@@ -16,7 +16,7 @@ impl<T, const N: usize> Field<T, N> {
                 col = 1;
             }
         }
-        self.sections.get
+        self.chunks.get
     }
 
     fn step() {
