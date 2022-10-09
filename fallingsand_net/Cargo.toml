@@ -1,9 +1,9 @@
 [package]
-name = "fallingsand-sim"
+name = "fallingsand_net"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-rustc-hash = "1.1.0"
+bevy_slinet = { version = "0.4", features = ["client", "server", "protocol_tcp", "serializer_bincode"] }
