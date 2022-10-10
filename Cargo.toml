@@ -9,6 +9,7 @@ edition = "2021"
 members = [
     "fallingsand_sim",
     "fallingsand_net",
+    "fallingsand_orchestrator",
 ]
 
 [dependencies]

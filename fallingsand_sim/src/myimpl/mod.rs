@@ -3,15 +3,15 @@ use crate::{
     coords::{ChunkCoords, TILES_PER_CHUNK},
 };
 
-use self::tile::{Tile, Variant};
+use self::tile::{MyTile, Variant};
 
 pub mod tile;
 pub mod tilesimulator;
 
-impl TileChunk<Tile> {
+impl TileChunk<MyTile> {
     pub fn new_air() -> Self {
         Self::new(
-            [Tile {
+            [MyTile {
                 variant: Variant::AIR,
                 ..Default::default()
             }; TILES_PER_CHUNK as usize * TILES_PER_CHUNK as usize],
@@ -19,10 +19,10 @@ impl TileChunk<Tile> {
     }
 }
 
-impl TileChunk<Tile> {
+impl TileChunk<MyTile> {
     pub fn new_air_sand_mix() -> Self {
         let mut chunk = Self::new(
-            [Tile {
+            [MyTile {
                 variant: Variant::AIR,
                 ..Default::default()
             }; TILES_PER_CHUNK as usize * TILES_PER_CHUNK as usize],

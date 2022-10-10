@@ -10,13 +10,13 @@ use fallingsand_sim::{
     chunk::{EntityChunk, TileChunk},
     coords::{ChunkCoords, WorldChunkCoords, WorldCoords},
     myimpl::{
-        tile::{Tile, Variant},
+        tile::{MyTile, Variant},
         tilesimulator::Context,
     },
     region::{Chunk, DisjointRegion},
 };
 
-fn create_field() -> DisjointRegion<Tile, ()> {
+fn create_field() -> DisjointRegion<MyTile, ()> {
     let mut field = DisjointRegion::new_unchecked();
     for y in 0..(4 + 2 * 2) {
         for x in 0..(8 + 2 * 2) {
@@ -79,7 +79,7 @@ fn main() {
 
 struct GameState {
     ctx: Context,
-    field: DisjointRegion<Tile, ()>,
+    field: DisjointRegion<MyTile, ()>,
 }
 
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
@@ -142,9 +142,9 @@ fn update_pixels(mut pb: QueryPixelBuffer, state: Res<GameState>) {
 }
 
 fn update_simulation(mut state: ResMut<GameState>) {
-    let state = state.as_mut();
-    state.ctx.tick += 1;
-    state
-        .field
-        .step_tiles(|x: &mut SimulationCell<Tile>| x.step(&state.ctx));
+    // let state = state.as_mut();
+    // state.ctx.tick += 1;
+    // state
+        // .field
+        // .step_tiles(|x: &mut SimulationCell<Tile>| x.step(&state.ctx));
 }

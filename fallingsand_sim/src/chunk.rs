@@ -1,4 +1,8 @@
-use crate::coords::{ChunkCoords, TILES_PER_CHUNK};
+use std::collections::HashSet;
+
+use rustc_hash::{FxHashMap, FxHashSet};
+
+use crate::coords::{ChunkCoords, TILES_PER_CHUNK, WorldChunkCoords};
 
 #[derive(Clone)]
 pub struct TileChunk<T> {
@@ -21,21 +25,31 @@ impl<T> TileChunk<T> {
     }
 }
 
-#[derive(Default)]
-pub struct EntityChunk<T> {
-    entities: Vec<T>,
+#[derive(Hash, PartialEq, Eq, Clone, Copy)]
+pub struct EntityKey(u32);
+
+pub struct EntityEntry<E> {
+    pub chunk_coords: WorldChunkCoords,
+    pub entity: E,
 }
 
-impl<T> EntityChunk<T> {
-    pub fn entities(&self) -> &[T] {
-        self.entities.as_ref()
+impl<E> EntityEntry<E> {
+    pub fn new(chunk_coords: WorldChunkCoords, entity: E) -> Self { Self { chunk_coords, entity } }
+}
+
+#[derive(Default)]
+pub struct EntityChunk {
+    entities: FxHashSet<EntityKey>,
+}
+
+impl EntityChunk {
+    pub fn new(entities: FxHashSet<EntityKey>) -> Self { Self { entities: FxHashSet::default() } }
+
+    pub fn entities(&self) -> &FxHashSet<EntityKey> {
+        &self.entities
     }
 
-    pub fn entities_mod(&mut self) -> &mut [T] {
-        &mut self.entities
-    }
-
-    pub fn entities_mut(&mut self) -> &mut Vec<T> {
+    pub fn entities_mut(&mut self) -> &mut FxHashSet<EntityKey> {
         &mut self.entities
     }
 }

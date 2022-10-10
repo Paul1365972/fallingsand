@@ -7,7 +7,7 @@ use crate::{
     coords::{CellCoords, TILES_PER_CHUNK},
 };
 
-use super::tile::{Tile, Variant};
+use super::tile::{MyTile, Variant};
 
 #[derive(Default)]
 pub struct Context {
@@ -23,7 +23,7 @@ impl Context {
     }
 }
 
-impl<'a> SimulationCell<'a, Tile> {
+impl<'a> SimulationCell<'a, MyTile> {
     pub fn step(&mut self, ctx: &Context) {
         let start = TILES_PER_CHUNK;
         let end = 0u8.wrapping_sub(TILES_PER_CHUNK);

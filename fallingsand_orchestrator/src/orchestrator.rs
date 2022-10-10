@@ -7,13 +7,6 @@ use itertools::Itertools;
 use rustc_hash::FxHashSet;
 
 use crate::{cell::cell::TileTransitionFn, coords::WorldChunkCoords, world::{World, Entity}};
-
-enum OrchestratorMode {
-    SINGLEPLAYER,
-    MULTIPLAYER(TcpStream),
-    HOST(TcpListener, Vec<Connection>),
-}
-
 impl OrchestratorMode {
     fn new_host(addr: &SocketAddr) -> OrchestratorMode {
         let listener = TcpListener::bind(addr).unwrap();
@@ -34,8 +27,8 @@ pub struct Connection {
 }
 
 pub struct Orchestrator<T, E> {
-    mode: OrchestratorMode,
     world: World<T, E>,
+
 }
 
 impl<T: Send, E: Entity> Orchestrator<T, E> {

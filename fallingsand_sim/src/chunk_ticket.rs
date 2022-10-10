@@ -15,7 +15,7 @@ pub struct ChunkTicket {
     shape: ChunkTicketShape,
 }
 
-enum ChunkTicketShape {
+pub enum ChunkTicketShape {
     RECT(u8)
 }
 
@@ -23,12 +23,13 @@ impl ChunkTicket {
     pub fn new(key: ChunkTicketKey, coords: WorldChunkCoords, shape: ChunkTicketShape) -> Self { Self { key, coords, shape } }
 
     pub fn translate(&mut self, offset: (i32, i32)) -> ChunkTicketTransition {
-        let original = &self.coords;
-        self.coords = original + offset;
+        let original = &self.coords + (0, 0);
+        let updated = &original + offset;
+        self.coords = updated;
         match self.shape {
             ChunkTicketShape::RECT(size) => {
-                let before = FxHashSet::from_iter(AABB::from_radius(size as i32).iter().map(|x| original + x));
-                let after = FxHashSet::from_iter(AABB::from_radius(size as i32).iter().map(|x| &self.coords + x));
+                let before = FxHashSet::from_iter(AABB::from_radius(size as i32).iter().map(|x| &original + x));
+                let after = FxHashSet::from_iter(AABB::from_radius(size as i32).iter().map(|x| &updated + x));
                 let load = &before - &after;
                 let unload = &before - &after;
                 ChunkTicketTransition { load, unload }
@@ -39,7 +40,7 @@ impl ChunkTicket {
     pub fn build_chunk_list(&self) -> ChunkTicketTransition {
         match self.shape {
             ChunkTicketShape::RECT(size ) => {
-                let result = ChunkTicketTransition::default();
+                let mut result = ChunkTicketTransition::default();
                 result.load.extend(AABB::from_radius(size as i32).iter().map(|offset| &self.coords + offset));
                 result
             },

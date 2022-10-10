@@ -1,15 +1,14 @@
 use itertools::Itertools;
-use rayon::prelude::{IntoParallelRefMutIterator, ParallelIterator};
+use rayon::{prelude::{IntoParallelRefMutIterator, ParallelIterator}, vec};
 use rustc_hash::FxHashMap;
 
 use crate::{
     coords::{ChunkCoords, WorldChunkCoords},
     region::DisjointRegion,
     util::DrainFilterMap,
-    world::{Entity}, chunk_ticket::ChunkTicketKey,
+ chunk_ticket::ChunkTicketKey, Entity, cell::cell::{SimulationCell, CellBuilder, TileTransitionFn}, Tile,
 };
 
-use super::cell::{CellBuilder, SimulationCell, TileTransitionFn};
 
 pub struct TileSimulationSubStep<'a, T> {
     cells: Vec<SimulationCell<'a, T>>,
@@ -60,70 +59,7 @@ impl ActiveChunks {
     }
 }
 
-pub struct EntityStepResult {
-    events: Vec<EntityStepEvent>,
-}
-
-impl EntityStepResult {
-    pub fn events(&self) -> &[EntityStepEvent] {
-        self.events.as_ref()
-    }
-}
-
-pub enum EntityStepEvent {
-    TicketEntityMoved(ChunkTicketKey, (i32, i32)),
-    TicketEntityRemoved(ChunkTicketKey),
-}
-
-impl<T: Send, E: Entity> DisjointRegion<T, E> {
-    pub fn step_tiles<F>(&mut self, tile_transition_fn: F)
-    where
-        F: TileTransitionFn<T>,
-    {
-        for offset in [(0, 0), (0, 2), (2, 0), (2, 2)] {
-            let mut substep = TileSimulationSubStep::new(self, offset);
-            substep.step_tiles(tile_transition_fn.clone());
-        }
-    }
-
-    pub fn step_entities(&mut self) -> EntityStepResult {
-        // Do step entity stuff
-
-        let events = Vec::new();
-
-        self.chunks_iter_mut().for_each(|(coords, chunk)| {
-            let removed = chunk
-                .entity_chunk_mut()
-                .entities_mut()
-                .drain_filter(|e| e.should_remove());
-            events.extend(
-                removed
-                    .filter_map(|x| x.get_chunk_ticket())
-                    .map(|x| EntityStepEvent::TicketEntityRemoved(x)),
-            );
-
-            let moved = chunk.entity_chunk_mut().entities_mut().drain_filter_map(
-                |e| e.apply_move(),
-                |_, o| o != (0, 0),
-                |e, o| (e, o),
-            );
-
-            events.extend(moved.iter().filter_map(|(e, o)| {
-                e.get_chunk_ticket()
-                    .map(|x| EntityStepEvent::TicketEntityMoved(x, *o))
-            }));
-
-            moved.into_iter().for_each(|(e, o)| {
-                self.get_mut(coords + o)
-                    .unwrap()
-                    .entity_chunk_mut()
-                    .entities_mut()
-                    .push(e);
-            });
-        });
-        EntityStepResult { events }
-    }
-
+impl<T, E> DisjointRegion<T, E> {
     pub fn build_active_chunks(&self) -> ActiveChunks {
         let mut chunks = Vec::new();
         for offset in [(0, 0), (0, 2), (2, 0), (2, 2)] {
@@ -151,5 +87,69 @@ impl<T: Send, E: Entity> DisjointRegion<T, E> {
         }
         chunks.sort();
         ActiveChunks::new(chunks)
+    }
+}
+
+impl<T: Tile, E> DisjointRegion<T, E> {
+    pub fn step_tiles<F>(&mut self, tile_transition_fn: F)
+    where
+        F: TileTransitionFn<T>,
+    {
+        for offset in [(0, 0), (0, 2), (2, 0), (2, 2)] {
+            let mut substep = TileSimulationSubStep::new(self, offset);
+            substep.step_tiles(tile_transition_fn.clone());
+        }
+        // To do maybe collect tile events here and apply them
+    }
+}
+
+pub trait DisjointRegionStepEntities<E: Entity<M, R>, M, R> {
+    fn step_entities<FM, FR>(&mut self, move_notifier: FM, remove_notifier: FR)     where
+    FM: FnMut(M),
+    FR: FnMut(R);
+}
+
+impl<T, E: Entity<M, R>, M, R> DisjointRegionStepEntities<E, M, R> for DisjointRegion<T, E> {
+
+    fn step_entities<FM, FR>(&mut self, move_notifier: FM, remove_notifier: FR)     where
+    FM: FnMut(M),
+    FR: FnMut(R),
+    {
+        // Do step entity stuff here
+
+        // Move and remove entities
+        self.retain_entities(|k, v| { 
+            let remove = v.entity.should_remove_and_notify();
+            if let Some(event) = remove {
+                self.get_mut(v.chunk_coords).unwrap().entity_chunk_mut().entities_mut().remove(k);
+                remove_notifier(event);
+                return false
+            }
+            true
+        });
+
+        for (key, value) in self.entities_mut() {
+            let movement = e.apply_move();
+        }
+
+        let moved = self.entities_mut().iter_mut().for_each(
+            |e| e.apply_move(),
+            |_, &o| o != (0, 0),
+            |e, o| (e, o),
+        );
+
+            // events.extend(moved.iter().filter_map(|(e, o)| {
+                // e.get_chunk_ticket()
+                    // .map(|x| EntityStepEvent::TicketEntityMoved(x, *o))
+            // }));
+
+            // moved.into_iter().for_each(|(e, o)| {
+                // self.get_mut(coords + o)
+                    // .unwrap()
+                    // .entity_chunk_mut()
+                    // .entities_mut()
+                    // .push(e);
+            // });
+        });
     }
 }

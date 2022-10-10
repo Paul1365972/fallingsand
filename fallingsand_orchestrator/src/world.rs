@@ -17,14 +17,7 @@ pub struct World<T, E> {
     chunk_tickets: FxHashMap<ChunkTicketKey, ChunkTicket>,
 }
 
-pub trait ChunkTicketHolder {
-    fn get_chunk_ticket(&self) -> Option<ChunkTicketKey>;
-}
 
-pub trait Entity: ChunkTicketHolder + Send {
-    fn apply_move(&self) -> (i32, i32);
-    fn should_remove(&self) -> bool;
-}
 
 enum ExternalEvents {
     LOAD_CHUNK(ChunkCoords),

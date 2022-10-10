@@ -1436,9 +1436,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "fallingsand_orchestrator"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "fallingsand_sim",
+ "itertools",
+ "rustc-hash",
+]
+
+[[package]]
 name = "fallingsand_sim"
 version = "0.1.0"
 dependencies = [
+ "bevy_ecs",
  "bincode",
  "itertools",
  "parry2d",

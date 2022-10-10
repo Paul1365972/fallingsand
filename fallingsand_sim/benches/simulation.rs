@@ -6,14 +6,14 @@ use fallingsand_sim::{
     cell::cell::SimulationCell,
     chunk::EntityChunk,
     coords::ChunkCoords,
-    myimpl::{tile::Tile, tilesimulator::Context},
+    myimpl::{tile::MyTile, tilesimulator::Context},
     region::{Chunk, DisjointRegion},
 };
 #[cfg(test)]
 use fallingsand_sim::{chunk::TileChunk, coords::WorldChunkCoords};
 use test::Bencher;
 
-fn create_filled_field() -> DisjointRegion<Tile, ()> {
+fn create_filled_field() -> DisjointRegion<MyTile, ()> {
     let mut field = DisjointRegion::new_unchecked();
     for y in 0..30 {
         for x in 0..30 {
@@ -64,16 +64,16 @@ fn clone_norm_chunks(b: &mut Bencher) {
     let mut blackhole = 0;
     println!(
         "Tile Chunk size: {}",
-        std::mem::size_of::<TileChunk<Tile>>()
+        std::mem::size_of::<TileChunk<MyTile>>()
     );
-    println!("Tile size: {}", std::mem::size_of::<Tile>());
+    println!("Tile size: {}", std::mem::size_of::<MyTile>());
     println!(
         "WorldChunkCoords size: {}",
         std::mem::size_of::<WorldChunkCoords>()
     );
     println!(
         "Region size: {}",
-        std::mem::size_of::<DisjointRegion<Tile, ()>>()
+        std::mem::size_of::<DisjointRegion<MyTile, ()>>()
     );
     b.iter(|| {
         for y in 0..30 {
@@ -89,7 +89,7 @@ fn clone_norm_chunks(b: &mut Bencher) {
 
 #[bench]
 fn step_empty_chunks(b: &mut Bencher) {
-    let mut field = DisjointRegion::<Tile, ()>::new_unchecked();
+    let mut field = DisjointRegion::<MyTile, ()>::new_unchecked();
     for y in 0..30 {
         for x in 0..30 {
             field.insert(
@@ -100,7 +100,7 @@ fn step_empty_chunks(b: &mut Bencher) {
     }
     let mut ctx = Context::default();
     b.iter(|| {
-        field.step_tiles(|x: &mut SimulationCell<Tile>| x.step(&ctx));
+        field.step_tiles(|x: &mut SimulationCell<MyTile>| x.step(&ctx));
         ctx.tick += 1;
     });
 }
@@ -110,14 +110,14 @@ fn step_filled_chunks(b: &mut Bencher) {
     let mut field = create_filled_field();
     let mut ctx = Context::default();
     b.iter(|| {
-        field.step_tiles(|x: &mut SimulationCell<Tile>| x.step(&ctx));
+        field.step_tiles(|x: &mut SimulationCell<MyTile>| x.step(&ctx));
         ctx.tick += 1;
     });
 }
 
 #[bench]
 fn build_active_chunk_list(b: &mut Bencher) {
-    let mut field = DisjointRegion::<Tile, ()>::new_unchecked();
+    let mut field = DisjointRegion::<MyTile, ()>::new_unchecked();
     for y in 0..30 {
         for x in 0..30 {
             field.insert(
