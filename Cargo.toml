@@ -2,6 +2,8 @@
 name = "fallingsand"
 version = "0.1.0"
 edition = "2021"
+exclude = ["dist", "build", "assets", "credits"]
+
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -9,14 +11,38 @@ edition = "2021"
 members = [
     "fallingsand_sim",
     "fallingsand_net",
-    "fallingsand_orchestrator",
 ]
+
+[features]
+dev = [
+    "bevy/dynamic_linking",
+]
+
 
 [dependencies]
 fallingsand_sim = { path = "fallingsand_sim" }
 fallingsand_net = { path = "fallingsand_net" }
-bevy = { version = "0.8", features = ["dynamic"] }
-bevy_pixel_buffer = "0.2"
 
-[profile.dev.package.fallingsand_sim]
+bevy = { version = "0.10.0", default-features = true, features = [] }
+bevy_pancam = "0.8.0"
+# bevy_kira_audio = { version = "0.13" }
+bevy_pixel_buffer = { git = "https://github.com/Paul1365972/bevy_pixel_buffer.git" }
+
+console_error_panic_hook = "0.1"
+
+
+[build-dependencies]
+embed-resource = "1.4"
+
+
+# Enable a small amount of optimization in debug mode
+[profile.dev]
 opt-level = 1
+
+# Enable high optimizations for dependencies (incl. Bevy), but not for our code:
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = true
+codegen-units = 1

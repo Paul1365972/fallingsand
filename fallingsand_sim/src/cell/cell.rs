@@ -3,60 +3,58 @@ use std::{
     ptr,
 };
 
-use crate::{chunk::TileChunk, coords::CellCoords};
+use crate::{chunk::TileChunk, util::coords::CellCoords};
 
-pub trait TileTransitionFn<T>: FnMut(&mut SimulationCell<T>) + Send + Sync + Clone {}
+use super::tile::MyTile;
 
-impl<U, T> TileTransitionFn<T> for U where U: FnMut(&mut SimulationCell<T>) + Send + Sync + Clone {}
-
-pub struct SimulationCell<'a, T> {
-    chunks: [&'a mut TileChunk<T>; 4 * 4],
+pub struct SimulationCell<'a> {
+    chunks: [&'a mut TileChunk; 4 * 4],
 }
 
-impl<'a, T: Clone> SimulationCell<'a, T> {
-    pub fn get(&self, coords: CellCoords) -> T {
+impl<'a> SimulationCell<'a> {
+    pub fn get(&self, coords: CellCoords) -> MyTile {
         self.chunks[coords.to_cell_chunk_index()]
             .get(coords.to_chunk_coords())
             .clone()
     }
 
-    pub fn get_mut(&mut self, coords: CellCoords) -> &mut T {
+    pub fn get_mut(&mut self, coords: CellCoords) -> &mut MyTile {
         self.chunks[coords.to_cell_chunk_index()].get_mut(coords.to_chunk_coords())
     }
 
     pub fn swap(&mut self, a: CellCoords, b: CellCoords) {
         unsafe {
-            let pa: *mut T = self.get_mut(a);
-            let pb: *mut T = self.get_mut(b);
+            let pa: *mut MyTile = self.get_mut(a);
+            let pb: *mut MyTile = self.get_mut(b);
             ptr::swap(pa, pb);
         }
     }
 }
 
-pub(crate) struct CellBuilder<'a, T> {
-    chunks: [MaybeUninit<&'a mut TileChunk<T>>; 4 * 4],
+pub struct CellBuilder<'a> {
+    chunks: [MaybeUninit<&'a mut TileChunk>; 4 * 4],
     init: u16,
 }
 
-impl<'a, T> CellBuilder<'a, T> {
-    pub fn new() -> CellBuilder<'a, T> {
+impl<'a> CellBuilder<'a> {
+    pub fn new() -> CellBuilder<'a> {
         CellBuilder {
             chunks: unsafe { MaybeUninit::uninit().assume_init() },
             init: 0,
         }
     }
 
-    pub fn add_unique(&mut self, index: usize, chunk: &'a mut TileChunk<T>) {
+    pub fn add_unique(&mut self, index: usize, chunk: &'a mut TileChunk) {
         assert!(index <= 16);
         assert!(self.init & (1 << index) == 0);
         self.chunks[index] = MaybeUninit::new(chunk);
         self.init |= 1 << index;
     }
 
-    pub fn build(self) -> Option<SimulationCell<'a, T>> {
+    pub fn build(self) -> Option<SimulationCell<'a>> {
         if self.init == 0xFFFF {
             Some(SimulationCell {
-                chunks: unsafe { mem::transmute::<_, [&'a mut TileChunk<T>; 4 * 4]>(self.chunks) },
+                chunks: unsafe { mem::transmute::<_, [&'a mut TileChunk; 4 * 4]>(self.chunks) },
             })
         } else {
             None

@@ -1,48 +1,20 @@
 use rustc_hash::FxHashMap;
 
 use crate::{
-    aabb::AABB,
-    chunk::{EntityChunk, TileChunk, EntityKey, EntityEntry},
-    coords::WorldChunkCoords,
+    cell::substep::TileSimulationSubStep,
+    chunk::{Chunk, EntityEntry, EntityKey, EntityKeyChunk, TileChunk},
+    entity::{chunk_ticket::ChunkTicketKey, entity::MyEntityVariant},
+    util::{aabb::AABB, coords::WorldChunkCoords},
+    world::GlobalContext,
 };
 
-pub struct DisjointRegion<T, E> {
+pub struct DisjointRegion {
     bounds: AABB,
-    chunks: FxHashMap<WorldChunkCoords, Chunk<T>>,
-    entities: FxHashMap<EntityKey, (WorldChunkCoords, E)>,
+    chunks: FxHashMap<WorldChunkCoords, Chunk>,
+    entities: FxHashMap<EntityKey, EntityEntry>,
 }
 
-pub struct Chunk<T> {
-    tile_chunk: TileChunk<T>,
-    entity_chunk: EntityChunk,
-}
-
-impl<T> Chunk<T> {
-    pub fn new(tile_chunk: TileChunk<T>, entity_chunk: EntityChunk) -> Self {
-        Self {
-            tile_chunk,
-            entity_chunk,
-        }
-    }
-
-    pub fn tile_chunk(&self) -> &TileChunk<T> {
-        &self.tile_chunk
-    }
-
-    pub fn tile_chunk_mut(&mut self) -> &mut TileChunk<T> {
-        &mut self.tile_chunk
-    }
-
-    pub fn entity_chunk(&self) -> &EntityChunk {
-        &self.entity_chunk
-    }
-
-    pub fn entity_chunk_mut(&mut self) -> &mut EntityChunk {
-        &mut self.entity_chunk
-    }
-}
-
-impl<T, E> DisjointRegion<T, E> {
+impl DisjointRegion {
     pub fn new_unchecked() -> Self {
         Self {
             bounds: AABB::from_point((123, 456)),
@@ -51,65 +23,151 @@ impl<T, E> DisjointRegion<T, E> {
         }
     }
 
-    pub fn new2(coords: WorldChunkCoords, chunk: Chunk<T>) -> Self {
-        let mut chunks = FxHashMap::default();
-        chunks.insert(coords, chunk);
-        Self {
-            bounds: AABB::from_point(coords.to_tuple()),
-            chunks,
-            entities: FxHashMap::default(),
-        }
+    pub fn merge(&mut self, other: DisjointRegion) {
+        todo!()
     }
 
-    pub fn merge(&mut self, other: DisjointRegion<T, E>) {
-        self.bounds = self.bounds.union(&other.bounds);
-        self.chunks.extend(other.chunks.into_iter());
-    }
-
-    pub fn chunks_iter(&self) -> std::collections::hash_map::Iter<WorldChunkCoords, Chunk<T>> {
+    pub fn chunks_iter(&self) -> std::collections::hash_map::Iter<WorldChunkCoords, Chunk> {
         self.chunks.iter()
+    }
+
+    pub fn for_chunk_coords<'a, F>(&self, f: F)
+    where
+        F: FnMut(&WorldChunkCoords),
+    {
+        self.chunks.keys().for_each(f);
+    }
+
+    pub fn for_entities_mut<'a, F>(&mut self, mut f: F)
+    where
+        F: FnMut(&EntityKey, &mut EntityEntry),
+    {
+        self.entities.iter_mut().for_each(|(k, v)| f(k, v));
     }
 
     pub fn contains_chunk(&self, coords: &WorldChunkCoords) -> bool {
         self.chunks.contains_key(coords)
     }
 
-    pub fn chunks_iter_mut(
-        &mut self,
-    ) -> std::collections::hash_map::IterMut<WorldChunkCoords, Chunk<T>> {
-        self.chunks.iter_mut()
+    pub fn for_tile_chunk_mut<'a, F>(&'a mut self, mut f: F)
+    where
+        F: FnMut(&WorldChunkCoords, &'a mut TileChunk),
+    {
+        self.chunks
+            .iter_mut()
+            .for_each(|(k, v)| f(k, v.tile_chunk_mut()));
     }
 
-    pub fn insert(&mut self, coords: WorldChunkCoords, chunk: Chunk<T>) {
-        self.chunks.insert(coords, chunk);
+    pub fn insert_tile_chunk(&mut self, coords: WorldChunkCoords, tile_chunk: TileChunk) {
+        self.chunks
+            .insert(coords, Chunk::new(tile_chunk, EntityKeyChunk::default()));
     }
 
-    pub fn remove(&mut self, coords: WorldChunkCoords) -> Option<Chunk<T>> {
-        self.chunks.remove(&coords)
+    pub fn unsafe_remove_tile_chunk(&mut self, coords: WorldChunkCoords) -> Option<TileChunk> {
+        let chunk = self.chunks.remove(&coords);
+        if let Some(chunk) = chunk {
+            for key in chunk.entity_chunk().entities() {
+                self.entities.remove(key);
+            }
+            return Some(chunk.into_tile_chunk());
+        }
+        None
     }
 
-    pub fn get(&self, coords: WorldChunkCoords) -> Option<&Chunk<T>> {
+    pub fn unsafe_get(&self, coords: WorldChunkCoords) -> Option<&Chunk> {
         self.chunks.get(&coords)
     }
 
-    pub fn get_mut(&mut self, coords: WorldChunkCoords) -> Option<&mut Chunk<T>> {
+    pub fn unsafe_get_mut(&mut self, coords: WorldChunkCoords) -> Option<&mut Chunk> {
         return self.chunks.get_mut(&coords);
     }
+}
 
-    pub fn get_entity(&self, key: EntityKey) -> Option<&EntityEntry<E>> {
-        self.entities.get(&key)
+impl DisjointRegion {
+    pub fn step_tiles(&mut self, ctx: &GlobalContext) {
+        for offset in [(0, 0), (0, 2), (2, 0), (2, 2)] {
+            let mut substep = TileSimulationSubStep::new(self, offset);
+            substep.step_tiles(ctx);
+        }
+        // To do maybe collect tile events here and apply them
+    }
+}
+
+pub struct DisjointRegionTileAccessor<'a> {
+    chunks: &'a mut FxHashMap<WorldChunkCoords, Chunk>,
+}
+
+impl<'a> DisjointRegionTileAccessor<'a> {
+    pub fn get_chunk(&self, coords: WorldChunkCoords) -> Option<&Chunk> {
+        self.chunks.get(&coords)
     }
 
-    pub fn entities(&self) -> &FxHashMap<EntityKey, EntityEntry<E>> {
-        &self.entities
+    pub fn get_chunk_mut(&mut self, coords: WorldChunkCoords) -> Option<&mut Chunk> {
+        self.chunks.get_mut(&coords)
     }
+}
 
-    pub fn entities_mut(&mut self) -> &mut FxHashMap<EntityKey, EntityEntry<E>> {
-        &mut self.entities
-    }
+pub enum EntityStepResult {
+    ChunkTicketMoved(ChunkTicketKey, (i32, i32)),
+    ChunkTicketRemoved(ChunkTicketKey),
+}
 
-    pub fn retain_entities<F>(&mut self, predicate: F) where
-    F: FnMut(&EntityKey, &mut EntityEntry<E>) -> bool,{
-        self.entities.retain(predicate);
+impl DisjointRegion {
+    pub fn step_entities(&mut self) -> Vec<EntityStepResult> {
+        let mut events = Vec::new();
+        // Do step entity stuff here
+
+        for (key, value) in self.entities.iter_mut() {
+            value.entity.step(DisjointRegionTileAccessor {
+                chunks: &mut self.chunks,
+            });
+        }
+
+        // Remove entities
+        self.entities.retain(|key, value| {
+            let entity = &mut value.entity;
+            if entity.should_remove() {
+                self.chunks
+                    .get_mut(&value.chunk_coords)
+                    .unwrap()
+                    .entity_chunk_mut()
+                    .entities_mut()
+                    .remove(key);
+                if let MyEntityVariant::Player(Some(ticket_key)) = &entity.variant {
+                    events.push(EntityStepResult::ChunkTicketRemoved(ticket_key.clone()));
+                }
+                return false;
+            }
+            true
+        });
+
+        // Move entities
+        for (key, value) in self.entities.iter_mut() {
+            let entity = &mut value.entity;
+            let offset = entity.apply_move();
+            if offset != (0, 0) {
+                self.chunks
+                    .get_mut(&value.chunk_coords)
+                    .unwrap()
+                    .entity_chunk_mut()
+                    .entities_mut()
+                    .remove(&key);
+                let new_coords = &value.chunk_coords + offset;
+                self.chunks
+                    .get_mut(&new_coords)
+                    .unwrap()
+                    .entity_chunk_mut()
+                    .entities_mut()
+                    .insert(*key);
+
+                if let MyEntityVariant::Player(Some(ticket_key)) = &entity.variant {
+                    events.push(EntityStepResult::ChunkTicketMoved(
+                        ticket_key.clone(),
+                        offset,
+                    ));
+                }
+            }
+        }
+        events
     }
 }

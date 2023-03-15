@@ -70,3 +70,25 @@ World size: 35840 x 73728 (70 x 144 Chunks)
 1. Server: Orchestrator(multi worker) -> DisjointRegions
 2. Client: Orchestrator(single worker) -> DisjointRegion
 2. Replay: Orchestrator -> DisjointRegion
+
+
+## Protocol
+
+### Orch model
+
+#### Sim -> Orch
+- Unload chunk rsp (Coords, Chunk)
+- Tick rsp (ChunkTicket(Moved/Removed))
+
+#### Orch -> Sim
+- Load Chunk (Coords, Chunk)
+- Unload Chunk (Coords)
+- Tick (GlobalState)
+
+#### Orch -> Client
+- Frame (Chunks in view, some state)
+- 
+
+#### Client -> Orch
+- InputState
+- 
