@@ -5,9 +5,9 @@
         <meta charset="utf-8"/>
         <title>fallingsand</title> <!-- TODO -->
         <link data-trunk rel="copy-dir" href="./assets"/>
-        <link data-trunk rel="copy-file" href="./build/windows/icon.ico">
-        <link rel="icon" href="./icon.ico">
-        <link data-trunk rel="inline" href="./build/web/styles.css"/>
+        <link data-trunk rel="copy-file" href="./res/web/favicon.png">
+        <link rel="icon" href="./favicon.png">
+        <link data-trunk rel="inline" href="./res/web/styles.css"/>
     </head>
     <body>
         <div class="game-container">
@@ -15,6 +15,7 @@
                 Javascript and support for canvas is required
             </canvas>
         </div>
-        <link data-trunk rel="inline" href="./build/web/sound.js"/>
+        <link data-trunk rel="inline" href="./res/web/sound.js"/>
+        <link data-trunk rel="rust" href="Cargo.toml" data-wasm-opt="z" data-bin="fallingsand"/>
     </body>
 </html>

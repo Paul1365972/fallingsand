@@ -1,6 +1,4 @@
-use crate::region::DisjointRegionTileAccessor;
-
-use super::chunk_ticket::ChunkTicketKey;
+use crate::chunk_tickets::ChunkTicketKey;
 
 pub struct MyEntity {
     pub location: (i16, i16),
@@ -13,7 +11,7 @@ pub enum MyEntityVariant {
 }
 
 impl MyEntity {
-    pub fn step(&mut self, tiles: DisjointRegionTileAccessor) {
+    pub fn step(&mut self) {
         todo!()
     }
 

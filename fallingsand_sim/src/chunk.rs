@@ -1,29 +1,71 @@
 use rustc_hash::FxHashSet;
 
 use crate::{
-    cell::tile::MyTile,
+    cell::{
+        cached_cell::CachedSimulationCell,
+        tile::MyTile,
+    },
     entity::entity::MyEntity,
-    util::coords::{ChunkCoords, WorldChunkCoords, TILES_PER_CHUNK},
+    util::coords::{WorldRegionCoords, CHUNKS_PER_REGION, TILES_PER_CHUNK},
 };
 
-#[derive(Clone)]
+#[repr(align(64))]
+#[derive(Debug)]
 pub struct TileChunk {
-    tiles: Box<[MyTile; TILES_PER_CHUNK as usize * TILES_PER_CHUNK as usize]>,
+    pub tiles: [MyTile; TILES_PER_CHUNK * TILES_PER_CHUNK],
+    //pub tile_entities: Vec<((u8, u8), TileEntity)>,
+    pub bounds: (u8, u8, u8, u8),
+    pub old_bounds: (u8, u8, u8, u8),
 }
 
 impl TileChunk {
-    pub fn new(tiles: [MyTile; TILES_PER_CHUNK as usize * TILES_PER_CHUNK as usize]) -> Self {
+    pub fn new(tiles: [MyTile; TILES_PER_CHUNK * TILES_PER_CHUNK]) -> Self {
         Self {
-            tiles: Box::new(tiles),
+            tiles,
+            //tile_entities: vec![],
+            bounds: (0, 0, TILES_PER_CHUNK as u8, TILES_PER_CHUNK as u8),
+            old_bounds: (0, 0, 0, 0),
         }
     }
+}
 
-    pub fn get(&self, coords: ChunkCoords) -> &MyTile {
-        &self.tiles[coords.to_chunk_tile_index()]
-    }
+pub struct Region {
+    pub chunks: Box<[TileChunk; CHUNKS_PER_REGION * CHUNKS_PER_REGION]>,
+    pub entity_keys: FxHashSet<EntityKey>,
+    pub simulation_cells:
+        Option<Box<[[CachedSimulationCell; CHUNKS_PER_REGION * CHUNKS_PER_REGION / 4 / 4]; 4]>>,
+    pub num_neighbors: u8,
+}
 
-    pub fn get_mut(&mut self, coords: ChunkCoords) -> &mut MyTile {
-        &mut self.tiles[coords.to_chunk_tile_index()]
+pub struct UnloadedRegion {
+    pub tile_chunk: Box<[TileChunk; CHUNKS_PER_REGION * CHUNKS_PER_REGION]>,
+    pub entities: Vec<MyEntity>,
+}
+
+impl Region {
+    pub fn initalize_simulation_cells(mut neighbors: [&mut Region; 9]) {
+        assert!(neighbors[4].num_neighbors == 8);
+        let cells: [[CachedSimulationCell; CHUNKS_PER_REGION * CHUNKS_PER_REGION / 4 / 4]; 4] =
+            std::array::from_fn(|offset_index| {
+                let index_x = offset_index % 2;
+                let index_y = offset_index / 2;
+                std::array::from_fn(|full_cell_index| {
+                    let full_cell_x = full_cell_index % (CHUNKS_PER_REGION / 4);
+                    let full_cell_y = full_cell_index / (CHUNKS_PER_REGION / 4);
+                    let pointers = std::array::from_fn(|chunk_index| {
+                        let chunk_x = chunk_index % 4;
+                        let chunk_y = chunk_index / 4;
+                        let x = 7 + index_x * 2 + full_cell_x * 4 + chunk_x;
+                        let y = 7 + index_y * 2 + full_cell_y * 4 + chunk_y;
+                        println!("XY: {}, {}", x, y);
+                        let chunk: *mut TileChunk = &mut neighbors[x / 8 + y / 8 * 3].chunks
+                            [x % 8 + y % 8 * CHUNKS_PER_REGION];
+                        chunk
+                    });
+                    CachedSimulationCell::new(pointers)
+                })
+            });
+        neighbors[4].simulation_cells = Some(Box::new(cells));
     }
 }
 
@@ -31,68 +73,15 @@ impl TileChunk {
 pub struct EntityKey(u32);
 
 pub struct EntityEntry {
-    pub chunk_coords: WorldChunkCoords,
+    pub chunk_coords: WorldRegionCoords,
     pub entity: MyEntity,
 }
 
 impl EntityEntry {
-    pub fn new(chunk_coords: WorldChunkCoords, entity: MyEntity) -> Self {
+    pub fn new(coords: WorldRegionCoords, entity: MyEntity) -> Self {
         Self {
-            chunk_coords,
+            chunk_coords: coords,
             entity,
         }
-    }
-}
-
-#[derive(Default)]
-pub struct EntityKeyChunk {
-    entities: FxHashSet<EntityKey>,
-}
-
-impl EntityKeyChunk {
-    pub fn new(entities: FxHashSet<EntityKey>) -> Self {
-        Self { entities: entities }
-    }
-
-    pub fn entities(&self) -> &FxHashSet<EntityKey> {
-        &self.entities
-    }
-
-    pub fn entities_mut(&mut self) -> &mut FxHashSet<EntityKey> {
-        &mut self.entities
-    }
-}
-
-pub struct Chunk {
-    tile_chunk: TileChunk,
-    entity_key_chunk: EntityKeyChunk,
-}
-
-impl Chunk {
-    pub fn new(tile_chunk: TileChunk, entity_chunk: EntityKeyChunk) -> Self {
-        Self {
-            tile_chunk,
-            entity_key_chunk: entity_chunk,
-        }
-    }
-
-    pub fn tile_chunk(&self) -> &TileChunk {
-        &self.tile_chunk
-    }
-
-    pub fn tile_chunk_mut(&mut self) -> &mut TileChunk {
-        &mut self.tile_chunk
-    }
-
-    pub fn into_tile_chunk(self) -> TileChunk {
-        self.tile_chunk
-    }
-
-    pub fn entity_chunk(&self) -> &EntityKeyChunk {
-        &self.entity_key_chunk
-    }
-
-    pub fn entity_chunk_mut(&mut self) -> &mut EntityKeyChunk {
-        &mut self.entity_key_chunk
     }
 }

@@ -10,18 +10,19 @@
 - 
 
 ## Noita comparison 
-1 tile is one color
-Virtual Resolution: 424 x 242 (4.5 pixels per tile)
-Region Chunk size: 512 x 512 (8 x 8 sim chunks)
-Simulation Chunk size: 64 x 64
-World size: 35840 x 73728 (70 x 144 Chunks)
-12 Region chunks loaded for 3,145,728 "active" tiles (768 sim chunks)
+- 1 tile is one color
+- Virtual Resolution: 424 x 242 (4.5 pixels per tile)
+- Region (Biome) Chunk size: 512 x 512 (8 x 8 sim chunks)
+- Simulation Chunk size: 64 x 64
+- World size: 35840 x 73728 (70 x 144 Chunks)
+- 12 Region chunks loaded for 3,145,728 "active" tiles (768 sim chunks)
+
 | Game | Noita | Rust 4 | Rust 3 |
 | -----|-------|--------|--------|
 | Passes | 4 | 4 | 9 |
 | Chunks per Pass | 196 | 196 | 85. |
 | Unit size | 1 | 4x4 | 3x3 |
-| Work units | 196 | 12 | 9. |
+| Work units | 196 | 49 | 196 |
 
 ## Other Simulation stuff
 - APIC
@@ -45,7 +46,7 @@ World size: 35840 x 73728 (70 x 144 Chunks)
 
 | Stage | Server | Host | Client | 
 |-------|--------|------|--------| 
-| / |   |  | _Always send movement packets_ | 
+| /  |  |  | _Always send movement packets_ | 
 | 1. | **Receive new players** | **Receive new players** | **Receive network packets** | 
 | 2. | **Insert chunks to region** | **Insert chunks to region** | **Apply (un?)load chunks** | 
 | 3. | **Apply global events** | **Apply global events** | **Apply global events** | 

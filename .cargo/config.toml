@@ -7,33 +7,28 @@
 linker = "clang"
 rustflags = ["-Clink-arg=-fuse-ld=lld", "-Zshare-generics=y"]
 
-# NOTE: you must manually install https://github.com/michaeleisel/zld on mac. you can easily do this with the "brew" package manager:
-# `brew install michaeleisel/zld/zld`
+# NOTE: you must install [Mach-O LLD Port](https://lld.llvm.org/MachO/index.html) on mac. you can easily do this by installing llvm which includes lld with the "brew" package manager:
+# `brew install llvm`
 [target.x86_64-apple-darwin]
-rustflags = ["-C", "link-arg=-fuse-ld=/usr/local/bin/zld", "-Zshare-generics=y"]
+rustflags = [
+    "-C",
+    "link-arg=-fuse-ld=/usr/local/opt/llvm/bin/ld64.lld",
+    "-Zshare-generics=y",
+]
 
 [target.aarch64-apple-darwin]
-rustflags = ["-C", "link-arg=-fuse-ld=/opt/homebrew/bin/zld", "-Zshare-generics=y"]
+rustflags = [
+    "-C",
+    "link-arg=-fuse-ld=/opt/homebrew/opt/llvm/bin/ld64.lld",
+    "-Zshare-generics=y",
+]
 
 [target.x86_64-pc-windows-msvc]
 linker = "rust-lld.exe"
 rustflags = ["-Zshare-generics=n"]
 
-# Optional: Uncommenting the following improves compile times, but reduces the amount of debug info to 'line number tables only'
-# In most cases the gains are negligible, but if you are on macos and have slow compile times you should see significant gains.
-#[profile.dev]
-#debug = 1
-
-
-# Stop making my CPU cry
-[build]
-jobs = 6
-
-# # WASM experiment
-# [target.wasm32-unknown-unknown]
-# runner = "wasm-server-runner"
 
 [alias]
-# runweb = "run --target wasm32-unknown-unknown"
 runwin = "run --target x86_64-pc-windows-msvc --features dev"
 tracewin = "run --target x86_64-pc-windows-msvc --release --features bevy/trace_tracy"
+benchwin = "bench --target x86_64-pc-windows-msvc"

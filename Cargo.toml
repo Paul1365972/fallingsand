@@ -2,8 +2,7 @@
 name = "fallingsand"
 version = "0.1.0"
 edition = "2021"
-exclude = ["dist", "build", "assets", "credits"]
-
+exclude = ["dist/", "res/", "assets/", ".github/"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -16,33 +15,42 @@ members = [
 [features]
 dev = [
     "bevy/dynamic_linking",
+    "bevy/filesystem_watcher"
 ]
-
 
 [dependencies]
 fallingsand_sim = { path = "fallingsand_sim" }
 fallingsand_net = { path = "fallingsand_net" }
 
-bevy = { version = "0.10.0", default-features = true, features = [] }
-bevy_pancam = "0.8.0"
+bevy = { version = "0.11", default-features = true, features = [] }
+bevy_pancam = "0.9"
 # bevy_kira_audio = { version = "0.13" }
-bevy_pixel_buffer = { git = "https://github.com/Paul1365972/bevy_pixel_buffer.git" }
+bevy_pixel_buffer = { version = "0.5" }
 
 console_error_panic_hook = "0.1"
 
+zorder = "0.1"
 
 [build-dependencies]
-embed-resource = "1.4"
+embed-resource = "2.3"
 
-
-# Enable a small amount of optimization in debug mode
 [profile.dev]
 opt-level = 1
 
-# Enable high optimizations for dependencies (incl. Bevy), but not for our code:
+[profile.dev.package.fallingsand_sim]
+opt-level = 1
+
 [profile.dev.package."*"]
 opt-level = 3
 
 [profile.release]
-lto = true
 codegen-units = 1
+lto = "thin"
+## Optional stuff to reduce size
+# lto = "fat"
+# strip = true
+# panic = "abort"
+
+# TODO Remove in the future
+[patch.crates-io]
+proc-macro2 = { git = "https://github.com/dtolnay/proc-macro2" }

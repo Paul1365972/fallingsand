@@ -1,4 +1,7 @@
+use std::{thread, time::Duration};
+
 use bevy::{
+    asset::ChangeWatcher,
     diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin},
     prelude::*,
     window::PresentMode,
@@ -11,46 +14,40 @@ use fallingsand_sim::{
         cell::SimulationCell,
         tile::{MyTile, MyTileVariant},
     },
-    chunk::{Chunk, EntityKeyChunk, TileChunk},
-    region::DisjointRegion,
-    util::coords::{ChunkCoords, WorldChunkCoords, WorldCoords, TILES_PER_CHUNK},
-    world::GlobalContext,
+    chunk::{TileChunk, UnloadedRegion},
+    util::coords::{WorldCoords, WorldRegionCoords, CHUNKS_PER_REGION, TILES_PER_CHUNK},
+    world::{GlobalContext, World},
 };
 
-fn create_field() -> DisjointRegion {
-    let mut field = DisjointRegion::new_unchecked();
-    for y in 0..(4 + 2 * 2) {
-        for x in 0..(8 + 2 * 2) {
-            field.insert_tile_chunk(
-                WorldChunkCoords::new(x, y),
-                TileChunk::new(
-                    [MyTile {
-                        variant: MyTileVariant::AIR,
-                        ..Default::default()
-                    }; TILES_PER_CHUNK as usize * TILES_PER_CHUNK as usize],
-                ),
+fn create_world() -> World {
+    let mut world = World::default();
+    for y in -1..=1 {
+        for x in -1..=1 {
+            let chunks = std::array::from_fn(|_| {
+                TileChunk::new(std::array::from_fn(|_| MyTile {
+                    variant: MyTileVariant::AIR,
+                }))
+            });
+            world.load_region(
+                WorldRegionCoords::new(x, y),
+                UnloadedRegion {
+                    tile_chunk: Box::new(chunks),
+                    entities: vec![],
+                },
             );
         }
     }
-    field
-        .unsafe_get_mut(WorldChunkCoords::new(2, 2))
-        .unwrap()
-        .tile_chunk_mut()
-        .get_mut(ChunkCoords::new(60, 63))
-        .variant = MyTileVariant::SAND;
-    field
-        .unsafe_get_mut(WorldChunkCoords::new(2, 2))
-        .unwrap()
-        .tile_chunk_mut()
-        .get_mut(ChunkCoords::new(60, 11))
-        .variant = MyTileVariant::STONE;
-    field
-        .unsafe_get_mut(WorldChunkCoords::new(2, 2))
-        .unwrap()
-        .tile_chunk_mut()
-        .get_mut(ChunkCoords::new(59, 10))
-        .variant = MyTileVariant::STONE;
-    field
+    let region = world.unsafe_get_mut(&WorldRegionCoords::new(0, 0)).unwrap();
+    //for i in 0..CHUNKS_PER_REGION {
+    //    for j in 0..TILES_PER_CHUNK {
+    //        region.chunks[i + i * CHUNKS_PER_REGION].tiles[j + j * TILES_PER_CHUNK].variant = MyTileVariant::STONE;
+    //    }
+    //}
+    let chunk = &mut region.chunks[0];
+    chunk.tiles[2 + (TILES_PER_CHUNK - 2) * TILES_PER_CHUNK].variant = MyTileVariant::SAND;
+    chunk.tiles[2 + 1 * TILES_PER_CHUNK].variant = MyTileVariant::STONE;
+    chunk.tiles[1 + 0 * TILES_PER_CHUNK].variant = MyTileVariant::STONE;
+    world
 }
 
 fn main() {
@@ -60,25 +57,29 @@ fn main() {
     println!("Hello, world!");
     let mut app = App::new();
 
-    app.add_plugins(DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(Window {
-            canvas: Some("#bevy".to_owned()),
-            title: "Fallingsand-Sim Game".to_string(),
-            // present_mode: PresentMode::Immediate,
-            present_mode: PresentMode::AutoVsync,
-            ..Default::default()
-        }),
-        ..default()
-    }).set(AssetPlugin {
-        watch_for_changes: true,
-        ..Default::default()
-    }));
+    app.add_plugins(
+        DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    canvas: Some("#bevy".to_owned()),
+                    title: "Fallingsand-Sim Game".to_string(),
+                    // present_mode: PresentMode::Immediate,
+                    present_mode: PresentMode::AutoVsync,
+                    ..Default::default()
+                }),
+                ..default()
+            })
+            .set(AssetPlugin {
+                watch_for_changes: ChangeWatcher::with_delay(Duration::from_secs(1)),
+                ..Default::default()
+            }),
+    );
 
-    app.add_plugin(LogDiagnosticsPlugin::default());
-    app.add_plugin(FrameTimeDiagnosticsPlugin);
+    app.add_plugins((LogDiagnosticsPlugin::default(), FrameTimeDiagnosticsPlugin));
 
-    app.add_plugin(PixelBufferPlugin);
-    app.add_startup_system(
+    app.add_plugins(PixelBufferPlugin);
+    app.add_systems(
+        Startup,
         PixelBufferBuilder::new()
             .with_size(PixelBufferSize::pixel_size((5, 5))) // only set pixel_size as size will be dynamically updated
             .with_fill(Fill::window())
@@ -86,24 +87,21 @@ fn main() {
             .setup(),
     );
 
-    app.add_plugin(PanCamPlugin);
-
+    app.add_plugins(PanCamPlugin);
 
     app.insert_resource(GameState {
-        ctx: GlobalContext::default(),
-        field: create_field(),
+        field: create_world(),
     });
+    app.insert_resource(FixedTime::new_from_secs(1.0 / 3.0));
 
-    
-    app.add_startup_system(setup)
-        .add_systems((update_pixels, update_simulation));
+    app.add_systems(Startup, setup);
+    app.add_systems(FixedUpdate, (update_pixels, update_simulation));
     app.run();
 }
 
 #[derive(Resource)]
 struct GameState {
-    ctx: GlobalContext,
-    field: DisjointRegion,
+    field: World,
 }
 
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
@@ -137,44 +135,60 @@ fn update_pixels(mut pb: QueryPixelBuffer, state: Res<GameState>) {
     let state = state.as_ref();
     pb.frame().per_pixel(|_, _| Pixel::GREEN);
     pb.frame().per_pixel(|p, _| {
-        let coords = WorldCoords::new(p.x as i32 + 48, p.y as i32 + 48);
-        let chunk = state.field.unsafe_get(coords.to_world_chunk_coords());
-        if chunk.is_none() {
-            return Pixel::BLACK;
-        }
-        let tile = chunk.unwrap().tile_chunk().get(coords.to_chunk_coords());
-        match tile.variant {
-            MyTileVariant::NIL => todo!(),
-            MyTileVariant::AIR => Pixel {
-                r: 255,
-                g: 255,
-                b: 255,
-                a: 255,
-            },
-            MyTileVariant::SAND => Pixel {
-                r: 255,
-                g: 255,
-                b: 0,
-                a: 255,
-            },
-            MyTileVariant::STONE => Pixel {
-                r: 64,
-                g: 64,
-                b: 64,
-                a: 255,
-            },
-            MyTileVariant::WATER => Pixel {
-                r: 0,
-                g: 0,
-                b: 255,
-                a: 255,
-            },
+        let coords = WorldCoords::new(p.x as i32 - 48, p.y as i32 - 48);
+        let region_coords = coords.to_region_coords();
+        let world_region_coords = coords.to_world_region_coords();
+        let region = state.field.unsafe_get(&world_region_coords);
+        if let Some(region) = region {
+            if region_coords.to_chunk_coords().to_tile_index() == 0 {
+                return Pixel::RED;
+            }
+            let tile = region.chunks[region_coords.to_chunk_index()].tiles
+                [region_coords.to_chunk_coords().to_tile_index()];
+                
+            if world_region_coords != WorldRegionCoords::new(0, 0) && matches!(tile.variant, MyTileVariant::AIR) {
+                return Pixel {
+                    r: 196,
+                    g: 196,
+                    b: 196,
+                    a: 255,
+                };
+            }
+            match tile.variant {
+                MyTileVariant::NIL => todo!(),
+                MyTileVariant::AIR => Pixel {
+                    r: 255,
+                    g: 255,
+                    b: 255,
+                    a: 255,
+                },
+                MyTileVariant::SAND => Pixel {
+                    r: 255,
+                    g: 255,
+                    b: 0,
+                    a: 255,
+                },
+                MyTileVariant::STONE => Pixel {
+                    r: 64,
+                    g: 64,
+                    b: 64,
+                    a: 255,
+                },
+                MyTileVariant::WATER => Pixel {
+                    r: 0,
+                    g: 0,
+                    b: 255,
+                    a: 255,
+                },
+            }
+        } else {
+            Pixel::BLACK
         }
     });
 }
 
 fn update_simulation(mut state: ResMut<GameState>) {
     let state = state.as_mut();
-    state.ctx.tick += 1;
-    state.field.step_tiles(&state.ctx);
+    state.field.step_context();
+    state.field.step_tiles();
 }
