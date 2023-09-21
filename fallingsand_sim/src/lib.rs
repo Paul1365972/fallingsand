@@ -1,53 +1,85 @@
 #![feature(map_many_mut)]
 
-use std::time::Duration;
-
-use bevy::prelude::*;
+use cell::tile::{MyTile, MyTileVariant};
+use chunk::{TileChunk, UnloadedRegion};
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    thread::JoinHandle,
+    time::Duration,
+};
+use util::{coords::WorldRegionCoords, timer::StepTimer};
+use world::World;
 
 pub mod cell;
 pub mod chunk;
-//pub mod chunk_cache;
 pub mod chunk_tickets;
 pub mod entity;
 pub mod orchestrator;
 pub mod util;
 pub mod world;
+pub mod region_manager;
 
-struct Server {
-    app: App,
+pub struct Server {
+    running: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
 }
 
-struct ServerExecutor {
-    server: Server,
+impl Server {
+    pub fn new() -> Self {
+        Self {
+            running: Arc::new(AtomicBool::new(false)),
+            handle: None,
+        }
+    }
+
+    pub fn run(&mut self) {
+        self.running.store(true, Ordering::Relaxed);
+        let running = self.running.clone();
+        self.handle = Some(
+            std::thread::Builder::new()
+                .name("Main Simulation Thread".into())
+                .stack_size(8 * 1024 * 1024)
+                .spawn(move || {
+                    println!("Initalizing World...");
+                    //let mut world = World::default();
+                    let mut world = create_world();
+                    let mut timer = StepTimer::new(Duration::from_secs_f64(1.0 / 60.0));
+                    while running.load(Ordering::Relaxed) {
+                        world.step(vec![]);
+                        timer.sleep();
+                    }
+                })
+                .unwrap(),
+        );
+    }
+
+    pub fn stop(self) {
+        self.running.store(false, Ordering::Relaxed);
+        self.handle.unwrap().join().unwrap();
+    }
 }
 
-// impl Server {
-//     fn new(hosted: bool) -> Self {
-//         let mut app = App::new();
-//         app.insert_resource(ScheduleRunnerSettings::run_loop(Duration::from_millis(2))); // TODO
-//         app.run();
-//         app.insert_sub_app(label, sub_app)
-//         Server { app: () }
-//     }
-//
-//     fn tick(&mut self) {
-//         self.app.update();
-//     }
-// }
-//
-// #[derive(Resource, Default, Deref, DerefMut)]
-// pub struct ChunkMap(HashMap<ChunkPos, Entity, FxBuildHasher>);
-//
-// #[derive(SystemParam)]
-// pub struct ChunkMapper<'w, 's> {
-//     map: Res<'w, ChunkMap>,
-//     chunks: Query<'w, 's, &'static Chunk, With<IsChunk>>,
-// }
-//
-// impl<'w, 's> ChunkMapper<'w, 's> {
-//     pub(crate) fn get_chunk(&self, position: &ChunkPos) -> Option<&Chunk> {
-//         let entity = self.map.get(position)?;
-//         self.chunks.get(*entity).ok()
-//     }
-// }
-//
+fn create_world() -> World {
+    let mut world = World::default();
+    for y in -6..=6 {
+        for x in -6..=6 {
+            let chunks = std::array::from_fn(|_| {
+                TileChunk::new(std::array::from_fn(|_| MyTile {
+                    variant: MyTileVariant::AIR,
+                    ..Default::default()
+                }))
+            });
+            world.load_region(
+                WorldRegionCoords::new(x, y),
+                UnloadedRegion {
+                    tile_chunk: Box::new(chunks),
+                    entities: vec![],
+                },
+            );
+        }
+    }
+    world
+}

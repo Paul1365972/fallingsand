@@ -20,3 +20,5 @@ cargo tracewin
 set "RUSTFLAGS=-C force-frame-pointers=y" & set "CARGO_BUILD_TARGET=x86_64-pc-windows-msvc" & set "CARGO_PROFILE_RELEASE_DEBUG=true" & cargo flamegraph
 
 trunk serve
+
+cargo miri test -p fallingsand_sim --benches --target x86_64-pc-windows-msvc

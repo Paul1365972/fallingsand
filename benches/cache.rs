@@ -27,7 +27,6 @@ fn linear(b: &mut Bencher) {
                 }
                 grid[index] = sum;
                 super_sum = super_sum.wrapping_add(sum);
-
             }
         }
         super_sum
@@ -80,7 +79,6 @@ fn morton(b: &mut Bencher) {
                 }
                 grid[index] = sum;
                 super_sum = super_sum.wrapping_add(sum);
-
             }
         }
         super_sum

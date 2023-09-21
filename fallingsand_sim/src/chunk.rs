@@ -1,10 +1,7 @@
 use rustc_hash::FxHashSet;
 
 use crate::{
-    cell::{
-        cached_cell::CachedSimulationCell,
-        tile::MyTile,
-    },
+    cell::{cached_cell::CachedSimulationCell, tile::MyTile},
     entity::entity::MyEntity,
     util::coords::{WorldRegionCoords, CHUNKS_PER_REGION, TILES_PER_CHUNK},
 };
@@ -57,9 +54,8 @@ impl Region {
                         let chunk_y = chunk_index / 4;
                         let x = 7 + index_x * 2 + full_cell_x * 4 + chunk_x;
                         let y = 7 + index_y * 2 + full_cell_y * 4 + chunk_y;
-                        println!("XY: {}, {}", x, y);
-                        let chunk: *mut TileChunk = &mut neighbors[x / 8 + y / 8 * 3].chunks
-                            [x % 8 + y % 8 * CHUNKS_PER_REGION];
+                        let chunk = std::ptr::addr_of_mut!(neighbors[x / 8 + y / 8 * 3].chunks[x % 8 + y % 8 * CHUNKS_PER_REGION]);
+                        //let chunk: *mut TileChunk = &mut neighbors[x / 8 + y / 8 * 3].chunks[x % 8 + y % 8 * CHUNKS_PER_REGION];
                         chunk
                     });
                     CachedSimulationCell::new(pointers)

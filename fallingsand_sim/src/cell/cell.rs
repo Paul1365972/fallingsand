@@ -33,11 +33,19 @@ impl<'a> SimulationCell<'a> {
     }
 
     fn handle_tile(&mut self, coords: CellCoords, ctx: &GlobalContext) {
-        let tile = self.get(coords);
+        let tile = self.get_mut(coords);
+        if tile.last_update == ctx.ticks as u8 {
+            return;
+        }
+        tile.last_update = ctx.ticks as u8;
         //self.get_mut(coords).temperature += 3;
         match tile.variant {
             MyTileVariant::SAND => {
-                let below = coords.below();
+                let below = if ctx.next_u64(coords) & 2 == 0 {
+                    coords.above()
+                } else {
+                    coords.below()
+                };
                 if !self.try_swap_solid(coords, below) {
                     if ctx.next_u64(coords) & 1 == 0 {
                         if !self.try_swap_solid(coords, below.left()) {

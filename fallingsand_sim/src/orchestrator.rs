@@ -1,23 +1,8 @@
 use std::net::TcpStream;
 
-use lru::LruCache;
 use rustc_hash::FxHashSet;
 
 use crate::{chunk::Region, util::coords::WorldRegionCoords, world::World};
-
-trait ChunkManager {
-    fn preload_chunk(coords: WorldRegionCoords);
-
-    fn load_chunk(coords: WorldRegionCoords) -> Region;
-
-    fn save_chunk(coords: WorldRegionCoords, chunk: Region);
-
-    fn close();
-}
-
-struct DiskChunkManager {
-    cache: LruCache<WorldRegionCoords, Region>,
-}
 
 pub struct Connection {
     stream: TcpStream,

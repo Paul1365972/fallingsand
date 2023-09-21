@@ -1,4 +1,4 @@
-use std::{thread, time::Duration};
+use std::{time::Duration, mem::ManuallyDrop};
 
 use bevy::{
     asset::ChangeWatcher,
@@ -10,28 +10,30 @@ use bevy::{
 use bevy_pancam::{PanCam, PanCamPlugin};
 use bevy_pixel_buffer::{prelude::*, query::QueryPixelBuffer};
 use fallingsand_sim::{
-    cell::{
-        cell::SimulationCell,
-        tile::{MyTile, MyTileVariant},
-    },
+    cell::tile::{MyTile, MyTileVariant},
     chunk::{TileChunk, UnloadedRegion},
-    util::coords::{WorldCoords, WorldRegionCoords, CHUNKS_PER_REGION, TILES_PER_CHUNK},
-    world::{GlobalContext, World},
+    util::coords::{WorldCoords, WorldRegionCoords, TILES_PER_CHUNK, CHUNKS_PER_REGION},
+    world::World,
 };
 
 fn create_world() -> World {
     let mut world = World::default();
     for y in -1..=1 {
         for x in -1..=1 {
-            let chunks = std::array::from_fn(|_| {
-                TileChunk::new(std::array::from_fn(|_| MyTile {
+            let mut chunks = Vec::with_capacity(CHUNKS_PER_REGION * CHUNKS_PER_REGION);
+            for _ in 0..(CHUNKS_PER_REGION * CHUNKS_PER_REGION) {
+                chunks.push(TileChunk::new(std::array::from_fn(|_| MyTile {
                     variant: MyTileVariant::AIR,
-                }))
-            });
+                    ..Default::default()
+                })));
+            }
+            let chunks = unsafe {
+                Box::from_raw(ManuallyDrop::new(chunks).as_mut_ptr() as *mut [TileChunk; CHUNKS_PER_REGION * CHUNKS_PER_REGION])
+            };
             world.load_region(
                 WorldRegionCoords::new(x, y),
                 UnloadedRegion {
-                    tile_chunk: Box::new(chunks),
+                    tile_chunk: chunks,
                     entities: vec![],
                 },
             );
@@ -62,9 +64,9 @@ fn main() {
             .set(WindowPlugin {
                 primary_window: Some(Window {
                     canvas: Some("#bevy".to_owned()),
-                    title: "Fallingsand-Sim Game".to_string(),
-                    // present_mode: PresentMode::Immediate,
-                    present_mode: PresentMode::AutoVsync,
+                    title: "Fallingsand-Sim Game".to_owned(),
+                    present_mode: PresentMode::AutoNoVsync,
+                    //present_mode: PresentMode::AutoVsync,
                     ..Default::default()
                 }),
                 ..default()
@@ -81,7 +83,7 @@ fn main() {
     app.add_systems(
         Startup,
         PixelBufferBuilder::new()
-            .with_size(PixelBufferSize::pixel_size((5, 5))) // only set pixel_size as size will be dynamically updated
+            .with_size(PixelBufferSize::pixel_size((2, 2))) // only set pixel_size as size will be dynamically updated
             .with_fill(Fill::window())
             .with_render(RenderConfig::sprite()) // set fill to the window
             .setup(),
@@ -92,10 +94,11 @@ fn main() {
     app.insert_resource(GameState {
         field: create_world(),
     });
-    app.insert_resource(FixedTime::new_from_secs(1.0 / 3.0));
+    app.insert_resource(FixedTime::new_from_secs(1.0 / 10.0));
 
     app.add_systems(Startup, setup);
-    app.add_systems(FixedUpdate, (update_pixels, update_simulation));
+    app.add_systems(Update, update_pixels);
+    app.add_systems(FixedUpdate, update_simulation);
     app.run();
 }
 
@@ -133,7 +136,6 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
 
 fn update_pixels(mut pb: QueryPixelBuffer, state: Res<GameState>) {
     let state = state.as_ref();
-    pb.frame().per_pixel(|_, _| Pixel::GREEN);
     pb.frame().per_pixel(|p, _| {
         let coords = WorldCoords::new(p.x as i32 - 48, p.y as i32 - 48);
         let region_coords = coords.to_region_coords();
@@ -145,8 +147,10 @@ fn update_pixels(mut pb: QueryPixelBuffer, state: Res<GameState>) {
             }
             let tile = region.chunks[region_coords.to_chunk_index()].tiles
                 [region_coords.to_chunk_coords().to_tile_index()];
-                
-            if world_region_coords != WorldRegionCoords::new(0, 0) && matches!(tile.variant, MyTileVariant::AIR) {
+
+            if world_region_coords != WorldRegionCoords::new(0, 0)
+                && matches!(tile.variant, MyTileVariant::AIR)
+            {
                 return Pixel {
                     r: 196,
                     g: 196,

@@ -30,5 +30,6 @@ rustflags = ["-Zshare-generics=n"]
 
 [alias]
 runwin = "run --target x86_64-pc-windows-msvc --features dev"
+runserverwin = "run --target x86_64-pc-windows-msvc -p fallingsand_server"
 tracewin = "run --target x86_64-pc-windows-msvc --release --features bevy/trace_tracy"
 benchwin = "bench --target x86_64-pc-windows-msvc"

@@ -70,11 +70,24 @@ impl World {
             Region::initalize_simulation_cells(self.regions.get_many_mut(keys).unwrap())
         }
     }
+
+    pub fn unload_region(&mut self, coords: &WorldRegionCoords) -> UnloadedRegion {
+        let region = self.regions.remove(coords).unwrap();
+        for coords in coords.neighbors_exclusive().into_iter() {
+            if let Some(neighbor_region) = self.regions.get_mut(&coords) {
+                neighbor_region.simulation_cells = None;
+                neighbor_region.num_neighbors -= 1;
+            }
+        }
+        // Handle entity unloads
+        UnloadedRegion {
+            tile_chunk: region.chunks,
+            entities: vec![],
+        }
+    }
 }
 
 impl World {
-    pub fn pre_step<F>(&mut self) {}
-
     pub fn step_context(&mut self) {
         self.context.ticks += 1;
     }
@@ -85,6 +98,20 @@ impl World {
         self.step_context();
         self.step_tiles();
         self.step_entities();
+    }
+
+    pub fn step_tiles(&mut self) {
+        for offset_index in 0..4 {
+            self.regions
+                .par_iter_mut()
+                .filter_map(|(_, region)| region.simulation_cells.as_mut())
+                .flat_map(|cells| &mut cells[offset_index])
+                .for_each(|cell| {
+                    let mut cell = cell.promote();
+                    cell.step(&self.context);
+                });
+        }
+        // To do maybe collect tile events here and apply them
     }
 
     pub fn step_entities(&mut self) {
@@ -149,24 +176,6 @@ impl World {
         //         self.chunk_tickets.insert(ticket_key, ticket);
         //     }
         // });
-    }
-
-    pub fn step_tiles(&mut self) {
-        for offset_index in 0..4 {
-            self.regions
-                .par_iter_mut()
-                .filter_map(|(_, region)| region.simulation_cells.as_mut())
-                .flat_map(|cells| &mut cells[offset_index])
-                .for_each(|cell| {
-                    let mut cell = cell.promote();
-                    cell.step(&self.context);
-                });
-        }
-        // To do maybe collect tile events here and apply them
-    }
-
-    pub fn unsafe_remove_tile_region(&mut self, coords: &WorldRegionCoords) -> Option<Region> {
-        self.regions.remove(coords)
     }
 
     pub fn unsafe_get(&self, coords: &WorldRegionCoords) -> Option<&Region> {

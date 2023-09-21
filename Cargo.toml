@@ -8,8 +8,9 @@ exclude = ["dist/", "res/", "assets/", ".github/"]
 
 [workspace]
 members = [
-    "fallingsand_sim",
     "fallingsand_net",
+    "fallingsand_sim",
+    "fallingsand_server",
 ]
 
 [features]
@@ -30,6 +31,8 @@ bevy_pixel_buffer = { version = "0.5" }
 console_error_panic_hook = "0.1"
 
 zorder = "0.1"
+flate2 = { version = "1.0", features = [], default-features = true }
+
 
 [build-dependencies]
 embed-resource = "2.3"
@@ -37,7 +40,13 @@ embed-resource = "2.3"
 [profile.dev]
 opt-level = 1
 
+[profile.dev.package.fallingsand_net]
+opt-level = 1
+
 [profile.dev.package.fallingsand_sim]
+opt-level = 1
+
+[profile.dev.package.fallingsand_server]
 opt-level = 1
 
 [profile.dev.package."*"]
