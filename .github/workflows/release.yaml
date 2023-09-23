@@ -83,7 +83,6 @@ jobs:
       - name: Prepare release
         run: |
           mkdir target/release/assets && cp -r assets target/release/assets
-          mkdir target/release/credits && cp -r credits target/release/credits
       - name: Zip release
         uses: vimtor/action-zip@v1
         with:

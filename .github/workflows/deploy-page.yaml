@@ -1,13 +1,18 @@
-name: deploy-github-page
+name: Deploy to GitHub Pages
 
 on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
 
 jobs:
-  build-web:
+  deploy-pages:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -17,21 +22,23 @@ jobs:
         with:
           toolchain: nightly
           target: wasm32-unknown-unknown
-      - name: Install Dependencies
-        run: sudo apt-get update; sudo apt-get install pkg-config libx11-dev libasound2-dev libudev-dev
+#      - name: Install Dependencies
+#        run: sudo apt-get update; sudo apt-get install pkg-config libx11-dev libasound2-dev libudev-dev
       - name: Install trunk
         uses: jetli/trunk-action@v0.4.0
         with:
           version: 'latest'
-      - name: Build Release
+      - name: Trunk build
         run: |
           trunk build --config ./Trunk.deploy.toml
-      - name: Optimize Wasm
+      - name: Optimize wasm
         uses: NiklasEi/wasm-opt-action@v2
         with:
           file: dist/*.wasm
-      - name: Deploy to GitHub Pages
-        uses: JamesIves/github-pages-deploy-action@v4
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v2
         with:
-          branch: gh-pages
-          folder: dist
+          path: dist/
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v2
