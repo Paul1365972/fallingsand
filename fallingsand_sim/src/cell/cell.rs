@@ -26,12 +26,19 @@ impl<'a> SimulationCell<'a> {
         let max_x = (dx * TILES_PER_CHUNK) as u16 + chunk.bounds.2 as u16;
         let max_y = (dy * TILES_PER_CHUNK) as u16 + chunk.bounds.3 as u16;
         for y in min_y..max_y {
-            for x in min_x..max_x {
-                self.handle_tile(CellCoords::new(x, y), ctx);
+            if y & 1 == 0 {
+                for x in min_x..max_x {
+                    self.handle_tile(CellCoords::new(x, y), ctx);
+                }
+            } else {
+                for x in (min_x..max_x).rev() {
+                    self.handle_tile(CellCoords::new(x, y), ctx);
+                }
             }
         }
     }
 
+    #[inline(always)]
     fn handle_tile(&mut self, coords: CellCoords, ctx: &GlobalContext) {
         let tile = self.get_mut(coords);
         if tile.last_update == ctx.ticks as u8 {
@@ -73,15 +80,15 @@ impl<'a> SimulationCell<'a> {
         }
     }
 
-    pub fn get(&self, coords: CellCoords) -> MyTile {
+    fn get(&self, coords: CellCoords) -> MyTile {
         self.references[coords.to_cell_index()].tiles[coords.to_chunk_index()]
     }
 
-    pub fn get_mut(&mut self, coords: CellCoords) -> &mut MyTile {
+    fn get_mut(&mut self, coords: CellCoords) -> &mut MyTile {
         &mut self.references[coords.to_cell_index()].tiles[coords.to_chunk_index()]
     }
 
-    pub fn swap(&mut self, a: CellCoords, b: CellCoords) {
+    fn swap(&mut self, a: CellCoords, b: CellCoords) {
         unsafe {
             let pa: *mut MyTile = self.get_mut(a);
             let pb: *mut MyTile = self.get_mut(b);

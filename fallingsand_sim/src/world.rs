@@ -20,9 +20,14 @@ pub struct PlayerInputState {
     pressed_keys: u16,
 }
 
-#[derive(Default)]
 pub struct GlobalContext {
     pub ticks: u32,
+}
+
+impl Default for GlobalContext {
+    fn default() -> Self {
+        Self { ticks: 0 }
+    }
 }
 
 impl GlobalContext {

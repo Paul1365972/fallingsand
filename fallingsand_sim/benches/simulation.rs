@@ -2,7 +2,7 @@
 #[cfg(test)]
 extern crate test;
 
-use std::mem::ManuallyDrop;
+use std::{mem::ManuallyDrop, hint::black_box};
 
 use fallingsand_sim::{
     cell::tile::{MyTile, MyTileVariant},
@@ -74,5 +74,12 @@ fn step_no_entities(b: &mut Bencher) {
     let mut world = empty_world();
     b.iter(|| {
         world.step_entities();
+    });
+}
+
+#[bench]
+fn create_world(b: &mut Bencher) {
+    b.iter(|| {
+        black_box(empty_world())
     });
 }

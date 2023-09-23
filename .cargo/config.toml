@@ -1,8 +1,3 @@
-# Add the contents of this file to `config.toml` to enable "fast build" configuration. Please read the notes below.
-
-# NOTE: For maximum performance, build using a nightly compiler
-# If you are using rust stable, remove the "-Zshare-generics=y" below.
-
 [target.x86_64-unknown-linux-gnu]
 linker = "clang"
 rustflags = ["-Clink-arg=-fuse-ld=lld", "-Zshare-generics=y"]
@@ -33,3 +28,5 @@ runwin = "run --target x86_64-pc-windows-msvc --features dev"
 runserverwin = "run --target x86_64-pc-windows-msvc -p fallingsand_server"
 tracewin = "run --target x86_64-pc-windows-msvc --release --features bevy/trace_tracy"
 benchwin = "bench --target x86_64-pc-windows-msvc"
+asmwin = "asm --target x86_64-pc-windows-msvc --release -p fallingsand_sim --lib"
+miriwin = "miri test --target x86_64-pc-windows-msvc -p fallingsand_sim --benches"

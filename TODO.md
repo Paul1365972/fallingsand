@@ -59,37 +59,3 @@
 1. Tick tiles
 2. Tick Entities
 3. Apply entity dx/dy, change chunks
-
-
-1. Player connects
-2. Game notices before next tick and adds global event
-
-
-## New design
-
-### Run modes
-1. Server: Orchestrator(multi worker) -> DisjointRegions
-2. Client: Orchestrator(single worker) -> DisjointRegion
-2. Replay: Orchestrator -> DisjointRegion
-
-
-## Protocol
-
-### Orch model
-
-#### Sim -> Orch
-- Unload chunk rsp (Coords, Chunk)
-- Tick rsp (ChunkTicket(Moved/Removed))
-
-#### Orch -> Sim
-- Load Chunk (Coords, Chunk)
-- Unload Chunk (Coords)
-- Tick (GlobalState)
-
-#### Orch -> Client
-- Frame (Chunks in view, some state)
-- 
-
-#### Client -> Orch
-- InputState
-- 

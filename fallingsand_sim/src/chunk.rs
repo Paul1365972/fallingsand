@@ -52,11 +52,10 @@ impl Region {
                     let pointers = std::array::from_fn(|chunk_index| {
                         let chunk_x = chunk_index % 4;
                         let chunk_y = chunk_index / 4;
-                        let x = 7 + index_x * 2 + full_cell_x * 4 + chunk_x;
-                        let y = 7 + index_y * 2 + full_cell_y * 4 + chunk_y;
-                        let chunk = std::ptr::addr_of_mut!(neighbors[x / 8 + y / 8 * 3].chunks[x % 8 + y % 8 * CHUNKS_PER_REGION]);
-                        //let chunk: *mut TileChunk = &mut neighbors[x / 8 + y / 8 * 3].chunks[x % 8 + y % 8 * CHUNKS_PER_REGION];
-                        chunk
+                        
+                        let x = CHUNKS_PER_REGION - 1 + index_x * 2 + full_cell_x * 4 + chunk_x;
+                        let y = CHUNKS_PER_REGION - 1 + index_y * 2 + full_cell_y * 4 + chunk_y;
+                        std::ptr::addr_of_mut!(neighbors[x / CHUNKS_PER_REGION + y / CHUNKS_PER_REGION * 3].chunks[x % CHUNKS_PER_REGION + y % CHUNKS_PER_REGION * CHUNKS_PER_REGION])
                     });
                     CachedSimulationCell::new(pointers)
                 })
