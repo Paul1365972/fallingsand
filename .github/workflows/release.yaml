@@ -1,4 +1,4 @@
-name: release-flow
+name: Build release
 
 on:
   push:
@@ -11,11 +11,9 @@ on:
         required: true
         type: string
 
-# ToDo: adapt names
 env:
-  # heads-up: this value is used as a pattern in an sed command as a workaround for a trunk issue
-  #   if you use special characters, take a look at the 'Make paths relative' step in the 'build-web' job
   GAME_EXECUTABLE_NAME: fallingsand
+  CARGO_TERM_COLOR: always
 
 permissions:
   contents: write
@@ -41,9 +39,19 @@ jobs:
       - name: Install rust toolchain
         uses: actions-rs/toolchain@v1
         with:
+          profile: minimal
           toolchain: nightly
-      - name: Install Dependencies
-        run: sudo apt-get update; sudo apt-get install pkg-config libx11-dev libasound2-dev libudev-dev
+      - name: Set up cargo cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
       - name: Build release
         run: |
           cargo build --release
@@ -51,10 +59,9 @@ jobs:
         run: |
           strip target/release/${{ env.GAME_EXECUTABLE_NAME }}
           chmod +x target/release/${{ env.GAME_EXECUTABLE_NAME }}
-          mv target/release/${{ env.GAME_EXECUTABLE_NAME }} .
       - name: Bundle release
         run: |
-          tar -czf ${{ env.GAME_EXECUTABLE_NAME }}_linux.tar.gz ${{ env.GAME_EXECUTABLE_NAME }} assets credits
+          tar -czf ${{ env.GAME_EXECUTABLE_NAME }}_linux.tar.gz target/release/${{ env.GAME_EXECUTABLE_NAME }} assets
       - name: Upload release
         uses: svenstaro/upload-release-action@v2
         with:
@@ -76,17 +83,26 @@ jobs:
       - name: Install rust toolchain
         uses: actions-rs/toolchain@v1
         with:
+          profile: minimal
           toolchain: nightly
+      - name: Set up cargo cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
       - name: Build release
         run: |
           cargo build --release
-      - name: Prepare release
-        run: |
-          mkdir target/release/assets && cp -r assets target/release/assets
-      - name: Zip release
+      - name: Bundle release
         uses: vimtor/action-zip@v1
         with:
-          files: target/release/assets/ target/release/credits/ target/release/${{ env.GAME_EXECUTABLE_NAME }}.exe
+          files: target/release/${{ env.GAME_EXECUTABLE_NAME }}.exe assets/
           dest: ${{ env.GAME_EXECUTABLE_NAME }}_windows.zip
       - name: Upload release
         uses: svenstaro/upload-release-action@v2
@@ -94,6 +110,7 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: ${{ env.GAME_EXECUTABLE_NAME }}_windows.zip
           asset_name: ${{ env.GAME_EXECUTABLE_NAME }}_${{ env.VERSION }}_windows.zip
+          release_name: ${{ env.VERSION }}
           tag: ${{ github.ref }}
           overwrite: true
 
@@ -116,13 +133,20 @@ jobs:
         uses: jetli/trunk-action@v0.4.0
         with:
           version: 'latest'
-      - name: Build Release
+      - name: Set up cargo cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+      - name: Build release
         run: |
           trunk build --config ./Trunk.deploy.toml
-      - name: Optimize Wasm
-        uses: NiklasEi/wasm-opt-action@v2
-        with:
-          file: dist/*.wasm
       - name: Zip release
         uses: vimtor/action-zip@v1
         with:

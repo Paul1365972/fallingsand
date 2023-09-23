@@ -3,6 +3,9 @@ name: Deploy to GitHub Pages
 on:
   workflow_dispatch:
 
+env:
+  CARGO_TERM_COLOR: always
+
 permissions:
   contents: read
   pages: write
@@ -20,14 +23,24 @@ jobs:
       - name: Install rust toolchain
         uses: actions-rs/toolchain@v1
         with:
+          profile: minimal
           toolchain: nightly
           target: wasm32-unknown-unknown
-#      - name: Install Dependencies
-#        run: sudo apt-get update; sudo apt-get install pkg-config libx11-dev libasound2-dev libudev-dev
       - name: Install trunk
         uses: jetli/trunk-action@v0.4.0
         with:
           version: 'latest'
+      - name: Set up cargo cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
       - name: Trunk build
         run: |
           trunk build --config ./Trunk.deploy.toml
