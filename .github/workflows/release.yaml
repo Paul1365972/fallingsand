@@ -37,9 +37,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
       - name: Install rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
           toolchain: nightly
       - name: Install dependencies
         run: sudo apt-get install -y pkg-config libx11-dev libasound2-dev libudev-dev
@@ -63,7 +62,7 @@ jobs:
           chmod +x target/release/${{ env.GAME_EXECUTABLE_NAME }}
       - name: Bundle release
         run: |
-          tar -czf ${{ env.GAME_EXECUTABLE_NAME }}_linux.tar.gz target/release/${{ env.GAME_EXECUTABLE_NAME }} assets
+          tar -czf ${{ env.GAME_EXECUTABLE_NAME }}_linux.tar.gz target/release/${{ env.GAME_EXECUTABLE_NAME }} assets/
       - name: Upload release
         uses: svenstaro/upload-release-action@v2
         with:
@@ -83,9 +82,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
       - name: Install rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
           toolchain: nightly
       - name: Set up cargo cache
         uses: actions/cache@v3
@@ -102,10 +100,8 @@ jobs:
         run: |
           cargo build --release
       - name: Bundle release
-        uses: vimtor/action-zip@v1
-        with:
-          files: target/release/${{ env.GAME_EXECUTABLE_NAME }}.exe assets/
-          dest: ${{ env.GAME_EXECUTABLE_NAME }}_windows.zip
+        run: |
+          Compress-Archive -Path target/release/${{ env.GAME_EXECUTABLE_NAME }}.exe, assets/ -Destination ${{ env.GAME_EXECUTABLE_NAME }}_windows.zip
       - name: Upload release
         uses: svenstaro/upload-release-action@v2
         with:
@@ -125,7 +121,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
       - name: Install rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly
           target: wasm32-unknown-unknown
