@@ -60,9 +60,10 @@ jobs:
         run: |
           strip target/release/${{ env.GAME_EXECUTABLE_NAME }}
           chmod +x target/release/${{ env.GAME_EXECUTABLE_NAME }}
+          mv target/release/${{ env.GAME_EXECUTABLE_NAME }} ./
       - name: Bundle release
         run: |
-          tar -czf ${{ env.GAME_EXECUTABLE_NAME }}_linux.tar.gz target/release/${{ env.GAME_EXECUTABLE_NAME }} assets/
+          tar -czf ${{ env.GAME_EXECUTABLE_NAME }}_linux.tar.gz ${{ env.GAME_EXECUTABLE_NAME }} assets/
       - name: Upload release
         uses: svenstaro/upload-release-action@v2
         with:
@@ -143,17 +144,16 @@ jobs:
       - name: Build release
         run: |
           trunk build --config ./Trunk.deploy.toml
-      - name: Zip release
-        uses: vimtor/action-zip@v1
-        with:
-          files: dist/
-          dest: ${{ env.GAME_EXECUTABLE_NAME }}_web.zip
+      - name: Bundle release
+        run: |
+          cd dist/
+          tar -czf ../${{ env.GAME_EXECUTABLE_NAME }}_web.tar.gz *
       - name: Upload release
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: ${{ env.GAME_EXECUTABLE_NAME }}_web.zip
-          asset_name: ${{ env.GAME_EXECUTABLE_NAME }}_${{ env.VERSION }}_web.zip
+          file: ${{ env.GAME_EXECUTABLE_NAME }}_web.tar.gz
+          asset_name: ${{ env.GAME_EXECUTABLE_NAME }}_${{ env.VERSION }}_web.tar.gz
           release_name: ${{ env.VERSION }}
           tag: ${{ env.VERSION }}
           overwrite: true
