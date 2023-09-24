@@ -41,6 +41,8 @@ jobs:
         with:
           profile: minimal
           toolchain: nightly
+      - name: Install dependencies
+        run: sudo apt-get install -y pkg-config libx11-dev libasound2-dev libudev-dev
       - name: Set up cargo cache
         uses: actions/cache@v3
         with:
@@ -50,8 +52,8 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          key: linux-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: linux-cargo-
       - name: Build release
         run: |
           cargo build --release
@@ -94,8 +96,8 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          key: windows-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: windows-cargo-
       - name: Build release
         run: |
           cargo build --release
@@ -142,8 +144,8 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          key: wasm-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: wasm-cargo-
       - name: Build release
         run: |
           trunk build --config ./Trunk.deploy.toml

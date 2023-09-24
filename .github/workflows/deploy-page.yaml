@@ -39,15 +39,11 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          key: wasm-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: wasm-cargo-
       - name: Trunk build
         run: |
           trunk build --config ./Trunk.deploy.toml
-      - name: Optimize wasm
-        uses: NiklasEi/wasm-opt-action@v2
-        with:
-          file: dist/*.wasm
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v2
         with:
