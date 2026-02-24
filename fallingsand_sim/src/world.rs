@@ -1,8 +1,11 @@
+use std::borrow::Borrow;
+use std::cell::Cell;
 use std::hash::{Hash, Hasher};
 
 use crate::chunk::{EntityEntry, EntityKey, Region, UnloadedRegion};
 use crate::chunk_tickets::{ChunkTicketField, ChunkTicketKey};
-use crate::entity::entity::MyEntityVariant;
+use crate::entity::entity::EntityVariant;
+use crate::network::ClientMap;
 use crate::util::coords::{CellCoords, WorldRegionCoords};
 use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHasher};
@@ -62,8 +65,9 @@ impl World {
 
                 if neighbor_region.num_neighbors == 8 {
                     let neighbors = coords.neighbors_inclusive();
-                    let keys = std::array::from_fn(|i| &neighbors[i]);
-                    Region::initalize_simulation_cells(self.regions.get_many_mut(keys).unwrap())
+                    let keys = neighbors.each_ref();
+                    let regions = self.regions.get_many_mut(keys).map(|x| x.unwrap());
+                    Region::initalize_simulation_cells(regions)
                 }
             }
         }
@@ -71,8 +75,9 @@ impl World {
         region.num_neighbors = num_neighbors;
         if region.num_neighbors == 8 {
             let neighbors = coords.neighbors_inclusive();
-            let keys = std::array::from_fn(|i| &neighbors[i]);
-            Region::initalize_simulation_cells(self.regions.get_many_mut(keys).unwrap())
+            let keys = neighbors.each_ref();
+            let regions = self.regions.get_many_mut(keys).map(|x| x.unwrap());
+            Region::initalize_simulation_cells(regions)
         }
     }
 
@@ -97,7 +102,7 @@ impl World {
         self.context.ticks += 1;
     }
 
-    pub fn step(&mut self, players: Vec<PlayerInputState>) {
+    pub fn step(&mut self, clients: &mut ClientMap) {
         // pre: already received network packets
         // send network packets
         self.step_context();
@@ -136,7 +141,10 @@ impl World {
                     .unwrap()
                     .entity_keys
                     .remove(key);
-                if let MyEntityVariant::Player(Some(ticket_key)) = &entity.variant {
+                if let EntityVariant::Player {
+                    chunk_ticket_key: Some(ticket_key),
+                } = &entity.variant
+                {
                     events.push(EntityStepResult::ChunkTicketRemoved(ticket_key.clone()));
                 }
                 return false;
@@ -161,7 +169,10 @@ impl World {
                     .entity_keys
                     .insert(*key);
 
-                if let MyEntityVariant::Player(Some(ticket_key)) = &entity.variant {
+                if let EntityVariant::Player {
+                    chunk_ticket_key: Some(ticket_key),
+                } = &entity.variant
+                {
                     events.push(EntityStepResult::ChunkTicketMoved(
                         ticket_key.clone(),
                         offset,

@@ -1,20 +1,22 @@
-use std::{time::Duration, mem::ManuallyDrop};
+mod network;
 
+use bevy::asset::AssetMetaCheck;
+use bevy::dev_tools::fps_overlay::FpsOverlayPlugin;
 use bevy::{
-    asset::ChangeWatcher,
     diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin},
     prelude::*,
     window::PresentMode,
 };
-
 use bevy_pancam::{PanCam, PanCamPlugin};
 use bevy_pixel_buffer::{prelude::*, query::QueryPixelBuffer};
 use fallingsand_sim::{
-    cell::tile::{MyTile, MyTileVariant},
+    cell::tile::{Tile, TileVariant},
     chunk::{TileChunk, UnloadedRegion},
-    util::coords::{WorldCoords, WorldRegionCoords, TILES_PER_CHUNK, CHUNKS_PER_REGION},
+    util::coords::{WorldCoords, WorldRegionCoords, CHUNKS_PER_REGION, TILES_PER_CHUNK},
     world::World,
 };
+use network::NetworkClient;
+use std::{mem::ManuallyDrop, time::Duration};
 
 fn create_world() -> World {
     let mut world = World::default();
@@ -22,13 +24,14 @@ fn create_world() -> World {
         for x in -1..=1 {
             let mut chunks = Vec::with_capacity(CHUNKS_PER_REGION * CHUNKS_PER_REGION);
             for _ in 0..(CHUNKS_PER_REGION * CHUNKS_PER_REGION) {
-                chunks.push(TileChunk::new(std::array::from_fn(|_| MyTile {
-                    variant: MyTileVariant::AIR,
+                chunks.push(TileChunk::new(std::array::from_fn(|_| Tile {
+                    variant: TileVariant::AIR,
                     ..Default::default()
                 })));
             }
             let chunks = unsafe {
-                Box::from_raw(ManuallyDrop::new(chunks).as_mut_ptr() as *mut [TileChunk; CHUNKS_PER_REGION * CHUNKS_PER_REGION])
+                Box::from_raw(ManuallyDrop::new(chunks).as_mut_ptr()
+                    as *mut [TileChunk; CHUNKS_PER_REGION * CHUNKS_PER_REGION])
             };
             world.load_region(
                 WorldRegionCoords::new(x, y),
@@ -46,9 +49,9 @@ fn create_world() -> World {
     //    }
     //}
     let chunk = &mut region.chunks[0];
-    chunk.tiles[2 + (TILES_PER_CHUNK - 2) * TILES_PER_CHUNK].variant = MyTileVariant::SAND;
-    chunk.tiles[2 + 1 * TILES_PER_CHUNK].variant = MyTileVariant::STONE;
-    chunk.tiles[1 + 0 * TILES_PER_CHUNK].variant = MyTileVariant::STONE;
+    chunk.tiles[2 + (TILES_PER_CHUNK - 2) * TILES_PER_CHUNK].variant = TileVariant::SAND;
+    chunk.tiles[2 + 1 * TILES_PER_CHUNK].variant = TileVariant::STONE;
+    chunk.tiles[1 + 0 * TILES_PER_CHUNK].variant = TileVariant::STONE;
     world
 }
 
@@ -67,17 +70,22 @@ fn main() {
                     title: "Fallingsand-Sim Game".to_owned(),
                     present_mode: PresentMode::AutoNoVsync,
                     //present_mode: PresentMode::AutoVsync,
+                    fit_canvas_to_parent: true,
                     ..Default::default()
                 }),
                 ..default()
             })
             .set(AssetPlugin {
-                watch_for_changes: ChangeWatcher::with_delay(Duration::from_secs(1)),
-                ..Default::default()
+                meta_check: AssetMetaCheck::Never,
+                ..default()
             }),
     );
 
-    app.add_plugins((LogDiagnosticsPlugin::default(), FrameTimeDiagnosticsPlugin));
+    app.add_plugins((
+        LogDiagnosticsPlugin::default(),
+        FrameTimeDiagnosticsPlugin,
+        FpsOverlayPlugin::default(),
+    ));
 
     app.add_plugins(PixelBufferPlugin);
     app.add_systems(
@@ -92,9 +100,10 @@ fn main() {
     app.add_plugins(PanCamPlugin);
 
     app.insert_resource(GameState {
-        field: create_world(),
+        world: create_world(),
+        network_client: NetworkClient::new(),
     });
-    app.insert_resource(FixedTime::new_from_secs(1.0 / 10.0));
+    app.insert_resource(Time::<Fixed>::from_hz(10.0));
 
     app.add_systems(Startup, setup);
     app.add_systems(Update, update_pixels);
@@ -104,7 +113,8 @@ fn main() {
 
 #[derive(Resource)]
 struct GameState {
-    field: World,
+    world: World,
+    network_client: NetworkClient,
 }
 
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
@@ -114,7 +124,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.spawn(Camera2dBundle::default()).insert(PanCam {
         grab_buttons: vec![MouseButton::Right],
         min_scale: 0.1,
-        max_scale: Some(10.),
+        max_scale: 10.,
         ..Default::default()
     });
 
@@ -140,7 +150,7 @@ fn update_pixels(mut pb: QueryPixelBuffer, state: Res<GameState>) {
         let coords = WorldCoords::new(p.x as i32 - 48, p.y as i32 - 48);
         let region_coords = coords.to_region_coords();
         let world_region_coords = coords.to_world_region_coords();
-        let region = state.field.unsafe_get(&world_region_coords);
+        let region = state.world.unsafe_get(&world_region_coords);
         if let Some(region) = region {
             if region_coords.to_chunk_coords().to_tile_index() == 0 {
                 return Pixel::RED;
@@ -149,7 +159,7 @@ fn update_pixels(mut pb: QueryPixelBuffer, state: Res<GameState>) {
                 [region_coords.to_chunk_coords().to_tile_index()];
 
             if world_region_coords != WorldRegionCoords::new(0, 0)
-                && matches!(tile.variant, MyTileVariant::AIR)
+                && matches!(tile.variant, TileVariant::AIR)
             {
                 return Pixel {
                     r: 196,
@@ -159,26 +169,26 @@ fn update_pixels(mut pb: QueryPixelBuffer, state: Res<GameState>) {
                 };
             }
             match tile.variant {
-                MyTileVariant::NIL => todo!(),
-                MyTileVariant::AIR => Pixel {
+                TileVariant::NIL => todo!(),
+                TileVariant::AIR => Pixel {
                     r: 255,
                     g: 255,
                     b: 255,
                     a: 255,
                 },
-                MyTileVariant::SAND => Pixel {
+                TileVariant::SAND => Pixel {
                     r: 255,
                     g: 255,
                     b: 0,
                     a: 255,
                 },
-                MyTileVariant::STONE => Pixel {
+                TileVariant::STONE => Pixel {
                     r: 64,
                     g: 64,
                     b: 64,
                     a: 255,
                 },
-                MyTileVariant::WATER => Pixel {
+                TileVariant::WATER => Pixel {
                     r: 0,
                     g: 0,
                     b: 255,
@@ -193,6 +203,6 @@ fn update_pixels(mut pb: QueryPixelBuffer, state: Res<GameState>) {
 
 fn update_simulation(mut state: ResMut<GameState>) {
     let state = state.as_mut();
-    state.field.step_context();
-    state.field.step_tiles();
+    state.world.step_context();
+    state.world.step_tiles();
 }

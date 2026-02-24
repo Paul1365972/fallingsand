@@ -1,67 +1,56 @@
-use std::{
-    net::{SocketAddr, TcpListener, TcpStream},
-    num::NonZeroUsize,
-    sync::{mpsc::{channel, Sender}, Mutex, Arc},
-    thread::{self, JoinHandle},
-    time::Duration, collections::BinaryHeap,
+use crate::{
+    cell::tile::{Tile, TileVariant},
+    chunk::{TileChunk, UnloadedRegion},
+    util::coords::{WorldRegionCoords, CHUNKS_PER_REGION},
 };
+use rustc_hash::FxHashMap;
+use std::{fs, mem::ManuallyDrop};
 
-use hashlink::LinkedHashMap;
-use itertools::Itertools;
-use rustc_hash::FxHashSet;
-
-use crate::{chunk::UnloadedRegion, util::coords::WorldRegionCoords};
-
-struct ChunkManager {
-    cache: LinkedHashMap<WorldRegionCoords, UnloadedRegion>,
-    handle: JoinHandle<()>,
-    closed: bool,
-    work: Arc<Mutex<WorkQueue>>,
+pub struct ChunkManager {
+    cache: FxHashMap<WorldRegionCoords, UnloadedRegion>,
 }
-
-struct WorkQueue {
-    load: Vec<WorldRegionCoords>,
-    preload: Vec<WorldRegionCoords>,
-}
-
-// enum WorkTask {
-//     Save(WorldChunkCoords, UnloadedChunk),
-//     Load(WorldChunkCoords),
-//     Close,
-// }
-// 
-// enum WorkResult {
-//     Saved(WorldChunkCoords, UnloadedChunk),
-//     Loaded(WorldChunkCoords),
-//     Pregenerated(WorldChunkCoords),
-// }
 
 impl ChunkManager {
-    // fn new() -> Self {
-    //     let handle = thread::spawn(move || {});
-    //     Self {
-    //         cache: LruCache::new(NonZeroUsize::new(1024).unwrap()),
-    //         priority_sender,
-    //         background_sender,
-    //         handle,
-    //         closed: false,
-    //     }
-    // }
-
-    fn preload_chunk(&mut self, coords: &WorldRegionCoords) {}
-
-    fn load_chunk(&mut self, coords: &WorldRegionCoords) -> Option<UnloadedRegion> {
-        // Spawn off an expensive computation
-
-        let value = self.cache.remove(coords);
-        if let Some(chunk) = value {
-            return Some(chunk);
-        } else {
-            None // TODO this is temporary because compile time error bad
-        }
+    pub fn new() -> Self {
+        let data = fs::read("./world/universe");
+        let cache = match data {
+            Ok(data) => bincode::deserialize(&data).unwrap(),
+            Err(_) => Default::default(),
+        };
+        Self { cache }
     }
 
-    fn save_chunk(&mut self, coords: &WorldRegionCoords, chunk: UnloadedRegion) {}
+    pub fn load(&mut self, coords: &WorldRegionCoords) -> UnloadedRegion {
+        self.cache
+            .remove(coords)
+            .unwrap_or_else(|| Self::generate_chunk(coords))
+    }
 
-    fn flush(&mut self) {}
+    pub fn unload(&mut self, coords: &WorldRegionCoords, region: UnloadedRegion) {
+        self.cache.insert(coords.clone(), region);
+    }
+
+    pub fn save(&mut self) {
+        //TODO bincode::serialize_into(writer, value)
+        let data = bincode::serialize(&self.cache).unwrap();
+        fs::write("./world/universe", data).unwrap();
+    }
+
+    fn generate_chunk(coords: &WorldRegionCoords) -> UnloadedRegion {
+        let mut chunks = Vec::with_capacity(CHUNKS_PER_REGION * CHUNKS_PER_REGION);
+        for _ in 0..(CHUNKS_PER_REGION * CHUNKS_PER_REGION) {
+            chunks.push(TileChunk::new(std::array::from_fn(|_| Tile {
+                variant: TileVariant::AIR,
+                ..Default::default()
+            })));
+        }
+        let chunks = unsafe {
+            Box::from_raw(ManuallyDrop::new(chunks).as_mut_ptr()
+                as *mut [TileChunk; CHUNKS_PER_REGION * CHUNKS_PER_REGION])
+        };
+        UnloadedRegion {
+            tile_chunk: chunks,
+            entities: vec![],
+        }
+    }
 }

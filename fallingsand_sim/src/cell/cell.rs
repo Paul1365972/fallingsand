@@ -1,6 +1,6 @@
 use std::ptr;
 
-use super::tile::{MyTile, MyTileVariant};
+use super::tile::{Tile, TileVariant};
 use crate::{
     chunk::TileChunk,
     util::coords::{CellCoords, TILES_PER_CHUNK},
@@ -47,7 +47,7 @@ impl<'a> SimulationCell<'a> {
         tile.last_update = ctx.ticks as u8;
         //self.get_mut(coords).temperature += 3;
         match tile.variant {
-            MyTileVariant::SAND => {
+            TileVariant::SAND => {
                 let below = if ctx.next_u64(coords) & 2 == 0 {
                     coords.above()
                 } else {
@@ -72,7 +72,7 @@ impl<'a> SimulationCell<'a> {
     fn try_swap_solid(&mut self, src: CellCoords, dst: CellCoords) -> bool {
         let dst_tile = self.get(dst);
         match dst_tile.variant {
-            MyTileVariant::AIR | MyTileVariant::WATER => {
+            TileVariant::AIR | TileVariant::WATER => {
                 self.swap(src, dst);
                 true
             }
@@ -80,18 +80,19 @@ impl<'a> SimulationCell<'a> {
         }
     }
 
-    fn get(&self, coords: CellCoords) -> MyTile {
+    fn get(&self, coords: CellCoords) -> Tile {
         self.references[coords.to_cell_index()].tiles[coords.to_chunk_index()]
     }
 
-    fn get_mut(&mut self, coords: CellCoords) -> &mut MyTile {
+    fn get_mut(&mut self, coords: CellCoords) -> &mut Tile {
         &mut self.references[coords.to_cell_index()].tiles[coords.to_chunk_index()]
     }
 
     fn swap(&mut self, a: CellCoords, b: CellCoords) {
+        assert!(a != b);
         unsafe {
-            let pa: *mut MyTile = self.get_mut(a);
-            let pb: *mut MyTile = self.get_mut(b);
+            let pa: *mut Tile = self.get_mut(a);
+            let pb: *mut Tile = self.get_mut(b);
             ptr::swap(pa, pb);
         }
     }

@@ -1,26 +1,11 @@
 [target.x86_64-unknown-linux-gnu]
-linker = "clang"
-rustflags = ["-Clink-arg=-fuse-ld=lld", "-Zshare-generics=y"]
-
-# NOTE: you must install [Mach-O LLD Port](https://lld.llvm.org/MachO/index.html) on mac. you can easily do this by installing llvm which includes lld with the "brew" package manager:
-# `brew install llvm`
-[target.x86_64-apple-darwin]
-rustflags = [
-    "-C",
-    "link-arg=-fuse-ld=/usr/local/opt/llvm/bin/ld64.lld",
-    "-Zshare-generics=y",
-]
-
-[target.aarch64-apple-darwin]
-rustflags = [
-    "-C",
-    "link-arg=-fuse-ld=/opt/homebrew/opt/llvm/bin/ld64.lld",
-    "-Zshare-generics=y",
-]
+rustflags = ["-Zshare-generics=y"]
 
 [target.x86_64-pc-windows-msvc]
-linker = "rust-lld.exe"
 rustflags = ["-Zshare-generics=n"]
+
+[target.wasm32-unknown-unknown]
+rustflags = [ "--cfg=web_sys_unstable_apis" ]
 
 
 [alias]
@@ -30,3 +15,7 @@ tracewin = "run --target x86_64-pc-windows-msvc --release --features bevy/trace_
 benchwin = "bench --target x86_64-pc-windows-msvc"
 asmwin = "asm --target x86_64-pc-windows-msvc --release -p fallingsand_sim --lib"
 miriwin = "miri test --target x86_64-pc-windows-msvc -p fallingsand_sim --benches"
+
+[build]
+target = "x86_64-pc-windows-msvc"
+# target = "wasm32-unknown-unknown"

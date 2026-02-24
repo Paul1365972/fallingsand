@@ -2,10 +2,10 @@
 #[cfg(test)]
 extern crate test;
 
-use std::{mem::ManuallyDrop, hint::black_box};
+use std::{hint::black_box, mem::ManuallyDrop};
 
 use fallingsand_sim::{
-    cell::tile::{MyTile, MyTileVariant},
+    cell::tile::{Tile, TileVariant},
     chunk::{TileChunk, UnloadedRegion},
     util::coords::{WorldRegionCoords, CHUNKS_PER_REGION, TILES_PER_CHUNK},
     world::World,
@@ -18,13 +18,14 @@ fn empty_world() -> World {
         for x in -2..=2 {
             let mut chunks = Vec::with_capacity(CHUNKS_PER_REGION * CHUNKS_PER_REGION);
             for _ in 0..(CHUNKS_PER_REGION * CHUNKS_PER_REGION) {
-                chunks.push(TileChunk::new(std::array::from_fn(|_| MyTile {
-                    variant: MyTileVariant::AIR,
+                chunks.push(TileChunk::new(std::array::from_fn(|_| Tile {
+                    variant: TileVariant::AIR,
                     ..Default::default()
                 })));
             }
             let chunks = unsafe {
-                Box::from_raw(ManuallyDrop::new(chunks).as_mut_ptr() as *mut [TileChunk; CHUNKS_PER_REGION * CHUNKS_PER_REGION])
+                Box::from_raw(ManuallyDrop::new(chunks).as_mut_ptr()
+                    as *mut [TileChunk; CHUNKS_PER_REGION * CHUNKS_PER_REGION])
             };
             world.load_region(
                 WorldRegionCoords::new(x, y),
@@ -44,7 +45,7 @@ fn filled_world() -> World {
     for i in 0..(CHUNKS_PER_REGION * CHUNKS_PER_REGION) {
         for j in 0..(TILES_PER_CHUNK * TILES_PER_CHUNK) {
             if (j + (j / TILES_PER_CHUNK) % 4) == 0 {
-                region.chunks[i].tiles[j].variant = MyTileVariant::SAND;
+                region.chunks[i].tiles[j].variant = TileVariant::SAND;
             }
         }
     }
@@ -79,7 +80,5 @@ fn step_no_entities(b: &mut Bencher) {
 
 #[bench]
 fn create_world(b: &mut Bencher) {
-    b.iter(|| {
-        black_box(empty_world())
-    });
+    b.iter(|| black_box(empty_world()));
 }

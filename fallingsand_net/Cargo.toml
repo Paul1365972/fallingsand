@@ -6,4 +6,38 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-# bevy_slinet = { version = "0.4", features = ["client", "server", "protocol_tcp", "serializer_bincode"] }
+#rand = "0.8"
+#futures = "0.3"
+#futures-util = "0.3"
+#
+#[target.'cfg(target_family = "wasm")'.dependencies]
+#wasm-bindgen = "0.2"
+#wasm-bindgen-futures = "0.4"
+#getrandom = { version = "0.2", features = ["js"] }
+#js-sys = "0.3"
+#web-sys = { version = "0.3", features = [
+#    "WebSocket",
+#    "MessageEvent",
+#    "ErrorEvent",
+#    "CloseEvent",
+#    "BinaryType",
+#
+#    "WebTransport",
+#    "WebTransportOptions",
+#    "WebTransportSendStream",
+#    "WebTransportReceiveStream",
+#    "WebTransportBidirectionalStream",
+#    "WebTransportCloseInfo",
+#    "WebTransportError",
+#
+#    "ReadableStream",
+#    "ReadableStreamDefaultReader",
+#    "ReadableStreamReadResult",
+#    "WritableStream",
+#    "WritableStreamDefaultWriter",
+#]}
+#
+#[target.'cfg(not(target_family = "wasm"))'.dependencies]
+#wtransport = { version = "0.4", features = [] }
+#tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+

@@ -1,16 +1,23 @@
+use serde::{Deserialize, Serialize};
+
 use crate::chunk_tickets::ChunkTicketKey;
 
-pub struct MyEntity {
+#[derive(Serialize, Deserialize)]
+pub struct Entity {
     pub location: (i16, i16),
     pub velocity: (i16, i16),
-    pub variant: MyEntityVariant,
+    pub variant: EntityVariant,
 }
 
-pub enum MyEntityVariant {
-    Player(Option<ChunkTicketKey>),
+#[derive(Serialize, Deserialize)]
+pub enum EntityVariant {
+    Player {
+        #[serde(skip)]
+        chunk_ticket_key: Option<ChunkTicketKey>,
+    },
 }
 
-impl MyEntity {
+impl Entity {
     pub fn step(&mut self) {
         todo!()
     }

@@ -1,6 +1,8 @@
 use std::ops::{Add, Sub};
 
-pub const TILES_PER_CHUNK_SHIFT: usize = 3;
+use serde::{Deserialize, Serialize};
+
+pub const TILES_PER_CHUNK_SHIFT: usize = 6;
 pub const TILES_PER_CHUNK: usize = 1 << TILES_PER_CHUNK_SHIFT;
 pub const TILES_PER_CHUNK_MASK: usize = TILES_PER_CHUNK - 1;
 
@@ -40,7 +42,7 @@ impl WorldCoords {
     }
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct WorldRegionCoords {
     x: i32,
     y: i32,
@@ -86,6 +88,10 @@ impl WorldRegionCoords {
             self + (0, 1),
             self + (1, 1),
         ]
+    }
+
+    pub fn to_string(&self) -> String {
+        format!("{},{}", self.x, self.y)
     }
 }
 

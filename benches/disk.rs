@@ -2,10 +2,13 @@
 #[cfg(test)]
 extern crate test;
 
-use flate2::{Compression, write::GzEncoder, read::GzDecoder};
+use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use test::Bencher;
 
-use std::{fs::File, io::{Write, Read}};
+use std::{
+    fs::File,
+    io::{Read, Write},
+};
 
 fn gen_data() -> Vec<u8> {
     let mut data = vec![0u8; 1 * 1_024 * 1_024];

@@ -16,26 +16,35 @@ members = [
 [features]
 dev = [
     "bevy/dynamic_linking",
-    "bevy/filesystem_watcher"
+    "bevy/file_watcher"
 ]
 
 [dependencies]
 fallingsand_sim = { path = "fallingsand_sim" }
 fallingsand_net = { path = "fallingsand_net" }
 
-bevy = { version = "0.11", default-features = true, features = [] }
-bevy_pancam = "0.9"
+bevy = { version = "0.16", default-features = true, features = ["bevy_dev_tools"] }
+bevy_pancam = "0.18"
 # bevy_kira_audio = { version = "0.13" }
-bevy_pixel_buffer = { version = "0.5" }
+bevy_pixel_buffer = { version = "0.8" }
 
 console_error_panic_hook = "0.1"
 
-zorder = "0.1"
+# zorder = "0.2"
 flate2 = { version = "1.0", features = [], default-features = true }
+#aeronet_websocket = { git = "https://github.com/aecsocket/aeronet", rev = "de591dea0d3bb8fa4bfcfc5132bd323befbe3512", features = ["client"] }
+#aeronet_io = { git = "https://github.com/aecsocket/aeronet", rev = "de591dea0d3bb8fa4bfcfc5132bd323befbe3512" }
+
+rustc-hash = "2.1"
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.26"
+futures-util = "0.3"
 
 
 [build-dependencies]
-embed-resource = "2.3"
+embed-resource = "3.0"
 
 [profile.dev]
 opt-level = 1
@@ -53,13 +62,13 @@ opt-level = 1
 opt-level = 3
 
 [profile.release]
-codegen-units = 1
 lto = "thin"
-## Optional stuff to reduce size
-# lto = "fat"
-# strip = true
-# panic = "abort"
 
-# TODO Remove in the future
-[patch.crates-io]
-proc-macro2 = { git = "https://github.com/dtolnay/proc-macro2" }
+[profile.dist]
+inherits = "release"
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+debug = false
+# panic = "abort"
