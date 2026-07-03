@@ -1,0 +1,10 @@
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld.exe"
+rustdocflags = ["-Clinker=rust-lld.exe"]
+
+[target.wasm32-unknown-unknown]
+rustflags = ['--cfg', 'getrandom_backend="wasm_js"']
+
+[alias]
+dev = "run -p fallingsand_client --features dev"
+dev-server = "run -p fallingsand_server"

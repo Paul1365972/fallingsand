@@ -1,0 +1,8 @@
+[package]
+name = "fallingsand_worldgen"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+fallingsand_core = { workspace = true }
+fastnoise-lite = { workspace = true }

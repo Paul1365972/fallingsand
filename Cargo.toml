@@ -1,0 +1,60 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/fallingsand_core",
+    "crates/fallingsand_sim",
+    "crates/fallingsand_protocol",
+    "crates/fallingsand_net",
+    "crates/fallingsand_worldgen",
+    "crates/fallingsand_server",
+    "crates/fallingsand_client",
+]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2024"
+
+[workspace.dependencies]
+fallingsand_core = { path = "crates/fallingsand_core" }
+fallingsand_sim = { path = "crates/fallingsand_sim", default-features = false }
+fallingsand_protocol = { path = "crates/fallingsand_protocol" }
+fallingsand_net = { path = "crates/fallingsand_net" }
+fallingsand_worldgen = { path = "crates/fallingsand_worldgen" }
+fallingsand_server = { path = "crates/fallingsand_server" }
+
+serde = { version = "1.0.228", features = ["derive"] }
+postcard = { version = "1.1.3", features = ["use-std"] }
+ron = "0.12.2"
+lz4_flex = "0.13.1"
+bitflags = "2.13.0"
+thiserror = "2.0.18"
+anyhow = "1.0.103"
+rustc-hash = "2.1.3"
+rayon = "1.12.0"
+bytes = "1"
+
+bevy_ecs = "0.19.0"
+bevy = { version = "0.19.0", default-features = false }
+
+tokio = "1.52.3"
+redb = "4.1.0"
+quinn = "0.11.11"
+web-transport = "0.10.6"
+web-transport-quinn = "0.11.9"
+web-transport-wasm = "0.5.8"
+
+fastnoise-lite = "1.1.1"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+
+[profile.dist]
+inherits = "release"
+lto = "fat"
+strip = true

@@ -1,0 +1,9 @@
+[package]
+name = "fallingsand_net"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+fallingsand_protocol = { workspace = true }
+bytes = { workspace = true }
+thiserror = { workspace = true }

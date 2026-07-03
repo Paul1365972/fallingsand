@@ -1,0 +1,55 @@
+(
+    materials: [
+        (
+            name: "air",
+            phase: Empty,
+            density: 1.2,
+            colors: [(0, 0, 0, 0)],
+        ),
+        (
+            name: "stone",
+            phase: Solid,
+            density: 2600.0,
+            colors: [
+                (110, 110, 115, 255),
+                (100, 100, 105, 255),
+                (120, 120, 125, 255),
+                (95, 95, 100, 255),
+            ],
+            rigid_capable: true,
+        ),
+        (
+            name: "sand",
+            phase: Powder,
+            density: 1600.0,
+            colors: [
+                (222, 192, 128, 255),
+                (212, 182, 118, 255),
+                (232, 202, 140, 255),
+                (202, 172, 110, 255),
+            ],
+        ),
+        (
+            name: "water",
+            phase: Liquid,
+            density: 1000.0,
+            colors: [
+                (44, 96, 200, 190),
+                (40, 90, 192, 190),
+                (48, 102, 208, 190),
+            ],
+            dispersion: 5,
+        ),
+        (
+            name: "steam",
+            phase: Gas,
+            density: 0.6,
+            colors: [
+                (200, 200, 210, 90),
+                (190, 190, 200, 80),
+                (210, 210, 220, 100),
+            ],
+            dispersion: 3,
+        ),
+    ],
+)

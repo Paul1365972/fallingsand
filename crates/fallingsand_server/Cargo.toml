@@ -1,0 +1,17 @@
+[package]
+name = "fallingsand_server"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "fallingsand_server"
+path = "src/main.rs"
+
+[dependencies]
+fallingsand_core = { workspace = true }
+fallingsand_sim = { workspace = true, features = ["parallel"] }
+fallingsand_protocol = { workspace = true }
+fallingsand_net = { workspace = true }
+fallingsand_worldgen = { workspace = true }
+bevy_ecs = { workspace = true }
+anyhow = { workspace = true }
