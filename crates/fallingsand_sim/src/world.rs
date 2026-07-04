@@ -66,6 +66,17 @@ impl CellWorld {
         self.set_cell(pos, Cell::new(material, shade));
     }
 
+    pub fn mark_dirty(&mut self, pos: CellPos) {
+        let Some(chunk) = self.chunks.get_mut(&pos.chunk()) else {
+            return;
+        };
+        if chunk.sleeping {
+            chunk.normalize_updated(self.tick as u8);
+            chunk.sleeping = false;
+        }
+        chunk.bounds.mark(pos.offset());
+    }
+
     pub fn queue_edit(&mut self, edit: WorldEdit) {
         self.edits.push(edit);
     }

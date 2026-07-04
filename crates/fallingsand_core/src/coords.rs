@@ -3,7 +3,9 @@ use serde::{Deserialize, Serialize};
 pub const CHUNK_BITS: u32 = 6;
 pub const REGION_BITS: u32 = 3;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Default, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+)]
 pub struct CellPos {
     pub x: i32,
     pub y: i32,

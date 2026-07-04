@@ -36,7 +36,7 @@ The loop is DST-flavored — gather, build, defend, expand — but every mechani
 |------|--------|-----------|
 | Platforms | **Native (Win/Linux/macOS) + Web client** | Server and single player are native-only. The browser build is a *client only* that joins remote servers. This constrains the client crate (WASM-compatible deps, no threads assumed, no filesystem) but not the server. |
 | Network authority | **Authoritative server + delta replication** | Server owns the world. Clients receive delta-compressed dirty-region updates for chunks in their interest area. No determinism requirement across machines; robust to packet loss and late joins. Bandwidth is the engineering cost — paid via dirty rects + compression. |
-| Transport | **WebTransport (QUIC)** via the `web-transport` crate family (`web-transport-quinn` native, `web-transport-wasm` browser); in-memory channels for the embedded local server | Datagrams for lossy hot data, streams for reliable ordered data, works in browsers. One `Session` API across server, native client, and wasm client. Actively maintained (MoQ project); pin versions — roughly one breaking release per quarter. Single player bypasses the network entirely through the same transport trait. |
+| Transport | **WebTransport (QUIC)** via the `web-transport` crate family (`web-transport-quinn` native, `web-transport-wasm` browser); in-memory channels for the embedded local server | One reliable ordered stream per connection carries the whole protocol — no datagram machinery, no loss handling above the transport. Works in browsers, one `Session` API across server, native client, and wasm client. Actively maintained (MoQ project); pin versions — roughly one breaking release per quarter. Single player bypasses the network entirely through the same transport trait. |
 | Terrain physics | **Rigid bodies built into the architecture** | Pixel-terrain ↔ rigid-body conversion (flood-fill → pixel bodies) is part of the world model, protocol, and renderer even though the first playable ships only cellular automata + entity collision. Retrofitting this is what kills falling-sand engines. |
 | Physics engine | **Custom, purpose-built** | Physics here is inseparable from the cell grid: bodies are made of cells, terrain changes every tick, and collision must be pixel-perfect. A general-purpose engine fights that coupling; a small bespoke solver (kinematic character movement + impulse-based pixel bodies) covers exactly what the game needs and nothing more. |
 | Server core | **`bevy_ecs` standalone** | Just the ECS crate — no Bevy app, windowing, or render on the server. Battle-tested parallel scheduler; entity component types are shared with the client naturally. |
@@ -134,7 +134,15 @@ Instead:
 Physics is a small custom module inside `fallingsand_sim` — no general-purpose physics engine.
 Everything collides against the cell grid directly, so changing terrain never requires rebuilding collision geometry.
 
-- **Entities** (players, items, creatures) are kinematic bodies: AABB/capsule shapes moved with swept collision tests against solid cells, with step-up assist and material-aware effects (drag in liquids, sinking in powders).
+- **Entities** (players, items, creatures) are kinematic bodies: AABB/capsule shapes moved with swept collision tests against solid cells, with material-aware effects (drag in liquids, sinking in powders).
+- **The character controller is feel-first** (Celeste-style forgiveness, tuned server-side since the server is authoritative): coyote time and jump buffering, variable jump height (release to cut), reduced gravity at the jump apex, heavier falling gravity, run acceleration with harder deceleration and turn assist, ceiling corner correction, and step-up/step-down assists that preserve momentum over rough terrain.
+- **Players wade through small amounts of granular matter**: movement blocked only by a few powder cells pushes through them with a speed penalty per grain, displacing the grains to nearby free cells (conserved, not destroyed).
+  Loose sand can slow, bury, and trap you — but you can always struggle out; only true solids (rock) pin you permanently.
+- **Solidity is phase-based**: every tick, entity AABBs and in-flight pixel-body cells rasterize into an obstacle mask over the grid.
+  Powders treat masked cells as ground — sand piles on a player's head and on flying debris instead of passing through.
+  Liquids and gases ignore the mask: at cell scale, water flowing *around* a body and *through* its cells are the same thing, which keeps swimming and submersion trivially correct.
+  When a mask moves, vacated cells with grains resting on or above them are dirty-marked so piles wake and collapse.
+- Entities collide against in-flight pixel-body cells (stand on a falling platform, blocked by a flying slab); pixel bodies gain contacts from entity boxes and never settle back into the grid while overlapping an entity, so nobody gets stamped into stone.
 - **Pixel bodies** are rigid bodies made of cells.
   Solid materials marked `rigid_capable` in the registry participate.
   On terrain damage, flood-fill detects disconnected solid islands; the island's cells are lifted out of the grid into a pixel body (a small cell buffer + position/rotation/velocity).
@@ -181,22 +189,15 @@ A `fallingsand_server::Server` is a library value you construct and tick — the
 ### Protocol (`fallingsand_protocol`)
 
 All messages are serde enums, postcard-encoded, lz4-compressed above a size threshold.
-Channels (WebTransport gives us both):
-
-| Channel | Reliability | Contents |
-|---------|-------------|----------|
-| Control stream | reliable ordered | Handshake, auth, material registry hash, region/chunk full loads, entity spawn/despawn, chat, inventory |
-| Delta datagrams | unreliable | Per-tick dirty-rect cell deltas, entity transforms, pixel-body transforms, particle spawn events |
-| Input datagrams | unreliable, client→server | Player input (sequence-numbered, redundantly resent) |
-
-Delta datagrams are versioned per chunk with a tick id.
-A client detecting a gap beyond its tolerance requests a full chunk resync on the reliable stream.
-This makes packet loss cost latency, never correctness.
+Everything flows over **one reliable ordered stream** per connection — handshake, chunk loads/unloads, per-tick dirty-rect deltas, entity and pixel-body state, player input.
+Because delivery is reliable and ordered, deltas always apply cleanly on top of the last state: no per-chunk versioning, no resync protocol, no input sequence numbers.
+Packet loss costs a retransmit delay (head-of-line blocking for roughly one RTT), never correctness — an acceptable trade for a ~10-player co-op game, and the reason the protocol stays radically simple.
+If profiling ever shows loss-induced stutter matters, moving hot state back to datagrams is a contained change behind the transport trait.
 
 ### Client-side latency handling
 
-- **Predict the local player only** (movement + immediate action feedback), reconcile against authoritative state via input sequence numbers.
-- **Interpolate everything else** (remote entities, pixel bodies) between snapshots (~100 ms buffer).
+- **Interpolate everything** (players, remote entities, pixel bodies) between the last two received states — plain lerp, no prediction, no reconciliation.
+  Local-player prediction is a deliberate non-feature until latency demands it; the shared `step_player` in `fallingsand_sim` keeps the insertion point ready.
 - **Do not predict the sand.**
   Cell deltas apply as they arrive; at 60 Hz server ticks the world feels live.
   Cosmetic client-side sim prediction of visible chunks is a later optimization with a clear insertion point (the client already ships `fallingsand_sim` for the embedded server, so the machinery exists).

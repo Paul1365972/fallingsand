@@ -17,6 +17,8 @@ bitflags::bitflags! {
     }
 }
 
+const _: () = assert!(size_of::<Cell>() == 4);
+
 impl Cell {
     pub const AIR: Self = Self {
         material: MaterialId::AIR,

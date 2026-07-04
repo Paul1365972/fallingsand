@@ -1,3 +1,4 @@
+use crate::obstacles::Obstacles;
 use crate::window::SimWindow;
 use fallingsand_core::{CellPos, MaterialRegistry, Phase};
 use std::hash::{Hash, Hasher};
@@ -5,6 +6,7 @@ use std::hash::{Hash, Hasher};
 pub(crate) fn update_cell(
     window: &mut SimWindow,
     registry: &MaterialRegistry,
+    obstacles: &Obstacles,
     pos: CellPos,
     tick: u64,
     tick_byte: u8,
@@ -18,7 +20,7 @@ pub(crate) fn update_cell(
     let material = registry.get(cell.material);
     match material.phase {
         Phase::Empty | Phase::Solid => {}
-        Phase::Powder => update_powder(window, registry, pos, material.density, tick),
+        Phase::Powder => update_powder(window, registry, obstacles, pos, material.density, tick),
         Phase::Liquid => update_liquid(
             window,
             registry,
@@ -87,18 +89,19 @@ fn side_order(pos: CellPos, tick: u64) -> [i32; 2] {
 fn update_powder(
     window: &mut SimWindow,
     registry: &MaterialRegistry,
+    obstacles: &Obstacles,
     pos: CellPos,
     density: f32,
     tick: u64,
 ) {
     let below = pos.translated(0, -1);
-    if fluid_displaceable(window, registry, density, below) {
+    if fluid_displaceable(window, registry, density, below) && !obstacles.occupied(below) {
         window.swap(pos, below);
         return;
     }
     for side in side_order(pos, tick) {
         let diag = pos.translated(side, -1);
-        if fluid_displaceable(window, registry, density, diag) {
+        if fluid_displaceable(window, registry, density, diag) && !obstacles.occupied(diag) {
             window.swap(pos, diag);
             return;
         }

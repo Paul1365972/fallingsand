@@ -1,0 +1,28 @@
+(
+    sea_level: -10,
+    cave_threshold: 0.08,
+    cave_depth_bonus: 0.06,
+    biomes: [
+        (
+            name: "meadow",
+            surface_material: "grass",
+            soil_material: "dirt",
+            soil_depth: 14,
+            height_amplitude: 26.0,
+        ),
+        (
+            name: "desert",
+            surface_material: "sand",
+            soil_material: "sand",
+            soil_depth: 22,
+            height_amplitude: 14.0,
+        ),
+        (
+            name: "rocklands",
+            surface_material: "stone",
+            soil_material: "gravel",
+            soil_depth: 8,
+            height_amplitude: 48.0,
+        ),
+    ],
+)

@@ -1,10 +1,11 @@
+use crate::obstacles::Obstacles;
 use crate::rules;
 use crate::window::{SimWindow, WINDOW_CHUNKS, WINDOW_SLOTS, spill};
 use crate::world::CellWorld;
 use fallingsand_core::{CHUNK_SIZE, CellPos, Chunk, ChunkPos, DirtyRect, MaterialRegistry};
 use rustc_hash::FxHashSet;
 
-pub fn step(world: &mut CellWorld, registry: &MaterialRegistry) {
+pub fn step(world: &mut CellWorld, registry: &MaterialRegistry, obstacles: &Obstacles) {
     world.advance_tick();
     let tick = world.tick();
     for chunk in world.chunk_map_mut().values_mut() {
@@ -14,12 +15,18 @@ pub fn step(world: &mut CellWorld, registry: &MaterialRegistry) {
         }
     }
     for phase in 0..4 {
-        run_phase(world, registry, phase, tick);
+        run_phase(world, registry, obstacles, phase, tick);
     }
     world.apply_edits();
 }
 
-fn run_phase(world: &mut CellWorld, registry: &MaterialRegistry, phase: u32, tick: u64) {
+fn run_phase(
+    world: &mut CellWorld,
+    registry: &MaterialRegistry,
+    obstacles: &Obstacles,
+    phase: u32,
+    tick: u64,
+) {
     let px = (phase & 1) as i32;
     let py = ((phase >> 1) & 1) as i32;
 
@@ -57,11 +64,11 @@ fn run_phase(world: &mut CellWorld, registry: &MaterialRegistry, phase: u32, tic
         use rayon::prelude::*;
         windows
             .par_iter_mut()
-            .for_each(|window| process_block(window, registry, tick));
+            .for_each(|window| process_block(window, registry, obstacles, tick));
     }
     #[cfg(not(feature = "parallel"))]
     for window in windows.iter_mut() {
-        process_block(window, registry, tick);
+        process_block(window, registry, obstacles, tick);
     }
 
     for window in windows {
@@ -76,7 +83,12 @@ fn run_phase(world: &mut CellWorld, registry: &MaterialRegistry, phase: u32, tic
     }
 }
 
-fn process_block(window: &mut SimWindow, registry: &MaterialRegistry, tick: u64) {
+fn process_block(
+    window: &mut SimWindow,
+    registry: &MaterialRegistry,
+    obstacles: &Obstacles,
+    tick: u64,
+) {
     let mut rects = [[DirtyRect::EMPTY; 2]; 2];
     for oy in 0..2i32 {
         for ox in 0..2i32 {
@@ -116,7 +128,7 @@ fn process_block(window: &mut SimWindow, registry: &MaterialRegistry, tick: u64)
             for i in 0..=(end - start) {
                 let lx = if reverse { end - i } else { start + i };
                 let pos = CellPos::new(origin_cell.x + ox as i32 * size + lx, origin_cell.y + gy);
-                rules::update_cell(window, registry, pos, tick, tick_byte);
+                rules::update_cell(window, registry, obstacles, pos, tick, tick_byte);
             }
         }
     }

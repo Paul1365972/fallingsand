@@ -6,3 +6,7 @@ edition.workspace = true
 [dependencies]
 fallingsand_core = { workspace = true }
 fastnoise-lite = { workspace = true }
+serde = { workspace = true }
+ron = { workspace = true }
+thiserror = { workspace = true }
+rustc-hash = { workspace = true }

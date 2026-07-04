@@ -40,4 +40,8 @@ impl Region {
     pub fn chunks_mut(&mut self) -> &mut [Chunk; REGION_AREA_CHUNKS] {
         &mut self.chunks
     }
+
+    pub fn into_chunks(self) -> Box<[Chunk; REGION_AREA_CHUNKS]> {
+        self.chunks
+    }
 }

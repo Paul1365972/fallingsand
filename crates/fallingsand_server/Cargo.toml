@@ -11,7 +11,20 @@ path = "src/main.rs"
 fallingsand_core = { workspace = true }
 fallingsand_sim = { workspace = true, features = ["parallel"] }
 fallingsand_protocol = { workspace = true }
-fallingsand_net = { workspace = true }
+fallingsand_net = { workspace = true, features = ["wt-native"] }
 fallingsand_worldgen = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+rcgen = { workspace = true }
+rustls-pki-types = { workspace = true }
+sha2 = { workspace = true }
+time = { workspace = true }
+ctrlc = { workspace = true }
 bevy_ecs = { workspace = true }
 anyhow = { workspace = true }
+rustc-hash = { workspace = true }
+spin_sleep = { workspace = true }
+redb = { workspace = true }
+lz4_flex = { workspace = true }
+serde = { workspace = true }
+postcard = { workspace = true }
+thiserror = { workspace = true }

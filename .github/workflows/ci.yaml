@@ -98,12 +98,12 @@ jobs:
         run: cargo binstall --version 0.1.0-alpha.2 --locked --no-confirm --force --git=https://github.com/TheBevyFlock/bevy_cli bevy_cli
 
       - name: Build web bundle
-        run: bevy build --locked --release -p fallingsand_client --yes web --bundle --bundle-dir dist
+        run: bevy build --locked --release -p fallingsand_client --yes web --bundle
 
       - name: Upload site
         uses: actions/upload-pages-artifact@v3
         with:
-          path: dist
+          path: target/bevy_web/web-release/fallingsand
 
   deploy-web:
     runs-on: ubuntu-latest

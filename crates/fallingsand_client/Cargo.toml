@@ -8,7 +8,7 @@ name = "fallingsand"
 path = "src/main.rs"
 
 [features]
-dev = ["bevy/dynamic_linking", "bevy/dev"]
+dev = ["bevy/dynamic_linking", "bevy/dev", "bevy/embedded_watcher"]
 
 [build-dependencies]
 embed-resource = "3"
@@ -18,12 +18,19 @@ fallingsand_core = { workspace = true }
 fallingsand_sim = { workspace = true }
 fallingsand_protocol = { workspace = true }
 fallingsand_net = { workspace = true }
-bevy = { workspace = true, features = ["2d", "ui"] }
+bevy = { workspace = true, features = ["2d", "ui", "default_font", "multi_threaded"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 fallingsand_server = { workspace = true }
 fallingsand_sim = { workspace = true, features = ["parallel"] }
+fallingsand_net = { workspace = true, features = ["wt-native"] }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+winit = { version = "0.30", default-features = false }
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
-bevy = { workspace = true, features = ["2d", "ui", "web"] }
+bevy = { workspace = true, features = ["2d", "ui", "default_font", "web"] }
+fallingsand_net = { workspace = true, features = ["wt-wasm"] }
 getrandom = { version = "0.3", features = ["wasm_js"] }
+web-sys = { version = "0.3", features = ["Window", "Location"] }
+js-sys = "0.3"
