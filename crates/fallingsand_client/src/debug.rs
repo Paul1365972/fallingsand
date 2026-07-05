@@ -22,8 +22,15 @@ pub struct BordersVisible(pub bool);
 #[derive(Resource, Default)]
 struct F3ComboUsed(bool);
 
+struct RectFlash {
+    pos: ChunkPos,
+    rect: DirtyRect,
+    keep_alive: bool,
+    at: f32,
+}
+
 #[derive(Resource, Default)]
-struct DeltaFlashes(Vec<(ChunkPos, DirtyRect, f32)>);
+struct RectFlashes(Vec<RectFlash>);
 
 const FLASH_SECS: f32 = 0.4;
 
@@ -33,12 +40,12 @@ impl Plugin for DebugOverlayPlugin {
             .insert_resource(DebugVisible(true))
             .init_resource::<BordersVisible>()
             .init_resource::<F3ComboUsed>()
-            .init_resource::<DeltaFlashes>()
+            .init_resource::<RectFlashes>()
             .add_systems(Startup, setup_overlay)
             .add_systems(Update, (toggle_overlay, update_overlay, screenshot))
             .add_systems(
                 Update,
-                (track_deltas, draw_borders)
+                (sync_debug_stream, track_rects, draw_borders)
                     .chain()
                     .run_if(in_state(crate::AppState::InGame)),
             );
@@ -93,8 +100,33 @@ fn toggle_overlay(
     }
 }
 
-fn track_deltas(
-    mut flashes: ResMut<DeltaFlashes>,
+fn sync_debug_stream(
+    borders: Res<BordersVisible>,
+    session: Option<ResMut<Session>>,
+    mut messages: MessageReader<ServerMsg>,
+    mut subscribed: Local<bool>,
+) {
+    let Some(mut session) = session else {
+        *subscribed = false;
+        return;
+    };
+    let rejoined = messages.read().any(|ServerMsg(message)| {
+        matches!(
+            message,
+            fallingsand_protocol::ServerMessage::HelloAck { .. }
+        )
+    });
+    if rejoined {
+        *subscribed = false;
+    }
+    if session.player.is_some() && *subscribed != borders.0 {
+        session.send(&fallingsand_protocol::ClientMessage::SetDebug { enabled: borders.0 });
+        *subscribed = borders.0;
+    }
+}
+
+fn track_rects(
+    mut flashes: ResMut<RectFlashes>,
     mut messages: MessageReader<ServerMsg>,
     time: Res<Time>,
     borders: Res<BordersVisible>,
@@ -107,17 +139,33 @@ fn track_deltas(
         return;
     }
     let now = time.elapsed_secs();
-    flashes.0.retain(|(_, _, at)| now - at < FLASH_SECS);
+    flashes.0.retain(|flash| now - flash.at < FLASH_SECS);
     for ServerMsg(message) in messages.read() {
-        if let fallingsand_protocol::ServerMessage::ChunkDelta { pos, rect, .. } = message {
-            flashes.0.push((*pos, *rect, now));
+        let fallingsand_protocol::ServerMessage::DebugRects { chunks } = message else {
+            continue;
+        };
+        for entry in chunks {
+            for (rect, keep_alive) in [(entry.change, false), (entry.keep_alive, true)] {
+                if rect.is_empty() {
+                    continue;
+                }
+                flashes
+                    .0
+                    .retain(|flash| flash.pos != entry.pos || flash.keep_alive != keep_alive);
+                flashes.0.push(RectFlash {
+                    pos: entry.pos,
+                    rect,
+                    keep_alive,
+                    at: now,
+                });
+            }
         }
     }
 }
 
 fn draw_borders(
     borders: Res<BordersVisible>,
-    flashes: Res<DeltaFlashes>,
+    flashes: Res<RectFlashes>,
     camera: Single<(&Camera, &GlobalTransform)>,
     time: Res<Time>,
     mut gizmos: Gizmos,
@@ -165,15 +213,20 @@ fn draw_borders(
     }
 
     let now = time.elapsed_secs();
-    for (pos, rect, at) in &flashes.0 {
-        let alpha = (1.0 - (now - at) / FLASH_SECS).clamp(0.0, 1.0) * 0.8;
-        let origin = Vec2::new(pos.x as f32 * chunk, pos.y as f32 * chunk);
-        let corner = origin + Vec2::new(rect.min_x as f32, rect.min_y as f32);
-        let size = Vec2::new(rect.width() as f32, rect.height() as f32);
+    for flash in &flashes.0 {
+        let alpha = (1.0 - (now - flash.at) / FLASH_SECS).clamp(0.0, 1.0) * 0.8;
+        let origin = Vec2::new(flash.pos.x as f32 * chunk, flash.pos.y as f32 * chunk);
+        let corner = origin + Vec2::new(flash.rect.min_x as f32, flash.rect.min_y as f32);
+        let size = Vec2::new(flash.rect.width() as f32, flash.rect.height() as f32);
+        let color = if flash.keep_alive {
+            Color::srgba(0.2, 0.9, 1.0, alpha)
+        } else {
+            Color::srgba(1.0, 0.9, 0.2, alpha)
+        };
         gizmos.rect_2d(
             Isometry2d::from_translation(corner + size / 2.0),
             size,
-            Color::srgba(1.0, 0.9, 0.2, alpha),
+            color,
         );
     }
 }
@@ -223,7 +276,7 @@ fn update_overlay(
          players: {}, pixel bodies: {}\n\
          cursor: {},{} [{}]\n\
          selected [1-9]: {}\n\
-         keys: AD move, space jump, LMB dig, RMB place, wheel zoom, IJKL pan, O follow, F3+G borders, esc pause",
+         keys: AD move, space jump, LMB dig, RMB place, wheel zoom, IJKL pan, O follow, F3+G borders+rects, esc pause",
         server.tick,
         server.sim_micros,
         server.loaded_chunks,

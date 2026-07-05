@@ -69,6 +69,13 @@ pub struct PixelBodyState {
     pub angle: f32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChunkDebugRects {
+    pub pos: ChunkPos,
+    pub change: DirtyRect,
+    pub keep_alive: DirtyRect,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ClientMessage {
     Hello {
@@ -79,6 +86,9 @@ pub enum ClientMessage {
     Input(PlayerInput),
     Chat {
         text: String,
+    },
+    SetDebug {
+        enabled: bool,
     },
     Goodbye,
 }
@@ -135,6 +145,9 @@ pub enum ServerMessage {
     },
     PixelBodyStates {
         bodies: Vec<PixelBodyState>,
+    },
+    DebugRects {
+        chunks: Vec<ChunkDebugRects>,
     },
     TickEnd {
         tick: u64,

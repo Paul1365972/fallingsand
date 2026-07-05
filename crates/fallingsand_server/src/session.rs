@@ -17,6 +17,7 @@ pub struct Session {
     pub uuid: Option<PlayerUuid>,
     pub known_chunks: FxHashSet<ChunkPos>,
     pub last_chat_tick: u64,
+    pub debug: bool,
 }
 
 impl Session {
@@ -29,6 +30,7 @@ impl Session {
             uuid: None,
             known_chunks: FxHashSet::default(),
             last_chat_tick: 0,
+            debug: false,
         }
     }
 }

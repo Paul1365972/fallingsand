@@ -7,8 +7,8 @@ use crate::{
 use bevy_ecs::prelude::*;
 use fallingsand_core::{CellOffset, CellPos, MaterialId, Phase, TICK_DT};
 use fallingsand_protocol::{
-    ClientMessage, EntityState, PROTOCOL_VERSION, PlayerId, ServerMessage, cells_to_wire,
-    decode_message, encode_message,
+    ChunkDebugRects, ClientMessage, EntityState, PROTOCOL_VERSION, PlayerId, ServerMessage,
+    cells_to_wire, decode_message, encode_message,
 };
 use fallingsand_sim::EntityBox;
 use fallingsand_sim::physics::{Body, Controller, PlayerParams, scatter_powder, step_player};
@@ -225,6 +225,9 @@ pub fn drain_network(
                     if let Ok((sender, _, _)) = players.get(entity) {
                         chats.push((player, sender.name.clone(), text));
                     }
+                }
+                ClientMessage::SetDebug { enabled } => {
+                    sessions.sessions[index].debug = enabled;
                 }
                 ClientMessage::Goodbye => {
                     sessions.sessions[index].conn.close("client goodbye");
@@ -493,8 +496,20 @@ pub fn replicate(
             false
         });
 
+        let mut debug_rects = Vec::new();
         for &pos in &interest {
             let chunk = sim.0.chunk(pos).expect("interest chunks are loaded");
+            if session.debug {
+                let change = chunk.dirty();
+                let keep_alive = chunk.keep_dirty();
+                if !change.is_empty() || !keep_alive.is_empty() {
+                    debug_rects.push(ChunkDebugRects {
+                        pos,
+                        change,
+                        keep_alive,
+                    });
+                }
+            }
             if known.insert(pos) {
                 let message = encode_message(&ServerMessage::ChunkLoad {
                     pos,
@@ -523,6 +538,14 @@ pub fn replicate(
             session.conn.send(message);
         }
         session.known_chunks = known;
+
+        if !debug_rects.is_empty() {
+            let message = encode_message(&ServerMessage::DebugRects {
+                chunks: debug_rects,
+            });
+            sent_bytes += message.len() as u64;
+            session.conn.send(message);
+        }
 
         sent_bytes += entity_message.len() as u64;
         session.conn.send(entity_message.clone());
