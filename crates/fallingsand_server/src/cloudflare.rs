@@ -15,6 +15,7 @@ const TRACE_URL: &str = "https://one.one.one.one/cdn-cgi/trace";
 const RENEW_AFTER: Duration = Duration::from_secs(60 * 24 * 60 * 60);
 const DDNS_INTERVAL: Duration = Duration::from_secs(300);
 const DNS_TTL: u32 = 60;
+const TXT_SETTLE_DELAY: Duration = Duration::from_secs(2);
 const TXT_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const TXT_POLL_ATTEMPTS: u32 = 24;
 
@@ -246,16 +247,14 @@ impl CloudflareHost {
     }
 
     async fn wait_for_txt(&self, name: &str, value: &str) {
+        tokio::time::sleep(TXT_SETTLE_DELAY).await;
         for attempt in 1..=TXT_POLL_ATTEMPTS {
-            tokio::time::sleep(TXT_POLL_INTERVAL).await;
             let records = self.query_txt(name).await.unwrap_or_default();
             if records.iter().any(|data| data.contains(value)) {
-                info!(
-                    "challenge txt record visible after ~{}s",
-                    attempt * TXT_POLL_INTERVAL.as_secs() as u32
-                );
+                info!("challenge txt record visible after {attempt} checks");
                 return;
             }
+            tokio::time::sleep(TXT_POLL_INTERVAL).await;
         }
         warn!("challenge txt record still not visible via dns, proceeding anyway");
     }

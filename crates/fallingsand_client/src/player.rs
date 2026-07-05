@@ -1,3 +1,4 @@
+use crate::interpolation::Interpolated;
 use crate::net::{NetSet, ServerMsg, Session, SessionEnded};
 use crate::{AppState, ClientRegistry, PauseState};
 use bevy::platform::collections::HashMap;
@@ -9,20 +10,10 @@ pub struct PlayerPlugin;
 
 pub const PLAYER_SIZE: Vec2 = Vec2::new(3.8, 11.0);
 const SNAP_DISTANCE: f32 = 64.0;
-pub const BLEND_RATE: f32 = TICK_RATE as f32;
-pub const BLEND_CARRY_DAMP: f32 = 0.9;
-pub const BLEND_MAX: f32 = 2.0;
-
-pub fn carry_blend(blend: f32) -> f32 {
-    ((blend - 1.0) * BLEND_CARRY_DAMP).max(-1.0)
-}
 
 #[derive(Component)]
 pub struct PlayerVisual {
     pub id: PlayerId,
-    pub previous: Vec2,
-    pub target: Vec2,
-    pub blend: f32,
 }
 
 #[derive(Component)]
@@ -73,7 +64,6 @@ impl Plugin for PlayerPlugin {
             Update,
             (
                 select_material.run_if(in_state(PauseState::Running)),
-                interpolate_players,
                 update_nametags.run_if(resource_changed::<PlayerNames>),
             ),
         )
@@ -109,7 +99,7 @@ fn apply_entity_states(
     mut commands: Commands,
     mut visuals: ResMut<PlayerVisuals>,
     mut messages: MessageReader<ServerMsg>,
-    mut query: Query<&mut PlayerVisual>,
+    mut query: Query<&mut Interpolated, With<PlayerVisual>>,
     session: Option<Res<Session>>,
     names: Res<PlayerNames>,
 ) {
@@ -124,14 +114,9 @@ fn apply_entity_states(
             let target = Vec2::new(state.x, state.y);
             if let Some(&entity) = visuals.0.get(&state.player) {
                 if let Ok(mut visual) = query.get_mut(entity) {
-                    if visual.target.distance_squared(target) > SNAP_DISTANCE * SNAP_DISTANCE {
-                        visual.previous = target;
-                        visual.blend = 1.0;
-                    } else {
-                        visual.previous = visual.target;
-                        visual.blend = carry_blend(visual.blend);
-                    }
-                    visual.target = target;
+                    let snap = visual.target_position().distance_squared(target)
+                        > SNAP_DISTANCE * SNAP_DISTANCE;
+                    visual.record(target, 0.0, snap);
                 }
             } else {
                 let is_local = local == Some(state.player);
@@ -142,12 +127,8 @@ fn apply_entity_states(
                 };
                 let entity = commands
                     .spawn((
-                        PlayerVisual {
-                            id: state.player,
-                            previous: target,
-                            target,
-                            blend: 1.0,
-                        },
+                        PlayerVisual { id: state.player },
+                        Interpolated::snapped(target, 0.0),
                         Sprite::from_color(color, PLAYER_SIZE),
                         Transform::from_xyz(target.x, target.y, 10.0),
                     ))
@@ -198,17 +179,6 @@ fn cleanup_players(
     }
     names.0.clear();
     *input = InputState::default();
-}
-
-pub fn interpolate_players(time: Res<Time>, mut query: Query<(&mut PlayerVisual, &mut Transform)>) {
-    for (mut visual, mut transform) in &mut query {
-        visual.blend = (visual.blend + time.delta_secs() * BLEND_RATE).min(BLEND_MAX);
-        let position = visual
-            .previous
-            .lerp(visual.target, visual.blend.clamp(0.0, 1.0));
-        transform.translation.x = position.x;
-        transform.translation.y = position.y;
-    }
 }
 
 fn select_material(

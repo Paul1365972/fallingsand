@@ -13,25 +13,12 @@ pub struct NetSet;
 const STALL_SECS: f32 = 2.0;
 const RETRY_DELAY: f32 = 2.0;
 const RETRY_MAX: f32 = 10.0;
+const HANDSHAKE_TIMEOUT_SECS: f32 = 10.0;
+#[cfg(not(target_family = "wasm"))]
+const DIAL_TIMEOUT_SECS: f32 = 15.0;
 
 fn retry_delay(attempt: u32) -> f32 {
-    let base = (RETRY_DELAY * 2f32.powi(attempt.min(8) as i32)).min(RETRY_MAX);
-    base * (0.75 + 0.5 * jitter())
-}
-
-fn jitter() -> f32 {
-    #[cfg(not(target_family = "wasm"))]
-    {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .subsec_nanos() as f32
-            / 1_000_000_000.0
-    }
-    #[cfg(target_family = "wasm")]
-    {
-        js_sys::Math::random() as f32
-    }
+    (RETRY_DELAY * 2f32.powi(attempt.min(8) as i32)).min(RETRY_MAX)
 }
 
 #[derive(Resource)]
@@ -41,6 +28,7 @@ pub struct Session {
     pub rx_bytes: u64,
     pub rx_per_sec: u64,
     since_rx: f32,
+    handshake_secs: f32,
     window: f32,
     window_bytes: u64,
     batch: Vec<ServerMessage>,
@@ -54,6 +42,7 @@ impl Session {
             rx_bytes: 0,
             rx_per_sec: 0,
             since_rx: 0.0,
+            handshake_secs: 0.0,
             window: 0.0,
             window_bytes: 0,
             batch: Vec::new(),
@@ -73,6 +62,12 @@ impl Session {
     fn status(&self) -> ConnectionStatus {
         self.conn.status()
     }
+
+    fn flush(&mut self, messages: &mut MessageWriter<ServerMsg>) {
+        for message in self.batch.drain(..) {
+            messages.write(ServerMsg(message));
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -82,14 +77,20 @@ pub struct ConnectTarget {
 }
 
 #[derive(Resource, Default)]
-pub struct PendingConnect(pub Option<ConnectTarget>);
-
-#[derive(Resource, Default)]
 pub struct Supervisor {
     pub target: Option<ConnectTarget>,
     attempt: u32,
     retry_in: f32,
     lost: Option<String>,
+}
+
+impl Supervisor {
+    pub fn new(target: Option<ConnectTarget>) -> Self {
+        Self {
+            target,
+            ..Self::default()
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -169,13 +170,7 @@ pub fn parse_cert_hash(hex: &str) -> Option<Vec<u8>> {
 pub fn cli_world_name() -> Option<String> {
     #[cfg(not(target_family = "wasm"))]
     {
-        let mut args = std::env::args().skip(1);
-        while let Some(arg) = args.next() {
-            if arg == "--world" {
-                return args.next();
-            }
-        }
-        None
+        crate::identity::arg_value("--world")
     }
     #[cfg(target_family = "wasm")]
     {
@@ -186,41 +181,27 @@ pub fn cli_world_name() -> Option<String> {
 pub fn cli_connect_target() -> Option<ConnectTarget> {
     #[cfg(not(target_family = "wasm"))]
     {
-        let mut args = std::env::args().skip(1);
-        let mut target: Option<ConnectTarget> = None;
-        while let Some(arg) = args.next() {
-            match arg.as_str() {
-                "--connect" => {
-                    if let Some(url) = args.next() {
-                        target = Some(ConnectTarget {
-                            url,
-                            cert_hash: None,
-                        });
-                    }
-                }
-                "--cert-hash" => {
-                    if let (Some(target), Some(hex)) = (target.as_mut(), args.next()) {
-                        target.cert_hash = parse_cert_hash(&hex);
-                        if target.cert_hash.is_none() {
-                            error!("invalid --cert-hash, expected 64 hex chars");
-                        }
-                    }
-                }
-                _ => {}
+        let url = crate::identity::arg_value("--connect")?;
+        let cert_hash = crate::identity::arg_value("--cert-hash").and_then(|hex| {
+            let hash = parse_cert_hash(&hex);
+            if hash.is_none() {
+                error!("invalid --cert-hash, expected 64 hex chars");
             }
-        }
-        target
+            hash
+        });
+        Some(ConnectTarget { url, cert_hash })
     }
-    #[cfg(target_family = "wasm")]
+    #[cfg(all(target_family = "wasm", target_os = "unknown"))]
     {
-        wasm_remote::query_connect_target()
+        let url = crate::identity::query_param("server")?;
+        let cert_hash = crate::identity::query_param("cert").and_then(|hex| parse_cert_hash(&hex));
+        Some(ConnectTarget { url, cert_hash })
     }
 }
 
 impl Plugin for NetPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<PendingConnect>()
-            .init_resource::<Supervisor>()
+        app.init_resource::<Supervisor>()
             .init_resource::<EmbeddedServerStats>()
             .add_message::<ServerMsg>()
             .add_message::<SessionEnded>()
@@ -243,11 +224,8 @@ impl Plugin for NetPlugin {
 }
 
 fn open(world: &mut World) {
-    let target = world.resource_mut::<PendingConnect>().0.take();
-    *world.resource_mut::<Supervisor>() = Supervisor {
-        target,
-        ..default()
-    };
+    let target = world.resource::<Supervisor>().target.clone();
+    *world.resource_mut::<Supervisor>() = Supervisor::new(target);
     if world.resource::<Supervisor>().target.is_none() {
         #[cfg(not(target_family = "wasm"))]
         embedded::launch(world);
@@ -275,15 +253,9 @@ fn drain(
     pause: Option<Res<State<crate::PauseState>>>,
     time: Res<Time>,
 ) {
-    if matches!(session.status(), ConnectionStatus::Closed { .. }) {
-        for message in session.batch.drain(..) {
-            messages.write(ServerMsg(message));
-        }
-        return;
-    }
-
+    let closed = matches!(session.status(), ConnectionStatus::Closed { .. });
     let paused = pause.is_some_and(|state| *state.get() == crate::PauseState::Paused);
-    session.since_rx = if paused {
+    session.since_rx = if paused || closed {
         0.0
     } else {
         session.since_rx + time.delta_secs()
@@ -320,12 +292,23 @@ fn drain(
                 let flush = matches!(message, ServerMessage::TickEnd { .. });
                 session.batch.push(message);
                 if flush {
-                    for message in session.batch.drain(..) {
-                        messages.write(ServerMsg(message));
-                    }
+                    session.flush(&mut messages);
                 }
             }
             Err(err) => error!("bad message: {err}"),
+        }
+    }
+
+    if closed {
+        session.flush(&mut messages);
+        return;
+    }
+
+    if session.player.is_none() {
+        session.handshake_secs += time.delta_secs();
+        if session.handshake_secs > HANDSHAKE_TIMEOUT_SECS {
+            warn!("no hello ack after {HANDSHAKE_TIMEOUT_SECS}s");
+            session.conn.close("handshake timed out");
         }
     }
 
@@ -387,14 +370,20 @@ struct NetRuntime(tokio::runtime::Runtime);
 
 #[cfg(not(target_family = "wasm"))]
 #[derive(Resource)]
-struct Dialing(std::sync::Mutex<std::sync::mpsc::Receiver<Result<Box<dyn Connection>, String>>>);
+struct Dialing {
+    receiver: std::sync::Mutex<std::sync::mpsc::Receiver<Result<Box<dyn Connection>, String>>>,
+    elapsed: f32,
+}
 
 #[cfg(not(target_family = "wasm"))]
 fn poll_dial(world: &mut World) -> bool {
-    let Some(dialing) = world.get_resource::<Dialing>() else {
+    let delta = world.resource::<Time>().delta_secs();
+    let Some(mut dialing) = world.get_resource_mut::<Dialing>() else {
         return false;
     };
-    let result = dialing.0.lock().unwrap().try_recv();
+    dialing.elapsed += delta;
+    let timed_out = dialing.elapsed > DIAL_TIMEOUT_SECS;
+    let result = dialing.receiver.lock().unwrap().try_recv();
     match result {
         Ok(Ok(conn)) => {
             world.remove_resource::<Dialing>();
@@ -405,7 +394,13 @@ fn poll_dial(world: &mut World) -> bool {
             error!("failed to connect: {err}");
             world.resource_mut::<Supervisor>().lost = Some(err);
         }
-        Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        Err(std::sync::mpsc::TryRecvError::Empty) => {
+            if timed_out {
+                world.remove_resource::<Dialing>();
+                error!("connect attempt timed out after {DIAL_TIMEOUT_SECS}s");
+                world.resource_mut::<Supervisor>().lost = Some("connect timed out".into());
+            }
+        }
         Err(std::sync::mpsc::TryRecvError::Disconnected) => {
             world.remove_resource::<Dialing>();
             world.resource_mut::<Supervisor>().lost = Some("connect worker died".into());
@@ -444,7 +439,10 @@ fn start_dial(world: &mut World, target: ConnectTarget) {
             let _ = sender.send(result);
         })
         .expect("spawn dial thread");
-    world.insert_resource(Dialing(std::sync::Mutex::new(receiver)));
+    world.insert_resource(Dialing {
+        receiver: std::sync::Mutex::new(receiver),
+        elapsed: 0.0,
+    });
 }
 
 #[cfg(all(target_family = "wasm", target_os = "unknown"))]
@@ -454,29 +452,6 @@ fn start_dial(world: &mut World, target: ConnectTarget) {
         target.cert_hash.clone(),
     ));
     world.insert_resource(Session::new(conn, crate::identity::load_or_create()));
-}
-
-#[cfg(all(target_family = "wasm", target_os = "unknown"))]
-mod wasm_remote {
-    use super::*;
-
-    pub fn query_connect_target() -> Option<ConnectTarget> {
-        let location = web_sys::window().map(|w| w.location());
-        let query = location.and_then(|l| l.search().ok()).unwrap_or_default();
-        let mut url = None;
-        let mut cert_hash = None;
-        for pair in query.trim_start_matches('?').split('&') {
-            let mut parts = pair.splitn(2, '=');
-            match (parts.next(), parts.next()) {
-                (Some("server"), Some(value)) => {
-                    url = js_sys::decode_uri_component(value).ok().map(String::from);
-                }
-                (Some("cert"), Some(value)) => cert_hash = parse_cert_hash(value),
-                _ => {}
-            }
-        }
-        url.map(|url| ConnectTarget { url, cert_hash })
-    }
 }
 
 #[cfg(not(target_family = "wasm"))]

@@ -14,6 +14,7 @@ use tracing::{info, warn};
 
 const DEFAULT_ADDR: &str = "0.0.0.0:4433";
 const CERT_VALIDITY_DAYS: i64 = 13;
+// cwd-relative; keep the working directory stable so cached ACME certs are reused
 const CERT_DIR: &str = "saves/certs";
 const WEB_CLIENT_URL: &str = "https://paul1365972.github.io/fallingsand";
 

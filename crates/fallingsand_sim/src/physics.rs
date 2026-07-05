@@ -10,12 +10,6 @@ const BUFFER_SECS: f32 = 0.13;
 const APEX_SPEED: f32 = 20.0;
 const WADE_UP_CELLS: usize = 4;
 const WADE_SIDE_CELLS: usize = 2;
-const FALL_RAMP_SPEED: f32 = 110.0;
-const FAST_FALL_GRAVITY: f32 = 1.3;
-const FALL_CAP_EASE: f32 = 2000.0;
-const HOP_BOOST: f32 = 30.0;
-const OVERSPEED_FRICTION_GROUND: f32 = 400.0;
-const OVERSPEED_FRICTION_AIR: f32 = 60.0;
 const WADE_DAMP: f32 = 0.7;
 const MAX_DISPLACED: usize = 16;
 const SCATTER_RADIUS: i32 = 6;
@@ -121,6 +115,21 @@ pub fn body_submerged<W: CellSource>(world: &W, registry: &MaterialRegistry, bod
     )
 }
 
+fn bank_adjacent<W: CellSource>(world: &W, registry: &MaterialRegistry, body: &Body) -> bool {
+    let left = (body.x - body.half_w - 0.5).floor() as i32;
+    let right = (body.x + body.half_w + 0.5).floor() as i32;
+    let y0 = body.y.floor() as i32;
+    let y1 = (body.y + body.half_h + 1.0).floor() as i32;
+    for y in y0..=y1 {
+        if cell_blocks(world, registry, CellPos::new(left, y))
+            || cell_blocks(world, registry, CellPos::new(right, y))
+        {
+            return true;
+        }
+    }
+    false
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PlayerParams {
     pub run_speed: f32,
@@ -135,6 +144,12 @@ pub struct PlayerParams {
     pub apex_gravity: f32,
     pub max_fall_speed: f32,
     pub fast_fall_speed: f32,
+    pub fast_fall_gravity: f32,
+    pub fall_ramp_speed: f32,
+    pub fall_cap_ease: f32,
+    pub hop_boost: f32,
+    pub overspeed_friction_ground: f32,
+    pub overspeed_friction_air: f32,
     pub swim_speed: f32,
     pub swim_accel: f32,
     pub water_gravity: f32,
@@ -142,6 +157,7 @@ pub struct PlayerParams {
     pub water_thrust: f32,
     pub water_drag: f32,
     pub water_drag_quad: f32,
+    pub water_exit_boost: f32,
 }
 
 impl Default for PlayerParams {
@@ -159,6 +175,12 @@ impl Default for PlayerParams {
             apex_gravity: 0.7,
             max_fall_speed: 190.0,
             fast_fall_speed: 340.0,
+            fast_fall_gravity: 1.3,
+            fall_ramp_speed: 110.0,
+            fall_cap_ease: 2000.0,
+            hop_boost: 30.0,
+            overspeed_friction_ground: 400.0,
+            overspeed_friction_air: 60.0,
             swim_speed: 32.0,
             swim_accel: 250.0,
             water_gravity: 500.0,
@@ -166,6 +188,7 @@ impl Default for PlayerParams {
             water_thrust: 450.0,
             water_drag: 3.0,
             water_drag_quad: 0.08,
+            water_exit_boost: 1.25,
         }
     }
 }
@@ -208,9 +231,11 @@ pub fn step_player<W: CellSource>(
         if body.vy <= 0.0 {
             ctrl.jumping = false;
         }
-        if (ctrl.buffer > 0.0 || jump_held) && ctrl.coyote > 0.0 {
-            body.vy = params.jump_speed;
-            body.vx += move_x.clamp(-1, 1) as f32 * HOP_BOOST;
+        let bank = bank_adjacent(world, registry, body);
+        if (ctrl.buffer > 0.0 || jump_held) && (ctrl.coyote > 0.0 || (ctrl.floating && bank)) {
+            let boost = if bank { params.water_exit_boost } else { 1.0 };
+            body.vy = params.jump_speed * boost;
+            body.vx += move_x.clamp(-1, 1) as f32 * params.hop_boost;
             ctrl.buffer = 0.0;
             ctrl.coyote = 0.0;
             ctrl.jumping = true;
@@ -261,7 +286,7 @@ pub fn step_player<W: CellSource>(
         };
         if (ctrl.buffer > 0.0 || jump_held) && ctrl.coyote > 0.0 {
             body.vy = params.jump_speed;
-            body.vx += move_x.clamp(-1, 1) as f32 * HOP_BOOST;
+            body.vx += move_x.clamp(-1, 1) as f32 * params.hop_boost;
             ctrl.buffer = 0.0;
             ctrl.coyote = 0.0;
             ctrl.jumping = true;
@@ -274,7 +299,7 @@ pub fn step_player<W: CellSource>(
             ctrl.jumping = false;
         }
         let gravity = if down_held && body.vy <= 0.0 {
-            params.gravity_down * FAST_FALL_GRAVITY
+            params.gravity_down * params.fast_fall_gravity
         } else if !body.on_ground && body.vy.abs() < APEX_SPEED {
             params.gravity_up * params.apex_gravity
         } else if body.vy > 0.0 {
@@ -283,8 +308,8 @@ pub fn step_player<W: CellSource>(
             } else {
                 params.gravity_up * params.cut_gravity
             }
-        } else if body.vy > -FALL_RAMP_SPEED {
-            let blend = -body.vy / FALL_RAMP_SPEED;
+        } else if body.vy > -params.fall_ramp_speed {
+            let blend = -body.vy / params.fall_ramp_speed;
             params.gravity_up * params.apex_gravity * (1.0 - blend) + params.gravity_down * blend
         } else {
             params.gravity_down
@@ -296,14 +321,14 @@ pub fn step_player<W: CellSource>(
         };
         body.vy += gravity * dt;
         if body.vy < -cap {
-            body.vy = approach(body.vy, -cap, FALL_CAP_EASE * dt);
+            body.vy = approach(body.vy, -cap, params.fall_cap_ease * dt);
         }
         let target = move_x.clamp(-1, 1) as f32 * params.run_speed;
         if target != 0.0 && target * body.vx > 0.0 && body.vx.abs() > target.abs() {
             let friction = if body.on_ground {
-                OVERSPEED_FRICTION_GROUND
+                params.overspeed_friction_ground
             } else {
-                OVERSPEED_FRICTION_AIR
+                params.overspeed_friction_air
             };
             body.vx = approach(body.vx, target, friction * dt);
         } else {
@@ -322,10 +347,33 @@ pub fn step_player<W: CellSource>(
     move_body(world, registry, body, dt)
 }
 
-enum Passage {
-    Free,
-    Solid,
-    Powder(Vec<CellPos>),
+struct Blockage {
+    solid: bool,
+    powder: Vec<CellPos>,
+}
+
+impl Blockage {
+    fn free(&self) -> bool {
+        !self.solid && self.powder.is_empty()
+    }
+
+    fn wadeable(&self, limit: usize, displaced: &[CellPos]) -> bool {
+        !self.solid
+            && !self.powder.is_empty()
+            && self.powder.len() <= limit
+            && displaced.len() + self.powder.len() <= MAX_DISPLACED
+    }
+
+    fn wade(self, displaced: &mut Vec<CellPos>) -> f32 {
+        let damp = WADE_DAMP.powi(self.powder.len() as i32);
+        displaced.extend(self.powder);
+        damp
+    }
+
+    fn dig(self, displaced: &mut Vec<CellPos>) {
+        let budget = MAX_DISPLACED.saturating_sub(displaced.len());
+        displaced.extend(self.powder.into_iter().take(budget));
+    }
 }
 
 fn passage<W: CellSource>(
@@ -335,33 +383,33 @@ fn passage<W: CellSource>(
     cx: f32,
     cy: f32,
     displaced: &[CellPos],
-) -> Passage {
+) -> Blockage {
     let cur = cell_bounds(body.x, body.y, body.half_w, body.half_h);
     let (x0, y0, x1, y1) = cell_bounds(cx, cy, body.half_w, body.half_h);
-    let mut powder: Vec<CellPos> = Vec::new();
+    let mut blockage = Blockage {
+        solid: false,
+        powder: Vec::new(),
+    };
     for y in y0..=y1 {
         for x in x0..=x1 {
             let pos = CellPos::new(x, y);
             let Some(cell) = world.cell_at(pos) else {
-                return Passage::Solid;
+                blockage.solid = true;
+                continue;
             };
             match registry.get(cell.material).phase {
-                Phase::Solid => return Passage::Solid,
+                Phase::Solid => blockage.solid = true,
                 Phase::Powder => {
                     let overlapped = x >= cur.0 && x <= cur.2 && y >= cur.1 && y <= cur.3;
                     if !overlapped && !displaced.contains(&pos) {
-                        powder.push(pos);
+                        blockage.powder.push(pos);
                     }
                 }
                 _ => {}
             }
         }
     }
-    if powder.is_empty() {
-        Passage::Free
-    } else {
-        Passage::Powder(powder)
-    }
+    blockage
 }
 
 pub fn move_body<W: CellSource>(
@@ -390,18 +438,15 @@ pub fn move_body<W: CellSource>(
             };
             let next_x = entry_face - dirf * body.half_w;
             if (next_x - target) * dirf >= 0.0 {
-                if matches!(
-                    passage(world, registry, body, target, body.y, &displaced),
-                    Passage::Free
-                ) {
+                if passage(world, registry, body, target, body.y, &displaced).free() {
                     body.x = target;
                 } else {
                     body.vx = 0.0;
                 }
                 break;
             }
-            let outcome = passage(world, registry, body, next_x, body.y, &displaced);
-            if matches!(outcome, Passage::Free) {
+            let blockage = passage(world, registry, body, next_x, body.y, &displaced);
+            if blockage.free() {
                 body.x = next_x;
                 col = next_col;
                 continue;
@@ -420,18 +465,15 @@ pub fn move_body<W: CellSource>(
             if stepped {
                 continue;
             }
-            if let Passage::Powder(cells) = outcome
-                && cells.len() <= WADE_SIDE_CELLS
-                && displaced.len() + cells.len() <= MAX_DISPLACED
-            {
-                let damp = WADE_DAMP.powi(cells.len() as i32);
-                displaced.extend(cells);
+            if blockage.wadeable(WADE_SIDE_CELLS, &displaced) {
+                let damp = blockage.wade(&mut displaced);
                 body.x = next_x;
                 col = next_col;
                 body.vx *= damp;
                 target = body.x + (target - body.x) * damp;
                 continue;
             }
+            blockage.dig(&mut displaced);
             body.x = if dir > 0 {
                 next_col as f32 - body.half_w
             } else {
@@ -487,45 +529,34 @@ pub fn move_body<W: CellSource>(
             };
             let next_y = entry_face - dirf * body.half_h;
             if (next_y - target) * dirf >= 0.0 {
-                if matches!(
-                    passage(world, registry, body, body.x, target, &displaced),
-                    Passage::Free
-                ) {
+                if passage(world, registry, body, body.x, target, &displaced).free() {
                     body.y = target;
                 } else {
                     body.vy = 0.0;
                 }
                 break;
             }
-            match passage(world, registry, body, body.x, next_y, &displaced) {
-                Passage::Free => {
-                    body.y = next_y;
-                    row = next_row;
+            let blockage = passage(world, registry, body, body.x, next_y, &displaced);
+            if blockage.free() {
+                body.y = next_y;
+                row = next_row;
+            } else if dir > 0 && blockage.wadeable(WADE_UP_CELLS, &displaced) {
+                let damp = blockage.wade(&mut displaced);
+                body.y = next_y;
+                row = next_row;
+                body.vy *= damp;
+                target = body.y + (target - body.y) * damp;
+            } else {
+                body.y = if dir > 0 {
+                    next_row as f32 - body.half_h
+                } else {
+                    (next_row + 1) as f32 + body.half_h
+                };
+                if dir < 0 {
+                    body.on_ground = true;
                 }
-                Passage::Powder(cells)
-                    if dir > 0
-                        && cells.len() <= WADE_UP_CELLS
-                        && displaced.len() + cells.len() <= MAX_DISPLACED =>
-                {
-                    let damp = WADE_DAMP.powi(cells.len() as i32);
-                    displaced.extend(cells);
-                    body.y = next_y;
-                    row = next_row;
-                    body.vy *= damp;
-                    target = body.y + (target - body.y) * damp;
-                }
-                _ => {
-                    body.y = if dir > 0 {
-                        next_row as f32 - body.half_h
-                    } else {
-                        (next_row + 1) as f32 + body.half_h
-                    };
-                    if dir < 0 {
-                        body.on_ground = true;
-                    }
-                    body.vy = 0.0;
-                    break;
-                }
+                body.vy = 0.0;
+                break;
             }
         }
     }

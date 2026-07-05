@@ -1,6 +1,6 @@
 use crate::ClientRegistry;
+use crate::interpolation::Interpolated;
 use crate::net::{NetSet, ServerMsg, SessionEnded};
-use crate::player::{BLEND_MAX, BLEND_RATE, carry_blend};
 use bevy::asset::RenderAssetUsages;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
@@ -11,12 +11,7 @@ pub struct BodyViewPlugin;
 
 #[derive(Component)]
 pub struct BodyVisual {
-    pub previous: (Vec2, f32),
-    pub target: (Vec2, f32),
-    pub blend: f32,
-    pub com: Vec2,
-    pub size: Vec2,
-    pub initialized: bool,
+    pub pivot: Vec2,
 }
 
 #[derive(Resource, Default)]
@@ -26,7 +21,6 @@ impl Plugin for BodyViewPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<BodyVisuals>()
             .add_systems(PreUpdate, apply_body_messages.after(NetSet))
-            .add_systems(Update, interpolate_bodies)
             .add_systems(Update, cleanup_bodies.run_if(on_message::<SessionEnded>))
             .add_systems(OnExit(crate::AppState::InGame), cleanup_bodies);
     }
@@ -72,7 +66,7 @@ fn apply_body_messages(
     mut visuals: ResMut<BodyVisuals>,
     mut messages: MessageReader<ServerMsg>,
     mut images: ResMut<Assets<Image>>,
-    mut query: Query<&mut BodyVisual>,
+    mut query: Query<(&BodyVisual, Option<&mut Interpolated>)>,
     registry: Res<ClientRegistry>,
 ) {
     for ServerMsg(message) in messages.read() {
@@ -102,12 +96,7 @@ fn apply_body_messages(
                 let entity = commands
                     .spawn((
                         BodyVisual {
-                            previous: (Vec2::ZERO, 0.0),
-                            target: (Vec2::ZERO, 0.0),
-                            blend: 1.0,
-                            com,
-                            size,
-                            initialized: false,
+                            pivot: size / 2.0 - com,
                         },
                         Sprite {
                             image,
@@ -130,44 +119,25 @@ fn apply_body_messages(
                     let Some(&entity) = visuals.0.get(&state.id) else {
                         continue;
                     };
-                    let Ok(mut visual) = query.get_mut(entity) else {
+                    let Ok((visual, interpolated)) = query.get_mut(entity) else {
                         continue;
                     };
-                    let target = (Vec2::new(state.x, state.y), state.angle);
-                    if visual.initialized {
-                        visual.previous = visual.target;
-                        visual.blend = carry_blend(visual.blend);
-                    } else {
-                        visual.previous = target;
-                        visual.blend = 1.0;
-                        visual.initialized = true;
+                    let position = Vec2::new(state.x, state.y);
+                    match interpolated {
+                        Some(mut interpolated) => {
+                            interpolated.record(position, state.angle, false);
+                        }
+                        None => {
+                            commands.entity(entity).insert((
+                                Interpolated::snapped(position, state.angle)
+                                    .with_pivot(visual.pivot),
+                                Visibility::Visible,
+                            ));
+                        }
                     }
-                    visual.target = target;
                 }
             }
             _ => {}
         }
-    }
-}
-
-fn interpolate_bodies(
-    time: Res<Time>,
-    mut query: Query<(&mut BodyVisual, &mut Transform, &mut Visibility)>,
-) {
-    for (mut visual, mut transform, mut visibility) in &mut query {
-        if !visual.initialized {
-            continue;
-        }
-        *visibility = Visibility::Visible;
-        visual.blend = (visual.blend + time.delta_secs() * BLEND_RATE).min(BLEND_MAX);
-        let alpha = visual.blend.clamp(0.0, 1.0);
-        let position = visual.previous.0.lerp(visual.target.0, alpha);
-        let angle = visual.previous.1 + (visual.target.1 - visual.previous.1) * alpha;
-
-        let offset = visual.size / 2.0 - visual.com;
-        let rotated = Vec2::from_angle(angle).rotate(offset);
-        transform.translation.x = position.x + rotated.x;
-        transform.translation.y = position.y + rotated.y;
-        transform.rotation = Quat::from_rotation_z(angle);
     }
 }

@@ -4,11 +4,17 @@ use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
+const CLOSE_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
+
+enum Outgoing {
+    Frame(Vec<u8>),
+    Close(String),
+}
+
 pub struct WtConnection {
-    tx: UnboundedSender<Vec<u8>>,
+    tx: UnboundedSender<Outgoing>,
     rx: Mutex<Receiver<Vec<u8>>>,
     closed: Arc<Closed>,
-    session: web_transport_quinn::Session,
 }
 
 impl WtConnection {
@@ -19,29 +25,39 @@ impl WtConnection {
         recv_stream: web_transport_quinn::RecvStream,
     ) -> Self {
         let closed = Arc::new(Closed::default());
-        let (out_tx, out_rx) = unbounded_channel::<Vec<u8>>();
+        let (out_tx, out_rx) = unbounded_channel::<Outgoing>();
         let (in_tx, in_rx) = channel::<Vec<u8>>();
 
-        runtime.spawn(writer(send_stream, out_rx));
+        runtime.spawn(writer(session.clone(), send_stream, out_rx));
         runtime.spawn(reader(recv_stream, in_tx, closed.clone()));
-        runtime.spawn(watch_closed(session.clone(), closed.clone()));
+        runtime.spawn(watch_closed(session, closed.clone()));
 
         Self {
             tx: out_tx,
             rx: Mutex::new(in_rx),
             closed,
-            session,
         }
     }
 }
 
 async fn writer(
+    session: web_transport_quinn::Session,
     mut stream: web_transport_quinn::SendStream,
-    mut messages: UnboundedReceiver<Vec<u8>>,
+    mut messages: UnboundedReceiver<Outgoing>,
 ) {
-    while let Some(message) = messages.recv().await {
-        if stream.write_all(&encode_frame(&message)).await.is_err() {
-            return;
+    while let Some(outgoing) = messages.recv().await {
+        match outgoing {
+            Outgoing::Frame(message) => {
+                if stream.write_all(&encode_frame(&message)).await.is_err() {
+                    return;
+                }
+            }
+            Outgoing::Close(reason) => {
+                let _ = stream.finish();
+                tokio::time::sleep(CLOSE_GRACE).await;
+                session.close(0, reason.as_bytes());
+                return;
+            }
         }
     }
     let _ = stream.finish();
@@ -91,7 +107,7 @@ async fn watch_closed(session: web_transport_quinn::Session, closed: Arc<Closed>
 
 impl Connection for WtConnection {
     fn send(&mut self, message: Vec<u8>) {
-        let _ = self.tx.send(message);
+        let _ = self.tx.send(Outgoing::Frame(message));
     }
 
     fn poll(&mut self) -> Option<Vec<u8>> {
@@ -108,7 +124,7 @@ impl Connection for WtConnection {
 
     fn close(&mut self, reason: &str) {
         self.closed.mark(reason);
-        self.session.close(0, reason.as_bytes());
+        let _ = self.tx.send(Outgoing::Close(reason.to_string()));
     }
 }
 

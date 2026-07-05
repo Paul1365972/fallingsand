@@ -57,7 +57,7 @@ fn configured_name() -> Option<String> {
 }
 
 #[cfg(not(target_family = "wasm"))]
-fn arg_value(flag: &str) -> Option<String> {
+pub(crate) fn arg_value(flag: &str) -> Option<String> {
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         if arg == flag {
@@ -106,7 +106,7 @@ fn configured_name() -> Option<String> {
 }
 
 #[cfg(all(target_family = "wasm", target_os = "unknown"))]
-fn query_param(key: &str) -> Option<String> {
+pub(crate) fn query_param(key: &str) -> Option<String> {
     let query = web_sys::window()?.location().search().ok()?;
     for pair in query.trim_start_matches('?').split('&') {
         let mut parts = pair.splitn(2, '=');

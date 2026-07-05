@@ -7,6 +7,7 @@ mod hud;
 #[cfg(not(target_family = "wasm"))]
 mod icon;
 mod identity;
+mod interpolation;
 mod menu;
 mod net;
 mod pause;
@@ -69,7 +70,7 @@ fn main() {
     )
     .insert_resource(ClearColor(Color::srgb(0.08, 0.09, 0.13)))
     .insert_resource(ClientRegistry(registry))
-    .insert_resource(net::PendingConnect(connect_target))
+    .insert_resource(net::Supervisor::new(connect_target))
     .insert_state(initial_state)
     .add_sub_state::<PauseState>()
     .add_plugins((
@@ -77,6 +78,7 @@ fn main() {
         render::ChunkRenderPlugin,
         worldview::WorldViewPlugin,
         bodyview::BodyViewPlugin,
+        interpolation::InterpolationPlugin,
         player::PlayerPlugin,
         camera::CameraPlugin,
         debug::DebugOverlayPlugin,

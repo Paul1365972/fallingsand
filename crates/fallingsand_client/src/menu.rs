@@ -475,7 +475,7 @@ fn handle_buttons(
     mut selected: ResMut<SelectedWorld>,
     mut worlds: ResMut<WorldList>,
     mut pending_delete: ResMut<PendingDelete>,
-    mut pending_connect: ResMut<crate::net::PendingConnect>,
+    mut supervisor: ResMut<crate::net::Supervisor>,
     mut settings: ResMut<crate::settings::Settings>,
     mut next_state: ResMut<NextState<AppState>>,
     mut exit: MessageWriter<AppExit>,
@@ -517,7 +517,7 @@ fn handle_buttons(
                         .single()
                         .map(|f| f.value().to_string())
                         .unwrap_or_default();
-                    pending_connect.0 = Some(crate::net::ConnectTarget {
+                    supervisor.target = Some(crate::net::ConnectTarget {
                         url,
                         cert_hash: crate::net::parse_cert_hash(cert.trim()),
                     });

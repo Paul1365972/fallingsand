@@ -23,8 +23,6 @@ pub use crate::MAX_HP;
 const CHAT_MAX_CHARS: usize = 240;
 const CHAT_RATE_SECS: f32 = 0.25;
 const CHAT_RATE_TICKS: u64 = (CHAT_RATE_SECS * crate::TICK_RATE as f32) as u64;
-const SAFE_IMPACT_SPEED: f32 = 300.0;
-const IMPACT_DAMAGE_SCALE: f32 = 0.3;
 
 #[derive(Component)]
 pub struct PhysicsBody(pub Body);
@@ -35,15 +33,11 @@ pub struct Control(pub Controller);
 #[derive(Component)]
 pub struct Health {
     pub hp: f32,
-    pub previous_vy: f32,
 }
 
 impl Default for Health {
     fn default() -> Self {
-        Self {
-            hp: MAX_HP,
-            previous_vy: 0.0,
-        }
+        Self { hp: MAX_HP }
     }
 }
 
@@ -52,7 +46,7 @@ pub fn drain_network(
     mut commands: Commands,
     mut listener: ResMut<NetListener>,
     mut sessions: ResMut<Sessions>,
-    mut players: Query<(&mut Player, &PhysicsBody)>,
+    mut players: Query<(&mut Player, &PhysicsBody, &Health)>,
     registry: Res<Registry>,
     sim: Res<SimWorld>,
     spawn_point: Res<SpawnPoint>,
@@ -117,7 +111,7 @@ pub fn drain_network(
 
                     let mut takeover = None;
                     if let Some(entity) = taken_entity {
-                        if let Ok((mut existing, body)) = players.get_mut(entity) {
+                        if let Ok((mut existing, body, _)) = players.get_mut(entity) {
                             existing.id = player;
                             existing.name = name.clone();
                             existing.input = Default::default();
@@ -160,7 +154,6 @@ pub fn drain_network(
                                             .filter(|hp| hp.is_finite() && *hp > 0.0)
                                             .unwrap_or(MAX_HP)
                                             .min(MAX_HP),
-                                        previous_vy: 0.0,
                                     },
                                 ))
                                 .id();
@@ -189,7 +182,7 @@ pub fn drain_network(
                             player,
                             name: name.clone(),
                         }));
-                    for (existing, _) in players.iter() {
+                    for (existing, _, _) in players.iter() {
                         if existing.id == player {
                             continue;
                         }
@@ -205,7 +198,7 @@ pub fn drain_network(
                 }
                 ClientMessage::Input(input) => {
                     if let Some(entity) = sessions.sessions[index].entity
-                        && let Ok((mut player, _)) = players.get_mut(entity)
+                        && let Ok((mut player, _, _)) = players.get_mut(entity)
                     {
                         player.input = input;
                     }
@@ -229,7 +222,7 @@ pub fn drain_network(
                         continue;
                     }
                     session.last_chat_tick = tick;
-                    if let Ok((sender, _)) = players.get(entity) {
+                    if let Ok((sender, _, _)) = players.get(entity) {
                         chats.push((player, sender.name.clone(), text));
                     }
                 }
@@ -240,11 +233,25 @@ pub fn drain_network(
         }
     }
 
+    let mut records: Vec<(
+        fallingsand_protocol::PlayerUuid,
+        crate::persistence::PlayerRecord,
+    )> = Vec::new();
     sessions.sessions.retain(|session| {
         if let fallingsand_net::ConnectionStatus::Closed { reason } = session.conn.status() {
             if let Some(entity) = session.entity {
-                if let Ok((player, _)) = players.get(entity) {
+                if let Ok((player, body, health)) = players.get(entity) {
                     tracing::info!("{} left: {reason}", player.name);
+                    if let Some(uuid) = session.uuid {
+                        records.push((
+                            uuid,
+                            crate::persistence::PlayerRecord {
+                                x: body.0.x,
+                                y: body.0.y,
+                                hp: health.hp,
+                            },
+                        ));
+                    }
                 }
                 commands.entity(entity).despawn();
             }
@@ -256,6 +263,11 @@ pub fn drain_network(
             true
         }
     });
+    if let Some(store) = store.0.as_ref()
+        && let Err(err) = store.save_players(&records)
+    {
+        tracing::error!("failed to save disconnected players: {err}");
+    }
 
     for session in &mut sessions.sessions {
         if !matches!(session.state, SessionState::Playing) {
@@ -397,7 +409,6 @@ pub fn step_physics(
 ) {
     let params = PlayerParams::default();
     for (player, mut body, mut control, mut health) in &mut query {
-        let falling_speed = -body.0.vy;
         let displaced = {
             let source = obstacles.0.overlay(&sim.0);
             step_player(
@@ -415,14 +426,8 @@ pub fn step_physics(
         if !displaced.is_empty() {
             scatter_powder(&mut sim.0, &registry.0, &obstacles.0, &body.0, &displaced);
         }
-        let landed = body.0.on_ground && health.previous_vy < -SAFE_IMPACT_SPEED;
-        if landed {
-            health.hp -= (falling_speed - SAFE_IMPACT_SPEED).max(0.0) * IMPACT_DAMAGE_SCALE;
-        }
-        health.previous_vy = body.0.vy;
         if health.hp <= 0.0 {
             health.hp = MAX_HP;
-            health.previous_vy = 0.0;
             body.0 = Body::new(
                 spawn_point.0.x as f32,
                 spawn_point.0.y as f32,

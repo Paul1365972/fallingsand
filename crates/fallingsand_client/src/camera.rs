@@ -36,7 +36,7 @@ impl Plugin for CameraPlugin {
                 (
                     zoom_input.run_if(in_state(PauseState::Running)),
                     pan_input.run_if(in_state(PauseState::Running)),
-                    follow_player.after(crate::player::interpolate_players),
+                    follow_player.after(crate::interpolation::interpolate),
                 )
                     .chain(),
             )
