@@ -79,9 +79,9 @@ pub struct ConnectTarget {
 #[derive(Resource, Default)]
 pub struct Supervisor {
     pub target: Option<ConnectTarget>,
-    attempt: u32,
-    retry_in: f32,
-    lost: Option<String>,
+    pub attempt: u32,
+    pub retry_in: f32,
+    pub last_error: Option<String>,
 }
 
 impl Supervisor {
@@ -107,7 +107,7 @@ impl Supervisor {
         match session {
             Some(session) => {
                 if session.player.is_none() {
-                    if self.lost.is_none() && self.attempt <= 1 {
+                    if self.last_error.is_none() && self.attempt <= 1 {
                         ConnPhase::Connecting
                     } else {
                         ConnPhase::Reconnecting {
@@ -123,7 +123,7 @@ impl Supervisor {
                 }
             }
             None if self.target.is_some() => {
-                if self.lost.is_none() && self.attempt <= 1 {
+                if self.last_error.is_none() && self.attempt <= 1 {
                     ConnPhase::Connecting
                 } else {
                     ConnPhase::Reconnecting {
@@ -132,7 +132,10 @@ impl Supervisor {
                 }
             }
             None => ConnPhase::Lost {
-                reason: self.lost.clone().unwrap_or_else(|| "not connected".into()),
+                reason: self
+                    .last_error
+                    .clone()
+                    .unwrap_or_else(|| "not connected".into()),
             },
         }
     }
@@ -216,6 +219,12 @@ impl Plugin for NetPlugin {
                 supervise
                     .after(NetSet)
                     .run_if(in_state(crate::AppState::InGame)),
+            )
+            .add_systems(
+                PreUpdate,
+                enter_playing
+                    .after(NetSet)
+                    .run_if(in_state(crate::GameState::Connecting)),
             );
 
         #[cfg(not(target_family = "wasm"))]
@@ -287,7 +296,7 @@ fn drain(
                 if let ServerMessage::Reject { reason } = &message {
                     error!("server rejected connection: {reason}");
                     supervisor.target = None;
-                    supervisor.lost = Some(reason.clone());
+                    supervisor.last_error = Some(reason.clone());
                 }
                 let flush = matches!(message, ServerMessage::TickEnd { .. });
                 session.batch.push(message);
@@ -320,6 +329,20 @@ fn drain(
     }
 }
 
+fn enter_playing(
+    session: Option<Res<Session>>,
+    mut messages: MessageReader<ServerMsg>,
+    mut next: ResMut<NextState<crate::GameState>>,
+) {
+    let joined = session.is_some_and(|session| session.player.is_some());
+    let tick_end = messages
+        .read()
+        .any(|ServerMsg(message)| matches!(message, ServerMessage::TickEnd { .. }));
+    if joined && tick_end {
+        next.set(crate::GameState::Playing);
+    }
+}
+
 fn supervise(world: &mut World) {
     let status = world.get_resource::<Session>().map(Session::status);
     match status {
@@ -329,16 +352,16 @@ fn supervise(world: &mut World) {
             world.write_message(SessionEnded);
             let mut supervisor = world.resource_mut::<Supervisor>();
             supervisor.retry_in = retry_delay(supervisor.attempt);
-            if supervisor.target.is_some() || supervisor.lost.is_none() {
-                supervisor.lost = Some(reason);
+            if supervisor.target.is_some() || supervisor.last_error.is_none() {
+                supervisor.last_error = Some(reason);
             }
         }
         Some(ConnectionStatus::Connected) => {
             if world.resource::<Session>().player.is_some() {
                 let mut supervisor = world.resource_mut::<Supervisor>();
-                if supervisor.attempt != 0 || supervisor.lost.is_some() {
+                if supervisor.attempt != 0 || supervisor.last_error.is_some() {
                     supervisor.attempt = 0;
-                    supervisor.lost = None;
+                    supervisor.last_error = None;
                 }
             }
         }
@@ -392,18 +415,18 @@ fn poll_dial(world: &mut World) -> bool {
         Ok(Err(err)) => {
             world.remove_resource::<Dialing>();
             error!("failed to connect: {err}");
-            world.resource_mut::<Supervisor>().lost = Some(err);
+            world.resource_mut::<Supervisor>().last_error = Some(err);
         }
         Err(std::sync::mpsc::TryRecvError::Empty) => {
             if timed_out {
                 world.remove_resource::<Dialing>();
                 error!("connect attempt timed out after {DIAL_TIMEOUT_SECS}s");
-                world.resource_mut::<Supervisor>().lost = Some("connect timed out".into());
+                world.resource_mut::<Supervisor>().last_error = Some("connect timed out".into());
             }
         }
         Err(std::sync::mpsc::TryRecvError::Disconnected) => {
             world.remove_resource::<Dialing>();
-            world.resource_mut::<Supervisor>().lost = Some("connect worker died".into());
+            world.resource_mut::<Supervisor>().last_error = Some("connect worker died".into());
         }
     }
     world.contains_resource::<Dialing>()
@@ -423,7 +446,7 @@ fn start_dial(world: &mut World, target: ConnectTarget) {
         {
             Ok(runtime) => world.insert_resource(NetRuntime(runtime)),
             Err(err) => {
-                world.resource_mut::<Supervisor>().lost = Some(err.to_string());
+                world.resource_mut::<Supervisor>().last_error = Some(err.to_string());
                 return;
             }
         }

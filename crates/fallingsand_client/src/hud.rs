@@ -1,7 +1,7 @@
-use crate::AppState;
 use crate::ClientRegistry;
 use crate::net::{NetSet, ServerMsg, Session};
 use crate::player::Hotbar;
+use crate::{AppState, GameState};
 use bevy::prelude::*;
 use fallingsand_protocol::ServerMessage;
 
@@ -28,8 +28,8 @@ pub struct LocalHealth(pub f32);
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<LocalHealth>()
-            .add_systems(OnEnter(AppState::InGame), spawn_hud)
-            .add_systems(OnExit(AppState::InGame), despawn_hud)
+            .add_systems(OnEnter(GameState::Playing), spawn_hud)
+            .add_systems(OnExit(GameState::Playing), despawn_hud)
             .add_systems(
                 PreUpdate,
                 track_health

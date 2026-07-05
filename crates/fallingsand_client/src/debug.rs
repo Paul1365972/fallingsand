@@ -1,6 +1,7 @@
 use crate::ClientRegistry;
-use crate::net::{EmbeddedServerStats, ServerMsg, Session};
-use crate::player::{Hotbar, InputState};
+use crate::bodyview::BodyVisuals;
+use crate::net::{EmbeddedServerStats, ServerMsg, Session, Supervisor};
+use crate::player::{Hotbar, InputState, PlayerNames};
 use crate::render::ChunkVisuals;
 use crate::worldview::WorldView;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
@@ -235,10 +236,14 @@ fn draw_borders(
 fn update_overlay(
     visible: Res<DebugVisible>,
     diagnostics: Res<DiagnosticsStore>,
+    game_state: Option<Res<State<crate::GameState>>>,
+    supervisor: Res<Supervisor>,
     server: Res<EmbeddedServerStats>,
     session: Option<Res<Session>>,
     view: Res<WorldView>,
     visuals: Res<ChunkVisuals>,
+    names: Res<PlayerNames>,
+    bodies: Res<BodyVisuals>,
     hotbar: Res<Hotbar>,
     input: Res<InputState>,
     registry: Res<ClientRegistry>,
@@ -255,47 +260,104 @@ fn update_overlay(
         .get(&FrameTimeDiagnosticsPlugin::FPS)
         .and_then(|d| d.smoothed())
         .unwrap_or(0.0);
-    let selected = hotbar
-        .materials
-        .get(hotbar.selected)
-        .map(|&id| registry.0.get(id).name.as_str())
-        .unwrap_or("none");
-    let cursor_material = view
-        .get_cell(input.aim)
-        .map(|cell| registry.0.get(cell.material).name.as_str())
-        .unwrap_or("unloaded");
+    let game_state = game_state.map(|state| *state.get());
+    let embedded = supervisor.target.is_none();
     let (rx_per_sec, rx_bytes) = session
         .map(|session| (session.rx_per_sec, session.rx_bytes))
         .unwrap_or((0, 0));
 
-    ***text = format!(
-        "fps: {fps:.0}\n\
-         server tick: {} ({} us sim)\n\
-         chunks: {} loaded / {} active / {} border / {} awake (server), {} client, {} uploads ({})\n\
-         net rx: {}/s ({} total), server tx: {}/tick\n\
-         players: {}, pixel bodies: {}\n\
-         cursor: {},{} [{}]\n\
-         selected [1-9]: {}\n\
-         keys: AD move, space jump, LMB dig, RMB place, wheel zoom, IJKL pan, O follow, F3+G borders+rects, esc pause",
-        server.tick,
-        server.sim_micros,
-        server.loaded_chunks,
-        server.active_chunks,
-        server.border_chunks,
-        server.awake_chunks,
-        view.chunks.len(),
-        visuals.uploads,
-        human_bytes(visuals.upload_bytes as u64),
-        human_bytes(rx_per_sec),
-        human_bytes(rx_bytes),
-        human_bytes(server.replicated_bytes),
-        server.players,
-        server.pixel_bodies,
-        input.aim.x,
-        input.aim.y,
-        cursor_material,
-        selected,
-    );
+    let mut lines = vec![
+        format!("fps: {fps:.0}"),
+        format!("fallingsand v{}", env!("CARGO_PKG_VERSION")),
+    ];
+    match game_state {
+        None => {}
+        Some(crate::GameState::Connecting) => {
+            let target = supervisor
+                .target
+                .as_ref()
+                .map(|target| target.url.as_str())
+                .unwrap_or("local server");
+            let mut conn = format!("conn: {target}, attempt {}", supervisor.attempt);
+            if let Some(err) = &supervisor.last_error {
+                conn.push_str(&format!(", last error: {err}"));
+            }
+            lines.push(conn);
+            lines.push(format!(
+                "net rx: {}/s ({} total)",
+                human_bytes(rx_per_sec),
+                human_bytes(rx_bytes)
+            ));
+        }
+        Some(crate::GameState::Playing) => {
+            let mut tick = format!("tick: {}", view.server_tick);
+            if embedded {
+                tick.push_str(&format!(" ({} us sim)", server.sim_micros));
+            }
+            lines.push(tick);
+
+            let mut chunks = "chunks: ".to_string();
+            if embedded {
+                chunks.push_str(&format!(
+                    "{} loaded / {} active / {} border / {} awake (server), ",
+                    server.loaded_chunks,
+                    server.active_chunks,
+                    server.border_chunks,
+                    server.awake_chunks,
+                ));
+            }
+            chunks.push_str(&format!(
+                "{} client, {} uploads ({})",
+                view.chunks.len(),
+                visuals.uploads,
+                human_bytes(visuals.upload_bytes as u64)
+            ));
+            lines.push(chunks);
+
+            let mut net = format!(
+                "net rx: {}/s ({} total)",
+                human_bytes(rx_per_sec),
+                human_bytes(rx_bytes)
+            );
+            if embedded {
+                net.push_str(&format!(
+                    ", server tx: {}/tick",
+                    human_bytes(server.replicated_bytes)
+                ));
+            }
+            lines.push(net);
+
+            let (players, pixel_bodies) = if embedded {
+                (server.players, server.pixel_bodies)
+            } else {
+                (names.0.len(), bodies.0.len())
+            };
+            lines.push(format!("players: {players}, pixel bodies: {pixel_bodies}"));
+
+            let cursor_material = view
+                .get_cell(input.aim)
+                .map(|cell| registry.0.get(cell.material).name.as_str())
+                .unwrap_or("unloaded");
+            lines.push(format!(
+                "cursor: {},{} [{}]",
+                input.aim.x, input.aim.y, cursor_material
+            ));
+            let selected = hotbar
+                .materials
+                .get(hotbar.selected)
+                .map(|&id| registry.0.get(id).name.as_str())
+                .unwrap_or("none");
+            lines.push(format!("selected [1-9]: {selected}"));
+            lines.push(
+                "keys: AD move, space jump, LMB dig, RMB place, wheel zoom, IJKL pan, O follow, F3+G borders+rects, esc pause"
+                    .to_string(),
+            );
+        }
+    }
+    let joined = lines.join("\n");
+    if ***text != joined {
+        ***text = joined;
+    }
 }
 
 fn human_bytes(bytes: u64) -> String {

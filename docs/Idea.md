@@ -223,7 +223,7 @@ Zero serialization shortcuts — the local pipe still moves `fallingsand_protoco
 
 ## Client Architecture (`fallingsand_client`)
 
-- **Bevy app** with states: `MainMenu → InGame (→ Paused overlay)`; connecting/reconnecting/stalled/lost states are a supervisor-driven overlay inside `InGame`, which covers mid-game connection loss with the same UI as the initial connect.
+- **Bevy app** with states: `MainMenu → InGame`, where `InGame` has a `Connecting → Playing` sub-state (Paused overlays `Playing`); the initial connect/handshake runs behind an opaque connection screen (status, attempt count, last error, cancel) and the client enters `Playing` — spawning the HUD and gameplay UI — only once the first complete tick batch is applied. Mid-game connection loss stays in `Playing`: the same supervisor-driven screen reappears as a translucent reconnecting/stalled/lost overlay.
 - **World rendering**: one GPU texture per loaded chunk (64×64), re-uploaded only for dirty rects (sub-rect `write_texture` from the render world); chunks drawn as one quad each (~120 draw calls — instancing over a chunk atlas is a possible later optimization, deferred as unmeasured).
   Material id + shade resolve to color via a palette texture in a fragment shader — no per-pixel CPU loop.
 - **Camera & scale**: Noita-like virtual resolution of ~424×242 cells fit to the window via Bevy's `AutoMin` scaling with a clamped zoom range (accepted deviation from integer scaling; revisit if grain shimmer bothers).

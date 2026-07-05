@@ -32,6 +32,14 @@ pub enum AppState {
 
 #[derive(SubStates, Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 #[source(AppState = AppState::InGame)]
+pub enum GameState {
+    #[default]
+    Connecting,
+    Playing,
+}
+
+#[derive(SubStates, Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[source(GameState = GameState::Playing)]
 pub enum PauseState {
     #[default]
     Running,
@@ -72,6 +80,7 @@ fn main() {
     .insert_resource(ClientRegistry(registry))
     .insert_resource(net::Supervisor::new(connect_target))
     .insert_state(initial_state)
+    .add_sub_state::<GameState>()
     .add_sub_state::<PauseState>()
     .add_plugins((
         net::NetPlugin,
