@@ -59,6 +59,7 @@ pub struct EntityState {
     pub x: f32,
     pub y: f32,
     pub hp: f32,
+    pub ducking: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

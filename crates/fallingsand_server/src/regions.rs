@@ -1,6 +1,6 @@
 use crate::persistence::{PlayerRecord, WorldStore, encode_region};
 use crate::session::Sessions;
-use crate::systems::{Health, PhysicsBody};
+use crate::systems::{Health, PLAYER_HALF_H, PhysicsBody};
 use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y, SimWorld};
 use bevy_ecs::prelude::*;
 use fallingsand_core::{
@@ -292,7 +292,7 @@ pub fn autosave(
                 player.uuid,
                 PlayerRecord {
                     x: body.0.x,
-                    y: body.0.y,
+                    y: body.0.y + (PLAYER_HALF_H - body.0.half_h),
                     hp: health.hp,
                 },
             ))
@@ -389,7 +389,7 @@ pub fn save_everything(world: &mut bevy_ecs::world::World, final_save: bool) {
                 player.uuid,
                 PlayerRecord {
                     x: body.0.x,
-                    y: body.0.y,
+                    y: body.0.y + (PLAYER_HALF_H - body.0.half_h),
                     hp: health.hp,
                 },
             ));

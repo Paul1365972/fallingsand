@@ -251,7 +251,7 @@ pub fn drain_network(
                             uuid,
                             crate::persistence::PlayerRecord {
                                 x: body.0.x,
-                                y: body.0.y,
+                                y: body.0.y + (PLAYER_HALF_H - body.0.half_h),
                                 hp: health.hp,
                             },
                         ));
@@ -476,15 +476,16 @@ pub fn replicate(
     mut sessions: ResMut<Sessions>,
     sim: Res<SimWorld>,
     mut stats: ResMut<TickStats>,
-    query: Query<(&Player, &PhysicsBody, &Health)>,
+    query: Query<(&Player, &PhysicsBody, &Control, &Health)>,
 ) {
     let entities: Vec<EntityState> = query
         .iter()
-        .map(|(player, body, health)| EntityState {
+        .map(|(player, body, control, health)| EntityState {
             player: player.id,
             x: body.0.x,
             y: body.0.y,
             hp: health.hp,
+            ducking: control.0.ducking(),
         })
         .collect();
     let entity_message = encode_message(&ServerMessage::EntityStates {
@@ -500,7 +501,7 @@ pub fn replicate(
         let Some(entity) = session.entity else {
             continue;
         };
-        let Some((_, body, _)) = query.get(entity).ok() else {
+        let Some((_, body, _, _)) = query.get(entity).ok() else {
             continue;
         };
 

@@ -9,6 +9,7 @@ use fallingsand_protocol::{ClientMessage, PlayerId, PlayerInput, ServerMessage};
 pub struct PlayerPlugin;
 
 pub const PLAYER_SIZE: Vec2 = Vec2::new(3.8, 11.0);
+pub const PLAYER_DUCK_SIZE: Vec2 = Vec2::new(3.8, 6.0);
 const SNAP_DISTANCE: f32 = 64.0;
 
 #[derive(Component)]
@@ -99,7 +100,7 @@ fn apply_entity_states(
     mut commands: Commands,
     mut visuals: ResMut<PlayerVisuals>,
     mut messages: MessageReader<ServerMsg>,
-    mut query: Query<&mut Interpolated, With<PlayerVisual>>,
+    mut query: Query<(&mut Interpolated, &mut Sprite), With<PlayerVisual>>,
     session: Option<Res<Session>>,
     names: Res<PlayerNames>,
 ) {
@@ -112,11 +113,19 @@ fn apply_entity_states(
         seen = Some(entities.iter().map(|state| state.player).collect());
         for state in entities {
             let target = Vec2::new(state.x, state.y);
+            let size = if state.ducking {
+                PLAYER_DUCK_SIZE
+            } else {
+                PLAYER_SIZE
+            };
             if let Some(&entity) = visuals.0.get(&state.player) {
-                if let Ok(mut visual) = query.get_mut(entity) {
+                if let Ok((mut visual, mut sprite)) = query.get_mut(entity) {
                     let snap = visual.target_position().distance_squared(target)
                         > SNAP_DISTANCE * SNAP_DISTANCE;
                     visual.record(target, 0.0, snap);
+                    if sprite.custom_size != Some(size) {
+                        sprite.custom_size = Some(size);
+                    }
                 }
             } else {
                 let is_local = local == Some(state.player);
@@ -129,7 +138,7 @@ fn apply_entity_states(
                     .spawn((
                         PlayerVisual { id: state.player },
                         Interpolated::snapped(target, 0.0),
-                        Sprite::from_color(color, PLAYER_SIZE),
+                        Sprite::from_color(color, size),
                         Transform::from_xyz(target.x, target.y, 10.0),
                     ))
                     .id();
