@@ -1,5 +1,6 @@
 use crate::ClientRegistry;
-use crate::net::{NetSet, ServerMsg};
+use crate::net::{NetSet, ServerMsg, SessionEnded};
+use crate::player::{BLEND_MAX, BLEND_RATE, carry_blend};
 use bevy::asset::RenderAssetUsages;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
@@ -26,6 +27,7 @@ impl Plugin for BodyViewPlugin {
         app.init_resource::<BodyVisuals>()
             .add_systems(PreUpdate, apply_body_messages.after(NetSet))
             .add_systems(Update, interpolate_bodies)
+            .add_systems(Update, cleanup_bodies.run_if(on_message::<SessionEnded>))
             .add_systems(OnExit(crate::AppState::InGame), cleanup_bodies);
     }
 }
@@ -70,7 +72,7 @@ fn apply_body_messages(
     mut visuals: ResMut<BodyVisuals>,
     mut messages: MessageReader<ServerMsg>,
     mut images: ResMut<Assets<Image>>,
-    mut query: Query<(&mut BodyVisual, &Transform)>,
+    mut query: Query<&mut BodyVisual>,
     registry: Res<ClientRegistry>,
 ) {
     for ServerMsg(message) in messages.read() {
@@ -128,21 +130,19 @@ fn apply_body_messages(
                     let Some(&entity) = visuals.0.get(&state.id) else {
                         continue;
                     };
-                    let Ok((mut visual, transform)) = query.get_mut(entity) else {
+                    let Ok(mut visual) = query.get_mut(entity) else {
                         continue;
                     };
                     let target = (Vec2::new(state.x, state.y), state.angle);
                     if visual.initialized {
-                        visual.previous = (
-                            transform.translation.truncate(),
-                            transform.rotation.to_euler(EulerRot::ZYX).0,
-                        );
+                        visual.previous = visual.target;
+                        visual.blend = carry_blend(visual.blend);
                     } else {
                         visual.previous = target;
+                        visual.blend = 1.0;
                         visual.initialized = true;
                     }
                     visual.target = target;
-                    visual.blend = 0.0;
                 }
             }
             _ => {}
@@ -159,9 +159,10 @@ fn interpolate_bodies(
             continue;
         }
         *visibility = Visibility::Visible;
-        visual.blend = (visual.blend + time.delta_secs() * 60.0).min(1.0);
-        let position = visual.previous.0.lerp(visual.target.0, visual.blend);
-        let angle = visual.previous.1 + (visual.target.1 - visual.previous.1) * visual.blend;
+        visual.blend = (visual.blend + time.delta_secs() * BLEND_RATE).min(BLEND_MAX);
+        let alpha = visual.blend.clamp(0.0, 1.0);
+        let position = visual.previous.0.lerp(visual.target.0, alpha);
+        let angle = visual.previous.1 + (visual.target.1 - visual.previous.1) * alpha;
 
         let offset = visual.size / 2.0 - visual.com;
         let rotated = Vec2::from_angle(angle).rotate(offset);

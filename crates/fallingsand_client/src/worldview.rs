@@ -1,4 +1,4 @@
-use crate::net::ServerMsg;
+use crate::net::{ServerMsg, SessionEnded};
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use fallingsand_core::{CHUNK_AREA, Cell, CellOffset, CellPos, ChunkPos, DirtyRect};
@@ -35,6 +35,7 @@ impl Plugin for WorldViewPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<WorldView>()
             .add_systems(PreUpdate, apply_updates.after(crate::net::NetSet))
+            .add_systems(Update, clear_view.run_if(on_message::<SessionEnded>))
             .add_systems(OnExit(crate::AppState::InGame), clear_view);
     }
 }
@@ -82,7 +83,7 @@ fn apply_updates(mut view: ResMut<WorldView>, mut messages: MessageReader<Server
                 apply_rect(chunk, *rect, &decoded);
                 chunk.dirty = true;
             }
-            ServerMessage::EntityStates { tick, .. } => {
+            ServerMessage::TickEnd { tick } => {
                 view.server_tick = view.server_tick.max(*tick);
             }
             _ => {}

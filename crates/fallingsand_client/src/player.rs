@@ -1,14 +1,21 @@
-use crate::net::{Conn, LocalPlayer, NetSet, ServerMsg};
+use crate::net::{NetSet, ServerMsg, Session, SessionEnded};
 use crate::{AppState, ClientRegistry, PauseState};
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use fallingsand_core::{CellPos, MaterialId, Phase};
-use fallingsand_protocol::{ClientMessage, PlayerId, PlayerInput, ServerMessage, encode_message};
+use fallingsand_protocol::{ClientMessage, PlayerId, PlayerInput, ServerMessage};
 
 pub struct PlayerPlugin;
 
 pub const PLAYER_SIZE: Vec2 = Vec2::new(3.8, 11.0);
 const SNAP_DISTANCE: f32 = 64.0;
+pub const BLEND_RATE: f32 = 60.0;
+pub const BLEND_CARRY_DAMP: f32 = 0.9;
+pub const BLEND_MAX: f32 = 2.0;
+
+pub fn carry_blend(blend: f32) -> f32 {
+    ((blend - 1.0) * BLEND_CARRY_DAMP).max(-1.0)
+}
 
 #[derive(Component)]
 pub struct PlayerVisual {
@@ -18,8 +25,14 @@ pub struct PlayerVisual {
     pub blend: f32,
 }
 
+#[derive(Component)]
+struct NameTag(PlayerId);
+
 #[derive(Resource, Default)]
 pub struct PlayerVisuals(pub HashMap<PlayerId, Entity>);
+
+#[derive(Resource, Default)]
+pub struct PlayerNames(pub HashMap<PlayerId, String>);
 
 #[derive(Resource)]
 pub struct Hotbar {
@@ -45,9 +58,13 @@ impl Plugin for PlayerPlugin {
             selected: 0,
         })
         .init_resource::<PlayerVisuals>()
+        .init_resource::<PlayerNames>()
         .init_resource::<InputState>()
         .insert_resource(Time::<Fixed>::from_hz(60.0))
-        .add_systems(PreUpdate, apply_entity_states.after(NetSet))
+        .add_systems(
+            PreUpdate,
+            (track_names, apply_entity_states).chain().after(NetSet),
+        )
         .add_systems(
             FixedUpdate,
             send_input.run_if(in_state(PauseState::Running)),
@@ -57,9 +74,34 @@ impl Plugin for PlayerPlugin {
             (
                 select_material.run_if(in_state(PauseState::Running)),
                 interpolate_players,
+                update_nametags.run_if(resource_changed::<PlayerNames>),
             ),
         )
+        .add_systems(Update, cleanup_players.run_if(on_message::<SessionEnded>))
         .add_systems(OnExit(AppState::InGame), cleanup_players);
+    }
+}
+
+fn track_names(mut names: ResMut<PlayerNames>, mut messages: MessageReader<ServerMsg>) {
+    for ServerMsg(message) in messages.read() {
+        match message {
+            ServerMessage::PlayerJoined { player, name } => {
+                names.0.insert(*player, name.clone());
+            }
+            ServerMessage::PlayerLeft { player } => {
+                names.0.remove(player);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn update_nametags(names: Res<PlayerNames>, mut tags: Query<(&NameTag, &mut Text2d)>) {
+    for (tag, mut text) in &mut tags {
+        let name = names.0.get(&tag.0).map(String::as_str).unwrap_or("");
+        if text.0 != name {
+            text.0 = name.to_string();
+        }
     }
 }
 
@@ -67,58 +109,71 @@ fn apply_entity_states(
     mut commands: Commands,
     mut visuals: ResMut<PlayerVisuals>,
     mut messages: MessageReader<ServerMsg>,
-    mut query: Query<(&mut PlayerVisual, &Transform)>,
-    local: Res<LocalPlayer>,
+    mut query: Query<&mut PlayerVisual>,
+    session: Option<Res<Session>>,
+    names: Res<PlayerNames>,
 ) {
-    let mut latest: Option<&Vec<fallingsand_protocol::EntityState>> = None;
+    let local = session.and_then(|session| session.player);
+    let mut seen: Option<Vec<PlayerId>> = None;
     for ServerMsg(message) in messages.read() {
-        if let ServerMessage::EntityStates { entities, .. } = message {
-            latest = Some(entities);
+        let ServerMessage::EntityStates { entities } = message else {
+            continue;
+        };
+        seen = Some(entities.iter().map(|state| state.player).collect());
+        for state in entities {
+            let target = Vec2::new(state.x, state.y);
+            if let Some(&entity) = visuals.0.get(&state.player) {
+                if let Ok(mut visual) = query.get_mut(entity) {
+                    if visual.target.distance_squared(target) > SNAP_DISTANCE * SNAP_DISTANCE {
+                        visual.previous = target;
+                        visual.blend = 1.0;
+                    } else {
+                        visual.previous = visual.target;
+                        visual.blend = carry_blend(visual.blend);
+                    }
+                    visual.target = target;
+                }
+            } else {
+                let is_local = local == Some(state.player);
+                let color = if is_local {
+                    Color::srgb(0.95, 0.75, 0.35)
+                } else {
+                    Color::srgb(0.55, 0.8, 0.95)
+                };
+                let entity = commands
+                    .spawn((
+                        PlayerVisual {
+                            id: state.player,
+                            previous: target,
+                            target,
+                            blend: 1.0,
+                        },
+                        Sprite::from_color(color, PLAYER_SIZE),
+                        Transform::from_xyz(target.x, target.y, 10.0),
+                    ))
+                    .id();
+                if !is_local {
+                    let name = names.0.get(&state.player).cloned().unwrap_or_default();
+                    commands.entity(entity).with_child((
+                        NameTag(state.player),
+                        Text2d::new(name),
+                        TextFont {
+                            font_size: FontSize::Px(24.0),
+                            ..default()
+                        },
+                        TextColor(Color::srgba(0.92, 0.95, 1.0, 0.9)),
+                        Transform::from_xyz(0.0, PLAYER_SIZE.y / 2.0 + 5.0, 1.0)
+                            .with_scale(Vec3::splat(0.25)),
+                    ));
+                }
+                visuals.0.insert(state.player, entity);
+            }
         }
     }
-    let Some(entities) = latest else {
+
+    let Some(seen) = seen else {
         return;
     };
-
-    let mut seen: Vec<PlayerId> = Vec::with_capacity(entities.len());
-    for state in entities {
-        seen.push(state.player);
-        let target = Vec2::new(state.x, state.y);
-        if let Some(&entity) = visuals.0.get(&state.player) {
-            if let Ok((mut visual, transform)) = query.get_mut(entity) {
-                let current = transform.translation.truncate();
-                visual.previous =
-                    if current.distance_squared(target) > SNAP_DISTANCE * SNAP_DISTANCE {
-                        target
-                    } else {
-                        current
-                    };
-                visual.target = target;
-                visual.blend = 0.0;
-            }
-        } else {
-            let is_local = local.id == Some(state.player);
-            let color = if is_local {
-                Color::srgb(0.95, 0.75, 0.35)
-            } else {
-                Color::srgb(0.55, 0.8, 0.95)
-            };
-            let entity = commands
-                .spawn((
-                    PlayerVisual {
-                        id: state.player,
-                        previous: target,
-                        target,
-                        blend: 1.0,
-                    },
-                    Sprite::from_color(color, PLAYER_SIZE),
-                    Transform::from_xyz(target.x, target.y, 10.0),
-                ))
-                .id();
-            visuals.0.insert(state.player, entity);
-        }
-    }
-
     let stale: Vec<PlayerId> = visuals
         .0
         .keys()
@@ -135,18 +190,22 @@ fn apply_entity_states(
 fn cleanup_players(
     mut commands: Commands,
     mut visuals: ResMut<PlayerVisuals>,
+    mut names: ResMut<PlayerNames>,
     mut input: ResMut<InputState>,
 ) {
     for (_, entity) in visuals.0.drain() {
         commands.entity(entity).despawn();
     }
+    names.0.clear();
     *input = InputState::default();
 }
 
-fn interpolate_players(time: Res<Time>, mut query: Query<(&mut PlayerVisual, &mut Transform)>) {
+pub fn interpolate_players(time: Res<Time>, mut query: Query<(&mut PlayerVisual, &mut Transform)>) {
     for (mut visual, mut transform) in &mut query {
-        visual.blend = (visual.blend + time.delta_secs() * 60.0).min(1.0);
-        let position = visual.previous.lerp(visual.target, visual.blend);
+        visual.blend = (visual.blend + time.delta_secs() * BLEND_RATE).min(BLEND_MAX);
+        let position = visual
+            .previous
+            .lerp(visual.target, visual.blend.clamp(0.0, 1.0));
         transform.translation.x = position.x;
         transform.translation.y = position.y;
     }
@@ -178,9 +237,9 @@ fn send_input(
     camera: Single<(&Camera, &GlobalTransform)>,
     hotbar: Res<Hotbar>,
     mut state: ResMut<InputState>,
-    conn: Option<ResMut<Conn>>,
+    session: Option<ResMut<Session>>,
 ) {
-    let Some(mut conn) = conn else {
+    let Some(mut session) = session else {
         return;
     };
 
@@ -204,6 +263,7 @@ fn send_input(
         jump: keys.pressed(KeyCode::Space)
             || keys.pressed(KeyCode::KeyW)
             || keys.pressed(KeyCode::ArrowUp),
+        down: keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown),
         primary: buttons.pressed(MouseButton::Left),
         secondary: buttons.pressed(MouseButton::Right),
         aim: state.aim,
@@ -213,5 +273,5 @@ fn send_input(
             .copied()
             .unwrap_or(MaterialId::AIR),
     };
-    conn.0.send(encode_message(&ClientMessage::Input(input)));
+    session.send(&ClientMessage::Input(input));
 }

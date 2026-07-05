@@ -134,12 +134,22 @@ impl WtListener {
         runtime.spawn(async move {
             let mut server = server;
             while let Some(request) = server.accept().await {
-                let Ok(session) = request.ok().await else {
-                    continue;
+                let remote = request.conn().remote_address();
+                let session = match request.ok().await {
+                    Ok(session) => session,
+                    Err(err) => {
+                        tracing::debug!("webtransport handshake with {remote} failed: {err}");
+                        continue;
+                    }
                 };
-                let Ok((send_stream, recv_stream)) = session.accept_bi().await else {
-                    continue;
+                let (send_stream, recv_stream) = match session.accept_bi().await {
+                    Ok(streams) => streams,
+                    Err(err) => {
+                        tracing::debug!("{remote} closed before opening a stream: {err}");
+                        continue;
+                    }
                 };
+                tracing::debug!("webtransport session established with {remote}");
                 let conn = WtConnection::new(&accept_runtime, session, send_stream, recv_stream);
                 if tx.send(conn).is_err() {
                     return;
@@ -163,7 +173,7 @@ pub fn connect(
     url: &str,
     cert_hash: Option<Vec<u8>>,
 ) -> anyhow::Result<WtConnection> {
-    let url: url::Url = url.parse()?;
+    let url = crate::normalize_server_url(url)?;
     let connect_runtime = runtime.clone();
     let session = runtime.block_on(async move {
         let builder = web_transport_quinn::ClientBuilder::new();

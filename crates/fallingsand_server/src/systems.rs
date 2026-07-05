@@ -68,6 +68,7 @@ pub fn drain_network(
     for session in &mut sessions.sessions {
         while let Some(bytes) = session.conn.poll() {
             let Ok(message) = decode_message::<ClientMessage>(&bytes) else {
+                tracing::warn!("closing connection: malformed message");
                 session.conn.close("malformed message");
                 break;
             };
@@ -80,6 +81,9 @@ pub fn drain_network(
                         continue;
                     }
                     if protocol_version != PROTOCOL_VERSION {
+                        tracing::warn!(
+                            "rejected {name}: protocol {protocol_version} != {PROTOCOL_VERSION}"
+                        );
                         session.conn.send(encode_message(&ServerMessage::Reject {
                             reason: format!(
                                 "protocol version mismatch: server {PROTOCOL_VERSION}, client {protocol_version}"
@@ -128,6 +132,15 @@ pub fn drain_network(
                     for message in crate::bodies::full_body_sync(&bodies) {
                         session.conn.send(message);
                     }
+                    for existing in players.iter() {
+                        session
+                            .conn
+                            .send(encode_message(&ServerMessage::PlayerJoined {
+                                player: existing.id,
+                                name: existing.name.clone(),
+                            }));
+                    }
+                    tracing::info!("{name} joined as player {}", player.0);
                     joined.push((player, name));
                 }
                 ClientMessage::Input(input) => {
@@ -145,11 +158,11 @@ pub fn drain_network(
     }
 
     sessions.sessions.retain(|session| {
-        if matches!(
-            session.conn.status(),
-            fallingsand_net::ConnectionStatus::Closed { .. }
-        ) {
+        if let fallingsand_net::ConnectionStatus::Closed { reason } = session.conn.status() {
             if let Some(entity) = session.entity {
+                if let Ok(player) = players.get(entity) {
+                    tracing::info!("{} left: {reason}", player.name);
+                }
                 commands.entity(entity).despawn();
             }
             if let Some(player) = session.player {
@@ -300,6 +313,7 @@ pub fn step_physics(
                 &mut control.0,
                 player.input.move_x,
                 player.input.jump,
+                player.input.down,
                 TICK_DT,
             )
         };
@@ -341,7 +355,6 @@ pub fn replicate(
         })
         .collect();
     let entity_message = encode_message(&ServerMessage::EntityStates {
-        tick: sim.0.tick(),
         entities: entities.clone(),
     });
 
@@ -419,4 +432,13 @@ pub fn replicate(
     stats.awake_chunks = sim.0.awake_chunk_count();
     stats.loaded_chunks = sim.0.chunks().count();
     stats.replicated_bytes = sent_bytes;
+}
+
+pub fn finish_tick(mut sessions: ResMut<Sessions>, sim: Res<SimWorld>) {
+    let message = encode_message(&ServerMessage::TickEnd { tick: sim.0.tick() });
+    for session in &mut sessions.sessions {
+        if matches!(session.state, SessionState::Playing) {
+            session.conn.send(message.clone());
+        }
+    }
 }

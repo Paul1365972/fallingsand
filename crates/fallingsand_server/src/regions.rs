@@ -103,7 +103,7 @@ pub fn manage_regions(
         loads += 1;
         let loaded = store.0.as_ref().and_then(|store| {
             store.load_region(pos).unwrap_or_else(|err| {
-                tracing_error(&format!("failed to load region {pos:?}: {err}"));
+                tracing::error!("failed to load region {pos:?}: {err}");
                 None
             })
         });
@@ -155,7 +155,7 @@ pub fn manage_regions(
     if let Some(store) = store.0.as_ref()
         && let Err(err) = store.save_regions(&to_save)
     {
-        tracing_error(&format!("failed to save {} regions: {err}", to_save.len()));
+        tracing::error!("failed to save {} regions: {err}", to_save.len());
     }
 }
 
@@ -191,8 +191,10 @@ pub fn autosave(
         to_save.push((*pos, encode_region(&region)));
         state.dirty = false;
     }
-    if let Err(err) = store.save_regions(&to_save) {
-        tracing_error(&format!("autosave failed: {err}"));
+    match store.save_regions(&to_save) {
+        Ok(()) if !to_save.is_empty() => tracing::debug!("autosaved {} regions", to_save.len()),
+        Ok(()) => {}
+        Err(err) => tracing::error!("autosave failed: {err}"),
     }
 
     let players: Vec<(String, PlayerRecord)> = sessions
@@ -211,7 +213,7 @@ pub fn autosave(
         })
         .collect();
     if let Err(err) = store.save_players(&players) {
-        tracing_error(&format!("player autosave failed: {err}"));
+        tracing::error!("player autosave failed: {err}");
     }
 }
 
@@ -220,6 +222,7 @@ pub fn save_everything(world: &mut bevy_ecs::world::World) {
         Some(store) => store.clone(),
         None => return,
     };
+    let started = std::time::Instant::now();
     let mut to_save: Vec<(RegionPos, Vec<u8>)> = Vec::new();
     {
         let regions = world.resource::<RegionMap>();
@@ -241,7 +244,7 @@ pub fn save_everything(world: &mut bevy_ecs::world::World) {
         }
     }
     if let Err(err) = store.save_regions(&to_save) {
-        tracing_error(&format!("final save failed: {err}"));
+        tracing::error!("final save failed: {err}");
     }
     for (pos, _) in &to_save {
         if let Some(state) = world.resource_mut::<RegionMap>().states.get_mut(pos) {
@@ -263,10 +266,12 @@ pub fn save_everything(world: &mut bevy_ecs::world::World) {
         }
     }
     if let Err(err) = store.save_players(&players) {
-        tracing_error(&format!("final player save failed: {err}"));
+        tracing::error!("final player save failed: {err}");
     }
-}
-
-fn tracing_error(message: &str) {
-    eprintln!("[server] {message}");
+    tracing::info!(
+        "world saved: {} regions, {} players in {:.1?}",
+        to_save.len(),
+        players.len(),
+        started.elapsed(),
+    );
 }

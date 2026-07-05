@@ -160,7 +160,7 @@ A `fallingsand_server::Server` is a library value you construct and tick — the
   The cell grid is a resource, not entities.
 - **Fixed tick rate: 60 Hz** target; the tick budget breakdown lives in [Performance](#performance-strategy).
   If a tick overruns, the server slews rather than spiraling.
-  Simulation rate and replication rate are independent knobs; both start at 60 Hz, and deltas are tick-tagged so replication can drop to a lower cadence later without redesign.
+  Simulation rate and replication rate are independent knobs; both start at 60 Hz, and each tick's replication batch is closed by a tick-stamped end-of-tick marker — clients apply batches atomically, and replication can drop to a lower cadence later without redesign.
 - **Tick order**:
   1. Drain network: sessions, player inputs, commands
   2. Apply player inputs (movement intents, actions → world edits)

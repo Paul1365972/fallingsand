@@ -1,6 +1,6 @@
 use crate::AppState;
 use crate::ClientRegistry;
-use crate::net::{LocalPlayer, NetSet, ServerMsg};
+use crate::net::{NetSet, ServerMsg, Session};
 use crate::player::Hotbar;
 use bevy::prelude::*;
 use fallingsand_protocol::ServerMessage;
@@ -156,12 +156,13 @@ fn despawn_hud(
 
 fn track_health(
     mut messages: MessageReader<ServerMsg>,
-    local: Res<LocalPlayer>,
+    session: Option<Res<Session>>,
     mut health: ResMut<LocalHealth>,
 ) {
+    let local = session.and_then(|session| session.player);
     for ServerMsg(message) in messages.read() {
-        if let ServerMessage::EntityStates { entities, .. } = message
-            && let Some(id) = local.id
+        if let ServerMessage::EntityStates { entities } = message
+            && let Some(id) = local
             && let Some(state) = entities.iter().find(|state| state.player == id)
         {
             health.0 = state.hp;

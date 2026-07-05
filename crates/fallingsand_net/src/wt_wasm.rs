@@ -45,7 +45,7 @@ async fn run_session(
     in_tx: Sender<Vec<u8>>,
     closed: Arc<Closed>,
 ) -> Result<(), String> {
-    let parsed: url::Url = url.parse().map_err(|_| "invalid url".to_string())?;
+    let parsed = crate::normalize_server_url(&url).map_err(|_| "invalid url".to_string())?;
     let builder = web_transport_wasm::ClientBuilder::new();
     let client = match cert_hash {
         Some(hash) => builder.with_server_certificate_hashes(vec![hash]),

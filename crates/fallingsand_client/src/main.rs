@@ -1,5 +1,6 @@
 mod bodyview;
 mod camera;
+mod connscreen;
 mod debug;
 mod hud;
 #[cfg(not(target_family = "wasm"))]
@@ -79,6 +80,7 @@ fn main() {
         menu::MenuPlugin,
         pause::PausePlugin,
         hud::HudPlugin,
+        connscreen::ConnScreenPlugin,
     ));
     #[cfg(not(target_family = "wasm"))]
     app.add_plugins(icon::IconPlugin);

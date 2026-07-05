@@ -8,6 +8,7 @@ pub struct PlayerId(pub u32);
 pub struct PlayerInput {
     pub move_x: i8,
     pub jump: bool,
+    pub down: bool,
     pub primary: bool,
     pub secondary: bool,
     pub aim: CellPos,
@@ -19,6 +20,7 @@ impl Default for PlayerInput {
         Self {
             move_x: 0,
             jump: false,
+            down: false,
             primary: false,
             secondary: false,
             aim: CellPos::new(0, 0),
@@ -75,7 +77,6 @@ pub enum ServerMessage {
         cells: Vec<u8>,
     },
     EntityStates {
-        tick: u64,
         entities: Vec<EntityState>,
     },
     PlayerJoined {
@@ -98,5 +99,8 @@ pub enum ServerMessage {
     },
     PixelBodyStates {
         bodies: Vec<PixelBodyState>,
+    },
+    TickEnd {
+        tick: u64,
     },
 }

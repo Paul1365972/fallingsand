@@ -1,10 +1,10 @@
 use crate::menu::{BUTTON_BG, BUTTON_HOVER, spawn_button};
-use crate::net::Conn;
+use crate::net::Session;
 #[cfg(not(target_family = "wasm"))]
 use crate::net::embedded::EmbeddedServer;
 use crate::{AppState, PauseState};
 use bevy::prelude::*;
-use fallingsand_protocol::{ClientMessage, PlayerInput, encode_message};
+use fallingsand_protocol::{ClientMessage, PlayerInput};
 
 pub struct PausePlugin;
 
@@ -51,11 +51,9 @@ fn toggle_pause(
     }
 }
 
-fn freeze_input(conn: Option<ResMut<Conn>>) {
-    if let Some(mut conn) = conn {
-        conn.0.send(encode_message(
-            &ClientMessage::Input(PlayerInput::default()),
-        ));
+fn freeze_input(session: Option<ResMut<Session>>) {
+    if let Some(mut session) = session {
+        session.send(&ClientMessage::Input(PlayerInput::default()));
     }
 }
 

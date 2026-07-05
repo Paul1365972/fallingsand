@@ -112,11 +112,18 @@ pub enum ServerError {
 impl Server {
     pub fn new(config: ServerConfig) -> Result<Self, ServerError> {
         let store = match &config.world.save_path {
-            Some(path) => Some(Arc::new(WorldStore::open(path)?)),
+            Some(path) => {
+                tracing::debug!("world store: {}", path.display());
+                Some(Arc::new(WorldStore::open(path)?))
+            }
             None => None,
         };
         let seed = match store.as_ref().and_then(|s| s.load_meta().transpose()) {
-            Some(meta) => meta?.seed,
+            Some(meta) => {
+                let meta = meta?;
+                tracing::info!("loaded world \"{}\" (seed {:#x})", meta.name, meta.seed);
+                meta.seed
+            }
             None => {
                 let seed = config.world.seed;
                 if let Some(store) = &store {
@@ -126,6 +133,7 @@ impl Server {
                         name: config.world.name.clone(),
                     })?;
                 }
+                tracing::info!("created world \"{}\" (seed {:#x})", config.world.name, seed);
                 seed
             }
         };
@@ -163,6 +171,7 @@ impl Server {
                 bodies::step_bodies,
                 systems::replicate,
                 bodies::replicate_bodies,
+                systems::finish_tick,
                 regions::autosave,
             )
                 .chain(),
@@ -197,9 +206,22 @@ impl Server {
             }
             if !control.paused() {
                 self.tick();
+                let stats = self.stats();
+                if stats.tick.is_multiple_of(10 * TICK_RATE as u64) {
+                    tracing::debug!(
+                        "tick {}: {} players, {}/{} chunks awake, {} bodies, sim {:.1}ms",
+                        stats.tick,
+                        stats.players,
+                        stats.awake_chunks,
+                        stats.loaded_chunks,
+                        stats.pixel_bodies,
+                        stats.sim_micros as f64 / 1000.0,
+                    );
+                }
             }
             timer.sleep();
         }
+        tracing::info!("stopping server");
         self.save_all();
     }
 }
@@ -207,6 +229,7 @@ impl Server {
 pub struct StepTimer {
     period: Duration,
     last_time: Instant,
+    behind: Duration,
 }
 
 impl StepTimer {
@@ -214,11 +237,24 @@ impl StepTimer {
         Self {
             period,
             last_time: Instant::now(),
+            behind: Duration::ZERO,
         }
     }
 
     pub fn sleep(&mut self) {
         let passed = self.last_time.elapsed();
+        if passed > self.period {
+            self.behind += passed - self.period;
+            if self.behind >= Duration::from_secs(2) {
+                tracing::warn!(
+                    "can't keep up, running {}ms behind",
+                    self.behind.as_millis()
+                );
+                self.behind = Duration::ZERO;
+            }
+        } else {
+            self.behind = Duration::ZERO;
+        }
         spin_sleep::sleep(self.period.saturating_sub(passed));
         self.last_time = Instant::now();
     }

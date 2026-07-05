@@ -1,4 +1,4 @@
-use crate::net::LocalPlayer;
+use crate::net::Session;
 use crate::player::PlayerVisual;
 use crate::{AppState, PauseState};
 use bevy::camera::ScalingMode;
@@ -36,7 +36,7 @@ impl Plugin for CameraPlugin {
                 (
                     zoom_input.run_if(in_state(PauseState::Running)),
                     pan_input.run_if(in_state(PauseState::Running)),
-                    follow_player,
+                    follow_player.after(crate::player::interpolate_players),
                 )
                     .chain(),
             )
@@ -124,13 +124,13 @@ fn pan_input(
 fn follow_player(
     time: Res<Time>,
     control: Res<CameraControl>,
-    local: Res<LocalPlayer>,
+    session: Option<Res<Session>>,
     players: Query<(&PlayerVisual, &Transform), Without<Camera2d>>,
     mut camera: Single<&mut Transform, With<Camera2d>>,
 ) {
     let target = if let Some(pan) = control.free_pan {
         pan
-    } else if let Some(id) = local.id
+    } else if let Some(id) = session.and_then(|session| session.player)
         && let Some((_, transform)) = players.iter().find(|(visual, _)| visual.id == id)
     {
         transform.translation.truncate()

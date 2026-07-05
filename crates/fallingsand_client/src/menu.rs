@@ -158,7 +158,7 @@ fn spawn_menu(mut commands: Commands) {
                     ..default()
                 })
                 .with_children(|column| {
-                    spawn_field(column, UrlField, "https://host:port", 320.0);
+                    spawn_field(column, UrlField, "host[:port]", 320.0);
                     spawn_field(column, CertField, "cert sha256 (optional)", 320.0);
                     spawn_button(column, MenuButton::Connect, "Connect", 120.0, BUTTON_BG);
                 });

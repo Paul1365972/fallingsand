@@ -1,6 +1,5 @@
 use crate::ClientRegistry;
 use bevy::prelude::*;
-use fallingsand_core::CellPos;
 use fallingsand_net::{Connection, ConnectionStatus};
 use fallingsand_protocol::{
     ClientMessage, PROTOCOL_VERSION, PlayerId, ServerMessage, decode_message, encode_message,
@@ -11,24 +10,133 @@ pub struct NetPlugin;
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct NetSet;
 
-#[derive(Resource)]
-pub struct Conn(pub Box<dyn Connection>);
+const STALL_SECS: f32 = 2.0;
+const RETRY_DELAY: f32 = 2.0;
+const RETRY_MAX: f32 = 10.0;
 
-#[derive(Resource, Default)]
-pub struct LocalPlayer {
-    pub id: Option<PlayerId>,
-    pub spawn: Option<CellPos>,
+fn retry_delay(attempt: u32) -> f32 {
+    let base = (RETRY_DELAY * 2f32.powi(attempt.min(8) as i32)).min(RETRY_MAX);
+    base * (0.75 + 0.5 * jitter())
 }
 
-#[derive(Resource, Default)]
-pub struct NetStats {
+fn jitter() -> f32 {
+    #[cfg(not(target_family = "wasm"))]
+    {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_nanos() as f32
+            / 1_000_000_000.0
+    }
+    #[cfg(target_family = "wasm")]
+    {
+        js_sys::Math::random() as f32
+    }
+}
+
+#[derive(Resource)]
+pub struct Session {
+    conn: Box<dyn Connection>,
+    pub player: Option<PlayerId>,
     pub rx_bytes: u64,
     pub rx_per_sec: u64,
+    since_rx: f32,
     window: f32,
     window_bytes: u64,
+    batch: Vec<ServerMessage>,
 }
 
-#[derive(Resource, Default, Clone, Copy)]
+impl Session {
+    fn new(conn: Box<dyn Connection>, name: String) -> Self {
+        let mut session = Self {
+            conn,
+            player: None,
+            rx_bytes: 0,
+            rx_per_sec: 0,
+            since_rx: 0.0,
+            window: 0.0,
+            window_bytes: 0,
+            batch: Vec::new(),
+        };
+        session.send(&ClientMessage::Hello {
+            protocol_version: PROTOCOL_VERSION,
+            name,
+        });
+        session
+    }
+
+    pub fn send(&mut self, message: &ClientMessage) {
+        self.conn.send(encode_message(message));
+    }
+
+    fn status(&self) -> ConnectionStatus {
+        self.conn.status()
+    }
+}
+
+#[derive(Clone)]
+pub struct ConnectTarget {
+    pub url: String,
+    pub cert_hash: Option<Vec<u8>>,
+}
+
+#[derive(Resource, Default)]
+pub struct PendingConnect(pub Option<ConnectTarget>);
+
+#[derive(Resource, Default)]
+pub struct Supervisor {
+    pub target: Option<ConnectTarget>,
+    attempt: u32,
+    retry_in: f32,
+    lost: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ConnPhase {
+    Connecting,
+    Reconnecting { attempt: u32 },
+    Online,
+    Stalled { seconds: f32 },
+    Lost { reason: String },
+}
+
+impl Supervisor {
+    pub fn phase(&self, session: Option<&Session>, paused: bool) -> ConnPhase {
+        match session {
+            Some(session) => {
+                if session.player.is_none() {
+                    if self.lost.is_none() && self.attempt <= 1 {
+                        ConnPhase::Connecting
+                    } else {
+                        ConnPhase::Reconnecting {
+                            attempt: self.attempt.max(1),
+                        }
+                    }
+                } else if !paused && session.since_rx >= STALL_SECS {
+                    ConnPhase::Stalled {
+                        seconds: session.since_rx,
+                    }
+                } else {
+                    ConnPhase::Online
+                }
+            }
+            None if self.target.is_some() => ConnPhase::Reconnecting {
+                attempt: self.attempt.max(1),
+            },
+            None => ConnPhase::Lost {
+                reason: self.lost.clone().unwrap_or_else(|| "not connected".into()),
+            },
+        }
+    }
+}
+
+#[derive(Message)]
+pub struct ServerMsg(pub ServerMessage);
+
+#[derive(Message)]
+pub struct SessionEnded;
+
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
 pub struct EmbeddedServerStats {
     pub tick: u64,
     pub sim_micros: u64,
@@ -37,14 +145,6 @@ pub struct EmbeddedServerStats {
     pub players: usize,
     pub replicated_bytes: u64,
     pub pixel_bodies: usize,
-}
-
-#[derive(Message)]
-pub struct ServerMsg(pub ServerMessage);
-
-pub struct ConnectTarget {
-    pub url: String,
-    pub cert_hash: Option<Vec<u8>>,
 }
 
 pub fn parse_cert_hash(hex: &str) -> Option<Vec<u8>> {
@@ -56,9 +156,6 @@ pub fn parse_cert_hash(hex: &str) -> Option<Vec<u8>> {
         .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).ok())
         .collect()
 }
-
-#[derive(Resource, Default)]
-pub struct PendingConnect(pub Option<ConnectTarget>);
 
 pub fn cli_world_name() -> Option<String> {
     #[cfg(not(target_family = "wasm"))]
@@ -113,78 +210,77 @@ pub fn cli_connect_target() -> Option<ConnectTarget> {
 
 impl Plugin for NetPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<LocalPlayer>()
-            .init_resource::<NetStats>()
+        app.init_resource::<PendingConnect>()
+            .init_resource::<Supervisor>()
             .init_resource::<EmbeddedServerStats>()
-            .init_resource::<PendingConnect>()
             .add_message::<ServerMsg>()
-            .add_systems(OnEnter(crate::AppState::InGame), connect)
-            .add_systems(OnExit(crate::AppState::InGame), disconnect)
+            .add_message::<SessionEnded>()
+            .add_systems(OnEnter(crate::AppState::InGame), open)
+            .add_systems(OnExit(crate::AppState::InGame), close)
             .add_systems(
                 PreUpdate,
-                drain_connection
-                    .in_set(NetSet)
-                    .run_if(resource_exists::<Conn>),
+                drain.in_set(NetSet).run_if(resource_exists::<Session>),
+            )
+            .add_systems(
+                PreUpdate,
+                supervise
+                    .after(NetSet)
+                    .run_if(in_state(crate::AppState::InGame)),
             );
 
         #[cfg(not(target_family = "wasm"))]
-        app.add_systems(
-            PreUpdate,
-            embedded::mirror_stats
-                .before(NetSet)
-                .run_if(resource_exists::<embedded::EmbeddedServer>),
-        );
+        app.add_systems(PreUpdate, embedded::mirror_stats.before(NetSet));
     }
 }
 
-fn connect(world: &mut World) {
-    if world.contains_resource::<Conn>() {
-        return;
-    }
+fn open(world: &mut World) {
     let target = world.resource_mut::<PendingConnect>().0.take();
-    #[cfg(not(target_family = "wasm"))]
-    match target {
-        Some(target) => remote::setup(world, target),
-        None => embedded::setup(world),
-    }
-    #[cfg(all(target_family = "wasm", target_os = "unknown"))]
-    if let Some(target) = target {
-        wasm_remote::setup(world, target);
-    } else {
-        warn!("no ?server=https://host:port query parameter; not connecting");
+    *world.resource_mut::<Supervisor>() = Supervisor {
+        target,
+        ..default()
+    };
+    if world.resource::<Supervisor>().target.is_none() {
+        #[cfg(not(target_family = "wasm"))]
+        embedded::launch(world);
+        #[cfg(all(target_family = "wasm", target_os = "unknown"))]
+        warn!("no ?server=host query parameter; not connecting");
     }
 }
 
-fn disconnect(world: &mut World) {
-    if let Some(mut conn) = world.remove_resource::<Conn>() {
-        conn.0.send(encode_message(&ClientMessage::Goodbye));
+fn close(world: &mut World) {
+    if let Some(mut session) = world.remove_resource::<Session>() {
+        session.send(&ClientMessage::Goodbye);
     }
+    *world.resource_mut::<Supervisor>() = Supervisor::default();
     #[cfg(not(target_family = "wasm"))]
-    {
-        world.remove_resource::<embedded::EmbeddedServer>();
-        world.remove_resource::<remote::RemoteRuntime>();
-    }
-    *world.resource_mut::<LocalPlayer>() = LocalPlayer::default();
-    *world.resource_mut::<NetStats>() = NetStats::default();
-    *world.resource_mut::<EmbeddedServerStats>() = EmbeddedServerStats::default();
+    world.remove_resource::<embedded::EmbeddedServer>();
 }
 
-fn drain_connection(
-    mut conn: ResMut<Conn>,
-    mut local: ResMut<LocalPlayer>,
-    mut stats: ResMut<NetStats>,
+fn drain(
+    mut session: ResMut<Session>,
     mut messages: MessageWriter<ServerMsg>,
     registry: Res<ClientRegistry>,
+    pause: Option<Res<State<crate::PauseState>>>,
     time: Res<Time>,
 ) {
-    if let ConnectionStatus::Closed { reason } = conn.0.status() {
-        warn!("connection closed: {reason}");
+    if matches!(session.status(), ConnectionStatus::Closed { .. }) {
+        for message in session.batch.drain(..) {
+            messages.write(ServerMsg(message));
+        }
         return;
     }
 
-    while let Some(bytes) = conn.0.poll() {
-        stats.rx_bytes += bytes.len() as u64;
-        stats.window_bytes += bytes.len() as u64;
+    let paused = pause.is_some_and(|state| *state.get() == crate::PauseState::Paused);
+    session.since_rx = if paused {
+        0.0
+    } else {
+        session.since_rx + time.delta_secs()
+    };
+
+    while let Some(bytes) = session.conn.poll() {
+        session.since_rx = 0.0;
+        session.rx_bytes += bytes.len() as u64;
+        session.window_bytes += bytes.len() as u64;
         match decode_message::<ServerMessage>(&bytes) {
             Ok(message) => {
                 if let ServerMessage::HelloAck {
@@ -201,52 +297,101 @@ fn drain_connection(
                     if *registry_hash != registry.0.hash() {
                         error!("material registry hash mismatch with server");
                     }
-                    local.id = Some(*player);
-                    local.spawn = Some(*spawn);
+                    session.player = Some(*player);
                     info!("joined as {player:?}, spawn {spawn:?}");
                 }
-                messages.write(ServerMsg(message));
+                let flush = matches!(message, ServerMessage::TickEnd { .. });
+                session.batch.push(message);
+                if flush {
+                    for message in session.batch.drain(..) {
+                        messages.write(ServerMsg(message));
+                    }
+                }
             }
             Err(err) => error!("bad message: {err}"),
         }
     }
 
-    stats.window += time.delta_secs();
-    if stats.window >= 1.0 {
-        stats.rx_per_sec = (stats.window_bytes as f32 / stats.window) as u64;
-        stats.window = 0.0;
-        stats.window_bytes = 0;
+    session.window += time.delta_secs();
+    if session.window >= 1.0 {
+        session.rx_per_sec = (session.window_bytes as f32 / session.window) as u64;
+        session.window = 0.0;
+        session.window_bytes = 0;
+    }
+}
+
+fn supervise(world: &mut World) {
+    let status = world.get_resource::<Session>().map(Session::status);
+    match status {
+        Some(ConnectionStatus::Closed { reason }) => {
+            warn!("connection closed: {reason}");
+            world.remove_resource::<Session>();
+            world.write_message(SessionEnded);
+            let mut supervisor = world.resource_mut::<Supervisor>();
+            supervisor.retry_in = retry_delay(supervisor.attempt);
+            supervisor.lost = Some(reason);
+        }
+        Some(ConnectionStatus::Connected) => {
+            if world.resource::<Session>().player.is_some() {
+                let mut supervisor = world.resource_mut::<Supervisor>();
+                if supervisor.attempt != 0 || supervisor.lost.is_some() {
+                    supervisor.attempt = 0;
+                    supervisor.lost = None;
+                }
+            }
+        }
+        None => {
+            let Some(target) = world.resource::<Supervisor>().target.clone() else {
+                return;
+            };
+            let delta = world.resource::<Time>().delta_secs();
+            let mut supervisor = world.resource_mut::<Supervisor>();
+            supervisor.retry_in -= delta;
+            if supervisor.retry_in > 0.0 {
+                return;
+            }
+            supervisor.attempt += 1;
+            supervisor.retry_in = retry_delay(supervisor.attempt);
+            let attempt = supervisor.attempt;
+            info!("connecting to {} (attempt {attempt})", target.url);
+            match dial(world, &target) {
+                Ok(conn) => {
+                    world.insert_resource(Session::new(conn, player_name()));
+                }
+                Err(err) => {
+                    error!("failed to connect to {}: {err}", target.url);
+                    world.resource_mut::<Supervisor>().lost = Some(err);
+                }
+            }
+        }
     }
 }
 
 #[cfg(not(target_family = "wasm"))]
-mod remote {
-    use super::*;
+#[derive(Resource)]
+struct NetRuntime(tokio::runtime::Runtime);
 
-    pub fn setup(world: &mut World, target: ConnectTarget) {
+#[cfg(not(target_family = "wasm"))]
+fn dial(world: &mut World, target: &ConnectTarget) -> Result<Box<dyn Connection>, String> {
+    if !world.contains_resource::<NetRuntime>() {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
-            .expect("tokio runtime");
-        let handle = runtime.handle().clone();
-        match fallingsand_net::wt_native::connect(handle, &target.url, target.cert_hash) {
-            Ok(mut conn) => {
-                info!("connected to {}", target.url);
-                conn.send(encode_message(&ClientMessage::Hello {
-                    protocol_version: PROTOCOL_VERSION,
-                    name: player_name(),
-                }));
-                world.insert_resource(Conn(Box::new(conn)));
-                world.insert_resource(RemoteRuntime(runtime));
-            }
-            Err(err) => {
-                error!("failed to connect to {}: {err}", target.url);
-            }
-        }
+            .map_err(|err| err.to_string())?;
+        world.insert_resource(NetRuntime(runtime));
     }
+    let handle = world.resource::<NetRuntime>().0.handle().clone();
+    fallingsand_net::wt_native::connect(handle, &target.url, target.cert_hash.clone())
+        .map(|conn| Box::new(conn) as Box<dyn Connection>)
+        .map_err(|err| err.to_string())
+}
 
-    #[derive(Resource)]
-    pub(super) struct RemoteRuntime(#[allow(dead_code)] tokio::runtime::Runtime);
+#[cfg(all(target_family = "wasm", target_os = "unknown"))]
+fn dial(_world: &mut World, target: &ConnectTarget) -> Result<Box<dyn Connection>, String> {
+    Ok(Box::new(fallingsand_net::wt_wasm::connect(
+        &target.url,
+        target.cert_hash.clone(),
+    )))
 }
 
 #[cfg(all(target_family = "wasm", target_os = "unknown"))]
@@ -273,25 +418,48 @@ mod wasm_remote {
         url.map(|url| ConnectTarget { url, cert_hash })
     }
 
-    pub fn setup(world: &mut World, target: ConnectTarget) {
-        let mut conn = fallingsand_net::wt_wasm::connect(&target.url, target.cert_hash);
-        info!("connecting to {}", target.url);
-        conn.send(encode_message(&ClientMessage::Hello {
-            protocol_version: PROTOCOL_VERSION,
-            name: player_name(),
-        }));
-        world.insert_resource(Conn(Box::new(conn)));
+    pub fn query_player_name() -> Option<String> {
+        let location = web_sys::window().map(|w| w.location());
+        let query = location.and_then(|l| l.search().ok()).unwrap_or_default();
+        for pair in query.trim_start_matches('?').split('&') {
+            let mut parts = pair.splitn(2, '=');
+            if let (Some("name"), Some(value)) = (parts.next(), parts.next()) {
+                return js_sys::decode_uri_component(value)
+                    .ok()
+                    .map(String::from)
+                    .filter(|name| !name.trim().is_empty());
+            }
+        }
+        None
+    }
+}
+
+pub fn configured_player_name() -> Option<String> {
+    #[cfg(not(target_family = "wasm"))]
+    {
+        let mut args = std::env::args().skip(1);
+        while let Some(arg) = args.next() {
+            if arg == "--name" {
+                return args.next().filter(|name| !name.trim().is_empty());
+            }
+        }
+        None
+    }
+    #[cfg(target_family = "wasm")]
+    {
+        wasm_remote::query_player_name()
     }
 }
 
 #[cfg(not(target_family = "wasm"))]
 fn player_name() -> String {
-    std::env::var("FS_PLAYER").unwrap_or_else(|_| format!("player{}", std::process::id() % 1000))
+    configured_player_name().unwrap_or_else(|| format!("player{}", std::process::id() % 1000))
 }
 
 #[cfg(all(target_family = "wasm", target_os = "unknown"))]
 fn player_name() -> String {
-    format!("web{}", (js_sys::Math::random() * 1000.0) as u32)
+    configured_player_name()
+        .unwrap_or_else(|| format!("web{}", (js_sys::Math::random() * 1000.0) as u32))
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -316,7 +484,7 @@ pub mod embedded {
         }
     }
 
-    pub fn setup(world: &mut World) {
+    pub fn launch(world: &mut World) {
         let registry = world.resource::<ClientRegistry>().0.clone();
         let world_name = world.resource::<crate::menu::SelectedWorld>().0.clone();
         let (listener, dialer) = fallingsand_net::memory_listener();
@@ -347,13 +515,9 @@ pub mod embedded {
             })
             .expect("spawn embedded server thread");
 
-        let mut conn = dialer.connect().expect("connect to embedded server");
-        conn.send(encode_message(&ClientMessage::Hello {
-            protocol_version: PROTOCOL_VERSION,
-            name: "local".into(),
-        }));
-
-        world.insert_resource(Conn(Box::new(conn)));
+        let conn = dialer.connect().expect("connect to embedded server");
+        let name = configured_player_name().unwrap_or_else(|| "local".into());
+        world.insert_resource(Session::new(Box::new(conn), name));
         world.insert_resource(EmbeddedServer {
             control,
             thread: Some(thread),
@@ -373,16 +537,24 @@ pub mod embedded {
         hasher.finish()
     }
 
-    pub fn mirror_stats(server: Res<EmbeddedServer>, mut mirror: ResMut<EmbeddedServerStats>) {
-        let stats = *server.stats.lock().unwrap();
-        *mirror = EmbeddedServerStats {
-            tick: stats.tick,
-            sim_micros: stats.sim_micros,
-            awake_chunks: stats.awake_chunks,
-            loaded_chunks: stats.loaded_chunks,
-            players: stats.players,
-            replicated_bytes: stats.replicated_bytes,
-            pixel_bodies: stats.pixel_bodies,
-        };
+    pub fn mirror_stats(
+        server: Option<Res<EmbeddedServer>>,
+        mut mirror: ResMut<EmbeddedServerStats>,
+    ) {
+        let next = server
+            .map(|server| {
+                let stats = *server.stats.lock().unwrap();
+                EmbeddedServerStats {
+                    tick: stats.tick,
+                    sim_micros: stats.sim_micros,
+                    awake_chunks: stats.awake_chunks,
+                    loaded_chunks: stats.loaded_chunks,
+                    players: stats.players,
+                    replicated_bytes: stats.replicated_bytes,
+                    pixel_bodies: stats.pixel_bodies,
+                }
+            })
+            .unwrap_or_default();
+        mirror.set_if_neq(next);
     }
 }

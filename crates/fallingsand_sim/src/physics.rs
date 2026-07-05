@@ -4,6 +4,7 @@ use fallingsand_core::{Cell, CellPos, MaterialRegistry, Phase};
 
 pub const STEP_UP_CELLS: i32 = 3;
 pub const STEP_DOWN_CELLS: i32 = 3;
+const CEILING_SLIP_CELLS: i32 = 2;
 const SUB_STEP: f32 = 0.4;
 const SKIN: f32 = 1e-4;
 const COYOTE_TICKS: u8 = 8;
@@ -12,7 +13,12 @@ const APEX_SPEED: f32 = 20.0;
 const STEP_UP_MAX_RISE: f32 = 40.0;
 const WADE_UP_CELLS: usize = 4;
 const WADE_SIDE_CELLS: usize = 2;
-const FALL_RAMP_SPEED: f32 = 80.0;
+const FALL_RAMP_SPEED: f32 = 110.0;
+const FAST_FALL_GRAVITY: f32 = 1.3;
+const FALL_CAP_EASE: f32 = 2000.0;
+const HOP_BOOST: f32 = 30.0;
+const OVERSPEED_FRICTION_GROUND: f32 = 400.0;
+const OVERSPEED_FRICTION_AIR: f32 = 60.0;
 const WADE_DAMP: f32 = 0.7;
 const MAX_DISPLACED: usize = 16;
 const SCATTER_RADIUS: i32 = 6;
@@ -131,6 +137,7 @@ pub struct PlayerParams {
     pub gravity_down: f32,
     pub apex_gravity: f32,
     pub max_fall_speed: f32,
+    pub fast_fall_speed: f32,
     pub swim_speed: f32,
     pub swim_accel: f32,
     pub water_gravity: f32,
@@ -144,16 +151,17 @@ impl Default for PlayerParams {
     fn default() -> Self {
         Self {
             run_speed: 80.0,
-            run_accel: 1000.0,
+            run_accel: 750.0,
             run_decel: 1600.0,
             air_control: 0.65,
             jump_speed: 205.0,
             jump_cut: 0.5,
             cut_gravity: 2.0,
             gravity_up: -760.0,
-            gravity_down: -1020.0,
+            gravity_down: -850.0,
             apex_gravity: 0.7,
-            max_fall_speed: 330.0,
+            max_fall_speed: 190.0,
+            fast_fall_speed: 340.0,
             swim_speed: 32.0,
             swim_accel: 250.0,
             water_gravity: 500.0,
@@ -182,6 +190,7 @@ pub fn step_player<W: CellSource>(
     ctrl: &mut Controller,
     move_x: i8,
     jump_held: bool,
+    down_held: bool,
     dt: f32,
 ) -> Vec<CellPos> {
     let pressed = jump_held && !ctrl.jump_held;
@@ -202,8 +211,9 @@ pub fn step_player<W: CellSource>(
         if body.vy <= 0.0 {
             ctrl.jumping = false;
         }
-        if ctrl.buffer > 0 && ctrl.coyote > 0 {
+        if (ctrl.buffer > 0 || jump_held) && ctrl.coyote > 0 {
             body.vy = params.jump_speed;
+            body.vx += move_x.clamp(-1, 1) as f32 * HOP_BOOST;
             ctrl.buffer = 0;
             ctrl.coyote = 0;
             ctrl.jumping = true;
@@ -236,7 +246,8 @@ pub fn step_player<W: CellSource>(
                 params.water_thrust
             } else {
                 0.0
-            };
+            }
+            - if down_held { params.water_thrust } else { 0.0 };
         body.vy += (lift * submersion - params.water_gravity) * dt;
         let drag = params.water_drag + params.water_drag_quad * body.vy.abs();
         body.vy *= 1.0 - (drag * dt).min(1.0);
@@ -251,8 +262,9 @@ pub fn step_player<W: CellSource>(
         } else {
             ctrl.coyote.saturating_sub(1)
         };
-        if ctrl.buffer > 0 && ctrl.coyote > 0 {
+        if (ctrl.buffer > 0 || jump_held) && ctrl.coyote > 0 {
             body.vy = params.jump_speed;
+            body.vx += move_x.clamp(-1, 1) as f32 * HOP_BOOST;
             ctrl.buffer = 0;
             ctrl.coyote = 0;
             ctrl.jumping = true;
@@ -264,7 +276,9 @@ pub fn step_player<W: CellSource>(
         if body.vy <= 0.0 {
             ctrl.jumping = false;
         }
-        let gravity = if !body.on_ground && jump_held && body.vy.abs() < APEX_SPEED {
+        let gravity = if down_held && body.vy <= 0.0 {
+            params.gravity_down * FAST_FALL_GRAVITY
+        } else if !body.on_ground && jump_held && body.vy.abs() < APEX_SPEED {
             params.gravity_up * params.apex_gravity
         } else if body.vy > 0.0 {
             if jump_held {
@@ -278,17 +292,34 @@ pub fn step_player<W: CellSource>(
         } else {
             params.gravity_down
         };
-        body.vy = (body.vy + gravity * dt).max(-params.max_fall_speed);
-        let target = move_x.clamp(-1, 1) as f32 * params.run_speed;
-        let mut accel = if target == 0.0 || target * body.vx < 0.0 {
-            params.run_decel
+        let cap = if down_held {
+            params.fast_fall_speed
         } else {
-            params.run_accel
+            params.max_fall_speed
         };
-        if !body.on_ground {
-            accel *= params.air_control;
+        body.vy += gravity * dt;
+        if body.vy < -cap {
+            body.vy = approach(body.vy, -cap, FALL_CAP_EASE * dt);
         }
-        body.vx = approach(body.vx, target, accel * dt);
+        let target = move_x.clamp(-1, 1) as f32 * params.run_speed;
+        if target != 0.0 && target * body.vx > 0.0 && body.vx.abs() > target.abs() {
+            let friction = if body.on_ground {
+                OVERSPEED_FRICTION_GROUND
+            } else {
+                OVERSPEED_FRICTION_AIR
+            };
+            body.vx = approach(body.vx, target, friction * dt);
+        } else {
+            let mut accel = if target == 0.0 || target * body.vx < 0.0 {
+                params.run_decel
+            } else {
+                params.run_accel
+            };
+            if !body.on_ground {
+                accel *= params.air_control;
+            }
+            body.vx = approach(body.vx, target, accel * dt);
+        }
     }
     ctrl.submerged = submerged;
     move_body(world, registry, body, dt)
@@ -296,8 +327,8 @@ pub fn step_player<W: CellSource>(
 
 enum Passage {
     Free,
-    Blocked,
-    Wade(u32),
+    Solid,
+    Powder(Vec<CellPos>),
 }
 
 fn passage<W: CellSource>(
@@ -306,8 +337,7 @@ fn passage<W: CellSource>(
     body: &Body,
     cx: f32,
     cy: f32,
-    wade_limit: usize,
-    displaced: &mut Vec<CellPos>,
+    displaced: &[CellPos],
 ) -> Passage {
     let cur = cell_bounds(body.x, body.y, body.half_w, body.half_h);
     let (x0, y0, x1, y1) = cell_bounds(cx, cy, body.half_w, body.half_h);
@@ -316,10 +346,10 @@ fn passage<W: CellSource>(
         for x in x0..=x1 {
             let pos = CellPos::new(x, y);
             let Some(cell) = world.cell_at(pos) else {
-                return Passage::Blocked;
+                return Passage::Solid;
             };
             match registry.get(cell.material).phase {
-                Phase::Solid => return Passage::Blocked,
+                Phase::Solid => return Passage::Solid,
                 Phase::Powder => {
                     let overlapped = x >= cur.0 && x <= cur.2 && y >= cur.1 && y <= cur.3;
                     if !overlapped && !displaced.contains(&pos) {
@@ -331,14 +361,9 @@ fn passage<W: CellSource>(
         }
     }
     if powder.is_empty() {
-        return Passage::Free;
-    }
-    if powder.len() <= wade_limit && displaced.len() + powder.len() <= MAX_DISPLACED {
-        let cost = powder.len() as u32;
-        displaced.extend(powder);
-        Passage::Wade(cost)
+        Passage::Free
     } else {
-        Passage::Blocked
+        Passage::Powder(powder)
     }
 }
 
@@ -353,47 +378,45 @@ pub fn move_body<W: CellSource>(
     body.on_ground = false;
     let mut remaining_x = body.vx * dt;
     let mut remaining_y = body.vy * dt;
+    let mut slip_budget = CEILING_SLIP_CELLS;
 
     while remaining_x.abs() > SKIN {
         let step = remaining_x.clamp(-SUB_STEP, SUB_STEP);
         remaining_x -= step;
         let next_x = body.x + step;
-        match passage(
-            world,
-            registry,
-            body,
-            next_x,
-            body.y,
-            WADE_SIDE_CELLS,
-            &mut displaced,
-        ) {
-            Passage::Free => body.x = next_x,
-            Passage::Wade(cost) => {
-                body.x = next_x;
-                let damp = WADE_DAMP.powi(cost as i32);
-                body.vx *= damp;
-                remaining_x *= damp;
-            }
-            Passage::Blocked => {
-                let mut stepped = false;
-                if body.vy <= STEP_UP_MAX_RISE {
-                    for up in 1..=STEP_UP_CELLS {
-                        let next_y = body.y + up as f32;
-                        if !rect_blocked(world, registry, next_x, next_y, body.half_w, body.half_h)
-                        {
-                            body.x = next_x;
-                            body.y = next_y;
-                            stepped = true;
-                            break;
-                        }
-                    }
-                }
-                if !stepped {
-                    body.vx = 0.0;
+        let outcome = passage(world, registry, body, next_x, body.y, &displaced);
+        if matches!(outcome, Passage::Free) {
+            body.x = next_x;
+            continue;
+        }
+        let mut stepped = false;
+        if body.vy <= STEP_UP_MAX_RISE {
+            for up in 1..=STEP_UP_CELLS {
+                let next_y = body.y + up as f32;
+                if !rect_blocked(world, registry, next_x, next_y, body.half_w, body.half_h) {
+                    body.x = next_x;
+                    body.y = next_y;
+                    stepped = true;
                     break;
                 }
             }
         }
+        if stepped {
+            continue;
+        }
+        if let Passage::Powder(cells) = outcome
+            && cells.len() <= WADE_SIDE_CELLS
+            && displaced.len() + cells.len() <= MAX_DISPLACED
+        {
+            let damp = WADE_DAMP.powi(cells.len() as i32);
+            displaced.extend(cells);
+            body.x = next_x;
+            body.vx *= damp;
+            remaining_x *= damp;
+            continue;
+        }
+        body.vx = 0.0;
+        break;
     }
 
     if was_grounded
@@ -430,49 +453,46 @@ pub fn move_body<W: CellSource>(
     while remaining_y.abs() > SKIN {
         let step = remaining_y.clamp(-SUB_STEP, SUB_STEP);
         let next_y = body.y + step;
-        match passage(
-            world,
-            registry,
-            body,
-            body.x,
-            next_y,
-            if step > 0.0 { WADE_UP_CELLS } else { 0 },
-            &mut displaced,
-        ) {
+        let outcome = passage(world, registry, body, body.x, next_y, &displaced);
+        match outcome {
             Passage::Free => {
                 remaining_y -= step;
                 body.y = next_y;
             }
-            Passage::Wade(cost) => {
+            Passage::Powder(cells)
+                if step > 0.0
+                    && cells.len() <= WADE_UP_CELLS
+                    && displaced.len() + cells.len() <= MAX_DISPLACED =>
+            {
                 remaining_y -= step;
                 body.y = next_y;
-                let damp = WADE_DAMP.powi(cost as i32);
+                let damp = WADE_DAMP.powi(cells.len() as i32);
+                displaced.extend(cells);
                 body.vy *= damp;
                 remaining_y *= damp;
             }
-            Passage::Blocked => {
+            _ => {
                 if step > 0.0 {
-                    let nudges: [i32; 4] = if body.vx >= 0.0 {
-                        [1, 2, -1, -2]
-                    } else {
-                        [-1, -2, 1, 2]
-                    };
+                    let sign = if body.vx >= 0.0 { 1.0 } else { -1.0 };
                     let mut corrected = false;
-                    for nudge in nudges {
-                        let nudged_x = body.x + nudge as f32;
-                        if !rect_blocked(
-                            world,
-                            registry,
-                            nudged_x,
-                            next_y,
-                            body.half_w,
-                            body.half_h,
-                        ) {
-                            body.x = nudged_x;
-                            body.y = next_y;
-                            remaining_y -= step;
-                            corrected = true;
-                            break;
+                    if slip_budget > 0 {
+                        for nudge in [sign, -sign] {
+                            let nudged_x = body.x + nudge;
+                            if !rect_blocked(
+                                world,
+                                registry,
+                                nudged_x,
+                                next_y,
+                                body.half_w,
+                                body.half_h,
+                            ) {
+                                body.x = nudged_x;
+                                body.y = next_y;
+                                remaining_y -= step;
+                                slip_budget -= 1;
+                                corrected = true;
+                                break;
+                            }
                         }
                     }
                     if !corrected {
