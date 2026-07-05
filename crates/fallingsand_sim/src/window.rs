@@ -2,11 +2,14 @@ use fallingsand_core::{CHUNK_SIZE, Cell, CellPos, Chunk, ChunkPos, DirtyRect};
 
 pub const WINDOW_CHUNKS: i32 = 4;
 pub const WINDOW_SLOTS: usize = (WINDOW_CHUNKS * WINDOW_CHUNKS) as usize;
+pub const SPEED_OF_LIGHT: i32 = CHUNK_SIZE as i32;
+const _: () = assert!(SPEED_OF_LIGHT as usize == CHUNK_SIZE && WINDOW_CHUNKS == 4);
 
 pub struct SimWindow {
     origin: ChunkPos,
     slots: [Option<Chunk>; WINDOW_SLOTS],
     tick: u64,
+    structural: Vec<CellPos>,
 }
 
 impl SimWindow {
@@ -15,11 +18,16 @@ impl SimWindow {
             origin,
             slots,
             tick,
+            structural: Vec::new(),
         }
     }
 
-    pub(crate) fn into_parts(self) -> (ChunkPos, [Option<Chunk>; WINDOW_SLOTS]) {
-        (self.origin, self.slots)
+    pub(crate) fn into_parts(self) -> (ChunkPos, [Option<Chunk>; WINDOW_SLOTS], Vec<CellPos>) {
+        (self.origin, self.slots, self.structural)
+    }
+
+    pub fn note_structural(&mut self, pos: CellPos) {
+        self.structural.push(pos);
     }
 
     pub(crate) const fn origin(&self) -> ChunkPos {
@@ -39,7 +47,7 @@ impl SimWindow {
         let sy = chunk.y.wrapping_sub(self.origin.y);
         debug_assert!(
             (0..WINDOW_CHUNKS).contains(&sx) && (0..WINDOW_CHUNKS).contains(&sy),
-            "speed-of-light violation: access at {pos:?} escapes window at {:?}",
+            "speed-of-light ({SPEED_OF_LIGHT}) violation: access at {pos:?} escapes window at {:?}",
             self.origin
         );
         if !(0..WINDOW_CHUNKS).contains(&sx) || !(0..WINDOW_CHUNKS).contains(&sy) {
@@ -66,6 +74,20 @@ impl SimWindow {
             chunk.sleeping = false;
         }
         chunk.set(pos.offset(), cell);
+    }
+
+    pub fn mark(&mut self, pos: CellPos) {
+        let Some(slot) = self.slot_of(pos) else {
+            return;
+        };
+        let Some(chunk) = self.slots[slot].as_mut() else {
+            return;
+        };
+        if chunk.sleeping {
+            chunk.normalize_updated((self.tick as u8).wrapping_sub(1));
+            chunk.sleeping = false;
+        }
+        chunk.keep_bounds.mark(pos.offset());
     }
 
     pub fn swap(&mut self, a: CellPos, b: CellPos) {

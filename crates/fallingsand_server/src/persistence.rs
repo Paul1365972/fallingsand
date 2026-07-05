@@ -1,17 +1,18 @@
 use fallingsand_core::{
     CHUNK_AREA, Cell, ChunkOffset, MaterialId, REGION_AREA_CHUNKS, Region, RegionPos,
 };
+use fallingsand_protocol::PlayerUuid;
 use redb::{Database, ReadableDatabase, TableDefinition};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 pub const REGION_FORMAT_VERSION: u8 = 1;
-pub const WORLD_FORMAT_VERSION: u16 = 1;
+pub const WORLD_FORMAT_VERSION: u16 = 2;
 const CELL_BYTES: usize = 3;
 const REGION_RAW_BYTES: usize = REGION_AREA_CHUNKS * CHUNK_AREA * CELL_BYTES;
 
 const REGIONS: TableDefinition<u64, &[u8]> = TableDefinition::new("regions");
-const PLAYERS: TableDefinition<&str, &[u8]> = TableDefinition::new("players");
+const PLAYERS: TableDefinition<u128, &[u8]> = TableDefinition::new("players");
 const META: TableDefinition<&str, &[u8]> = TableDefinition::new("meta");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,10 +22,11 @@ pub struct WorldMeta {
     pub name: String,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PlayerRecord {
     pub x: f32,
     pub y: f32,
+    pub hp: f32,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -77,6 +79,21 @@ impl WorldStore {
             let _ = std::fs::create_dir_all(parent);
         }
         let db = Database::create(path)?;
+        {
+            let read = db.begin_read()?;
+            match read.open_table(META) {
+                Ok(table) => {
+                    if let Some(guard) = table.get("world")? {
+                        let meta: WorldMeta = postcard::from_bytes(guard.value())?;
+                        if meta.format_version != WORLD_FORMAT_VERSION {
+                            return Err(StoreError::UnsupportedWorld(meta.format_version));
+                        }
+                    }
+                }
+                Err(redb::TableError::TableDoesNotExist(_)) => {}
+                Err(err) => return Err(err.into()),
+            }
+        }
         let write = db.begin_write()?;
         {
             write.open_table(REGIONS)?;
@@ -135,25 +152,25 @@ impl WorldStore {
         Ok(())
     }
 
-    pub fn load_player(&self, name: &str) -> Result<Option<PlayerRecord>, StoreError> {
+    pub fn load_player(&self, uuid: PlayerUuid) -> Result<Option<PlayerRecord>, StoreError> {
         let read = self.db.begin_read()?;
         let table = read.open_table(PLAYERS)?;
-        let Some(guard) = table.get(name)? else {
+        let Some(guard) = table.get(uuid.0)? else {
             return Ok(None);
         };
         Ok(Some(postcard::from_bytes(guard.value())?))
     }
 
-    pub fn save_players(&self, players: &[(String, PlayerRecord)]) -> Result<(), StoreError> {
+    pub fn save_players(&self, players: &[(PlayerUuid, PlayerRecord)]) -> Result<(), StoreError> {
         if players.is_empty() {
             return Ok(());
         }
         let write = self.db.begin_write()?;
         {
             let mut table = write.open_table(PLAYERS)?;
-            for (name, record) in players {
+            for (uuid, record) in players {
                 let bytes = postcard::to_allocvec(record)?;
-                table.insert(name.as_str(), bytes.as_slice())?;
+                table.insert(uuid.0, bytes.as_slice())?;
             }
         }
         write.commit()?;

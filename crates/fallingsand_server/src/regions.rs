@@ -1,10 +1,15 @@
 use crate::persistence::{PlayerRecord, WorldStore, encode_region};
 use crate::session::Sessions;
-use crate::systems::PhysicsBody;
+use crate::systems::{Health, PhysicsBody};
 use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y, SimWorld};
 use bevy_ecs::prelude::*;
-use fallingsand_core::{CellPos, ChunkOffset, ChunkPos, REGION_SIZE_CHUNKS, Region, RegionPos};
-use fallingsand_sim::CellWorld;
+use fallingsand_core::{
+    CellOffset, CellPos, ChunkOffset, ChunkPos, MaterialRegistry, REGION_SIZE_CELLS,
+    REGION_SIZE_CHUNKS, Region, RegionPos,
+};
+use fallingsand_protocol::PlayerUuid;
+use fallingsand_sim::bodies::stamp_body;
+use fallingsand_sim::{CellWorld, PixelBody};
 use fallingsand_worldgen::WorldGenerator;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
@@ -30,36 +35,80 @@ pub struct RegionMap {
     pub states: FxHashMap<RegionPos, RegionState>,
 }
 
-pub fn wanted_regions(query: &Query<&PhysicsBody>) -> FxHashSet<RegionPos> {
-    let mut wanted = FxHashSet::default();
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TicketLevel {
+    Active,
+    Border,
+    Loaded,
+}
+
+#[derive(Resource, Default)]
+pub struct ChunkTickets {
+    pub active: FxHashSet<ChunkPos>,
+    pub border: FxHashSet<ChunkPos>,
+}
+
+impl ChunkTickets {
+    pub fn simulates(&self, pos: ChunkPos) -> bool {
+        self.active.contains(&pos) || self.border.contains(&pos)
+    }
+
+    pub fn level(&self, pos: ChunkPos) -> TicketLevel {
+        if self.active.contains(&pos) {
+            TicketLevel::Active
+        } else if self.border.contains(&pos) {
+            TicketLevel::Border
+        } else {
+            TicketLevel::Loaded
+        }
+    }
+}
+
+pub fn compute_tickets(mut tickets: ResMut<ChunkTickets>, query: Query<&PhysicsBody>) {
+    let ChunkTickets { active, border } = &mut *tickets;
+    active.clear();
+    border.clear();
     for body in query.iter() {
         let center = CellPos::new(body.0.x as i32, body.0.y as i32).chunk();
-        let min = center.translated(
-            -(INTEREST_RADIUS_X + BORDER_MARGIN),
-            -(INTEREST_RADIUS_Y + BORDER_MARGIN),
-        );
-        let max = center.translated(
-            INTEREST_RADIUS_X + BORDER_MARGIN,
-            INTEREST_RADIUS_Y + BORDER_MARGIN,
-        );
-        for region_y in (min.y >> 3)..=(max.y >> 3) {
-            for region_x in (min.x >> 3)..=(max.x >> 3) {
-                wanted.insert(RegionPos::new(region_x, region_y));
+        for dy in -(INTEREST_RADIUS_Y + BORDER_MARGIN)..=(INTEREST_RADIUS_Y + BORDER_MARGIN) {
+            for dx in -(INTEREST_RADIUS_X + BORDER_MARGIN)..=(INTEREST_RADIUS_X + BORDER_MARGIN) {
+                let pos = center.translated(dx, dy);
+                if dx.abs() <= INTEREST_RADIUS_X && dy.abs() <= INTEREST_RADIUS_Y {
+                    active.insert(pos);
+                } else {
+                    border.insert(pos);
+                }
             }
         }
     }
-    wanted
+    border.retain(|pos| !active.contains(pos));
 }
 
-fn insert_region(sim: &mut CellWorld, pos: RegionPos, region: Region) {
+pub fn wanted_regions(tickets: &ChunkTickets) -> FxHashSet<RegionPos> {
+    tickets
+        .active
+        .iter()
+        .chain(tickets.border.iter())
+        .map(|pos| pos.region())
+        .collect()
+}
+
+fn insert_region(sim: &mut CellWorld, registry: &MaterialRegistry, pos: RegionPos, region: Region) {
     let base = pos.base_chunk();
     let chunks = *region.into_chunks();
+    let mut reactive: Vec<CellPos> = Vec::new();
     for (index, chunk) in chunks.into_iter().enumerate() {
         let offset = ChunkOffset::from_index(index);
-        sim.insert_chunk(
-            ChunkPos::new(base.x + offset.x as i32, base.y + offset.y as i32),
-            chunk,
-        );
+        let chunk_pos = ChunkPos::new(base.x + offset.x as i32, base.y + offset.y as i32);
+        for (cell_index, cell) in chunk.cells().iter().enumerate() {
+            if registry.is_reactive(cell.material) {
+                reactive.push(chunk_pos.cell(CellOffset::from_index(cell_index)));
+            }
+        }
+        sim.insert_chunk(chunk_pos, chunk);
+    }
+    for cell_pos in reactive {
+        sim.mark_keep(cell_pos);
     }
 }
 
@@ -76,15 +125,30 @@ fn extract_region(sim: &mut CellWorld, pos: RegionPos) -> Region {
     region
 }
 
+fn body_overlaps_region(body: &PixelBody, pos: RegionPos) -> bool {
+    let radius = (body.width as f32).hypot(body.height as f32) + 1.0;
+    let base = pos.base_chunk().base_cell();
+    let (min_x, min_y) = (base.x as f32, base.y as f32);
+    let max_x = min_x + REGION_SIZE_CELLS as f32;
+    let max_y = min_y + REGION_SIZE_CELLS as f32;
+    body.x + radius > min_x
+        && body.x - radius < max_x
+        && body.y + radius > min_y
+        && body.y - radius < max_y
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn manage_regions(
     mut sim: ResMut<SimWorld>,
     mut regions: ResMut<RegionMap>,
     generator: Res<Generator>,
     store: Res<Store>,
-    query: Query<&PhysicsBody>,
+    registry: Res<crate::Registry>,
+    tickets: Res<ChunkTickets>,
+    mut bodies: ResMut<crate::bodies::PixelBodies>,
 ) {
     let tick = sim.0.tick();
-    let wanted = wanted_regions(&query);
+    let wanted = wanted_regions(&tickets);
 
     for pos in &wanted {
         if let Some(state) = regions.states.get_mut(pos) {
@@ -108,7 +172,7 @@ pub fn manage_regions(
             })
         });
         let region = loaded.unwrap_or_else(|| generator.0.generate_region(pos));
-        insert_region(&mut sim.0, pos, region);
+        insert_region(&mut sim.0, &registry.0, pos, region);
         regions.states.insert(
             pos,
             RegionState {
@@ -116,6 +180,32 @@ pub fn manage_regions(
                 last_wanted: tick,
             },
         );
+    }
+
+    let expired: Vec<RegionPos> = regions
+        .states
+        .iter()
+        .filter(|(pos, state)| {
+            !wanted.contains(pos) && tick.saturating_sub(state.last_wanted) > UNLOAD_GRACE_TICKS
+        })
+        .map(|(&pos, _)| pos)
+        .collect();
+
+    if !expired.is_empty() {
+        let bodies = &mut *bodies;
+        let mut index = 0;
+        while index < bodies.bodies.len() {
+            let unloading = expired
+                .iter()
+                .any(|&pos| body_overlaps_region(&bodies.bodies[index], pos));
+            if unloading {
+                let body = bodies.bodies.swap_remove(index);
+                stamp_body(&mut sim.0, &registry.0, &body);
+                bodies.despawned.push(body.id);
+            } else {
+                index += 1;
+            }
+        }
     }
 
     for (pos, state) in regions.states.iter_mut() {
@@ -134,15 +224,6 @@ pub fn manage_regions(
             }
         }
     }
-
-    let expired: Vec<RegionPos> = regions
-        .states
-        .iter()
-        .filter(|(pos, state)| {
-            !wanted.contains(pos) && tick.saturating_sub(state.last_wanted) > UNLOAD_GRACE_TICKS
-        })
-        .map(|(&pos, _)| pos)
-        .collect();
 
     let mut to_save: Vec<(RegionPos, Vec<u8>)> = Vec::new();
     for pos in expired {
@@ -164,7 +245,7 @@ pub fn autosave(
     mut regions: ResMut<RegionMap>,
     store: Res<Store>,
     sessions: Res<Sessions>,
-    query: Query<(&crate::session::Player, &PhysicsBody)>,
+    query: Query<(&crate::session::Player, &PhysicsBody, &Health)>,
 ) {
     let Some(store) = store.0.as_ref() else {
         return;
@@ -197,17 +278,18 @@ pub fn autosave(
         Err(err) => tracing::error!("autosave failed: {err}"),
     }
 
-    let players: Vec<(String, PlayerRecord)> = sessions
+    let players: Vec<(PlayerUuid, PlayerRecord)> = sessions
         .sessions
         .iter()
         .filter_map(|session| {
             let entity = session.entity?;
-            let (player, body) = query.get(entity).ok()?;
+            let (player, body, health) = query.get(entity).ok()?;
             Some((
-                player.name.clone(),
+                player.uuid,
                 PlayerRecord {
                     x: body.0.x,
                     y: body.0.y,
+                    hp: health.hp,
                 },
             ))
         })
@@ -217,12 +299,53 @@ pub fn autosave(
     }
 }
 
-pub fn save_everything(world: &mut bevy_ecs::world::World) {
+pub fn save_everything(world: &mut bevy_ecs::world::World, final_save: bool) {
     let store = match &world.resource::<Store>().0 {
         Some(store) => store.clone(),
         None => return,
     };
     let started = std::time::Instant::now();
+
+    if final_save {
+        let registry = world.resource::<crate::Registry>().0.clone();
+        let mut bodies = std::mem::take(&mut *world.resource_mut::<crate::bodies::PixelBodies>());
+        if !bodies.bodies.is_empty() {
+            let mut touched: FxHashSet<RegionPos> = FxHashSet::default();
+            {
+                let mut sim = world.resource_mut::<SimWorld>();
+                for body in &bodies.bodies {
+                    stamp_body(&mut sim.0, &registry, body);
+                    let radius = (body.width as f32).hypot(body.height as f32) + 1.0;
+                    let min = CellPos::new(
+                        (body.x - radius).floor() as i32,
+                        (body.y - radius).floor() as i32,
+                    )
+                    .region();
+                    let max = CellPos::new(
+                        (body.x + radius).ceil() as i32,
+                        (body.y + radius).ceil() as i32,
+                    )
+                    .region();
+                    for region_y in min.y..=max.y {
+                        for region_x in min.x..=max.x {
+                            touched.insert(RegionPos::new(region_x, region_y));
+                        }
+                    }
+                }
+            }
+            for body in bodies.bodies.drain(..) {
+                bodies.despawned.push(body.id);
+            }
+            let mut regions = world.resource_mut::<RegionMap>();
+            for pos in touched {
+                if let Some(state) = regions.states.get_mut(&pos) {
+                    state.dirty = true;
+                }
+            }
+        }
+        *world.resource_mut::<crate::bodies::PixelBodies>() = bodies;
+    }
+
     let mut to_save: Vec<(RegionPos, Vec<u8>)> = Vec::new();
     {
         let regions = world.resource::<RegionMap>();
@@ -252,15 +375,16 @@ pub fn save_everything(world: &mut bevy_ecs::world::World) {
         }
     }
 
-    let mut players: Vec<(String, PlayerRecord)> = Vec::new();
+    let mut players: Vec<(PlayerUuid, PlayerRecord)> = Vec::new();
     {
-        let mut query = world.query::<(&crate::session::Player, &PhysicsBody)>();
-        for (player, body) in query.iter(world) {
+        let mut query = world.query::<(&crate::session::Player, &PhysicsBody, &Health)>();
+        for (player, body, health) in query.iter(world) {
             players.push((
-                player.name.clone(),
+                player.uuid,
                 PlayerRecord {
                     x: body.0.x,
                     y: body.0.y,
+                    hp: health.hp,
                 },
             ));
         }

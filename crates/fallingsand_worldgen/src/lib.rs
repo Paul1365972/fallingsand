@@ -17,10 +17,26 @@ pub struct BiomeDef {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct BiomeFile {
-    pub sea_level: i32,
+pub struct BandDef {
+    pub name: String,
+    pub floor: Option<i32>,
+    pub stone_material: String,
     pub cave_threshold: f32,
     pub cave_depth_bonus: f32,
+    #[serde(default)]
+    pub lava_pools: bool,
+    #[serde(default = "default_pool_threshold")]
+    pub lava_pool_threshold: f32,
+}
+
+fn default_pool_threshold() -> f32 {
+    0.35
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct BiomeFile {
+    pub sea_level: i32,
+    pub bands: Vec<BandDef>,
     pub biomes: Vec<BiomeDef>,
 }
 
@@ -32,6 +48,8 @@ pub enum GenError {
     UnknownMaterial { biome: String, material: String },
     #[error("no biomes defined")]
     NoBiomes,
+    #[error("invalid bands: {0}")]
+    BadBands(String),
 }
 
 struct Biome {
@@ -41,18 +59,28 @@ struct Biome {
     height_amplitude: f32,
 }
 
+struct Band {
+    floor: Option<i32>,
+    stone: MaterialId,
+    cave_threshold: f32,
+    cave_depth_bonus: f32,
+    lava_pools: bool,
+    lava_pool_threshold: f32,
+}
+
 pub struct WorldGenerator {
     seed: u64,
     sea_level: i32,
-    cave_threshold: f32,
-    cave_depth_bonus: f32,
     biomes: Vec<Biome>,
-    stone: MaterialId,
+    bands: Vec<Band>,
     water: MaterialId,
+    lava: MaterialId,
     height_noise: FastNoiseLite,
     biome_noise: FastNoiseLite,
     cave_noise: FastNoiseLite,
     cave_warp: FastNoiseLite,
+    band_edge_noise: FastNoiseLite,
+    lava_noise: FastNoiseLite,
 }
 
 fn sub_seed(seed: u64, purpose: &str) -> i32 {
@@ -70,6 +98,32 @@ impl WorldGenerator {
         let file: BiomeFile = ron::from_str(biomes_source)?;
         if file.biomes.is_empty() {
             return Err(GenError::NoBiomes);
+        }
+        if file.bands.is_empty() {
+            return Err(GenError::BadBands("no bands defined".to_string()));
+        }
+        for (index, pair) in file.bands.windows(2).enumerate() {
+            match (pair[0].floor, pair[1].floor) {
+                (None, _) => {
+                    return Err(GenError::BadBands(format!(
+                        "band {:?} has no floor but is not last",
+                        file.bands[index].name
+                    )));
+                }
+                (Some(upper), Some(lower)) if lower >= upper => {
+                    return Err(GenError::BadBands(format!(
+                        "band floors must strictly decrease, {:?} -> {:?}",
+                        file.bands[index].name,
+                        file.bands[index + 1].name
+                    )));
+                }
+                _ => {}
+            }
+        }
+        if file.bands.last().and_then(|band| band.floor).is_some() {
+            return Err(GenError::BadBands(
+                "last band must have floor: None".to_string(),
+            ));
         }
         let resolve = |biome: &str, material: &str| {
             registry
@@ -91,8 +145,22 @@ impl WorldGenerator {
                 })
             })
             .collect::<Result<Vec<_>, GenError>>()?;
-        let stone = resolve("<builtin>", "stone")?;
         let water = resolve("<builtin>", "water")?;
+        let lava = resolve("<builtin>", "lava")?;
+        let bands = file
+            .bands
+            .iter()
+            .map(|def| {
+                Ok(Band {
+                    floor: def.floor,
+                    stone: resolve(&def.name, &def.stone_material)?,
+                    cave_threshold: def.cave_threshold,
+                    cave_depth_bonus: def.cave_depth_bonus,
+                    lava_pools: def.lava_pools,
+                    lava_pool_threshold: def.lava_pool_threshold,
+                })
+            })
+            .collect::<Result<Vec<_>, GenError>>()?;
 
         let mut height_noise = FastNoiseLite::with_seed(sub_seed(seed, "height"));
         height_noise.set_noise_type(Some(NoiseType::OpenSimplex2));
@@ -117,18 +185,29 @@ impl WorldGenerator {
         cave_warp.set_fractal_type(Some(FractalType::DomainWarpProgressive));
         cave_warp.set_fractal_octaves(Some(3));
 
+        let mut band_edge_noise = FastNoiseLite::with_seed(sub_seed(seed, "band_edge"));
+        band_edge_noise.set_noise_type(Some(NoiseType::OpenSimplex2));
+        band_edge_noise.set_frequency(Some(0.004));
+
+        let mut lava_noise = FastNoiseLite::with_seed(sub_seed(seed, "lava"));
+        lava_noise.set_noise_type(Some(NoiseType::OpenSimplex2S));
+        lava_noise.set_fractal_type(Some(FractalType::FBm));
+        lava_noise.set_fractal_octaves(Some(2));
+        lava_noise.set_frequency(Some(0.015));
+
         Ok(Self {
             seed,
             sea_level: file.sea_level,
-            cave_threshold: file.cave_threshold,
-            cave_depth_bonus: file.cave_depth_bonus,
             biomes,
-            stone,
+            bands,
             water,
+            lava,
             height_noise,
             biome_noise,
             cave_noise,
             cave_warp,
+            band_edge_noise,
+            lava_noise,
         })
     }
 
@@ -170,12 +249,28 @@ impl WorldGenerator {
         if mix < 0.5 { a } else { b }
     }
 
-    fn is_cave(&self, x: i32, y: i32, surface: i32) -> bool {
+    fn band_at(&self, x: i32, y: i32) -> &Band {
+        for (index, band) in self.bands.iter().enumerate() {
+            let Some(floor) = band.floor else {
+                return band;
+            };
+            let jitter = self
+                .band_edge_noise
+                .get_noise_2d(x as f32, index as f32 * 1000.0)
+                * 24.0;
+            if y as f32 >= floor as f32 + jitter {
+                return band;
+            }
+        }
+        self.bands.last().expect("bands validated non-empty")
+    }
+
+    fn is_cave(&self, x: i32, y: i32, surface: i32, band: &Band) -> bool {
         if y > surface - 6 {
             return false;
         }
         let depth_factor = ((surface - y) as f32 / 500.0).min(1.0);
-        let threshold = self.cave_threshold + self.cave_depth_bonus * depth_factor;
+        let threshold = band.cave_threshold + band.cave_depth_bonus * depth_factor;
         let (wx, wy) = self.cave_warp.domain_warp_2d(x as f32, y as f32);
         self.cave_noise.get_noise_2d(wx, wy).abs() < threshold
     }
@@ -222,7 +317,13 @@ impl WorldGenerator {
             }
             return Cell::AIR;
         }
-        if self.is_cave(x, y, surface) {
+        let band = self.band_at(x, y);
+        if self.is_cave(x, y, surface, band) {
+            if band.lava_pools
+                && self.lava_noise.get_noise_2d(x as f32, y as f32) > band.lava_pool_threshold
+            {
+                return shaded(self.lava, x, y);
+            }
             return Cell::AIR;
         }
         let depth = surface - y;
@@ -235,7 +336,7 @@ impl WorldGenerator {
         } else if depth <= biome.soil_depth {
             biome.soil
         } else {
-            self.stone
+            band.stone
         };
         shaded(material, x, y)
     }

@@ -99,7 +99,7 @@ fn wake_vacated(world: &mut CellWorld, registry: &MaterialRegistry, pos: CellPos
     let powder = powder_at(world, registry, pos)
         || (-1..=1).any(|dx| powder_at(world, registry, pos.translated(dx, 1)));
     if powder {
-        world.mark_dirty(pos);
+        world.mark_keep(pos);
     }
 }
 

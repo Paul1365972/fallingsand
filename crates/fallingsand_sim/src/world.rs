@@ -7,6 +7,7 @@ use std::hash::{Hash, Hasher};
 pub struct CellWorld {
     chunks: FxHashMap<ChunkPos, Chunk>,
     edits: Vec<WorldEdit>,
+    structural: Vec<CellPos>,
     tick: u64,
 }
 
@@ -66,7 +67,7 @@ impl CellWorld {
         self.set_cell(pos, Cell::new(material, shade));
     }
 
-    pub fn mark_dirty(&mut self, pos: CellPos) {
+    pub fn mark_keep(&mut self, pos: CellPos) {
         let Some(chunk) = self.chunks.get_mut(&pos.chunk()) else {
             return;
         };
@@ -74,11 +75,19 @@ impl CellWorld {
             chunk.normalize_updated(self.tick as u8);
             chunk.sleeping = false;
         }
-        chunk.bounds.mark(pos.offset());
+        chunk.keep_bounds.mark(pos.offset());
     }
 
     pub fn queue_edit(&mut self, edit: WorldEdit) {
         self.edits.push(edit);
+    }
+
+    pub(crate) fn push_structural(&mut self, positions: Vec<CellPos>) {
+        self.structural.extend(positions);
+    }
+
+    pub fn take_structural(&mut self) -> Vec<CellPos> {
+        std::mem::take(&mut self.structural)
     }
 
     pub(crate) fn apply_edits(&mut self) {
@@ -100,7 +109,7 @@ impl CellWorld {
     pub fn awake_chunk_count(&self) -> usize {
         self.chunks
             .values()
-            .filter(|chunk| !chunk.dirty().is_empty())
+            .filter(|chunk| !chunk.sim_dirty().is_empty())
             .count()
     }
 

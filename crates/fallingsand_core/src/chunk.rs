@@ -116,6 +116,8 @@ pub struct Chunk {
     cells: Box<[Cell; CHUNK_AREA]>,
     pub bounds: DirtyRect,
     pub old_bounds: DirtyRect,
+    pub keep_bounds: DirtyRect,
+    pub old_keep_bounds: DirtyRect,
     pub sleeping: bool,
 }
 
@@ -131,6 +133,8 @@ impl Chunk {
             cells: Box::new([Cell::AIR; CHUNK_AREA]),
             bounds: DirtyRect::EMPTY,
             old_bounds: DirtyRect::EMPTY,
+            keep_bounds: DirtyRect::EMPTY,
+            old_keep_bounds: DirtyRect::EMPTY,
             sleeping: true,
         }
     }
@@ -140,6 +144,8 @@ impl Chunk {
             cells: Box::new([cell; CHUNK_AREA]),
             bounds: DirtyRect::FULL,
             old_bounds: DirtyRect::EMPTY,
+            keep_bounds: DirtyRect::EMPTY,
+            old_keep_bounds: DirtyRect::EMPTY,
             sleeping: true,
         }
     }
@@ -171,10 +177,20 @@ impl Chunk {
     pub fn swap_bounds(&mut self) {
         self.old_bounds = self.bounds;
         self.bounds = DirtyRect::EMPTY;
+        self.old_keep_bounds = self.keep_bounds;
+        self.keep_bounds = DirtyRect::EMPTY;
     }
 
     pub fn dirty(&self) -> DirtyRect {
         self.bounds.union(self.old_bounds)
+    }
+
+    pub fn keep_dirty(&self) -> DirtyRect {
+        self.keep_bounds.union(self.old_keep_bounds)
+    }
+
+    pub fn sim_dirty(&self) -> DirtyRect {
+        self.dirty().union(self.keep_dirty())
     }
 
     pub fn normalize_updated(&mut self, tick: u8) {

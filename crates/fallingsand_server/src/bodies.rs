@@ -4,17 +4,15 @@ use bevy_ecs::prelude::*;
 use fallingsand_core::CellPos;
 use fallingsand_protocol::{PixelBodyState, ServerMessage, encode_message};
 use fallingsand_sim::bodies::{PixelBody, detect_island, extract_body, stamp_body, step_body};
-use rustc_hash::FxHashSet;
 
 const BODY_GRAVITY: f32 = -400.0;
-const MAX_BODIES: usize = 64;
 const TICK_DT: f32 = 1.0 / crate::TICK_RATE as f32;
 
 #[derive(Resource, Default)]
 pub struct PixelBodies {
     pub bodies: Vec<PixelBody>,
     pub next_id: u32,
-    pub candidates: FxHashSet<CellPos>,
+    pub candidates: Vec<CellPos>,
     pub spawned: Vec<u32>,
     pub despawned: Vec<u32>,
 }
@@ -27,14 +25,11 @@ pub fn step_bodies(
     mut stats: ResMut<TickStats>,
 ) {
     let bodies = &mut *bodies;
-    bodies.spawned.clear();
-    bodies.despawned.clear();
-
-    let candidates: Vec<CellPos> = bodies.candidates.drain().collect();
+    bodies.candidates.extend(sim.0.take_structural());
+    let mut candidates = std::mem::take(&mut bodies.candidates);
+    candidates.sort_unstable_by_key(|pos| (pos.y, pos.x));
+    candidates.dedup();
     for seed in candidates {
-        if bodies.bodies.len() >= MAX_BODIES {
-            break;
-        }
         let Some(island) = detect_island(&sim.0, &registry.0, seed) else {
             continue;
         };
@@ -67,7 +62,7 @@ pub fn step_bodies(
     stats.pixel_bodies = bodies.bodies.len();
 }
 
-pub fn replicate_bodies(mut sessions: ResMut<Sessions>, bodies: Res<PixelBodies>) {
+pub fn replicate_bodies(mut sessions: ResMut<Sessions>, mut bodies: ResMut<PixelBodies>) {
     let spawn_messages: Vec<Vec<u8>> = bodies
         .spawned
         .iter()
@@ -108,6 +103,9 @@ pub fn replicate_bodies(mut sessions: ResMut<Sessions>, bodies: Res<PixelBodies>
             session.conn.send(states_message.clone());
         }
     }
+
+    bodies.spawned.clear();
+    bodies.despawned.clear();
 }
 
 fn body_spawn_message(body: &PixelBody) -> ServerMessage {

@@ -29,6 +29,8 @@ enum MenuButton {
     Delete(String),
     Create,
     Connect,
+    ToggleFullscreen,
+    ToggleVsync,
     Quit,
 }
 
@@ -40,6 +42,17 @@ struct UrlField;
 
 #[derive(Component)]
 struct CertField;
+
+#[derive(Component)]
+struct PlayerNameField;
+
+#[cfg_attr(target_family = "wasm", allow(dead_code))]
+#[derive(Component)]
+struct FullscreenLabel;
+
+#[cfg_attr(target_family = "wasm", allow(dead_code))]
+#[derive(Component)]
+struct VsyncLabel;
 
 #[derive(Resource, Default)]
 struct WorldList(Vec<String>);
@@ -60,11 +73,21 @@ impl Plugin for MenuPlugin {
             .init_resource::<WorldList>()
             .init_resource::<PendingDelete>()
             .add_systems(OnEnter(AppState::MainMenu), (scan_worlds, spawn_menu))
-            .add_systems(OnExit(AppState::MainMenu), despawn_menu)
+            .add_systems(
+                OnExit(AppState::MainMenu),
+                (commit_name, despawn_menu).chain(),
+            )
             .add_systems(
                 Update,
                 (handle_buttons, sync_world_rows).run_if(in_state(AppState::MainMenu)),
             );
+        #[cfg(not(target_family = "wasm"))]
+        app.add_systems(
+            Update,
+            refresh_toggle_labels
+                .run_if(in_state(AppState::MainMenu))
+                .run_if(resource_changed::<crate::settings::Settings>),
+        );
     }
 }
 
@@ -92,7 +115,10 @@ fn list_worlds() -> Vec<String> {
     Vec::new()
 }
 
-fn spawn_menu(mut commands: Commands) {
+fn spawn_menu(mut commands: Commands, settings: Res<crate::settings::Settings>) {
+    #[cfg(target_family = "wasm")]
+    let _ = &settings;
+    let player_name = crate::identity::load_or_create().name;
     commands
         .spawn((
             MenuRoot,
@@ -121,6 +147,39 @@ fn spawn_menu(mut commands: Commands) {
                 },
             ));
 
+            spawn_header(parent, "player");
+            parent
+                .spawn(Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    row_gap: px(6),
+                    ..default()
+                })
+                .with_children(|column| {
+                    spawn_field(column, PlayerNameField, "name", 220.0, &player_name);
+                    #[cfg(not(target_family = "wasm"))]
+                    column
+                        .spawn(Node {
+                            flex_direction: FlexDirection::Row,
+                            column_gap: px(6),
+                            ..default()
+                        })
+                        .with_children(|row| {
+                            spawn_toggle(
+                                row,
+                                MenuButton::ToggleFullscreen,
+                                FullscreenLabel,
+                                fullscreen_label(settings.fullscreen),
+                            );
+                            spawn_toggle(
+                                row,
+                                MenuButton::ToggleVsync,
+                                VsyncLabel,
+                                vsync_label(settings.vsync),
+                            );
+                        });
+                });
+
             #[cfg(not(target_family = "wasm"))]
             {
                 spawn_header(parent, "worlds");
@@ -144,7 +203,7 @@ fn spawn_menu(mut commands: Commands) {
                         ..default()
                     })
                     .with_children(|row| {
-                        spawn_field(row, NameField, "new world", 220.0);
+                        spawn_field(row, NameField, "new world", 220.0, "");
                         spawn_button(row, MenuButton::Create, "Create", 90.0, BUTTON_BG);
                     });
             }
@@ -158,8 +217,8 @@ fn spawn_menu(mut commands: Commands) {
                     ..default()
                 })
                 .with_children(|column| {
-                    spawn_field(column, UrlField, "host[:port]", 320.0);
-                    spawn_field(column, CertField, "cert sha256 (optional)", 320.0);
+                    spawn_field(column, UrlField, "host[:port]", 320.0, "");
+                    spawn_field(column, CertField, "cert sha256 (optional)", 320.0, "");
                     spawn_button(column, MenuButton::Connect, "Connect", 120.0, BUTTON_BG);
                 });
 
@@ -183,7 +242,13 @@ fn spawn_header(parent: &mut ChildSpawnerCommands, label: &str) {
     ));
 }
 
-fn spawn_field(parent: &mut ChildSpawnerCommands, marker: impl Component, label: &str, width: f32) {
+fn spawn_field(
+    parent: &mut ChildSpawnerCommands,
+    marker: impl Component,
+    label: &str,
+    width: f32,
+    initial: &str,
+) {
     parent
         .spawn(Node {
             flex_direction: FlexDirection::Row,
@@ -202,7 +267,7 @@ fn spawn_field(parent: &mut ChildSpawnerCommands, marker: impl Component, label:
             ));
             row.spawn((
                 marker,
-                EditableText::new(""),
+                EditableText::new(initial),
                 TextFont {
                     font_size: FontSize::Px(16.0),
                     ..default()
@@ -218,6 +283,68 @@ fn spawn_field(parent: &mut ChildSpawnerCommands, marker: impl Component, label:
                 BackgroundColor(FIELD_BG),
             ));
         });
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn fullscreen_label(on: bool) -> String {
+    format!("Fullscreen: {}", if on { "on" } else { "off" })
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn vsync_label(on: bool) -> String {
+    format!("VSync: {}", if on { "on" } else { "off" })
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn spawn_toggle(
+    parent: &mut ChildSpawnerCommands,
+    action: MenuButton,
+    marker: impl Component,
+    label: String,
+) {
+    parent
+        .spawn((
+            action,
+            Button,
+            Node {
+                width: px(160),
+                height: px(30),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            BackgroundColor(BUTTON_BG),
+        ))
+        .with_child((
+            marker,
+            Text::new(label),
+            TextFont {
+                font_size: FontSize::Px(15.0),
+                ..default()
+            },
+            TextColor(Color::WHITE),
+        ));
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn refresh_toggle_labels(
+    settings: Res<crate::settings::Settings>,
+    mut fullscreen: Query<&mut Text, (With<FullscreenLabel>, Without<VsyncLabel>)>,
+    mut vsync: Query<&mut Text, (With<VsyncLabel>, Without<FullscreenLabel>)>,
+) {
+    for mut text in &mut fullscreen {
+        **text = fullscreen_label(settings.fullscreen);
+    }
+    for mut text in &mut vsync {
+        **text = vsync_label(settings.vsync);
+    }
+}
+
+fn commit_name(field: Query<&EditableText, With<PlayerNameField>>) {
+    if let Ok(editable) = field.single() {
+        let value = editable.value().to_string();
+        crate::identity::update_name(&value);
+    }
 }
 
 pub(crate) fn spawn_button(
@@ -349,6 +476,7 @@ fn handle_buttons(
     mut worlds: ResMut<WorldList>,
     mut pending_delete: ResMut<PendingDelete>,
     mut pending_connect: ResMut<crate::net::PendingConnect>,
+    mut settings: ResMut<crate::settings::Settings>,
     mut next_state: ResMut<NextState<AppState>>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -394,6 +522,12 @@ fn handle_buttons(
                         cert_hash: crate::net::parse_cert_hash(cert.trim()),
                     });
                     next_state.set(AppState::InGame);
+                }
+                MenuButton::ToggleFullscreen => {
+                    settings.fullscreen = !settings.fullscreen;
+                }
+                MenuButton::ToggleVsync => {
+                    settings.vsync = !settings.vsync;
                 }
                 MenuButton::Quit => {
                     exit.write(AppExit::Success);

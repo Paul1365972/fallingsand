@@ -1,7 +1,31 @@
 (
     sea_level: -10,
-    cave_threshold: 0.08,
-    cave_depth_bonus: 0.06,
+    bands: [
+        (
+            name: "crust",
+            floor: Some(-350),
+            stone_material: "stone",
+            cave_threshold: 0.08,
+            cave_depth_bonus: 0.06,
+        ),
+        (
+            name: "deep",
+            floor: Some(-900),
+            stone_material: "stone",
+            cave_threshold: 0.12,
+            cave_depth_bonus: 0.03,
+            lava_pools: true,
+        ),
+        (
+            name: "molten",
+            floor: None,
+            stone_material: "stone",
+            cave_threshold: 0.15,
+            cave_depth_bonus: 0.0,
+            lava_pools: true,
+            lava_pool_threshold: 0.25,
+        ),
+    ],
     biomes: [
         (
             name: "meadow",

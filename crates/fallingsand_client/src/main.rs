@@ -1,15 +1,18 @@
 mod bodyview;
 mod camera;
+mod chat;
 mod connscreen;
 mod debug;
 mod hud;
 #[cfg(not(target_family = "wasm"))]
 mod icon;
+mod identity;
 mod menu;
 mod net;
 mod pause;
 mod player;
 mod render;
+mod settings;
 mod worldview;
 
 use bevy::prelude::*;
@@ -80,7 +83,9 @@ fn main() {
         menu::MenuPlugin,
         pause::PausePlugin,
         hud::HudPlugin,
+        chat::ChatPlugin,
         connscreen::ConnScreenPlugin,
+        settings::SettingsPlugin,
     ));
     #[cfg(not(target_family = "wasm"))]
     app.add_plugins(icon::IconPlugin);

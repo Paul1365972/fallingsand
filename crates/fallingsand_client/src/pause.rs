@@ -35,14 +35,18 @@ impl Plugin for PausePlugin {
     }
 }
 
-fn toggle_pause(
+pub(crate) fn toggle_pause(
     keys: Res<ButtonInput<KeyCode>>,
     state: Option<Res<State<PauseState>>>,
     next: Option<ResMut<NextState<PauseState>>>,
+    chat_open: Res<crate::chat::ChatOpen>,
 ) {
     let (Some(state), Some(mut next)) = (state, next) else {
         return;
     };
+    if chat_open.0 {
+        return;
+    }
     if keys.just_pressed(KeyCode::Escape) {
         next.set(match state.get() {
             PauseState::Running => PauseState::Paused,

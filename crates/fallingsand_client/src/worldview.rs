@@ -9,6 +9,7 @@ pub struct WorldViewPlugin;
 pub struct ViewChunk {
     pub cells: Box<[Cell; CHUNK_AREA]>,
     pub dirty: bool,
+    pub pending: Vec<DirtyRect>,
 }
 
 #[derive(Resource, Default)]
@@ -57,6 +58,7 @@ fn apply_updates(mut view: ResMut<WorldView>, mut messages: MessageReader<Server
                         ViewChunk {
                             cells: buffer,
                             dirty: true,
+                            pending: Vec::new(),
                         },
                     );
                 }
@@ -81,7 +83,9 @@ fn apply_updates(mut view: ResMut<WorldView>, mut messages: MessageReader<Server
                     continue;
                 }
                 apply_rect(chunk, *rect, &decoded);
-                chunk.dirty = true;
+                if !chunk.dirty {
+                    chunk.pending.push(*rect);
+                }
             }
             ServerMessage::TickEnd { tick } => {
                 view.server_tick = view.server_tick.max(*tick);

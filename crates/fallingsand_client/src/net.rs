@@ -47,7 +47,7 @@ pub struct Session {
 }
 
 impl Session {
-    fn new(conn: Box<dyn Connection>, name: String) -> Self {
+    fn new(conn: Box<dyn Connection>, identity: crate::identity::Identity) -> Self {
         let mut session = Self {
             conn,
             player: None,
@@ -60,7 +60,8 @@ impl Session {
         };
         session.send(&ClientMessage::Hello {
             protocol_version: PROTOCOL_VERSION,
-            name,
+            uuid: identity.uuid,
+            name: identity.name,
         });
         session
     }
@@ -120,9 +121,15 @@ impl Supervisor {
                     ConnPhase::Online
                 }
             }
-            None if self.target.is_some() => ConnPhase::Reconnecting {
-                attempt: self.attempt.max(1),
-            },
+            None if self.target.is_some() => {
+                if self.lost.is_none() && self.attempt <= 1 {
+                    ConnPhase::Connecting
+                } else {
+                    ConnPhase::Reconnecting {
+                        attempt: self.attempt.max(1),
+                    }
+                }
+            }
             None => ConnPhase::Lost {
                 reason: self.lost.clone().unwrap_or_else(|| "not connected".into()),
             },
@@ -142,6 +149,8 @@ pub struct EmbeddedServerStats {
     pub sim_micros: u64,
     pub awake_chunks: usize,
     pub loaded_chunks: usize,
+    pub active_chunks: usize,
+    pub border_chunks: usize,
     pub players: usize,
     pub replicated_bytes: u64,
     pub pixel_bodies: usize,
@@ -254,10 +263,13 @@ fn close(world: &mut World) {
     *world.resource_mut::<Supervisor>() = Supervisor::default();
     #[cfg(not(target_family = "wasm"))]
     world.remove_resource::<embedded::EmbeddedServer>();
+    #[cfg(not(target_family = "wasm"))]
+    world.remove_resource::<Dialing>();
 }
 
 fn drain(
     mut session: ResMut<Session>,
+    mut supervisor: ResMut<Supervisor>,
     mut messages: MessageWriter<ServerMsg>,
     registry: Res<ClientRegistry>,
     pause: Option<Res<State<crate::PauseState>>>,
@@ -300,6 +312,11 @@ fn drain(
                     session.player = Some(*player);
                     info!("joined as {player:?}, spawn {spawn:?}");
                 }
+                if let ServerMessage::Reject { reason } = &message {
+                    error!("server rejected connection: {reason}");
+                    supervisor.target = None;
+                    supervisor.lost = Some(reason.clone());
+                }
                 let flush = matches!(message, ServerMessage::TickEnd { .. });
                 session.batch.push(message);
                 if flush {
@@ -329,7 +346,9 @@ fn supervise(world: &mut World) {
             world.write_message(SessionEnded);
             let mut supervisor = world.resource_mut::<Supervisor>();
             supervisor.retry_in = retry_delay(supervisor.attempt);
-            supervisor.lost = Some(reason);
+            if supervisor.target.is_some() || supervisor.lost.is_none() {
+                supervisor.lost = Some(reason);
+            }
         }
         Some(ConnectionStatus::Connected) => {
             if world.resource::<Session>().player.is_some() {
@@ -341,6 +360,9 @@ fn supervise(world: &mut World) {
             }
         }
         None => {
+            if poll_dial(world) {
+                return;
+            }
             let Some(target) = world.resource::<Supervisor>().target.clone() else {
                 return;
             };
@@ -354,15 +376,7 @@ fn supervise(world: &mut World) {
             supervisor.retry_in = retry_delay(supervisor.attempt);
             let attempt = supervisor.attempt;
             info!("connecting to {} (attempt {attempt})", target.url);
-            match dial(world, &target) {
-                Ok(conn) => {
-                    world.insert_resource(Session::new(conn, player_name()));
-                }
-                Err(err) => {
-                    error!("failed to connect to {}: {err}", target.url);
-                    world.resource_mut::<Supervisor>().lost = Some(err);
-                }
-            }
+            start_dial(world, target);
         }
     }
 }
@@ -372,26 +386,74 @@ fn supervise(world: &mut World) {
 struct NetRuntime(tokio::runtime::Runtime);
 
 #[cfg(not(target_family = "wasm"))]
-fn dial(world: &mut World, target: &ConnectTarget) -> Result<Box<dyn Connection>, String> {
-    if !world.contains_resource::<NetRuntime>() {
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .map_err(|err| err.to_string())?;
-        world.insert_resource(NetRuntime(runtime));
+#[derive(Resource)]
+struct Dialing(std::sync::Mutex<std::sync::mpsc::Receiver<Result<Box<dyn Connection>, String>>>);
+
+#[cfg(not(target_family = "wasm"))]
+fn poll_dial(world: &mut World) -> bool {
+    let Some(dialing) = world.get_resource::<Dialing>() else {
+        return false;
+    };
+    let result = dialing.0.lock().unwrap().try_recv();
+    match result {
+        Ok(Ok(conn)) => {
+            world.remove_resource::<Dialing>();
+            world.insert_resource(Session::new(conn, crate::identity::load_or_create()));
+        }
+        Ok(Err(err)) => {
+            world.remove_resource::<Dialing>();
+            error!("failed to connect: {err}");
+            world.resource_mut::<Supervisor>().lost = Some(err);
+        }
+        Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+            world.remove_resource::<Dialing>();
+            world.resource_mut::<Supervisor>().lost = Some("connect worker died".into());
+        }
     }
-    let handle = world.resource::<NetRuntime>().0.handle().clone();
-    fallingsand_net::wt_native::connect(handle, &target.url, target.cert_hash.clone())
-        .map(|conn| Box::new(conn) as Box<dyn Connection>)
-        .map_err(|err| err.to_string())
+    world.contains_resource::<Dialing>()
 }
 
 #[cfg(all(target_family = "wasm", target_os = "unknown"))]
-fn dial(_world: &mut World, target: &ConnectTarget) -> Result<Box<dyn Connection>, String> {
-    Ok(Box::new(fallingsand_net::wt_wasm::connect(
+fn poll_dial(_world: &mut World) -> bool {
+    false
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn start_dial(world: &mut World, target: ConnectTarget) {
+    if !world.contains_resource::<NetRuntime>() {
+        match tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => world.insert_resource(NetRuntime(runtime)),
+            Err(err) => {
+                world.resource_mut::<Supervisor>().lost = Some(err.to_string());
+                return;
+            }
+        }
+    }
+    let handle = world.resource::<NetRuntime>().0.handle().clone();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("wt-dial".into())
+        .spawn(move || {
+            let result = fallingsand_net::wt_native::connect(handle, &target.url, target.cert_hash)
+                .map(|conn| Box::new(conn) as Box<dyn Connection>)
+                .map_err(|err| err.to_string());
+            let _ = sender.send(result);
+        })
+        .expect("spawn dial thread");
+    world.insert_resource(Dialing(std::sync::Mutex::new(receiver)));
+}
+
+#[cfg(all(target_family = "wasm", target_os = "unknown"))]
+fn start_dial(world: &mut World, target: ConnectTarget) {
+    let conn = Box::new(fallingsand_net::wt_wasm::connect(
         &target.url,
         target.cert_hash.clone(),
-    )))
+    ));
+    world.insert_resource(Session::new(conn, crate::identity::load_or_create()));
 }
 
 #[cfg(all(target_family = "wasm", target_os = "unknown"))]
@@ -407,9 +469,7 @@ mod wasm_remote {
             let mut parts = pair.splitn(2, '=');
             match (parts.next(), parts.next()) {
                 (Some("server"), Some(value)) => {
-                    url = js_sys::decode_uri_component(value)
-                        .ok()
-                        .map(|v| String::from(v));
+                    url = js_sys::decode_uri_component(value).ok().map(String::from);
                 }
                 (Some("cert"), Some(value)) => cert_hash = parse_cert_hash(value),
                 _ => {}
@@ -417,49 +477,6 @@ mod wasm_remote {
         }
         url.map(|url| ConnectTarget { url, cert_hash })
     }
-
-    pub fn query_player_name() -> Option<String> {
-        let location = web_sys::window().map(|w| w.location());
-        let query = location.and_then(|l| l.search().ok()).unwrap_or_default();
-        for pair in query.trim_start_matches('?').split('&') {
-            let mut parts = pair.splitn(2, '=');
-            if let (Some("name"), Some(value)) = (parts.next(), parts.next()) {
-                return js_sys::decode_uri_component(value)
-                    .ok()
-                    .map(String::from)
-                    .filter(|name| !name.trim().is_empty());
-            }
-        }
-        None
-    }
-}
-
-pub fn configured_player_name() -> Option<String> {
-    #[cfg(not(target_family = "wasm"))]
-    {
-        let mut args = std::env::args().skip(1);
-        while let Some(arg) = args.next() {
-            if arg == "--name" {
-                return args.next().filter(|name| !name.trim().is_empty());
-            }
-        }
-        None
-    }
-    #[cfg(target_family = "wasm")]
-    {
-        wasm_remote::query_player_name()
-    }
-}
-
-#[cfg(not(target_family = "wasm"))]
-fn player_name() -> String {
-    configured_player_name().unwrap_or_else(|| format!("player{}", std::process::id() % 1000))
-}
-
-#[cfg(all(target_family = "wasm", target_os = "unknown"))]
-fn player_name() -> String {
-    configured_player_name()
-        .unwrap_or_else(|| format!("web{}", (js_sys::Math::random() * 1000.0) as u32))
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -516,8 +533,10 @@ pub mod embedded {
             .expect("spawn embedded server thread");
 
         let conn = dialer.connect().expect("connect to embedded server");
-        let name = configured_player_name().unwrap_or_else(|| "local".into());
-        world.insert_resource(Session::new(Box::new(conn), name));
+        world.insert_resource(Session::new(
+            Box::new(conn),
+            crate::identity::load_or_create(),
+        ));
         world.insert_resource(EmbeddedServer {
             control,
             thread: Some(thread),
@@ -549,6 +568,8 @@ pub mod embedded {
                     sim_micros: stats.sim_micros,
                     awake_chunks: stats.awake_chunks,
                     loaded_chunks: stats.loaded_chunks,
+                    active_chunks: stats.active_chunks,
+                    border_chunks: stats.border_chunks,
                     players: stats.players,
                     replicated_bytes: stats.replicated_bytes,
                     pixel_bodies: stats.pixel_bodies,

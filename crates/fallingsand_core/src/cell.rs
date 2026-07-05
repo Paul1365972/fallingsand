@@ -9,14 +9,6 @@ pub struct Cell {
     pub updated: u8,
 }
 
-bitflags::bitflags! {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-    pub struct CellFlags: u8 {
-        const BURNING = 1 << 0;
-        const ELECTRIFIED = 1 << 1;
-    }
-}
-
 const _: () = assert!(size_of::<Cell>() == 4);
 
 impl Cell {
@@ -40,14 +32,6 @@ impl Cell {
 
     pub fn set_shade(&mut self, shade: u8) {
         self.shade_flags = (self.shade_flags & 0x0F) | (shade << 4);
-    }
-
-    pub const fn flags(self) -> CellFlags {
-        CellFlags::from_bits_truncate(self.shade_flags & 0x0F)
-    }
-
-    pub fn set_flags(&mut self, flags: CellFlags) {
-        self.shade_flags = (self.shade_flags & 0xF0) | flags.bits();
     }
 
     pub const fn is_air(self) -> bool {

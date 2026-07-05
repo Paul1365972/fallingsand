@@ -211,8 +211,15 @@ pub fn interpolate_players(time: Res<Time>, mut query: Query<(&mut PlayerVisual,
     }
 }
 
-fn select_material(keys: Res<ButtonInput<KeyCode>>, mut hotbar: ResMut<Hotbar>) {
-    const DIGITS: [KeyCode; 9] = [
+fn select_material(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut hotbar: ResMut<Hotbar>,
+    chat_open: Res<crate::chat::ChatOpen>,
+) {
+    if chat_open.0 {
+        return;
+    }
+    const DIGITS: [KeyCode; 10] = [
         KeyCode::Digit1,
         KeyCode::Digit2,
         KeyCode::Digit3,
@@ -222,6 +229,7 @@ fn select_material(keys: Res<ButtonInput<KeyCode>>, mut hotbar: ResMut<Hotbar>) 
         KeyCode::Digit7,
         KeyCode::Digit8,
         KeyCode::Digit9,
+        KeyCode::Digit0,
     ];
     for (index, key) in DIGITS.iter().enumerate() {
         if keys.just_pressed(*key) && index < hotbar.materials.len() {
@@ -230,12 +238,14 @@ fn select_material(keys: Res<ButtonInput<KeyCode>>, mut hotbar: ResMut<Hotbar>) 
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn send_input(
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
     window: Single<&Window>,
     camera: Single<(&Camera, &GlobalTransform)>,
     hotbar: Res<Hotbar>,
+    chat_open: Res<crate::chat::ChatOpen>,
     mut state: ResMut<InputState>,
     session: Option<ResMut<Session>>,
 ) {
@@ -248,6 +258,19 @@ fn send_input(
         && let Ok(world) = camera.viewport_to_world_2d(camera_transform, cursor)
     {
         state.aim = CellPos::new(world.x.floor() as i32, world.y.floor() as i32);
+    }
+
+    if chat_open.0 {
+        session.send(&ClientMessage::Input(PlayerInput {
+            aim: state.aim,
+            selected: hotbar
+                .materials
+                .get(hotbar.selected)
+                .copied()
+                .unwrap_or(MaterialId::AIR),
+            ..default()
+        }));
+        return;
     }
 
     let mut move_x = 0i8;

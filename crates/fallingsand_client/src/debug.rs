@@ -20,6 +20,9 @@ pub struct DebugVisible(pub bool);
 pub struct BordersVisible(pub bool);
 
 #[derive(Resource, Default)]
+struct F3ComboUsed(bool);
+
+#[derive(Resource, Default)]
 struct DeltaFlashes(Vec<(ChunkPos, DirtyRect, f32)>);
 
 const FLASH_SECS: f32 = 0.4;
@@ -29,6 +32,7 @@ impl Plugin for DebugOverlayPlugin {
         app.add_plugins(FrameTimeDiagnosticsPlugin::default())
             .insert_resource(DebugVisible(true))
             .init_resource::<BordersVisible>()
+            .init_resource::<F3ComboUsed>()
             .init_resource::<DeltaFlashes>()
             .add_systems(Startup, setup_overlay)
             .add_systems(Update, (toggle_overlay, update_overlay, screenshot))
@@ -75,12 +79,17 @@ fn toggle_overlay(
     keys: Res<ButtonInput<KeyCode>>,
     mut visible: ResMut<DebugVisible>,
     mut borders: ResMut<BordersVisible>,
+    mut combo: ResMut<F3ComboUsed>,
 ) {
-    if keys.just_pressed(KeyCode::F3) {
-        visible.0 = !visible.0;
-    }
-    if keys.just_pressed(KeyCode::F4) {
+    if keys.pressed(KeyCode::F3) && keys.just_pressed(KeyCode::KeyG) {
         borders.0 = !borders.0;
+        combo.0 = true;
+    }
+    if keys.just_released(KeyCode::F3) {
+        if !combo.0 {
+            visible.0 = !visible.0;
+        }
+        combo.0 = false;
     }
 }
 
@@ -209,18 +218,21 @@ fn update_overlay(
     ***text = format!(
         "fps: {fps:.0}\n\
          server tick: {} ({} us sim)\n\
-         chunks: {} loaded / {} awake (server), {} client, {} uploads\n\
+         chunks: {} loaded / {} active / {} border / {} awake (server), {} client, {} uploads ({})\n\
          net rx: {}/s ({} total), server tx: {}/tick\n\
          players: {}, pixel bodies: {}\n\
          cursor: {},{} [{}]\n\
          selected [1-9]: {}\n\
-         keys: AD move, space jump, LMB dig, RMB place, wheel zoom, IJKL pan, O follow, F4 borders, esc pause",
+         keys: AD move, space jump, LMB dig, RMB place, wheel zoom, IJKL pan, O follow, F3+G borders, esc pause",
         server.tick,
         server.sim_micros,
         server.loaded_chunks,
+        server.active_chunks,
+        server.border_chunks,
         server.awake_chunks,
         view.chunks.len(),
         visuals.uploads,
+        human_bytes(visuals.upload_bytes as u64),
         human_bytes(rx_per_sec),
         human_bytes(rx_bytes),
         human_bytes(server.replicated_bytes),

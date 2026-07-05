@@ -6,16 +6,29 @@ use fallingsand_core::{CHUNK_SIZE, CellPos, Chunk, ChunkPos, DirtyRect, Material
 use rustc_hash::FxHashSet;
 
 pub fn step(world: &mut CellWorld, registry: &MaterialRegistry, obstacles: &Obstacles) {
+    step_scoped(world, registry, obstacles, &|_| true);
+}
+
+pub fn step_scoped(
+    world: &mut CellWorld,
+    registry: &MaterialRegistry,
+    obstacles: &Obstacles,
+    simulate: &(dyn Fn(ChunkPos) -> bool + Sync),
+) {
     world.advance_tick();
     let tick = world.tick();
-    for chunk in world.chunk_map_mut().values_mut() {
+    for (&pos, chunk) in world.chunk_map_mut().iter_mut() {
+        if !simulate(pos) {
+            chunk.sleeping = true;
+            continue;
+        }
         chunk.swap_bounds();
-        if chunk.old_bounds.is_empty() {
+        if chunk.old_bounds.is_empty() && chunk.old_keep_bounds.is_empty() {
             chunk.sleeping = true;
         }
     }
     for phase in 0..4 {
-        run_phase(world, registry, obstacles, phase, tick);
+        run_phase(world, registry, obstacles, phase, tick, simulate);
     }
     world.apply_edits();
 }
@@ -26,6 +39,7 @@ fn run_phase(
     obstacles: &Obstacles,
     phase: u32,
     tick: u64,
+    simulate: &(dyn Fn(ChunkPos) -> bool + Sync),
 ) {
     let px = (phase & 1) as i32;
     let py = ((phase >> 1) & 1) as i32;
@@ -33,7 +47,7 @@ fn run_phase(
     let map = world.chunk_map_mut();
     let mut blocks: FxHashSet<(i32, i32)> = FxHashSet::default();
     for (&pos, chunk) in map.iter() {
-        if chunk.dirty().is_empty() {
+        if chunk.sim_dirty().is_empty() || !simulate(pos) {
             continue;
         }
         for dy in -1..=1 {
@@ -64,15 +78,17 @@ fn run_phase(
         use rayon::prelude::*;
         windows
             .par_iter_mut()
-            .for_each(|window| process_block(window, registry, obstacles, tick));
+            .for_each(|window| process_block(window, registry, obstacles, tick, simulate));
     }
     #[cfg(not(feature = "parallel"))]
     for window in windows.iter_mut() {
-        process_block(window, registry, obstacles, tick);
+        process_block(window, registry, obstacles, tick, simulate);
     }
 
+    let mut structural: Vec<CellPos> = Vec::new();
     for window in windows {
-        let (origin, slots) = window.into_parts();
+        let (origin, slots, window_structural) = window.into_parts();
+        structural.extend(window_structural);
         for (index, slot) in slots.into_iter().enumerate() {
             if let Some(chunk) = slot {
                 let sx = index as i32 % WINDOW_CHUNKS;
@@ -81,6 +97,7 @@ fn run_phase(
             }
         }
     }
+    world.push_structural(structural);
 }
 
 fn process_block(
@@ -88,19 +105,20 @@ fn process_block(
     registry: &MaterialRegistry,
     obstacles: &Obstacles,
     tick: u64,
+    simulate: &(dyn Fn(ChunkPos) -> bool + Sync),
 ) {
     let mut rects = [[DirtyRect::EMPTY; 2]; 2];
     for oy in 0..2i32 {
         for ox in 0..2i32 {
             let (sx, sy) = (ox + 1, oy + 1);
-            if window.chunk_at(sx, sy).is_none() {
+            if window.chunk_at(sx, sy).is_none() || !simulate(window.origin().translated(sx, sy)) {
                 continue;
             }
             let mut rect = DirtyRect::EMPTY;
             for dy in -1..=1 {
                 for dx in -1..=1 {
                     if let Some(neighbor) = window.chunk_at(sx + dx, sy + dy) {
-                        rect = rect.union(spill(neighbor.dirty(), dx, dy));
+                        rect = rect.union(spill(neighbor.sim_dirty(), dx, dy));
                     }
                 }
             }

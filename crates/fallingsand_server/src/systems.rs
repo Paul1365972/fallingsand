@@ -19,7 +19,9 @@ pub const PLAYER_HALF_W: f32 = 1.9;
 pub const PLAYER_HALF_H: f32 = 5.5;
 pub const REACH: f32 = 80.0;
 pub const BRUSH_RADIUS: i32 = 3;
-pub const MAX_HP: f32 = 100.0;
+pub use crate::MAX_HP;
+const CHAT_MAX_CHARS: usize = 240;
+const CHAT_RATE_TICKS: u64 = 15;
 const SAFE_IMPACT_SPEED: f32 = 300.0;
 const IMPACT_DAMAGE_SCALE: f32 = 0.3;
 const TICK_DT: f32 = 1.0 / crate::TICK_RATE as f32;
@@ -50,7 +52,7 @@ pub fn drain_network(
     mut commands: Commands,
     mut listener: ResMut<NetListener>,
     mut sessions: ResMut<Sessions>,
-    mut players: Query<&mut Player>,
+    mut players: Query<(&mut Player, &PhysicsBody)>,
     registry: Res<Registry>,
     sim: Res<SimWorld>,
     spawn_point: Res<SpawnPoint>,
@@ -64,26 +66,29 @@ pub fn drain_network(
     let sessions = &mut *sessions;
     let mut joined: Vec<(PlayerId, String)> = Vec::new();
     let mut left: Vec<PlayerId> = Vec::new();
+    let mut chats: Vec<(PlayerId, String, String)> = Vec::new();
 
-    for session in &mut sessions.sessions {
-        while let Some(bytes) = session.conn.poll() {
+    for index in 0..sessions.sessions.len() {
+        while let Some(bytes) = sessions.sessions[index].conn.poll() {
             let Ok(message) = decode_message::<ClientMessage>(&bytes) else {
                 tracing::warn!("closing connection: malformed message");
-                session.conn.close("malformed message");
+                sessions.sessions[index].conn.close("malformed message");
                 break;
             };
             match message {
                 ClientMessage::Hello {
                     protocol_version,
+                    uuid,
                     name,
                 } => {
-                    if !matches!(session.state, SessionState::AwaitingHello) {
+                    if !matches!(sessions.sessions[index].state, SessionState::AwaitingHello) {
                         continue;
                     }
                     if protocol_version != PROTOCOL_VERSION {
                         tracing::warn!(
                             "rejected {name}: protocol {protocol_version} != {PROTOCOL_VERSION}"
                         );
+                        let session = &mut sessions.sessions[index];
                         session.conn.send(encode_message(&ServerMessage::Reject {
                             reason: format!(
                                 "protocol version mismatch: server {PROTOCOL_VERSION}, client {protocol_version}"
@@ -94,34 +99,80 @@ pub fn drain_network(
                     }
                     let player = PlayerId(sessions.next_player);
                     sessions.next_player += 1;
-                    let restored = store
-                        .0
-                        .as_ref()
-                        .and_then(|store| store.load_player(&name).ok().flatten());
-                    let spawn = match &restored {
-                        Some(record) => CellPos::new(record.x as i32, record.y as i32),
-                        None => spawn_point.0,
+
+                    let mut taken_entity = None;
+                    for other in &mut sessions.sessions {
+                        if other.uuid == Some(uuid) {
+                            other.conn.send(encode_message(&ServerMessage::Reject {
+                                reason: "superseded by a new session".into(),
+                            }));
+                            other.conn.close("superseded by a new session");
+                            other.uuid = None;
+                            taken_entity = other.entity.take().or(taken_entity);
+                            if let Some(old) = other.player.take() {
+                                left.push(old);
+                            }
+                        }
+                    }
+
+                    let mut takeover = None;
+                    if let Some(entity) = taken_entity {
+                        if let Ok((mut existing, body)) = players.get_mut(entity) {
+                            existing.id = player;
+                            existing.name = name.clone();
+                            existing.input = Default::default();
+                            takeover =
+                                Some((entity, CellPos::new(body.0.x as i32, body.0.y as i32)));
+                        } else {
+                            commands.entity(entity).despawn();
+                        }
+                    }
+                    let (entity, spawn) = match takeover {
+                        Some(takeover) => takeover,
+                        None => {
+                            let restored = store
+                                .0
+                                .as_ref()
+                                .and_then(|store| store.load_player(uuid).ok().flatten());
+                            let spawn = match &restored {
+                                Some(record) => CellPos::new(record.x as i32, record.y as i32),
+                                None => spawn_point.0,
+                            };
+                            let entity = commands
+                                .spawn((
+                                    Player {
+                                        id: player,
+                                        uuid,
+                                        name: name.clone(),
+                                        input: Default::default(),
+                                    },
+                                    PhysicsBody(Body::new(
+                                        restored.as_ref().map(|r| r.x).unwrap_or(spawn.x as f32),
+                                        restored.as_ref().map(|r| r.y).unwrap_or(spawn.y as f32),
+                                        PLAYER_HALF_W,
+                                        PLAYER_HALF_H,
+                                    )),
+                                    Control::default(),
+                                    Health {
+                                        hp: restored
+                                            .as_ref()
+                                            .map(|r| r.hp)
+                                            .filter(|hp| hp.is_finite() && *hp > 0.0)
+                                            .unwrap_or(MAX_HP)
+                                            .min(MAX_HP),
+                                        previous_vy: 0.0,
+                                    },
+                                ))
+                                .id();
+                            (entity, spawn)
+                        }
                     };
-                    let entity = commands
-                        .spawn((
-                            Player {
-                                id: player,
-                                name: name.clone(),
-                                input: Default::default(),
-                            },
-                            PhysicsBody(Body::new(
-                                restored.map(|r| r.x).unwrap_or(spawn.x as f32),
-                                restored.map(|r| r.y).unwrap_or(spawn.y as f32),
-                                PLAYER_HALF_W,
-                                PLAYER_HALF_H,
-                            )),
-                            Control::default(),
-                            Health::default(),
-                        ))
-                        .id();
+
+                    let session = &mut sessions.sessions[index];
                     session.state = SessionState::Playing;
                     session.entity = Some(entity);
                     session.player = Some(player);
+                    session.uuid = Some(uuid);
                     session.conn.send(encode_message(&ServerMessage::HelloAck {
                         protocol_version: PROTOCOL_VERSION,
                         registry_hash: registry.0.hash(),
@@ -132,7 +183,16 @@ pub fn drain_network(
                     for message in crate::bodies::full_body_sync(&bodies) {
                         session.conn.send(message);
                     }
-                    for existing in players.iter() {
+                    session
+                        .conn
+                        .send(encode_message(&ServerMessage::PlayerJoined {
+                            player,
+                            name: name.clone(),
+                        }));
+                    for (existing, _) in players.iter() {
+                        if existing.id == player {
+                            continue;
+                        }
                         session
                             .conn
                             .send(encode_message(&ServerMessage::PlayerJoined {
@@ -140,18 +200,41 @@ pub fn drain_network(
                                 name: existing.name.clone(),
                             }));
                     }
-                    tracing::info!("{name} joined as player {}", player.0);
+                    tracing::info!("{name} ({uuid}) joined as player {}", player.0);
                     joined.push((player, name));
                 }
                 ClientMessage::Input(input) => {
-                    if let Some(entity) = session.entity
-                        && let Ok(mut player) = players.get_mut(entity)
+                    if let Some(entity) = sessions.sessions[index].entity
+                        && let Ok((mut player, _)) = players.get_mut(entity)
                     {
                         player.input = input;
                     }
                 }
+                ClientMessage::Chat { text } => {
+                    let session = &mut sessions.sessions[index];
+                    if !matches!(session.state, SessionState::Playing) {
+                        continue;
+                    }
+                    let (Some(entity), Some(player)) = (session.entity, session.player) else {
+                        continue;
+                    };
+                    let tick = sim.0.tick();
+                    if session.last_chat_tick != 0
+                        && tick.saturating_sub(session.last_chat_tick) < CHAT_RATE_TICKS
+                    {
+                        continue;
+                    }
+                    let text: String = text.trim().chars().take(CHAT_MAX_CHARS).collect();
+                    if text.is_empty() {
+                        continue;
+                    }
+                    session.last_chat_tick = tick;
+                    if let Ok((sender, _)) = players.get(entity) {
+                        chats.push((player, sender.name.clone(), text));
+                    }
+                }
                 ClientMessage::Goodbye => {
-                    session.conn.close("client goodbye");
+                    sessions.sessions[index].conn.close("client goodbye");
                 }
             }
         }
@@ -160,7 +243,7 @@ pub fn drain_network(
     sessions.sessions.retain(|session| {
         if let fallingsand_net::ConnectionStatus::Closed { reason } = session.conn.status() {
             if let Some(entity) = session.entity {
-                if let Ok(player) = players.get(entity) {
+                if let Ok((player, _)) = players.get(entity) {
                     tracing::info!("{} left: {reason}", player.name);
                 }
                 commands.entity(entity).despawn();
@@ -194,6 +277,13 @@ pub fn drain_network(
                 .send(encode_message(&ServerMessage::PlayerLeft {
                     player: *player,
                 }));
+        }
+        for (player, name, text) in &chats {
+            session.conn.send(encode_message(&ServerMessage::Chat {
+                player: *player,
+                name: name.clone(),
+                text: text.clone(),
+            }));
         }
     }
 }
@@ -247,7 +337,7 @@ pub fn apply_player_inputs(
                     if dist_sq <= BRUSH_RADIUS * BRUSH_RADIUS || dist_sq > ring * ring {
                         continue;
                     }
-                    bodies.candidates.insert(input.aim.translated(ox, oy));
+                    bodies.candidates.push(input.aim.translated(ox, oy));
                 }
             }
         }
@@ -285,12 +375,17 @@ pub fn step_simulation(
     mut sim: ResMut<SimWorld>,
     registry: Res<Registry>,
     obstacles: Res<SimObstacles>,
+    tickets: Res<crate::regions::ChunkTickets>,
     mut stats: ResMut<TickStats>,
 ) {
     let start = Instant::now();
-    fallingsand_sim::step(&mut sim.0, &registry.0, &obstacles.0);
+    fallingsand_sim::step_scoped(&mut sim.0, &registry.0, &obstacles.0, &|pos| {
+        tickets.simulates(pos)
+    });
     stats.tick = sim.0.tick();
     stats.sim_micros = start.elapsed().as_micros() as u64;
+    stats.active_chunks = tickets.active.len();
+    stats.border_chunks = tickets.border.len();
 }
 
 pub fn step_physics(

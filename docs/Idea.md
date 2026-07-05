@@ -62,7 +62,8 @@ docs/                     # Design docs
 ```
 
 Strict dependency direction: `core ← sim ← {server, client}` and `core ← protocol ← {server, client}`.
-Only `fallingsand_client` may depend on Bevy; only `fallingsand_server` may depend on tokio and redb.
+Only `fallingsand_client` may depend on Bevy; only `fallingsand_server` may depend on redb.
+tokio is server-side plus the client's native-only target (the WebTransport dialer needs a runtime); wasm builds carry neither.
 CI enforces that `fallingsand_client` builds for `wasm32-unknown-unknown`.
 
 ## World Model
@@ -87,7 +88,7 @@ Target **4 bytes/cell**:
 struct Cell {
     material: MaterialId,  // u16 — index into the material registry
     shade_flags: u8,       // high nibble: color variation (visual only),
-                           // low nibble: flag bits (burning, electrified, ...)
+                           // low nibble: reserved (burning is the fire phase, not a flag)
     updated: u8,           // last-updated tick (low byte)
 }
 ```
@@ -103,7 +104,8 @@ Cheap, happens rarely, kills the bug class.
 A hardcoded material enum doesn't scale to a real material catalogue.
 Instead:
 
-- `data/materials.ron` defines materials: id, name, phase (solid/powder/liquid/gas), density, color palette, flammability, reactions (e.g. water + lava → stone + steam), etc.
+- `data/materials.ron` defines materials: id, name, phase (solid/powder/liquid/gas/fire — Noita-style, fire is a cell phase), density, color palette, tags, decay chances, plus a reactions list with per-pair probability and tag operands (e.g. water + lava → steam + stone, fire + [burnable] → fire + fire).
+  Burn duration is probabilistic decay instead of Noita's per-cell fire_hp, keeping Cell at 4 bytes.
 - Loaded into a `MaterialRegistry` at startup.
   The server sends the client a hash to detect mismatch; later this enables server-side custom materials.
 - The sim kernel switches on **phase + properties**, not on material identity.
@@ -124,7 +126,8 @@ Instead:
   - replication sends only dirty rects,
   - the renderer re-uploads only dirty rects.
   Waking rules: a write to a sleeping chunk (or its border) wakes it; neighbors of a dirty border wake too.
-- **Cell particles**: cells knocked loose (explosions, splashes, digging spray) leave the grid and fly ballistically as lightweight free particles, reinserting into the grid on impact.
+  A second double-buffered **keep-alive rect** pair (`keep_bounds`) marks cells that must be simulated again without having changed (clinging fire, pending decay, reactive contact pairs); the sim schedules from the union, while replication and persistence read only the change rects — keep-alives cost zero bandwidth.
+- **Cell particles** (deferred post-MVP): cells knocked loose (explosions, splashes, digging spray) leave the grid and fly ballistically as lightweight free particles, reinserting into the grid on impact.
   Server-simulated and replicated as spawn events (clients integrate the trajectories themselves); purely cosmetic spray can additionally be spawned client-side.
 - **Determinism *within* the server**: same seed + same inputs → same world on one machine (useful for tests/replays).
   Cross-machine determinism is *not* required; the authoritative-server model frees us from that.
@@ -174,12 +177,14 @@ A `fallingsand_server::Server` is a library value you construct and tick — the
 ### Interest management: chunk tickets
 
 - Every **ticket source** (player, spawn anchor, scripted camera) projects tickets onto chunks: `Active` (simulate + replicate), `Border` (loaded, simulated so edges behave, not replicated), `Loaded` (in memory only).
-- Regions with zero tickets get persisted and unloaded after a grace period.
+- Regions with zero tickets get persisted and unloaded after a grace period; in-flight pixel bodies over an unloading region are stamped back into the grid first so they persist.
 - Replication distance and simulation distance are separate knobs per source.
+- Implemented as a per-tick `ChunkTickets` set computed from player positions (the only source type so far); load/unload stays region-granular, and chunks outside Active∪Border freeze in place (rects preserved) until re-entered.
 
 ### Persistence
 
-- redb tables: `regions` (z-order key → lz4 blob, format-versioned), `entities` (region key → entity set), `players` (uuid → player data), `meta` (seed, world version, name).
+- redb tables: `regions` (z-order key → lz4 blob, format-versioned), `players` (uuid → name/position/hp), `meta` (seed, world version, name); an `entities` table (region key → entity set) joins when non-player entities exist.
+- Pixel bodies are not stored separately: unsettled bodies are stamped back into the grid on region unload and on final save, so their cells persist as terrain.
 - Regions are written **only when dirty**, on unload and on periodic autosave.
   Writes go through redb transactions so a crash never corrupts the world.
 - The save format carries an explicit version byte from day one; migrations are a function table.
@@ -210,17 +215,17 @@ Zero serialization shortcuts — the local pipe still moves `fallingsand_protoco
 
 ## Client Architecture (`fallingsand_client`)
 
-- **Bevy app** with states: `MainMenu → Connecting → InGame (→ Paused overlay)`.
-- **World rendering**: one GPU texture per loaded chunk (64×64), re-uploaded only for dirty rects; chunks drawn as instanced quads.
+- **Bevy app** with states: `MainMenu → InGame (→ Paused overlay)`; connecting/reconnecting/stalled/lost states are a supervisor-driven overlay inside `InGame`, which covers mid-game connection loss with the same UI as the initial connect.
+- **World rendering**: one GPU texture per loaded chunk (64×64), re-uploaded only for dirty rects (sub-rect `write_texture` from the render world); chunks drawn as one quad each (~120 draw calls — instancing over a chunk atlas is a possible later optimization, deferred as unmeasured).
   Material id + shade resolve to color via a palette texture in a fragment shader — no per-pixel CPU loop.
-- **Camera & scale**: Noita-like virtual resolution of ~424×242 cells, integer-scaled to the window (~4–5 px per cell at 1080p) so grains stay readable.
-  A modest zoom range is allowed, but replication/interest budgets are sized for the default zoom — zooming out never expands the server's obligations.
+- **Camera & scale**: Noita-like virtual resolution of ~424×242 cells fit to the window via Bevy's `AutoMin` scaling with a clamped zoom range (accepted deviation from integer scaling; revisit if grain shimmer bothers).
+  Replication/interest budgets are sized for the default zoom — zooming out never expands the server's obligations.
 - **Pixel bodies & entities**: sprites/textures with transforms, interpolated.
 - **UI**: Bevy UI for the first iteration (menu, HUD, chat, debug overlay).
-  The main menu is a real deliverable: world list (create/load/delete), server browser/direct-connect, settings.
-- **Debug tooling from day one**: F3-style overlay (tick time, chunk counts, dirty stats, bandwidth), chunk-boundary/dirty-rect visualizer, material inspector under cursor.
+  The main menu: world list (create/load/delete), direct-connect, player name + window settings; a server browser is deferred (join-by-address per the auth open question).
+- **Debug tooling from day one**: F3-style overlay (tick time, chunk counts incl. ticket tiers, dirty stats, bandwidth, upload bytes), F4 chunk-boundary/delta-rect visualizer, material inspector under cursor.
   This pays for itself immediately when tuning the sim.
-- **WASM build** (trunk): same crate, `fallingsand_sim`'s rayon behind a feature, storage/embedded server compiled out.
+- **WASM build** (Bevy CLI): same crate, `fallingsand_sim`'s rayon behind a feature, storage/embedded server compiled out.
   The web client is join-only.
 
 ## World Generation (`fallingsand_worldgen`)
@@ -256,9 +261,10 @@ Not blocking the milestones below; each gets its own decision when it becomes lo
 
 - **Lighting**: Terraria-style flood lighting vs. raycast; likely a client-side concern — decide before the "beautiful" pass.
 - **Fluids beyond cellular automata**: pressure/velocity fields for large liquid bodies (Noita does a hybrid); revisit after CA liquids exist.
-- **Temperature/fire spread plane**: separate SoA plane per chunk — design sketch exists (see Cell representation), scheduling TBD.
+- **Temperature plane**: separate SoA plane per chunk — design sketch exists (see Cell representation), scheduling TBD.
+  Fire itself shipped as a cell phase with probabilistic reactions; a temperature field would layer under it for melting/freezing.
 - **Modding surface**: data-driven materials/biomes are the first step; scripting is deliberately unplanned.
-- **Auth/identity for public servers**: fine with join-by-address + name for now.
+- **Auth/identity for public servers**: fine with join-by-address + a client-generated persistent uuid + display name for now; the uuid also drives reconnect session takeover and save keying.
 - **Browser certificate distribution**: WebTransport in browsers requires either a CA-trusted cert or `serverCertificateHashes` with ECDSA certs of ≤14-day validity, so community-hosted servers need cert rotation plus an out-of-band hash channel (e.g. a lobby HTTPS API) — or a WebSocket fallback for browsers.
   Decide by M4; native clients are unaffected.
 - **Environmental pressure design** (day/night, seasons, weather à la DST): which cycles exist and how they interact with the material sim (rain refills aquifers? winter freezes water?) — decide when the survival layer lands (M6+).

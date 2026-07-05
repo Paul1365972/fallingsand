@@ -7,5 +7,4 @@ edition.workspace = true
 serde = { workspace = true }
 postcard = { workspace = true }
 ron = { workspace = true }
-bitflags = { workspace = true }
 thiserror = { workspace = true }

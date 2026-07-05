@@ -1,8 +1,32 @@
 use fallingsand_core::{CellPos, ChunkPos, DirtyRect, MaterialId};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct PlayerId(pub u32);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct PlayerUuid(pub u128);
+
+impl PlayerUuid {
+    pub fn to_hex(self) -> String {
+        format!("{:032x}", self.0)
+    }
+
+    pub fn from_hex(text: &str) -> Option<Self> {
+        let text = text.trim();
+        if text.is_empty() || text.len() > 32 {
+            return None;
+        }
+        u128::from_str_radix(text, 16).ok().map(Self)
+    }
+}
+
+impl fmt::Display for PlayerUuid {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:032x}", self.0)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PlayerInput {
@@ -47,8 +71,15 @@ pub struct PixelBodyState {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ClientMessage {
-    Hello { protocol_version: u16, name: String },
+    Hello {
+        protocol_version: u16,
+        uuid: PlayerUuid,
+        name: String,
+    },
     Input(PlayerInput),
+    Chat {
+        text: String,
+    },
     Goodbye,
 }
 
@@ -85,6 +116,11 @@ pub enum ServerMessage {
     },
     PlayerLeft {
         player: PlayerId,
+    },
+    Chat {
+        player: PlayerId,
+        name: String,
+        text: String,
     },
     PixelBodySpawn {
         id: u32,

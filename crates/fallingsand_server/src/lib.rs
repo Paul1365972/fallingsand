@@ -21,6 +21,7 @@ pub const TICK_RATE: u32 = 60;
 pub const TICK_DURATION: Duration = Duration::from_nanos(1_000_000_000 / TICK_RATE as u64);
 pub const INTEREST_RADIUS_X: i32 = 6;
 pub const INTEREST_RADIUS_Y: i32 = 4;
+pub const MAX_HP: f32 = 100.0;
 
 #[derive(Resource)]
 pub struct SimWorld(pub CellWorld);
@@ -43,6 +44,8 @@ pub struct TickStats {
     pub sim_micros: u64,
     pub awake_chunks: usize,
     pub loaded_chunks: usize,
+    pub active_chunks: usize,
+    pub border_chunks: usize,
     pub players: usize,
     pub replicated_bytes: u64,
     pub pixel_bodies: usize,
@@ -155,6 +158,7 @@ impl Server {
         world.insert_resource(Generator(generator));
         world.insert_resource(Store(store));
         world.insert_resource(RegionMap::default());
+        world.insert_resource(regions::ChunkTickets::default());
         world.insert_resource(SpawnPoint(spawn));
         world.insert_resource(bodies::PixelBodies::default());
         world.insert_resource(SimObstacles::default());
@@ -164,6 +168,7 @@ impl Server {
             (
                 systems::drain_network,
                 systems::apply_player_inputs,
+                regions::compute_tickets,
                 regions::manage_regions,
                 systems::build_obstacles,
                 systems::step_simulation,
@@ -194,15 +199,15 @@ impl Server {
         *self.world.resource::<TickStats>()
     }
 
-    pub fn save_all(&mut self) {
-        regions::save_everything(&mut self.world);
+    pub fn save_all(&mut self, final_save: bool) {
+        regions::save_everything(&mut self.world, final_save);
     }
 
     pub fn run_blocking(&mut self, control: Arc<ServerControl>) {
         let mut timer = StepTimer::new(TICK_DURATION);
         while !control.stop_requested() {
             if control.take_save_request() {
-                self.save_all();
+                self.save_all(false);
             }
             if !control.paused() {
                 self.tick();
@@ -222,7 +227,7 @@ impl Server {
             timer.sleep();
         }
         tracing::info!("stopping server");
-        self.save_all();
+        self.save_all(true);
     }
 }
 
