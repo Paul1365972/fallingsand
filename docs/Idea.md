@@ -192,6 +192,7 @@ A `fallingsand_server::Server` is a library value you construct and tick — the
 
 - redb tables: `regions` (z-order key → lz4 blob, format-versioned), `players` (uuid → name/position/hp), `meta` (seed, world version, name); an `entities` table (region key → entity set) joins when non-player entities exist.
 - Pixel bodies are not stored separately: unsettled bodies are stamped back into the grid on region unload and on final save, so their cells persist as terrain.
+- Region blobs carry each chunk's **resume rect** (the union of its change and keep-alive rects at save time) alongside the cells; on load it is restored as a keep-alive rect, so in-flight processes (falling powder, flowing liquids, pending reactions) continue after unload/reload — and, being a keep-alive, restoring costs no replication bandwidth and never fakes a change.
 - Regions are written **only when dirty**, on unload and on periodic autosave.
   Writes go through redb transactions so a crash never corrupts the world.
 - The save format carries an explicit version byte from day one; migrations are a function table.

@@ -1,15 +1,18 @@
 use fallingsand_core::{
-    CHUNK_AREA, Cell, ChunkOffset, MaterialId, REGION_AREA_CHUNKS, Region, RegionPos,
+    CHUNK_AREA, CHUNK_SIZE, Cell, ChunkOffset, DirtyRect, MaterialId, REGION_AREA_CHUNKS, Region,
+    RegionPos,
 };
 use fallingsand_protocol::PlayerUuid;
 use redb::{Database, ReadableDatabase, TableDefinition};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-pub const REGION_FORMAT_VERSION: u8 = 1;
+pub const REGION_FORMAT_VERSION: u8 = 2;
 pub const WORLD_FORMAT_VERSION: u16 = 2;
 const CELL_BYTES: usize = 3;
-const REGION_RAW_BYTES: usize = REGION_AREA_CHUNKS * CHUNK_AREA * CELL_BYTES;
+const RECT_BYTES: usize = 4;
+const REGION_CELL_BYTES: usize = REGION_AREA_CHUNKS * CHUNK_AREA * CELL_BYTES;
+const REGION_RAW_BYTES: usize = REGION_CELL_BYTES + REGION_AREA_CHUNKS * RECT_BYTES;
 
 const REGIONS: TableDefinition<u64, &[u8]> = TableDefinition::new("regions");
 const PLAYERS: TableDefinition<u128, &[u8]> = TableDefinition::new("players");
@@ -186,10 +189,28 @@ pub fn encode_region(region: &Region) -> Vec<u8> {
             raw.push(cell.shade_flags);
         }
     }
+    for chunk in region.chunks() {
+        let rect = chunk.sim_dirty();
+        raw.extend_from_slice(&[rect.min_x, rect.min_y, rect.max_x, rect.max_y]);
+    }
     let mut blob = Vec::with_capacity(raw.len() / 8 + 16);
     blob.push(REGION_FORMAT_VERSION);
     blob.extend_from_slice(&lz4_flex::compress_prepend_size(&raw));
     blob
+}
+
+fn decode_rect(bytes: &[u8]) -> DirtyRect {
+    let rect = DirtyRect::new(bytes[0], bytes[1], bytes[2], bytes[3]);
+    if rect.is_empty() {
+        return DirtyRect::EMPTY;
+    }
+    let max = (CHUNK_SIZE - 1) as u8;
+    DirtyRect::new(
+        rect.min_x.min(max),
+        rect.min_y.min(max),
+        rect.max_x.min(max),
+        rect.max_y.min(max),
+    )
 }
 
 pub fn decode_region(blob: &[u8]) -> Result<Region, StoreError> {
@@ -208,7 +229,7 @@ pub fn decode_region(blob: &[u8]) -> Result<Region, StoreError> {
         )));
     }
     let mut region = Region::new();
-    let mut cursor = raw.chunks_exact(CELL_BYTES);
+    let mut cursor = raw[..REGION_CELL_BYTES].chunks_exact(CELL_BYTES);
     for chunk_index in 0..REGION_AREA_CHUNKS {
         let chunk = region.chunk_mut(ChunkOffset::from_index(chunk_index));
         for cell in chunk.cells_mut() {
@@ -219,6 +240,10 @@ pub fn decode_region(blob: &[u8]) -> Result<Region, StoreError> {
                 updated: 0,
             };
         }
+    }
+    let rects = raw[REGION_CELL_BYTES..].chunks_exact(RECT_BYTES);
+    for (chunk, bytes) in region.chunks_mut().iter_mut().zip(rects) {
+        chunk.keep_bounds = decode_rect(bytes);
     }
     Ok(region)
 }

@@ -4,8 +4,7 @@ use crate::systems::{Health, PLAYER_HALF_H, PhysicsBody};
 use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y, SimWorld};
 use bevy_ecs::prelude::*;
 use fallingsand_core::{
-    CellOffset, CellPos, ChunkOffset, ChunkPos, MaterialRegistry, REGION_SIZE_CELLS,
-    REGION_SIZE_CHUNKS, Region, RegionPos,
+    CellPos, ChunkOffset, ChunkPos, REGION_SIZE_CELLS, REGION_SIZE_CHUNKS, Region, RegionPos,
 };
 use fallingsand_protocol::PlayerUuid;
 use fallingsand_sim::bodies::{stamp_body, try_stamp};
@@ -95,22 +94,13 @@ pub fn wanted_regions(tickets: &ChunkTickets) -> FxHashSet<RegionPos> {
         .collect()
 }
 
-fn insert_region(sim: &mut CellWorld, registry: &MaterialRegistry, pos: RegionPos, region: Region) {
+fn insert_region(sim: &mut CellWorld, pos: RegionPos, region: Region) {
     let base = pos.base_chunk();
     let chunks = *region.into_chunks();
-    let mut reactive: Vec<CellPos> = Vec::new();
     for (index, chunk) in chunks.into_iter().enumerate() {
         let offset = ChunkOffset::from_index(index);
         let chunk_pos = ChunkPos::new(base.x + offset.x as i32, base.y + offset.y as i32);
-        for (cell_index, cell) in chunk.cells().iter().enumerate() {
-            if registry.is_reactive(cell.material) {
-                reactive.push(chunk_pos.cell(CellOffset::from_index(cell_index)));
-            }
-        }
         sim.insert_chunk(chunk_pos, chunk);
-    }
-    for cell_pos in reactive {
-        sim.mark_keep(cell_pos);
     }
 }
 
@@ -174,7 +164,7 @@ pub fn manage_regions(
             })
         });
         let region = loaded.unwrap_or_else(|| generator.0.generate_region(pos));
-        insert_region(&mut sim.0, &registry.0, pos, region);
+        insert_region(&mut sim.0, pos, region);
         regions.states.insert(
             pos,
             RegionState {
