@@ -15,8 +15,10 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 
 pub const BORDER_MARGIN: i32 = 3;
-pub const UNLOAD_GRACE_TICKS: u64 = 300;
-pub const AUTOSAVE_INTERVAL_TICKS: u64 = 600;
+pub const UNLOAD_GRACE_SECS: f32 = 5.0;
+pub const AUTOSAVE_INTERVAL_SECS: f32 = 10.0;
+pub const UNLOAD_GRACE_TICKS: u64 = (UNLOAD_GRACE_SECS * crate::TICK_RATE as f32) as u64;
+pub const AUTOSAVE_INTERVAL_TICKS: u64 = (AUTOSAVE_INTERVAL_SECS * crate::TICK_RATE as f32) as u64;
 pub const MAX_LOADS_PER_TICK: usize = 1;
 
 #[derive(Resource)]

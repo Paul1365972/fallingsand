@@ -31,7 +31,7 @@ pub struct Material {
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
-    pub decay_chance: f32,
+    pub decay_rate: f32,
     #[serde(default)]
     pub decay_into: Option<String>,
     #[serde(default)]
@@ -44,12 +44,16 @@ pub struct ReactionDef {
     pub b: String,
     pub a_becomes: String,
     pub b_becomes: String,
-    #[serde(default = "default_chance")]
-    pub chance: f32,
+    #[serde(default = "default_rate")]
+    pub rate: f32,
 }
 
-fn default_chance() -> f32 {
-    1.0
+fn default_rate() -> f32 {
+    f32::INFINITY
+}
+
+fn per_tick_chance(rate: f32) -> f32 {
+    1.0 - (-rate * crate::TICK_DT).exp()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -178,7 +182,7 @@ impl MaterialRegistry {
         let decays: Vec<Option<(f32, MaterialId)>> = materials
             .iter()
             .map(|material| {
-                if material.decay_chance <= 0.0 {
+                if material.decay_rate <= 0.0 {
                     return Ok(None);
                 }
                 let product = match &material.decay_into {
@@ -187,7 +191,7 @@ impl MaterialRegistry {
                         .ok_or_else(|| RegistryError::UnknownMaterial(name.clone()))?,
                     None => MaterialId::AIR,
                 };
-                Ok(Some((material.decay_chance, product)))
+                Ok(Some((per_tick_chance(material.decay_rate), product)))
             })
             .collect::<Result<_, RegistryError>>()?;
 
@@ -255,7 +259,7 @@ impl MaterialRegistry {
                                     Reaction {
                                         becomes,
                                         other_becomes,
-                                        chance: def.chance,
+                                        chance: per_tick_chance(def.rate),
                                     },
                                     specificity,
                                 ));

@@ -5,7 +5,7 @@ use crate::{
     SpawnPoint, TickStats,
 };
 use bevy_ecs::prelude::*;
-use fallingsand_core::{CellOffset, CellPos, MaterialId, Phase};
+use fallingsand_core::{CellOffset, CellPos, MaterialId, Phase, TICK_DT};
 use fallingsand_protocol::{
     ClientMessage, EntityState, PROTOCOL_VERSION, PlayerId, ServerMessage, cells_to_wire,
     decode_message, encode_message,
@@ -21,10 +21,10 @@ pub const REACH: f32 = 80.0;
 pub const BRUSH_RADIUS: i32 = 3;
 pub use crate::MAX_HP;
 const CHAT_MAX_CHARS: usize = 240;
-const CHAT_RATE_TICKS: u64 = 15;
+const CHAT_RATE_SECS: f32 = 0.25;
+const CHAT_RATE_TICKS: u64 = (CHAT_RATE_SECS * crate::TICK_RATE as f32) as u64;
 const SAFE_IMPACT_SPEED: f32 = 300.0;
 const IMPACT_DAMAGE_SCALE: f32 = 0.3;
-const TICK_DT: f32 = 1.0 / crate::TICK_RATE as f32;
 
 #[derive(Component)]
 pub struct PhysicsBody(pub Body);

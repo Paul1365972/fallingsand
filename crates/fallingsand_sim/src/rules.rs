@@ -7,7 +7,8 @@ const NEIGHBORS: [(i32, i32); 4] = [(0, -1), (-1, 0), (1, 0), (0, 1)];
 const SALT_REACT: u32 = 1;
 const SALT_DECAY: u32 = 2;
 const SALT_FLICKER: u32 = 3;
-const FLICKER_CHANCE: f32 = 0.3;
+const FLICKER_RATE: f32 = 18.0;
+const FLICKER_CHANCE: f32 = FLICKER_RATE * fallingsand_core::TICK_DT;
 
 pub(crate) fn update_cell(
     window: &mut SimWindow,

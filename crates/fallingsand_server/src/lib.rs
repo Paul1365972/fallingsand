@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-pub const TICK_RATE: u32 = 60;
+pub use fallingsand_core::TICK_RATE;
 pub const TICK_DURATION: Duration = Duration::from_nanos(1_000_000_000 / TICK_RATE as u64);
 pub const INTEREST_RADIUS_X: i32 = 6;
 pub const INTEREST_RADIUS_Y: i32 = 4;

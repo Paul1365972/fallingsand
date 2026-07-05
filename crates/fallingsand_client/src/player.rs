@@ -2,14 +2,14 @@ use crate::net::{NetSet, ServerMsg, Session, SessionEnded};
 use crate::{AppState, ClientRegistry, PauseState};
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
-use fallingsand_core::{CellPos, MaterialId, Phase};
+use fallingsand_core::{CellPos, MaterialId, Phase, TICK_RATE};
 use fallingsand_protocol::{ClientMessage, PlayerId, PlayerInput, ServerMessage};
 
 pub struct PlayerPlugin;
 
 pub const PLAYER_SIZE: Vec2 = Vec2::new(3.8, 11.0);
 const SNAP_DISTANCE: f32 = 64.0;
-pub const BLEND_RATE: f32 = 60.0;
+pub const BLEND_RATE: f32 = TICK_RATE as f32;
 pub const BLEND_CARRY_DAMP: f32 = 0.9;
 pub const BLEND_MAX: f32 = 2.0;
 
@@ -60,7 +60,7 @@ impl Plugin for PlayerPlugin {
         .init_resource::<PlayerVisuals>()
         .init_resource::<PlayerNames>()
         .init_resource::<InputState>()
-        .insert_resource(Time::<Fixed>::from_hz(60.0))
+        .insert_resource(Time::<Fixed>::from_hz(TICK_RATE as f64))
         .add_systems(
             PreUpdate,
             (track_names, apply_entity_states).chain().after(NetSet),

@@ -7,8 +7,8 @@ pub const STEP_DOWN_CELLS: i32 = 3;
 const CEILING_SLIP_CELLS: i32 = 2;
 const SUB_STEP: f32 = 0.4;
 const SKIN: f32 = 1e-4;
-const COYOTE_TICKS: u8 = 8;
-const BUFFER_TICKS: u8 = 8;
+const COYOTE_SECS: f32 = 0.13;
+const BUFFER_SECS: f32 = 0.13;
 const APEX_SPEED: f32 = 20.0;
 const STEP_UP_MAX_RISE: f32 = 40.0;
 const WADE_UP_CELLS: usize = 4;
@@ -63,8 +63,8 @@ impl Body {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Controller {
-    coyote: u8,
-    buffer: u8,
+    coyote: f32,
+    buffer: f32,
     jump_held: bool,
     jumping: bool,
     submerged: bool,
@@ -196,26 +196,26 @@ pub fn step_player<W: CellSource>(
     let pressed = jump_held && !ctrl.jump_held;
     ctrl.jump_held = jump_held;
     ctrl.buffer = if pressed {
-        BUFFER_TICKS
+        BUFFER_SECS
     } else {
-        ctrl.buffer.saturating_sub(1)
+        (ctrl.buffer - dt).max(0.0)
     };
 
     let submerged = body_submerged(world, registry, body);
     if submerged {
         ctrl.coyote = if body.on_ground {
-            COYOTE_TICKS
+            COYOTE_SECS
         } else {
-            ctrl.coyote.saturating_sub(1)
+            (ctrl.coyote - dt).max(0.0)
         };
         if body.vy <= 0.0 {
             ctrl.jumping = false;
         }
-        if (ctrl.buffer > 0 || jump_held) && ctrl.coyote > 0 {
+        if (ctrl.buffer > 0.0 || jump_held) && ctrl.coyote > 0.0 {
             body.vy = params.jump_speed;
             body.vx += move_x.clamp(-1, 1) as f32 * HOP_BOOST;
-            ctrl.buffer = 0;
-            ctrl.coyote = 0;
+            ctrl.buffer = 0.0;
+            ctrl.coyote = 0.0;
             ctrl.jumping = true;
         }
         let samples = (body.half_h * 2.0).round().max(1.0) as i32;
@@ -258,15 +258,15 @@ pub fn step_player<W: CellSource>(
             body.vy = SURFACE_BOB_SPEED;
         }
         ctrl.coyote = if body.on_ground {
-            COYOTE_TICKS
+            COYOTE_SECS
         } else {
-            ctrl.coyote.saturating_sub(1)
+            (ctrl.coyote - dt).max(0.0)
         };
-        if (ctrl.buffer > 0 || jump_held) && ctrl.coyote > 0 {
+        if (ctrl.buffer > 0.0 || jump_held) && ctrl.coyote > 0.0 {
             body.vy = params.jump_speed;
             body.vx += move_x.clamp(-1, 1) as f32 * HOP_BOOST;
-            ctrl.buffer = 0;
-            ctrl.coyote = 0;
+            ctrl.buffer = 0.0;
+            ctrl.coyote = 0.0;
             ctrl.jumping = true;
         }
         if ctrl.jumping && body.vy > 0.0 && !jump_held {

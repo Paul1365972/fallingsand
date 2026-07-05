@@ -1,12 +1,11 @@
 use crate::session::{SessionState, Sessions};
 use crate::{Registry, SimObstacles, SimWorld, TickStats};
 use bevy_ecs::prelude::*;
-use fallingsand_core::CellPos;
+use fallingsand_core::{CellPos, TICK_DT};
 use fallingsand_protocol::{PixelBodyState, ServerMessage, encode_message};
 use fallingsand_sim::bodies::{PixelBody, detect_island, extract_body, stamp_body, step_body};
 
 const BODY_GRAVITY: f32 = -400.0;
-const TICK_DT: f32 = 1.0 / crate::TICK_RATE as f32;
 
 #[derive(Resource, Default)]
 pub struct PixelBodies {

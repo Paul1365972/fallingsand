@@ -4,6 +4,9 @@ pub mod coords;
 pub mod material;
 pub mod region;
 
+pub const TICK_RATE: u32 = 60;
+pub const TICK_DT: f32 = 1.0 / TICK_RATE as f32;
+
 pub use cell::Cell;
 pub use chunk::{CHUNK_AREA, CHUNK_SIZE, Chunk, DirtyRect};
 pub use coords::{CellOffset, CellPos, ChunkOffset, ChunkPos, RegionPos};

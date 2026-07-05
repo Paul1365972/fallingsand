@@ -6,7 +6,7 @@ use std::collections::VecDeque;
 
 pub const MAX_ISLAND_EXTENT: i32 = 48;
 pub const MAX_ISLAND_CELLS: usize = 2048;
-pub const SETTLE_TICKS: u8 = 20;
+pub const SETTLE_SECS: f32 = 0.33;
 const SETTLE_SPEED_SQ: f32 = 100.0;
 const SETTLE_SPIN: f32 = 1.5;
 const CONTACT_DAMPING: f32 = 0.94;
@@ -32,7 +32,7 @@ pub struct PixelBody {
     pub spin: f32,
     pub inv_mass: f32,
     pub inv_inertia: f32,
-    pub rest_ticks: u8,
+    pub rest_secs: f32,
 }
 
 impl PixelBody {
@@ -169,7 +169,7 @@ pub fn extract_body(
         spin: 0.0,
         inv_mass: 1.0 / mass,
         inv_inertia: 1.0 / inertia,
-        rest_ticks: 0,
+        rest_secs: 0.0,
     }
 }
 
@@ -308,11 +308,11 @@ pub fn step_body(
             && (body.y - entity.y).abs() < radius + entity.half_h + 1.0
     });
     if touching && slow && !near_entity {
-        body.rest_ticks = body.rest_ticks.saturating_add(1);
+        body.rest_secs += dt;
     } else {
-        body.rest_ticks = 0;
+        body.rest_secs = 0.0;
     }
-    body.rest_ticks >= SETTLE_TICKS
+    body.rest_secs >= SETTLE_SECS
 }
 
 pub fn stamp_body(world: &mut CellWorld, registry: &MaterialRegistry, body: &PixelBody) {
