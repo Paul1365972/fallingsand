@@ -4,13 +4,10 @@ use fallingsand_core::{Cell, CellPos, MaterialRegistry, Phase};
 
 pub const STEP_UP_CELLS: i32 = 3;
 pub const STEP_DOWN_CELLS: i32 = 3;
-const CEILING_SLIP_CELLS: i32 = 2;
-const SUB_STEP: f32 = 0.4;
 const SKIN: f32 = 1e-4;
 const COYOTE_SECS: f32 = 0.13;
 const BUFFER_SECS: f32 = 0.13;
 const APEX_SPEED: f32 = 20.0;
-const STEP_UP_MAX_RISE: f32 = 40.0;
 const WADE_UP_CELLS: usize = 4;
 const WADE_SIDE_CELLS: usize = 2;
 const FALL_RAMP_SPEED: f32 = 110.0;
@@ -156,7 +153,7 @@ impl Default for PlayerParams {
             air_control: 0.65,
             jump_speed: 205.0,
             jump_cut: 0.5,
-            cut_gravity: 2.0,
+            cut_gravity: 1.5,
             gravity_up: -760.0,
             gravity_down: -850.0,
             apex_gravity: 0.7,
@@ -278,7 +275,7 @@ pub fn step_player<W: CellSource>(
         }
         let gravity = if down_held && body.vy <= 0.0 {
             params.gravity_down * FAST_FALL_GRAVITY
-        } else if !body.on_ground && jump_held && body.vy.abs() < APEX_SPEED {
+        } else if !body.on_ground && body.vy.abs() < APEX_SPEED {
             params.gravity_up * params.apex_gravity
         } else if body.vy > 0.0 {
             if jump_held {
@@ -376,47 +373,73 @@ pub fn move_body<W: CellSource>(
     let mut displaced: Vec<CellPos> = Vec::new();
     let was_grounded = body.on_ground;
     body.on_ground = false;
-    let mut remaining_x = body.vx * dt;
-    let mut remaining_y = body.vy * dt;
-    let mut slip_budget = CEILING_SLIP_CELLS;
+    let remaining_x = body.vx * dt;
+    let remaining_y = body.vy * dt;
 
-    while remaining_x.abs() > SKIN {
-        let step = remaining_x.clamp(-SUB_STEP, SUB_STEP);
-        remaining_x -= step;
-        let next_x = body.x + step;
-        let outcome = passage(world, registry, body, next_x, body.y, &displaced);
-        if matches!(outcome, Passage::Free) {
-            body.x = next_x;
-            continue;
-        }
-        let mut stepped = false;
-        if body.vy <= STEP_UP_MAX_RISE {
+    if remaining_x.abs() > SKIN {
+        let dir = if remaining_x > 0.0 { 1i32 } else { -1 };
+        let dirf = dir as f32;
+        let mut target = body.x + remaining_x;
+        let mut col = (body.x + dirf * body.half_w - dirf * SKIN).floor() as i32;
+        loop {
+            let next_col = col + dir;
+            let entry_face = if dir > 0 {
+                next_col as f32 + SKIN
+            } else {
+                (next_col + 1) as f32 - 2.0 * SKIN
+            };
+            let next_x = entry_face - dirf * body.half_w;
+            if (next_x - target) * dirf >= 0.0 {
+                if matches!(
+                    passage(world, registry, body, target, body.y, &displaced),
+                    Passage::Free
+                ) {
+                    body.x = target;
+                } else {
+                    body.vx = 0.0;
+                }
+                break;
+            }
+            let outcome = passage(world, registry, body, next_x, body.y, &displaced);
+            if matches!(outcome, Passage::Free) {
+                body.x = next_x;
+                col = next_col;
+                continue;
+            }
+            let mut stepped = false;
             for up in 1..=STEP_UP_CELLS {
                 let next_y = body.y + up as f32;
                 if !rect_blocked(world, registry, next_x, next_y, body.half_w, body.half_h) {
                     body.x = next_x;
                     body.y = next_y;
+                    col = next_col;
                     stepped = true;
                     break;
                 }
             }
+            if stepped {
+                continue;
+            }
+            if let Passage::Powder(cells) = outcome
+                && cells.len() <= WADE_SIDE_CELLS
+                && displaced.len() + cells.len() <= MAX_DISPLACED
+            {
+                let damp = WADE_DAMP.powi(cells.len() as i32);
+                displaced.extend(cells);
+                body.x = next_x;
+                col = next_col;
+                body.vx *= damp;
+                target = body.x + (target - body.x) * damp;
+                continue;
+            }
+            body.x = if dir > 0 {
+                next_col as f32 - body.half_w
+            } else {
+                (next_col + 1) as f32 + body.half_w
+            };
+            body.vx = 0.0;
+            break;
         }
-        if stepped {
-            continue;
-        }
-        if let Passage::Powder(cells) = outcome
-            && cells.len() <= WADE_SIDE_CELLS
-            && displaced.len() + cells.len() <= MAX_DISPLACED
-        {
-            let damp = WADE_DAMP.powi(cells.len() as i32);
-            displaced.extend(cells);
-            body.x = next_x;
-            body.vx *= damp;
-            remaining_x *= damp;
-            continue;
-        }
-        body.vx = 0.0;
-        break;
     }
 
     if was_grounded
@@ -450,57 +473,56 @@ pub fn move_body<W: CellSource>(
         }
     }
 
-    while remaining_y.abs() > SKIN {
-        let step = remaining_y.clamp(-SUB_STEP, SUB_STEP);
-        let next_y = body.y + step;
-        let outcome = passage(world, registry, body, body.x, next_y, &displaced);
-        match outcome {
-            Passage::Free => {
-                remaining_y -= step;
-                body.y = next_y;
-            }
-            Passage::Powder(cells)
-                if step > 0.0
-                    && cells.len() <= WADE_UP_CELLS
-                    && displaced.len() + cells.len() <= MAX_DISPLACED =>
-            {
-                remaining_y -= step;
-                body.y = next_y;
-                let damp = WADE_DAMP.powi(cells.len() as i32);
-                displaced.extend(cells);
-                body.vy *= damp;
-                remaining_y *= damp;
-            }
-            _ => {
-                if step > 0.0 {
-                    let sign = if body.vx >= 0.0 { 1.0 } else { -1.0 };
-                    let mut corrected = false;
-                    if slip_budget > 0 {
-                        for nudge in [sign, -sign] {
-                            let nudged_x = body.x + nudge;
-                            if !rect_blocked(
-                                world,
-                                registry,
-                                nudged_x,
-                                next_y,
-                                body.half_w,
-                                body.half_h,
-                            ) {
-                                body.x = nudged_x;
-                                body.y = next_y;
-                                remaining_y -= step;
-                                slip_budget -= 1;
-                                corrected = true;
-                                break;
-                            }
-                        }
-                    }
-                    if !corrected {
-                        body.vy = 0.0;
-                        break;
-                    }
+    if remaining_y.abs() > SKIN {
+        let dir = if remaining_y > 0.0 { 1i32 } else { -1 };
+        let dirf = dir as f32;
+        let mut target = body.y + remaining_y;
+        let mut row = (body.y + dirf * body.half_h - dirf * SKIN).floor() as i32;
+        loop {
+            let next_row = row + dir;
+            let entry_face = if dir > 0 {
+                next_row as f32 + SKIN
+            } else {
+                (next_row + 1) as f32 - 2.0 * SKIN
+            };
+            let next_y = entry_face - dirf * body.half_h;
+            if (next_y - target) * dirf >= 0.0 {
+                if matches!(
+                    passage(world, registry, body, body.x, target, &displaced),
+                    Passage::Free
+                ) {
+                    body.y = target;
                 } else {
-                    body.on_ground = true;
+                    body.vy = 0.0;
+                }
+                break;
+            }
+            match passage(world, registry, body, body.x, next_y, &displaced) {
+                Passage::Free => {
+                    body.y = next_y;
+                    row = next_row;
+                }
+                Passage::Powder(cells)
+                    if dir > 0
+                        && cells.len() <= WADE_UP_CELLS
+                        && displaced.len() + cells.len() <= MAX_DISPLACED =>
+                {
+                    let damp = WADE_DAMP.powi(cells.len() as i32);
+                    displaced.extend(cells);
+                    body.y = next_y;
+                    row = next_row;
+                    body.vy *= damp;
+                    target = body.y + (target - body.y) * damp;
+                }
+                _ => {
+                    body.y = if dir > 0 {
+                        next_row as f32 - body.half_h
+                    } else {
+                        (next_row + 1) as f32 + body.half_h
+                    };
+                    if dir < 0 {
+                        body.on_ground = true;
+                    }
                     body.vy = 0.0;
                     break;
                 }
