@@ -27,8 +27,12 @@ The loop is DST-flavored — gather, build, defend, expand — but every mechani
   The surface is home — buildable, farmable, survivable.
   Depth is the risk/reward axis: better materials, worse hazards.
   The sky thins into emptiness and is a late-game frontier, not a wall.
+  No bedrock and no indestructible materials anywhere — depth is gated by hardness and hazard, never by fiat.
 - **First iteration gameplay** is deliberately thin: move, dig, place, a few materials, basic health.
   The world simulation *is* the early content; survival systems layer on in later milestones once the foundations are proven.
+- **Survival direction**: per-player game modes toggled by Minecraft-style chat commands (`/gamemode`, open to everyone) — survival is the default, creative adds flight and unrestricted tools.
+  Survival digs bare-handed gated by per-material hardness; dug cells fill a per-material inventory and place back out — cells are the resource, no item drops.
+  Hazards are material contact (lava/fire burn, drowning, crush by pixel bodies) — no fall damage; death respawns at spawn with slow passive regen, keeping inventory until the game is deep enough to afford the drop-your-stuff cost above.
 
 ## Technology Choices
 
@@ -247,6 +251,7 @@ Zero serialization shortcuts — the local pipe still moves `fallingsand_protoco
 - Biome and feature definitions are data-driven (`data/biomes.ron`) like materials.
 - First iteration: surface band with height variation, a cave layer, 2–3 biomes, a handful of materials.
   Enough to prove the pipeline shape, not content-complete.
+- Next: a full overhaul — dramatic terrain, real cave systems, surface life and water, depth-tiered ores, ~6 biomes — with a PNG preview harness built first so generation is iterated offline, not in-game.
 
 ## Performance Strategy
 
@@ -267,11 +272,9 @@ Budgets first, so regressions are visible in the in-game debug overlay:
 
 Not blocking the milestones below; each gets its own decision when it becomes load-bearing.
 
-- **Lighting**: Terraria-style flood lighting vs. raycast; likely a client-side concern — decide before the "beautiful" pass.
 - **Fluids beyond cellular automata**: pressure/velocity fields for large liquid bodies (Noita does a hybrid); revisit after CA liquids exist.
 - **Temperature plane**: separate SoA plane per chunk — design sketch exists (see Cell representation), scheduling TBD.
   Fire itself shipped as a cell phase with probabilistic reactions; a temperature field would layer under it for melting/freezing.
-- **Modding surface**: data-driven materials/biomes are the first step; scripting is deliberately unplanned.
 - **Auth/identity for public servers**: fine with join-by-address + a client-generated persistent uuid + display name for now; the uuid also drives reconnect session takeover and save keying.
 - **Browser certificate distribution**: WebTransport in browsers requires either a CA-trusted cert or `serverCertificateHashes` with ECDSA certs of ≤14-day validity, so community-hosted servers need cert rotation plus an out-of-band hash channel (e.g. a lobby HTTPS API) — or a WebSocket fallback for browsers.
   Decide by M4; native clients are unaffected.

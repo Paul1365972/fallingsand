@@ -28,4 +28,3 @@ From the GDC talk and community reverse engineering:
 
 - APIC: 4–16 particles per cell simulated.
 - Position Based Dynamics: https://matthias-research.github.io/pages/publications/posBasedDyn.pdf
-  (see §3.5 — group particles and equalize their velocities to dampen local movement, with angular momentum handling).

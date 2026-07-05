@@ -7,33 +7,40 @@ Old pre-rewrite code lives on the `legacy` branch: reference only, never copy fo
 ## Commands
 
 ```
-cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo fmt --all
 cargo build -p fallingsand_client --target wasm32-unknown-unknown
 cargo run -p fallingsand_client --features dev
 ```
 
+## Ideology
+
+- Conservation of mass: cells are never created or destroyed without a physical cause (a reaction, explicit consumption); overlaps and awkward states resolve by displacement, never by deleting whichever cell is inconvenient.
+- Momentum is conserved in every exchange; contacts are inelastic — energy only dissipates, never appears.
+- One cell, one owner: double occupancy by terrain, rigid bodies, or entities is an architecture bug, not a tuning problem.
+- Every matter-affecting system handles all matter kinds — grid cells, powders/fluids, rigid bodies, entities — or explicitly flags the gap (a fallen tree must burn).
+- Physics is semi-realistic and phase-based; no artificial caps or clamps that distort it.
+- Fix root causes: recurring sim/physics bugs get architectural reworks, not symptom patches.
+- Boil-the-ocean mode: nothing is holy — rework any system, architecture, or protocol freely; no backwards compatibility or migrations, bump the version constants instead.
+- Server-authoritative everything: clients send raw input and render interpolated state — no client prediction, no client-side gameplay logic.
+- Every system needs an idle story: a settled world costs ~nothing — no per-tick work, no permanently-awake chunks, server or client.
+- We want great, not good; Noita and Celeste are the benchmarks (worldgen taste: Terraria × Noita × modern Minecraft), and feel is judged by human playtest.
+
 ## Rules
 
 - Dependency direction: `core ← sim ← {server, client}`, `core ← protocol ← {server, client}`.
-- Only `fallingsand_client` may depend on Bevy; only `fallingsand_server` on redb. tokio: server, plus the client's native-only target (WebTransport dialer runtime).
-- No code comments, no doc comments; only very few exceptions like `// SAFETY:` on unsafe blocks for example.
-- Conventional commits.
+- Only `fallingsand_client` may depend on Bevy; only `fallingsand_server` on redb; tokio: server plus the client's native-only target.
+- No code comments, no doc comments (rare exceptions like `// SAFETY:`); docs are terse and standalone, no meta talk.
 - Game data is RON in `data/`; the sim dispatches on phase + properties, never material identity.
+- No tests unless asked; verify with clippy + build, then hand feel/UI verification to the user — never hack up self-verification.
+- Big features are built as one unit and playtested once at the end — no placeholder milestones or demo scaffolding.
+- Commit once at the end of a task (packets only when clearly separable): conventional subject, no body, no co-author; never push; leave the user's parallel WIP untouched.
 
 ## Sim invariants
 
 - 4-phase 2×2-chunk-block scheduling; workers get a 4×4-chunk `SimWindow`, disjoint per phase.
 - No update may reach beyond the window (speed of light = 64); longer effects use the `WorldEdit` queue.
-- Chunks sleep via double-buffered dirty rects; writes to sleeping chunks must `normalize_updated` first (helpers do this).
-- Change rects (`bounds`) feed replication/persistence; keep-alive rects (`keep_bounds`) only feed sim scheduling. `window.mark` for "simulate again", `window.set` for real changes — never mark `bounds` without a cell write.
-- `Cell` stays exactly 4 bytes; extra per-cell state becomes separate SoA planes later.
-- Same seed + inputs → same world on one machine; randomness is tick-seeded FxHash, no RNG state.
-
-## Ecosystem facts (verified 2026-07, training data is stale)
-
-- Bevy 0.19: required components (no bundles), `Message`/`MessageReader` for buffered events, `On<E>` observers, Resource is a Component, `2d`/`ui`/`audio` feature collections, `web` feature for wasm.
-- Standalone bevy_ecs needs the `multi_threaded` feature for the parallel executor.
-- Web builds use Bevy CLI (`bevy build web --bundle`), not Trunk for now.
-
+- Change rects (`bounds`) feed replication/persistence; keep-alive rects (`keep_bounds`) only feed sim scheduling. `window.mark` for "simulate again", `window.set` for real changes.
+- Sleep, unload, and reload must preserve pending activity — in-flight processes never freeze in time.
+- Same seed + inputs → same world on one machine; randomness is tick-seeded FxHash, no RNG state, no iteration-order-dependent containers in sim paths.
+- Tuning constants are seconds-based, never per-tick.
