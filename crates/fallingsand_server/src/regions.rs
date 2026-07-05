@@ -8,7 +8,7 @@ use fallingsand_core::{
     REGION_SIZE_CHUNKS, Region, RegionPos,
 };
 use fallingsand_protocol::PlayerUuid;
-use fallingsand_sim::bodies::stamp_body;
+use fallingsand_sim::bodies::{stamp_body, try_stamp};
 use fallingsand_sim::{CellWorld, PixelBody};
 use fallingsand_worldgen::WorldGenerator;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -202,7 +202,9 @@ pub fn manage_regions(
                 .any(|&pos| body_overlaps_region(&bodies.bodies[index], pos));
             if unloading {
                 let body = bodies.bodies.swap_remove(index);
-                stamp_body(&mut sim.0, &registry.0, &body);
+                if !try_stamp(&mut sim.0, &registry.0, &[], &body) {
+                    stamp_body(&mut sim.0, &registry.0, &body);
+                }
                 bodies.despawned.push(body.id);
             } else {
                 index += 1;
@@ -316,7 +318,9 @@ pub fn save_everything(world: &mut bevy_ecs::world::World, final_save: bool) {
             {
                 let mut sim = world.resource_mut::<SimWorld>();
                 for body in &bodies.bodies {
-                    stamp_body(&mut sim.0, &registry, body);
+                    if !try_stamp(&mut sim.0, &registry, &[], body) {
+                        stamp_body(&mut sim.0, &registry, body);
+                    }
                     let radius = (body.width as f32).hypot(body.height as f32) + 1.0;
                     let min = CellPos::new(
                         (body.x - radius).floor() as i32,

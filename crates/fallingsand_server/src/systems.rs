@@ -17,6 +17,7 @@ use std::time::Instant;
 
 pub const PLAYER_HALF_W: f32 = 1.9;
 pub const PLAYER_HALF_H: f32 = 5.5;
+pub const PLAYER_MASS: f32 = 4.0 * PLAYER_HALF_W * PLAYER_HALF_H;
 pub const REACH: f32 = 80.0;
 pub const BRUSH_RADIUS: i32 = 3;
 pub use crate::MAX_HP;
@@ -408,11 +409,17 @@ pub fn step_physics(
     registry: Res<Registry>,
     obstacles: Res<SimObstacles>,
     spawn_point: Res<SpawnPoint>,
-    mut query: Query<(&Player, &mut PhysicsBody, &mut Control, &mut Health)>,
+    mut bodies: ResMut<crate::bodies::PixelBodies>,
+    mut impulses: ResMut<crate::PlayerImpulses>,
+    mut query: Query<(Entity, &Player, &mut PhysicsBody, &mut Control, &mut Health)>,
 ) {
     let params = PlayerParams::default();
-    for (player, mut body, mut control, mut health) in &mut query {
-        let displaced = {
+    for (entity, player, mut body, mut control, mut health) in &mut query {
+        if let Some((jx, jy)) = impulses.0.remove(&entity) {
+            body.0.vx += jx / PLAYER_MASS;
+            body.0.vy += jy / PLAYER_MASS;
+        }
+        let result = {
             let source = obstacles.0.overlay(&sim.0);
             step_player(
                 &source,
@@ -426,8 +433,30 @@ pub fn step_physics(
                 TICK_DT,
             )
         };
-        if !displaced.is_empty() {
-            scatter_powder(&mut sim.0, &registry.0, &obstacles.0, &body.0, &displaced);
+        if !result.displaced.is_empty() {
+            scatter_powder(
+                &mut sim.0,
+                &registry.0,
+                &obstacles.0,
+                &body.0,
+                &result.displaced,
+            );
+        }
+        for blocked in &result.blocked {
+            let Some((id, _)) = obstacles.0.body_at(blocked.pos) else {
+                continue;
+            };
+            let Some(pixel_body) = bodies.body_mut(id) else {
+                continue;
+            };
+            let jx = PLAYER_MASS * blocked.dvx;
+            let jy = PLAYER_MASS * blocked.dvy;
+            let rx = blocked.pos.x as f32 + 0.5 - pixel_body.x;
+            let ry = blocked.pos.y as f32 + 0.5 - pixel_body.y;
+            pixel_body.vx += jx * pixel_body.inv_mass;
+            pixel_body.vy += jy * pixel_body.inv_mass;
+            pixel_body.spin += (rx * jy - ry * jx) * pixel_body.inv_inertia;
+            pixel_body.rest_secs = 0.0;
         }
         if health.hp <= 0.0 {
             health.hp = MAX_HP;
@@ -440,6 +469,7 @@ pub fn step_physics(
             control.0 = Controller::default();
         }
     }
+    impulses.0.clear();
 }
 
 pub fn replicate(

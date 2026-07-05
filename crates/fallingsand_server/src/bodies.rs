@@ -1,11 +1,17 @@
 use crate::session::{SessionState, Sessions};
-use crate::{Registry, SimObstacles, SimWorld, TickStats};
+use crate::systems::{PLAYER_MASS, PhysicsBody};
+use crate::{PlayerImpulses, Registry, SimObstacles, SimWorld, TickStats};
 use bevy_ecs::prelude::*;
 use fallingsand_core::{CellPos, TICK_DT};
 use fallingsand_protocol::{PixelBodyState, ServerMessage, encode_message};
-use fallingsand_sim::bodies::{PixelBody, detect_island, extract_body, stamp_body, step_body};
+use fallingsand_sim::bodies::{
+    EntityDynamics, PixelBody, detect_island, extract_body, react_body, refresh_body,
+    step_bodies as simulate_bodies, try_stamp,
+};
+use fallingsand_sim::{EntityBox, Obstacles};
+use rustc_hash::FxHashSet;
 
-const BODY_GRAVITY: f32 = -400.0;
+pub const BODY_GRAVITY: f32 = -400.0;
 
 #[derive(Resource, Default)]
 pub struct PixelBodies {
@@ -14,6 +20,13 @@ pub struct PixelBodies {
     pub candidates: Vec<CellPos>,
     pub spawned: Vec<u32>,
     pub despawned: Vec<u32>,
+    pub dirty: Vec<u32>,
+}
+
+impl PixelBodies {
+    pub fn body_mut(&mut self, id: u32) -> Option<&mut PixelBody> {
+        self.bodies.iter_mut().find(|body| body.id == id)
+    }
 }
 
 pub fn step_bodies(
@@ -21,7 +34,9 @@ pub fn step_bodies(
     registry: Res<Registry>,
     obstacles: Res<SimObstacles>,
     mut bodies: ResMut<PixelBodies>,
+    mut impulses: ResMut<PlayerImpulses>,
     mut stats: ResMut<TickStats>,
+    query: Query<(Entity, &PhysicsBody)>,
 ) {
     let bodies = &mut *bodies;
     bodies.candidates.extend(sim.0.take_structural());
@@ -39,31 +54,134 @@ pub fn step_bodies(
         bodies.bodies.push(body);
     }
 
-    let mut settled: Vec<usize> = Vec::new();
-    for (index, body) in bodies.bodies.iter_mut().enumerate() {
-        if step_body(
-            &sim.0,
-            &registry.0,
-            &obstacles.0.entity_boxes,
-            body,
-            BODY_GRAVITY,
-            TICK_DT,
-        ) {
-            settled.push(index);
+    let mut players: Vec<Entity> = Vec::new();
+    let mut entities: Vec<EntityDynamics> = Vec::new();
+    let mut grounded: Vec<bool> = Vec::new();
+    for (entity, body) in &query {
+        players.push(entity);
+        grounded.push(body.0.on_ground);
+        entities.push(EntityDynamics {
+            bbox: EntityBox {
+                x: body.0.x,
+                y: body.0.y,
+                half_w: body.0.half_w,
+                half_h: body.0.half_h,
+            },
+            vx: body.0.vx,
+            vy: body.0.vy,
+            inv_mass: 1.0 / PLAYER_MASS,
+        });
+    }
+
+    for (dynamics, on_ground) in entities.iter().zip(&grounded) {
+        if *on_ground {
+            transfer_standing_weight(&obstacles.0, bodies, dynamics);
         }
     }
-    for index in settled.into_iter().rev() {
-        let body = bodies.bodies.swap_remove(index);
-        stamp_body(&mut sim.0, &registry.0, &body);
-        bodies.despawned.push(body.id);
+
+    let step = simulate_bodies(
+        &sim.0,
+        &registry.0,
+        &obstacles.0,
+        &mut bodies.bodies,
+        &entities,
+        BODY_GRAVITY,
+        TICK_DT,
+    );
+    for (player, (jx, jy)) in players.iter().zip(step.entity_impulses) {
+        if jx != 0.0 || jy != 0.0 {
+            let entry = impulses.0.entry(*player).or_insert((0.0, 0.0));
+            entry.0 += jx;
+            entry.1 += jy;
+        }
+    }
+
+    let entity_boxes: Vec<EntityBox> = entities.iter().map(|entity| entity.bbox).collect();
+    for index in step.settled.into_iter().rev() {
+        if try_stamp(
+            &mut sim.0,
+            &registry.0,
+            &entity_boxes,
+            &bodies.bodies[index],
+        ) {
+            let body = bodies.bodies.swap_remove(index);
+            bodies.despawned.push(body.id);
+        } else {
+            bodies.bodies[index].rest_secs = fallingsand_sim::bodies::SETTLE_SECS;
+        }
     }
 
     stats.pixel_bodies = bodies.bodies.len();
 }
 
+fn transfer_standing_weight(
+    obstacles: &Obstacles,
+    bodies: &mut PixelBodies,
+    dynamics: &EntityDynamics,
+) {
+    let bbox = dynamics.bbox;
+    let row = (bbox.y - bbox.half_h + 1e-4).floor() as i32 - 1;
+    let x0 = (bbox.x - bbox.half_w + 1e-4).floor() as i32;
+    let x1 = (bbox.x + bbox.half_w - 1e-4).floor() as i32;
+    let mut supports: Vec<(u32, CellPos)> = Vec::new();
+    for x in x0..=x1 {
+        let pos = CellPos::new(x, row);
+        if let Some((id, _)) = obstacles.body_at(pos) {
+            supports.push((id, pos));
+        }
+    }
+    if supports.is_empty() {
+        return;
+    }
+    let share = PLAYER_MASS * BODY_GRAVITY * TICK_DT / supports.len() as f32;
+    for (id, pos) in supports {
+        let Some(body) = bodies.body_mut(id) else {
+            continue;
+        };
+        let rx = pos.x as f32 + 0.5 - body.x;
+        body.vy += share * body.inv_mass;
+        body.spin += rx * share * body.inv_inertia;
+        body.rest_secs = 0.0;
+    }
+}
+
+pub fn react_bodies(
+    mut sim: ResMut<SimWorld>,
+    registry: Res<Registry>,
+    mut bodies: ResMut<PixelBodies>,
+) {
+    let tick = sim.0.tick();
+    let bodies = &mut *bodies;
+    let previous = std::mem::take(&mut bodies.bodies);
+    for mut body in previous {
+        if !react_body(&mut sim.0, &registry.0, &mut body, tick) {
+            bodies.bodies.push(body);
+            continue;
+        }
+        let parts = refresh_body(&body, &registry.0, || {
+            let id = bodies.next_id;
+            bodies.next_id += 1;
+            id
+        });
+        if parts.is_empty() {
+            bodies.despawned.push(body.id);
+            continue;
+        }
+        for part in parts {
+            if part.id == body.id {
+                bodies.dirty.push(part.id);
+            } else {
+                bodies.spawned.push(part.id);
+            }
+            bodies.bodies.push(part);
+        }
+    }
+}
+
 pub fn replicate_bodies(mut sessions: ResMut<Sessions>, mut bodies: ResMut<PixelBodies>) {
-    let spawn_messages: Vec<Vec<u8>> = bodies
-        .spawned
+    let mut resend: FxHashSet<u32> = bodies.spawned.iter().copied().collect();
+    resend.extend(bodies.dirty.iter().copied());
+    let spawn_messages: Vec<Vec<u8>> = resend
         .iter()
         .filter_map(|id| bodies.bodies.iter().find(|body| body.id == *id))
         .map(|body| encode_message(&body_spawn_message(body)))
@@ -105,6 +223,7 @@ pub fn replicate_bodies(mut sessions: ResMut<Sessions>, mut bodies: ResMut<Pixel
 
     bodies.spawned.clear();
     bodies.despawned.clear();
+    bodies.dirty.clear();
 }
 
 fn body_spawn_message(body: &PixelBody) -> ServerMessage {

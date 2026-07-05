@@ -29,6 +29,9 @@ pub struct SimWorld(pub CellWorld);
 #[derive(Resource, Default)]
 pub struct SimObstacles(pub fallingsand_sim::Obstacles);
 
+#[derive(Resource, Default)]
+pub struct PlayerImpulses(pub rustc_hash::FxHashMap<Entity, (f32, f32)>);
+
 #[derive(Resource, Clone)]
 pub struct Registry(pub Arc<MaterialRegistry>);
 
@@ -162,6 +165,7 @@ impl Server {
         world.insert_resource(SpawnPoint(spawn));
         world.insert_resource(bodies::PixelBodies::default());
         world.insert_resource(SimObstacles::default());
+        world.insert_resource(PlayerImpulses::default());
 
         let mut schedule = Schedule::default();
         schedule.add_systems(
@@ -174,6 +178,7 @@ impl Server {
                 systems::step_simulation,
                 systems::step_physics,
                 bodies::step_bodies,
+                bodies::react_bodies,
                 systems::replicate,
                 bodies::replicate_bodies,
                 systems::finish_tick,

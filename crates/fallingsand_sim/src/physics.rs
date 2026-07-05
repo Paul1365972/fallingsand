@@ -91,15 +91,16 @@ fn cell_bounds(cx: f32, cy: f32, half_w: f32, half_h: f32) -> (i32, i32, i32, i3
 fn rect_blocked<W: CellSource>(
     world: &W,
     registry: &MaterialRegistry,
+    body: &Body,
     cx: f32,
     cy: f32,
-    half_w: f32,
-    half_h: f32,
 ) -> bool {
-    let (x0, y0, x1, y1) = cell_bounds(cx, cy, half_w, half_h);
+    let cur = cell_bounds(body.x, body.y, body.half_w, body.half_h);
+    let (x0, y0, x1, y1) = cell_bounds(cx, cy, body.half_w, body.half_h);
     for y in y0..=y1 {
         for x in x0..=x1 {
-            if cell_blocks(world, registry, CellPos::new(x, y)) {
+            let overlapped = x >= cur.0 && x <= cur.2 && y >= cur.1 && y <= cur.3;
+            if !overlapped && cell_blocks(world, registry, CellPos::new(x, y)) {
                 return true;
             }
         }
@@ -212,7 +213,7 @@ pub fn step_player<W: CellSource>(
     jump_held: bool,
     down_held: bool,
     dt: f32,
-) -> Vec<CellPos> {
+) -> MoveResult {
     let pressed = jump_held && !ctrl.jump_held;
     ctrl.jump_held = jump_held;
     ctrl.buffer = if pressed {
@@ -347,8 +348,38 @@ pub fn step_player<W: CellSource>(
     move_body(world, registry, body, dt)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Blocked {
+    pub pos: CellPos,
+    pub dvx: f32,
+    pub dvy: f32,
+}
+
+#[derive(Debug, Default)]
+pub struct MoveResult {
+    pub displaced: Vec<CellPos>,
+    pub blocked: Vec<Blocked>,
+}
+
+impl MoveResult {
+    fn record_blocked(&mut self, solids: &[CellPos], dvx: f32, dvy: f32) {
+        if solids.is_empty() {
+            return;
+        }
+        let share = 1.0 / solids.len() as f32;
+        for &pos in solids {
+            self.blocked.push(Blocked {
+                pos,
+                dvx: dvx * share,
+                dvy: dvy * share,
+            });
+        }
+    }
+}
+
 struct Blockage {
     solid: bool,
+    solids: Vec<CellPos>,
     powder: Vec<CellPos>,
 }
 
@@ -388,23 +419,26 @@ fn passage<W: CellSource>(
     let (x0, y0, x1, y1) = cell_bounds(cx, cy, body.half_w, body.half_h);
     let mut blockage = Blockage {
         solid: false,
+        solids: Vec::new(),
         powder: Vec::new(),
     };
     for y in y0..=y1 {
         for x in x0..=x1 {
             let pos = CellPos::new(x, y);
+            let overlapped = x >= cur.0 && x <= cur.2 && y >= cur.1 && y <= cur.3;
             let Some(cell) = world.cell_at(pos) else {
                 blockage.solid = true;
                 continue;
             };
+            if overlapped {
+                continue;
+            }
             match registry.get(cell.material).phase {
-                Phase::Solid => blockage.solid = true,
-                Phase::Powder => {
-                    let overlapped = x >= cur.0 && x <= cur.2 && y >= cur.1 && y <= cur.3;
-                    if !overlapped && !displaced.contains(&pos) {
-                        blockage.powder.push(pos);
-                    }
+                Phase::Solid => {
+                    blockage.solid = true;
+                    blockage.solids.push(pos);
                 }
+                Phase::Powder if !displaced.contains(&pos) => blockage.powder.push(pos),
                 _ => {}
             }
         }
@@ -417,8 +451,8 @@ pub fn move_body<W: CellSource>(
     registry: &MaterialRegistry,
     body: &mut Body,
     dt: f32,
-) -> Vec<CellPos> {
-    let mut displaced: Vec<CellPos> = Vec::new();
+) -> MoveResult {
+    let mut result = MoveResult::default();
     let was_grounded = body.on_ground;
     body.on_ground = false;
     let remaining_x = body.vx * dt;
@@ -438,14 +472,16 @@ pub fn move_body<W: CellSource>(
             };
             let next_x = entry_face - dirf * body.half_w;
             if (next_x - target) * dirf >= 0.0 {
-                if passage(world, registry, body, target, body.y, &displaced).free() {
+                let blockage = passage(world, registry, body, target, body.y, &result.displaced);
+                if blockage.free() {
                     body.x = target;
                 } else {
+                    result.record_blocked(&blockage.solids, body.vx, 0.0);
                     body.vx = 0.0;
                 }
                 break;
             }
-            let blockage = passage(world, registry, body, next_x, body.y, &displaced);
+            let blockage = passage(world, registry, body, next_x, body.y, &result.displaced);
             if blockage.free() {
                 body.x = next_x;
                 col = next_col;
@@ -454,7 +490,7 @@ pub fn move_body<W: CellSource>(
             let mut stepped = false;
             for up in 1..=STEP_UP_CELLS {
                 let next_y = body.y + up as f32;
-                if !rect_blocked(world, registry, next_x, next_y, body.half_w, body.half_h) {
+                if !rect_blocked(world, registry, body, next_x, next_y) {
                     body.x = next_x;
                     body.y = next_y;
                     col = next_col;
@@ -465,15 +501,16 @@ pub fn move_body<W: CellSource>(
             if stepped {
                 continue;
             }
-            if blockage.wadeable(WADE_SIDE_CELLS, &displaced) {
-                let damp = blockage.wade(&mut displaced);
+            if blockage.wadeable(WADE_SIDE_CELLS, &result.displaced) {
+                let damp = blockage.wade(&mut result.displaced);
                 body.x = next_x;
                 col = next_col;
                 body.vx *= damp;
                 target = body.x + (target - body.x) * damp;
                 continue;
             }
-            blockage.dig(&mut displaced);
+            result.record_blocked(&blockage.solids, body.vx, 0.0);
+            blockage.dig(&mut result.displaced);
             body.x = if dir > 0 {
                 next_col as f32 - body.half_w
             } else {
@@ -484,30 +521,14 @@ pub fn move_body<W: CellSource>(
         }
     }
 
-    if was_grounded
-        && body.vy <= 0.0
-        && !rect_blocked(
-            world,
-            registry,
-            body.x,
-            body.y - 0.1,
-            body.half_w,
-            body.half_h,
-        )
+    if was_grounded && body.vy <= 0.0 && !rect_blocked(world, registry, body, body.x, body.y - 0.1)
     {
         for down in 1..=STEP_DOWN_CELLS {
             let next_y = body.y - down as f32;
-            if rect_blocked(world, registry, body.x, next_y, body.half_w, body.half_h) {
+            if rect_blocked(world, registry, body, body.x, next_y) {
                 break;
             }
-            if rect_blocked(
-                world,
-                registry,
-                body.x,
-                next_y - 0.1,
-                body.half_w,
-                body.half_h,
-            ) {
+            if rect_blocked(world, registry, body, body.x, next_y - 0.1) {
                 body.y = next_y;
                 body.on_ground = true;
                 break;
@@ -529,24 +550,27 @@ pub fn move_body<W: CellSource>(
             };
             let next_y = entry_face - dirf * body.half_h;
             if (next_y - target) * dirf >= 0.0 {
-                if passage(world, registry, body, body.x, target, &displaced).free() {
+                let blockage = passage(world, registry, body, body.x, target, &result.displaced);
+                if blockage.free() {
                     body.y = target;
                 } else {
+                    result.record_blocked(&blockage.solids, 0.0, body.vy);
                     body.vy = 0.0;
                 }
                 break;
             }
-            let blockage = passage(world, registry, body, body.x, next_y, &displaced);
+            let blockage = passage(world, registry, body, body.x, next_y, &result.displaced);
             if blockage.free() {
                 body.y = next_y;
                 row = next_row;
-            } else if dir > 0 && blockage.wadeable(WADE_UP_CELLS, &displaced) {
-                let damp = blockage.wade(&mut displaced);
+            } else if dir > 0 && blockage.wadeable(WADE_UP_CELLS, &result.displaced) {
+                let damp = blockage.wade(&mut result.displaced);
                 body.y = next_y;
                 row = next_row;
                 body.vy *= damp;
                 target = body.y + (target - body.y) * damp;
             } else {
+                result.record_blocked(&blockage.solids, 0.0, body.vy);
                 body.y = if dir > 0 {
                     next_row as f32 - body.half_h
                 } else {
@@ -563,18 +587,11 @@ pub fn move_body<W: CellSource>(
 
     if body.vy <= 0.0
         && !body.on_ground
-        && rect_blocked(
-            world,
-            registry,
-            body.x,
-            body.y - 0.1,
-            body.half_w,
-            body.half_h,
-        )
+        && rect_blocked(world, registry, body, body.x, body.y - 0.1)
     {
         body.on_ground = true;
     }
-    displaced
+    result
 }
 
 pub fn scatter_powder(
@@ -598,7 +615,7 @@ pub fn scatter_powder(
         if registry.get(cell.material).phase != Phase::Powder {
             continue;
         }
-        world.set_cell(pos, Cell::AIR);
+        let mut destination: Option<CellPos> = None;
         'search: for radius in 1..=SCATTER_RADIUS {
             let mut ring: Vec<(i32, i32)> = Vec::new();
             for dy in -radius..=radius {
@@ -624,10 +641,16 @@ pub fn scatter_powder(
                     .get_cell(target)
                     .is_some_and(|c| registry.get(c.material).phase == Phase::Empty);
                 if empty {
-                    world.set_cell(target, cell);
+                    destination = Some(target);
                     break 'search;
                 }
             }
+        }
+        if let Some(target) = destination {
+            world.set_cell(pos, Cell::AIR);
+            world.set_cell(target, cell);
+        } else {
+            world.mark_keep(pos);
         }
     }
 }

@@ -25,7 +25,7 @@ impl EntityBox {
 pub struct Obstacles {
     pub entity_boxes: Vec<EntityBox>,
     entity_cells: FxHashSet<CellPos>,
-    body_cells: FxHashMap<CellPos, Cell>,
+    body_cells: FxHashMap<CellPos, (u32, Cell)>,
 }
 
 impl Obstacles {
@@ -33,7 +33,11 @@ impl Obstacles {
         self.entity_cells.contains(&pos) || self.body_cells.contains_key(&pos)
     }
 
-    pub fn body_cell(&self, pos: CellPos) -> Option<Cell> {
+    pub fn blocks_fluid(&self, pos: CellPos) -> bool {
+        self.body_cells.contains_key(&pos)
+    }
+
+    pub fn body_at(&self, pos: CellPos) -> Option<(u32, Cell)> {
         self.body_cells.get(&pos).copied()
     }
 
@@ -73,7 +77,10 @@ impl Obstacles {
                         continue;
                     }
                     let (wx, wy) = body.local_to_world(lx as f32 + 0.5, ly as f32 + 0.5);
-                    body_cells.insert(CellPos::new(wx.floor() as i32, wy.floor() as i32), cell);
+                    body_cells.insert(
+                        CellPos::new(wx.floor() as i32, wy.floor() as i32),
+                        (body.id, cell),
+                    );
                 }
             }
         }
@@ -88,6 +95,11 @@ impl Obstacles {
                 wake_vacated(world, registry, pos);
             }
         }
+        for &pos in body_cells.keys() {
+            if !self.body_cells.contains_key(&pos) && fluid_at(world, registry, pos) {
+                world.mark_keep(pos);
+            }
+        }
 
         self.entity_boxes = entities.to_vec();
         self.entity_cells = entity_cells;
@@ -98,7 +110,11 @@ impl Obstacles {
 fn wake_vacated(world: &mut CellWorld, registry: &MaterialRegistry, pos: CellPos) {
     let powder = powder_at(world, registry, pos)
         || (-1..=1).any(|dx| powder_at(world, registry, pos.translated(dx, 1)));
-    if powder {
+    let fluid = fluid_at(world, registry, pos)
+        || [(0, 1), (0, -1), (1, 0), (-1, 0)]
+            .iter()
+            .any(|&(dx, dy)| fluid_at(world, registry, pos.translated(dx, dy)));
+    if powder || fluid {
         world.mark_keep(pos);
     }
 }
@@ -109,6 +125,15 @@ fn powder_at(world: &CellWorld, registry: &MaterialRegistry, pos: CellPos) -> bo
         .is_some_and(|cell| registry.get(cell.material).phase == Phase::Powder)
 }
 
+fn fluid_at(world: &CellWorld, registry: &MaterialRegistry, pos: CellPos) -> bool {
+    world.get_cell(pos).is_some_and(|cell| {
+        matches!(
+            registry.get(cell.material).phase,
+            Phase::Liquid | Phase::Gas | Phase::Fire
+        )
+    })
+}
+
 pub struct ObstacleOverlay<'a, W> {
     base: &'a W,
     obstacles: &'a Obstacles,
@@ -117,7 +142,8 @@ pub struct ObstacleOverlay<'a, W> {
 impl<W: CellSource> CellSource for ObstacleOverlay<'_, W> {
     fn cell_at(&self, pos: CellPos) -> Option<Cell> {
         self.obstacles
-            .body_cell(pos)
+            .body_at(pos)
+            .map(|(_, cell)| cell)
             .or_else(|| self.base.cell_at(pos))
     }
 }

@@ -24,7 +24,9 @@ pub(crate) fn update_cell(
     if cell.updated == tick_byte {
         return;
     }
-    if registry.is_reactive(cell.material) && react(window, registry, pos, cell, tick, tick_byte) {
+    if registry.is_reactive(cell.material)
+        && react(window, registry, obstacles, pos, cell, tick, tick_byte)
+    {
         return;
     }
     let material = registry.get(cell.material);
@@ -34,6 +36,7 @@ pub(crate) fn update_cell(
         Phase::Liquid => update_liquid(
             window,
             registry,
+            obstacles,
             pos,
             material.density,
             material.dispersion,
@@ -42,6 +45,7 @@ pub(crate) fn update_cell(
         Phase::Gas | Phase::Fire => update_gas(
             window,
             registry,
+            obstacles,
             pos,
             material.density,
             material.dispersion,
@@ -53,6 +57,7 @@ pub(crate) fn update_cell(
 fn react(
     window: &mut SimWindow,
     registry: &MaterialRegistry,
+    obstacles: &Obstacles,
     pos: CellPos,
     cell: Cell,
     tick: u64,
@@ -83,7 +88,9 @@ fn react(
     }
     if let Some((chance, product)) = registry.decay(cell.material) {
         let material = registry.get(cell.material);
-        if material.phase == Phase::Fire && sustained(window, registry, pos, cell.material) {
+        if material.phase == Phase::Fire
+            && sustained(window, registry, obstacles, pos, cell.material)
+        {
             if roll(pos, tick, SALT_FLICKER, FLICKER_CHANCE) {
                 let mut flicker = cell;
                 flicker.set_shade(hash_shade(pos, tick));
@@ -123,12 +130,17 @@ fn note_structural(
 fn sustained(
     window: &SimWindow,
     registry: &MaterialRegistry,
+    obstacles: &Obstacles,
     pos: CellPos,
     material: MaterialId,
 ) -> bool {
     NEIGHBORS.iter().any(|&(dx, dy)| {
+        let neighbor_pos = pos.translated(dx, dy);
+        if let Some((_, body_cell)) = obstacles.body_at(neighbor_pos) {
+            return registry.sustains(material, body_cell.material);
+        }
         window
-            .get(pos.translated(dx, dy))
+            .get(neighbor_pos)
             .is_some_and(|neighbor| registry.sustains(material, neighbor.material))
     })
 }
@@ -221,33 +233,47 @@ fn update_powder(
     let below = pos.translated(0, -1);
     if fluid_displaceable(window, registry, density, below) && !obstacles.occupied(below) {
         window.swap(pos, below);
+        note_undermined(window, registry, pos);
         return;
     }
     for side in side_order(pos, tick) {
         let diag = pos.translated(side, -1);
         if fluid_displaceable(window, registry, density, diag) && !obstacles.occupied(diag) {
             window.swap(pos, diag);
+            note_undermined(window, registry, pos);
             return;
         }
+    }
+}
+
+fn note_undermined(window: &mut SimWindow, registry: &MaterialRegistry, vacated: CellPos) {
+    let above = vacated.translated(0, 1);
+    let rigid = window.get(above).is_some_and(|cell| {
+        let material = registry.get(cell.material);
+        material.phase == Phase::Solid && material.rigid_capable
+    });
+    if rigid {
+        window.note_structural(above);
     }
 }
 
 fn update_liquid(
     window: &mut SimWindow,
     registry: &MaterialRegistry,
+    obstacles: &Obstacles,
     pos: CellPos,
     density: f32,
     dispersion: u8,
     tick: u64,
 ) {
     let below = pos.translated(0, -1);
-    if fluid_displaceable(window, registry, density, below) {
+    if fluid_displaceable(window, registry, density, below) && !obstacles.blocks_fluid(below) {
         window.swap(pos, below);
         return;
     }
     for side in side_order(pos, tick) {
         let diag = pos.translated(side, -1);
-        if fluid_displaceable(window, registry, density, diag) {
+        if fluid_displaceable(window, registry, density, diag) && !obstacles.blocks_fluid(diag) {
             window.swap(pos, diag);
             return;
         }
@@ -256,11 +282,15 @@ fn update_liquid(
         let mut best: Option<CellPos> = None;
         for distance in 1..=dispersion.max(1) as i32 {
             let target = pos.translated(side * distance, 0);
-            if !fluid_displaceable(window, registry, density, target) {
+            if !fluid_displaceable(window, registry, density, target)
+                || obstacles.blocks_fluid(target)
+            {
                 break;
             }
             best = Some(target);
-            if fluid_displaceable(window, registry, density, target.translated(0, -1)) {
+            let drop = target.translated(0, -1);
+            if fluid_displaceable(window, registry, density, drop) && !obstacles.blocks_fluid(drop)
+            {
                 break;
             }
         }
@@ -274,19 +304,20 @@ fn update_liquid(
 fn update_gas(
     window: &mut SimWindow,
     registry: &MaterialRegistry,
+    obstacles: &Obstacles,
     pos: CellPos,
     density: f32,
     dispersion: u8,
     tick: u64,
 ) {
     let above = pos.translated(0, 1);
-    if lighter_fluid_above(window, registry, density, above) {
+    if lighter_fluid_above(window, registry, density, above) && !obstacles.blocks_fluid(above) {
         window.swap(pos, above);
         return;
     }
     for side in side_order(pos, tick) {
         let diag = pos.translated(side, 1);
-        if lighter_fluid_above(window, registry, density, diag) {
+        if lighter_fluid_above(window, registry, density, diag) && !obstacles.blocks_fluid(diag) {
             window.swap(pos, diag);
             return;
         }
@@ -295,7 +326,9 @@ fn update_gas(
         let mut best: Option<CellPos> = None;
         for distance in 1..=dispersion.max(1) as i32 {
             let target = pos.translated(side * distance, 0);
-            if !lighter_fluid_above(window, registry, density, target) {
+            if !lighter_fluid_above(window, registry, density, target)
+                || obstacles.blocks_fluid(target)
+            {
                 break;
             }
             best = Some(target);

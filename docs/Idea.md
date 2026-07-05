@@ -129,7 +129,7 @@ Instead:
   A second double-buffered **keep-alive rect** pair (`keep_bounds`) marks cells that must be simulated again without having changed (clinging fire, pending decay, reactive contact pairs); the sim schedules from the union, while replication and persistence read only the change rects — keep-alives cost zero bandwidth.
 - **Cell particles** (deferred post-MVP): cells knocked loose (explosions, splashes, digging spray) leave the grid and fly ballistically as lightweight free particles, reinserting into the grid on impact.
   Server-simulated and replicated as spawn events (clients integrate the trajectories themselves); purely cosmetic spray can additionally be spawned client-side.
-- **Determinism *within* the server**: same seed + same inputs → same world on one machine (useful for tests/replays).
+- **Determinism *within* the server**: same seed + same inputs → same world on one machine (useful for replays).
   Cross-machine determinism is *not* required; the authoritative-server model frees us from that.
 
 ### Physics
@@ -142,16 +142,23 @@ Everything collides against the cell grid directly, so changing terrain never re
 - **Players wade through small amounts of granular matter**: movement blocked only by a few powder cells pushes through them with a speed penalty per grain, displacing the grains to nearby free cells (conserved, not destroyed).
   Loose sand can slow, bury, and trap you — but you can always struggle out; only true solids (rock) pin you permanently.
 - **Solidity is phase-based**: every tick, entity AABBs and in-flight pixel-body cells rasterize into an obstacle mask over the grid.
-  Powders treat masked cells as ground — sand piles on a player's head and on flying debris instead of passing through.
-  Liquids and gases ignore the mask: at cell scale, water flowing *around* a body and *through* its cells are the same thing, which keeps swimming and submersion trivially correct.
-  When a mask moves, vacated cells with grains resting on or above them are dirty-marked so piles wake and collapse.
-- Entities collide against in-flight pixel-body cells (stand on a falling platform, blocked by a flying slab); pixel bodies gain contacts from entity boxes and never settle back into the grid while overlapping an entity, so nobody gets stamped into stone.
+  Powders treat all masked cells as ground — sand piles on a player's head and on flying debris instead of passing through.
+  Liquids and gases split the mask: entity volumes stay permeable (swimming and submersion work at cell scale), but pixel-body cells are real matter and block fluid inflow.
+  Fluid already overlapped by a moving body is never destroyed — inflow is blocked but outflow is free, so it drains out on its own, which is displacement made literal.
+  When a mask moves, vacated and newly covered cells with powder or fluid nearby are dirty-marked so piles collapse and water refills.
+- **Everything overlapping exchanges momentum instead of blocking statically.**
+  Cells already overlapping an entity's hitbox never obstruct its movement (depenetration law: you can always move out of an overlap, never deeper through fresh cells), so debris rasterized into your hull can't lock you in place.
+  Both sides carry mass (players ~cell area at flesh density, body cells at material density): a body landing on a player shoves them down and gets shoved back, a player pushes light debris out of the way and merely bounces off a heavy slab, standing on a body transfers weight onto it, and a jump headbutts loose planks away.
+  Momentum is conserved in every exchange; contacts are inelastic, so energy only dissipates.
 - **Pixel bodies** are rigid bodies made of cells.
   Solid materials marked `rigid_capable` in the registry participate.
-  On terrain damage, flood-fill detects disconnected solid islands; the island's cells are lifted out of the grid into a pixel body (a small cell buffer + position/rotation/velocity).
-- Pixel-body integration is impulse-based: collision detection samples the body's perimeter cells against the grid, contacts get impulse response plus positional correction.
-  Body-vs-body collision starts coarse (AABB/circle approximation) and is refined only if gameplay demands it.
-- When a pixel body comes to rest it is stamped back into the grid and becomes terrain again.
+  Flood-fill detects disconnected solid islands and lifts their cells out of the grid into a pixel body (a small cell buffer + position/rotation/velocity, density-weighted mass and inertia).
+  Island checks are seeded by anything that removes support: dig brushes, reactions consuming solids, and powder draining out from under a rigid solid — all feed one structural-notification queue.
+- Pixel-body integration is impulse-based: collision detection samples the body's perimeter cells against the grid; contacts against terrain are static, contacts against entities and other bodies are dynamic (impulses split by inverse mass, applied to both sides).
+  Submerged body cells get buoyancy from the liquid they overlap plus drag — wood floats, stone sinks, no special cases.
+- Pixel bodies react like terrain: perimeter cells run the same material reaction table against their grid neighbors each tick (a fallen tree burns), products that stop being solid leave the body as world cells, and bodies that burn through split by connectivity or despawn when empty.
+- When a pixel body comes to rest on terrain alone it is stamped back into the grid and becomes terrain again.
+  Stamping is all-or-nothing and conserving: it never overwrites matter (displaced fluid is relocated), never writes into an entity, and a body that cannot stamp cleanly just stays live and tries again later.
 - Rendering: pixel bodies are just small textures with a transform.
 - The first playable may cap pixel-body count aggressively; the important part is that the world model, protocol, and renderer all know pixel bodies exist from day one.
 
@@ -271,9 +278,9 @@ Not blocking the milestones below; each gets its own decision when it becomes lo
 
 ## Milestones
 
-Each milestone is playable/demoable and merges only with its tests.
+Each milestone is playable/demoable.
 
-- **M0 — Skeleton**: workspace scaffolding, CI (fmt, clippy, tests, wasm client build), empty crates with the dependency rules enforced.
+- **M0 — Skeleton**: workspace scaffolding, CI (fmt, clippy, wasm client build), empty crates with the dependency rules enforced.
 - **M1 — Kernel**: `fallingsand_core` + `fallingsand_sim`: materials from RON, sand/water/gas behavior, dirty rects + sleeping working.
 - **M2 — See it**: `fallingsand_client` renders a local `fallingsand_server` (embedded, in-memory transport): chunk textures with dirty-rect uploads, pan/zoom camera, a controllable player with grid collision, digging/placing materials.
   First playable.
