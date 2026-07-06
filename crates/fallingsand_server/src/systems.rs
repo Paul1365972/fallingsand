@@ -1,26 +1,29 @@
+use crate::commands::{PendingCommand, PendingCommands};
+use crate::persistence::inventory_from_record;
 use crate::regions::Store;
 use crate::session::{Player, Session, SessionState, Sessions};
 use crate::{
-    INTEREST_RADIUS_X, INTEREST_RADIUS_Y, NetListener, Registry, SimObstacles, SimWorld,
-    SpawnPoint, TickStats,
+    INTEREST_RADIUS_X, INTEREST_RADIUS_Y, MAX_AIR_SECS, NetListener, Registry, SimObstacles,
+    SimWorld, SpawnPoint, TickStats,
 };
 use bevy_ecs::prelude::*;
-use fallingsand_core::{CellOffset, CellPos, Fixed, MaterialId, Phase};
+use fallingsand_core::{CellOffset, CellPos, Fixed, MaterialId, MaterialRegistry, Phase, TICK_DT};
 use fallingsand_protocol::{
-    ChunkDebugRects, ClientMessage, EntityState, PROTOCOL_VERSION, PlayerId, ServerMessage,
-    cells_to_wire, decode_message, encode_message,
+    ChunkDebugRects, ClientMessage, EntityState, GameMode, PROTOCOL_VERSION, PlayerId,
+    ServerMessage, cells_to_wire, decode_message, encode_message,
 };
 use fallingsand_sim::EntityBox;
-use fallingsand_sim::physics::{Body, Controller, PlayerParams, scatter_powder, step_player};
-use rustc_hash::FxHashSet;
+use fallingsand_sim::physics::{
+    Body, Controller, PlayerParams, StepInput, scatter_powder, step_player,
+};
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::time::Instant;
 
 pub const PLAYER_HALF_W: Fixed = Fixed::from_f32(1.9);
 pub const PLAYER_HALF_H: Fixed = Fixed::from_f32(5.5);
 pub const PLAYER_MASS: f32 = 4.0 * PLAYER_HALF_W.to_f32() * PLAYER_HALF_H.to_f32();
-pub const REACH: f32 = 80.0;
-pub const BRUSH_RADIUS: i32 = 3;
 pub use crate::MAX_HP;
+pub use fallingsand_core::{BRUSH_RADIUS, REACH, SURVIVAL_REACH};
 const CHAT_MAX_CHARS: usize = 240;
 const CHAT_RATE_SECS: f32 = 0.25;
 const CHAT_RATE_TICKS: u64 = (CHAT_RATE_SECS * crate::TICK_RATE as f32) as u64;
@@ -34,20 +37,122 @@ pub struct Control(pub Controller);
 #[derive(Component)]
 pub struct Health {
     pub hp: f32,
+    pub last_damage_tick: u64,
 }
 
 impl Default for Health {
     fn default() -> Self {
-        Self { hp: MAX_HP }
+        Self {
+            hp: MAX_HP,
+            last_damage_tick: 0,
+        }
     }
 }
 
+#[derive(Component, Default)]
+pub struct DigState {
+    pub budget: f32,
+}
+
+#[derive(Component, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Mode(pub GameMode);
+
+#[derive(Component)]
+pub struct Air {
+    pub secs: f32,
+}
+
+impl Default for Air {
+    fn default() -> Self {
+        Self { secs: MAX_AIR_SECS }
+    }
+}
+
+#[derive(Component, Default)]
+pub struct Burning {
+    pub secs: f32,
+}
+
+impl Burning {
+    pub fn active(&self) -> bool {
+        self.secs > 0.0
+    }
+}
+
+#[derive(Component, Default)]
+pub struct Inventory {
+    pub counts: FxHashMap<MaterialId, u64>,
+    pub dirty: bool,
+}
+
+impl Inventory {
+    pub fn count(&self, material: MaterialId) -> u64 {
+        self.counts.get(&material).copied().unwrap_or(0)
+    }
+
+    pub fn add(&mut self, material: MaterialId, amount: u64) {
+        if amount == 0 {
+            return;
+        }
+        *self.counts.entry(material).or_insert(0) += amount;
+        self.dirty = true;
+    }
+
+    pub fn remove(&mut self, material: MaterialId, amount: u64) -> bool {
+        if amount == 0 {
+            return true;
+        }
+        let Some(count) = self.counts.get_mut(&material) else {
+            return false;
+        };
+        if *count < amount {
+            return false;
+        }
+        *count -= amount;
+        if *count == 0 {
+            self.counts.remove(&material);
+        }
+        self.dirty = true;
+        true
+    }
+}
+
+pub fn player_record(
+    registry: &MaterialRegistry,
+    body: &Body,
+    health: &Health,
+    mode: &Mode,
+    air: &Air,
+    burning: &Burning,
+    inventory: &Inventory,
+) -> crate::persistence::PlayerRecord {
+    crate::persistence::PlayerRecord {
+        x: body.x,
+        y: body.y + (PLAYER_HALF_H - body.half_h),
+        hp: health.hp,
+        mode: mode.0,
+        air: air.secs,
+        burning: burning.secs,
+        inventory: crate::persistence::inventory_to_record(registry, &inventory.counts),
+    }
+}
+
+#[allow(clippy::type_complexity)]
 #[allow(clippy::too_many_arguments)]
 pub fn drain_network(
     mut commands: Commands,
     mut listener: ResMut<NetListener>,
     mut sessions: ResMut<Sessions>,
-    mut players: Query<(&mut Player, &PhysicsBody, &Health)>,
+    mut pending: ResMut<PendingCommands>,
+    mut players: Query<(
+        &mut Player,
+        &PhysicsBody,
+        &Health,
+        &Mode,
+        &Air,
+        &Burning,
+        &mut Inventory,
+    )>,
     registry: Res<Registry>,
     sim: Res<SimWorld>,
     spawn_point: Res<SpawnPoint>,
@@ -112,10 +217,13 @@ pub fn drain_network(
 
                     let mut takeover = None;
                     if let Some(entity) = taken_entity {
-                        if let Ok((mut existing, body, _)) = players.get_mut(entity) {
+                        if let Ok((mut existing, body, _, _, _, _, mut inventory)) =
+                            players.get_mut(entity)
+                        {
                             existing.id = player;
                             existing.name = name.clone();
                             existing.input = Default::default();
+                            inventory.dirty = true;
                             takeover = Some((
                                 entity,
                                 CellPos::new(body.0.x.floor_cell(), body.0.y.floor_cell()),
@@ -137,6 +245,7 @@ pub fn drain_network(
                                 }
                                 None => spawn_point.0,
                             };
+                            let record = restored.as_ref();
                             let entity = commands
                                 .spawn((
                                     Player {
@@ -146,25 +255,42 @@ pub fn drain_network(
                                         input: Default::default(),
                                     },
                                     PhysicsBody(Body::new(
-                                        restored
-                                            .as_ref()
-                                            .map(|r| r.x)
-                                            .unwrap_or(Fixed::from_cell(spawn.x)),
-                                        restored
-                                            .as_ref()
-                                            .map(|r| r.y)
-                                            .unwrap_or(Fixed::from_cell(spawn.y)),
+                                        record.map(|r| r.x).unwrap_or(Fixed::from_cell(spawn.x)),
+                                        record.map(|r| r.y).unwrap_or(Fixed::from_cell(spawn.y)),
                                         PLAYER_HALF_W,
                                         PLAYER_HALF_H,
                                     )),
                                     Control::default(),
                                     Health {
-                                        hp: restored
-                                            .as_ref()
+                                        hp: record
                                             .map(|r| r.hp)
                                             .filter(|hp| hp.is_finite() && *hp > 0.0)
                                             .unwrap_or(MAX_HP)
                                             .min(MAX_HP),
+                                        last_damage_tick: 0,
+                                    },
+                                    DigState::default(),
+                                    Mode(record.map(|r| r.mode).unwrap_or_default()),
+                                    Air {
+                                        secs: record
+                                            .map(|r| r.air)
+                                            .filter(|air| air.is_finite())
+                                            .unwrap_or(MAX_AIR_SECS)
+                                            .clamp(0.0, MAX_AIR_SECS),
+                                    },
+                                    Burning {
+                                        secs: record
+                                            .map(|r| r.burning)
+                                            .filter(|secs| secs.is_finite())
+                                            .unwrap_or(0.0)
+                                            .max(0.0),
+                                    },
+                                    Inventory {
+                                        counts: inventory_from_record(
+                                            &registry.0,
+                                            record.map(|r| r.inventory.as_slice()).unwrap_or(&[]),
+                                        ),
+                                        dirty: true,
                                     },
                                 ))
                                 .id();
@@ -193,7 +319,7 @@ pub fn drain_network(
                             player,
                             name: name.clone(),
                         }));
-                    for (existing, _, _) in players.iter() {
+                    for (existing, ..) in players.iter() {
                         if existing.id == player {
                             continue;
                         }
@@ -209,7 +335,7 @@ pub fn drain_network(
                 }
                 ClientMessage::Input(input) => {
                     if let Some(entity) = sessions.sessions[index].entity
-                        && let Ok((mut player, _, _)) = players.get_mut(entity)
+                        && let Ok((mut player, ..)) = players.get_mut(entity)
                     {
                         player.input = input;
                     }
@@ -233,7 +359,9 @@ pub fn drain_network(
                         continue;
                     }
                     session.last_chat_tick = tick;
-                    if let Ok((sender, _, _)) = players.get(entity) {
+                    if text.starts_with('/') {
+                        pending.0.push(PendingCommand { entity, text });
+                    } else if let Ok((sender, ..)) = players.get(entity) {
                         chats.push((player, sender.name.clone(), text));
                     }
                 }
@@ -254,16 +382,22 @@ pub fn drain_network(
     sessions.sessions.retain(|session| {
         if let fallingsand_net::ConnectionStatus::Closed { reason } = session.conn.status() {
             if let Some(entity) = session.entity {
-                if let Ok((player, body, health)) = players.get(entity) {
+                if let Ok((player, body, health, mode, air, burning, inventory)) =
+                    players.get(entity)
+                {
                     tracing::info!("{} left: {reason}", player.name);
                     if let Some(uuid) = session.uuid {
                         records.push((
                             uuid,
-                            crate::persistence::PlayerRecord {
-                                x: body.0.x,
-                                y: body.0.y + (PLAYER_HALF_H - body.0.half_h),
-                                hp: health.hp,
-                            },
+                            player_record(
+                                &registry.0,
+                                &body.0,
+                                health,
+                                mode,
+                                air,
+                                burning,
+                                inventory,
+                            ),
                         ));
                     }
                 }
@@ -319,40 +453,54 @@ pub fn apply_player_inputs(
     registry: Res<Registry>,
     obstacles: Res<SimObstacles>,
     mut bodies: ResMut<crate::bodies::PixelBodies>,
-    query: Query<(&Player, &PhysicsBody)>,
+    mut query: Query<(&Player, &PhysicsBody, &Mode, &mut DigState, &mut Inventory)>,
 ) {
-    for (player, body) in &query {
+    for (player, body, mode, mut dig, mut inventory) in &mut query {
         let input = &player.input;
+        let survival = mode.0 == GameMode::Survival;
+        if !input.primary {
+            dig.budget = 0.0;
+        }
         if !input.primary && !input.secondary {
             continue;
         }
+        let reach = if survival { SURVIVAL_REACH } else { REACH };
         let dx = (Fixed::from_cell(input.aim.x) - body.0.x).to_f32();
         let dy = (Fixed::from_cell(input.aim.y) - body.0.y).to_f32();
-        if dx * dx + dy * dy > REACH * REACH {
+        if dx * dx + dy * dy > reach * reach {
             continue;
         }
         let mut dug = false;
-        for oy in -BRUSH_RADIUS..=BRUSH_RADIUS {
-            for ox in -BRUSH_RADIUS..=BRUSH_RADIUS {
-                if ox * ox + oy * oy > BRUSH_RADIUS * BRUSH_RADIUS {
-                    continue;
-                }
-                let pos = input.aim.translated(ox, oy);
-                let Some(cell) = sim.0.get_cell(pos) else {
-                    continue;
-                };
-                if input.primary {
-                    let phase = registry.0.get(cell.material).phase;
-                    if phase != Phase::Empty {
+        if input.primary {
+            if survival {
+                dug = survival_dig(&mut sim.0, &registry.0, &mut dig, &mut inventory, input.aim);
+            } else {
+                for (_, pos) in brush_cells(input.aim) {
+                    let Some(cell) = sim.0.get_cell(pos) else {
+                        continue;
+                    };
+                    if registry.0.get(cell.material).phase != Phase::Empty {
                         sim.0.place_material(pos, MaterialId::AIR);
                         dug = true;
                     }
-                } else if cell.is_air()
-                    && !cell_overlaps_body(pos, &body.0)
-                    && !obstacles.0.occupied(pos)
-                {
-                    sim.0.place_material(pos, input.selected);
                 }
+            }
+        } else if registry
+            .0
+            .try_get(input.selected)
+            .is_some_and(|material| material.phase != Phase::Empty)
+        {
+            'place: for (_, pos) in brush_cells(input.aim) {
+                let Some(cell) = sim.0.get_cell(pos) else {
+                    continue;
+                };
+                if !cell.is_air() || cell_overlaps_body(pos, &body.0) || obstacles.0.occupied(pos) {
+                    continue;
+                }
+                if survival && !inventory.remove(input.selected, 1) {
+                    break 'place;
+                }
+                sim.0.place_material(pos, input.selected);
             }
         }
         if dug {
@@ -367,6 +515,89 @@ pub fn apply_player_inputs(
                 }
             }
         }
+    }
+}
+
+fn brush_cells(aim: CellPos) -> impl Iterator<Item = (i32, CellPos)> {
+    (-BRUSH_RADIUS..=BRUSH_RADIUS).flat_map(move |oy| {
+        (-BRUSH_RADIUS..=BRUSH_RADIUS).filter_map(move |ox| {
+            let dist_sq = ox * ox + oy * oy;
+            (dist_sq <= BRUSH_RADIUS * BRUSH_RADIUS).then_some((dist_sq, aim.translated(ox, oy)))
+        })
+    })
+}
+
+pub fn survival_dig(
+    world: &mut fallingsand_sim::CellWorld,
+    registry: &MaterialRegistry,
+    dig: &mut DigState,
+    inventory: &mut Inventory,
+    aim: CellPos,
+) -> bool {
+    let mut candidates: Vec<(i32, i32, i32)> = brush_cells(aim)
+        .filter(|&(_, pos)| {
+            world.get_cell(pos).is_some_and(|cell| {
+                matches!(
+                    registry.get(cell.material).phase,
+                    Phase::Solid | Phase::Powder
+                )
+            })
+        })
+        .map(|(dist_sq, pos)| (dist_sq, pos.y, pos.x))
+        .collect();
+    candidates.sort_unstable();
+    let Some(&(_, y, x)) = candidates.first() else {
+        dig.budget = 0.0;
+        return false;
+    };
+    let closest_cost = world
+        .get_cell(CellPos::new(x, y))
+        .map(|cell| registry.get(cell.material).hardness)
+        .unwrap_or(0.0);
+    dig.budget = (dig.budget + TICK_DT).min(closest_cost + TICK_DT);
+    let mut dug = false;
+    for &(_, y, x) in &candidates {
+        let pos = CellPos::new(x, y);
+        let Some(cell) = world.get_cell(pos) else {
+            continue;
+        };
+        let cost = registry.get(cell.material).hardness;
+        if dig.budget < cost {
+            break;
+        }
+        dig.budget -= cost;
+        world.place_material(pos, MaterialId::AIR);
+        inventory.add(cell.material, 1);
+        dug = true;
+    }
+    dug
+}
+
+pub fn sync_inventories(mut sessions: ResMut<Sessions>, mut query: Query<&mut Inventory>) {
+    for session in &mut sessions.sessions {
+        if !matches!(session.state, SessionState::Playing) {
+            continue;
+        }
+        let Some(entity) = session.entity else {
+            continue;
+        };
+        let Ok(mut inventory) = query.get_mut(entity) else {
+            continue;
+        };
+        if !inventory.dirty {
+            continue;
+        }
+        inventory.dirty = false;
+        let mut counts: Vec<(MaterialId, u64)> = inventory
+            .counts
+            .iter()
+            .filter(|&(_, &count)| count > 0)
+            .map(|(&id, &count)| (id, count))
+            .collect();
+        counts.sort_unstable();
+        session
+            .conn
+            .send(encode_message(&ServerMessage::Inventory { counts }));
     }
 }
 
@@ -415,6 +646,8 @@ pub fn step_simulation(
     stats.border_chunks = tickets.border.len();
 }
 
+#[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments)]
 pub fn step_physics(
     mut sim: ResMut<SimWorld>,
     registry: Res<Registry>,
@@ -422,13 +655,28 @@ pub fn step_physics(
     spawn_point: Res<SpawnPoint>,
     mut bodies: ResMut<crate::bodies::PixelBodies>,
     mut impulses: ResMut<crate::PlayerImpulses>,
-    mut query: Query<(Entity, &Player, &mut PhysicsBody, &mut Control, &mut Health)>,
+    mut crushes: ResMut<crate::hazards::CrushEvents>,
+    mut query: Query<(
+        Entity,
+        &Player,
+        &Mode,
+        &mut PhysicsBody,
+        &mut Control,
+        &mut Health,
+        &mut Air,
+        &mut Burning,
+    )>,
 ) {
     let params = PlayerParams::default();
-    for (entity, player, mut body, mut control, mut health) in &mut query {
+    for (entity, player, mode, mut body, mut control, mut health, mut air, mut burning) in
+        &mut query
+    {
         if let Some((jx, jy)) = impulses.0.remove(&entity) {
-            body.0.vx = body.0.vx.add_f32(jx / PLAYER_MASS);
-            body.0.vy = body.0.vy.add_f32(jy / PLAYER_MASS);
+            let dvx = jx / PLAYER_MASS;
+            let dvy = jy / PLAYER_MASS;
+            body.0.vx = body.0.vx.add_f32(dvx);
+            body.0.vy = body.0.vy.add_f32(dvy);
+            crushes.0.push((entity, dvx.hypot(dvy)));
         }
         let result = {
             let source = obstacles.0.overlay(&sim.0);
@@ -438,9 +686,12 @@ pub fn step_physics(
                 &params,
                 &mut body.0,
                 &mut control.0,
-                player.input.move_x,
-                player.input.jump,
-                player.input.down,
+                StepInput {
+                    move_x: player.input.move_x,
+                    jump: player.input.jump,
+                    down: player.input.down,
+                    fly: player.input.fly && mode.0 == GameMode::Creative,
+                },
             )
         };
         if !result.displaced.is_empty() {
@@ -470,6 +721,8 @@ pub fn step_physics(
         }
         if health.hp <= 0.0 {
             health.hp = MAX_HP;
+            air.secs = MAX_AIR_SECS;
+            burning.secs = 0.0;
             body.0 = Body::new(
                 Fixed::from_cell(spawn_point.0.x),
                 Fixed::from_cell(spawn_point.0.y),
@@ -482,21 +735,35 @@ pub fn step_physics(
     impulses.0.clear();
 }
 
+#[allow(clippy::type_complexity)]
 pub fn replicate(
     mut sessions: ResMut<Sessions>,
     sim: Res<SimWorld>,
     mut stats: ResMut<TickStats>,
-    query: Query<(&Player, &PhysicsBody, &Control, &Health)>,
+    query: Query<(
+        &Player,
+        &PhysicsBody,
+        &Control,
+        &Health,
+        &Mode,
+        &Burning,
+        &Air,
+    )>,
 ) {
     let entities: Vec<EntityState> = query
         .iter()
-        .map(|(player, body, control, health)| EntityState {
-            player: player.id,
-            x: body.0.x,
-            y: body.0.y,
-            hp: health.hp,
-            ducking: control.0.ducking(),
-        })
+        .map(
+            |(player, body, control, health, mode, burning, air)| EntityState {
+                player: player.id,
+                x: body.0.x,
+                y: body.0.y,
+                hp: health.hp,
+                ducking: control.0.ducking(),
+                mode: mode.0,
+                burning: burning.active(),
+                air: air.secs,
+            },
+        )
         .collect();
     let entity_message = encode_message(&ServerMessage::EntityStates {
         entities: entities.clone(),
@@ -511,7 +778,7 @@ pub fn replicate(
         let Some(entity) = session.entity else {
             continue;
         };
-        let Some((_, body, _, _)) = query.get(entity).ok() else {
+        let Some((_, body, ..)) = query.get(entity).ok() else {
             continue;
         };
 
@@ -598,8 +865,24 @@ pub fn replicate(
     stats.replicated_bytes = sent_bytes;
 }
 
-pub fn finish_tick(mut sessions: ResMut<Sessions>, sim: Res<SimWorld>) {
-    let message = encode_message(&ServerMessage::TickEnd { tick: sim.0.tick() });
+pub fn advance_clock(mut clock: ResMut<crate::WorldClock>) {
+    clock.t += TICK_DT / crate::DAY_SECS;
+    while clock.t >= 1.0 {
+        clock.t -= 1.0;
+        clock.day += 1;
+    }
+}
+
+pub fn finish_tick(
+    mut sessions: ResMut<Sessions>,
+    sim: Res<SimWorld>,
+    clock: Res<crate::WorldClock>,
+) {
+    let message = encode_message(&ServerMessage::TickEnd {
+        tick: sim.0.tick(),
+        time_of_day: clock.t,
+        day: clock.day,
+    });
     for session in &mut sessions.sessions {
         if matches!(session.state, SessionState::Playing) {
             session.conn.send(message.clone());

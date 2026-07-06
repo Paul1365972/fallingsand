@@ -97,12 +97,15 @@ fn teardown(
 
 fn collect_chat(mut log: ResMut<ChatLog>, mut messages: MessageReader<ServerMsg>, time: Res<Time>) {
     for ServerMsg(message) in messages.read() {
-        if let ServerMessage::Chat { name, text, .. } = message {
-            log.0.push((format!("{name}: {text}"), time.elapsed_secs()));
-            if log.0.len() > LOG_CAP {
-                let excess = log.0.len() - LOG_CAP;
-                log.0.drain(..excess);
-            }
+        let line = match message {
+            ServerMessage::Chat { name, text, .. } => format!("{name}: {text}"),
+            ServerMessage::System { text } => text.clone(),
+            _ => continue,
+        };
+        log.0.push((line, time.elapsed_secs()));
+        if log.0.len() > LOG_CAP {
+            let excess = log.0.len() - LOG_CAP;
+            log.0.drain(..excess);
         }
     }
 }

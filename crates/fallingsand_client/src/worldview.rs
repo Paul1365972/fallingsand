@@ -87,7 +87,7 @@ fn apply_updates(mut view: ResMut<WorldView>, mut messages: MessageReader<Server
                     chunk.pending.push(*rect);
                 }
             }
-            ServerMessage::TickEnd { tick } => {
+            ServerMessage::TickEnd { tick, .. } => {
                 view.server_tick = view.server_tick.max(*tick);
             }
             _ => {}

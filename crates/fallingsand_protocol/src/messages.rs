@@ -28,11 +28,36 @@ impl fmt::Display for PlayerUuid {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum GameMode {
+    #[default]
+    Creative,
+    Survival,
+}
+
+impl GameMode {
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "creative" | "c" => Some(Self::Creative),
+            "survival" | "s" => Some(Self::Survival),
+            _ => None,
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Creative => "creative",
+            Self::Survival => "survival",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PlayerInput {
     pub move_x: i8,
     pub jump: bool,
     pub down: bool,
+    pub fly: bool,
     pub primary: bool,
     pub secondary: bool,
     pub aim: CellPos,
@@ -45,6 +70,7 @@ impl Default for PlayerInput {
             move_x: 0,
             jump: false,
             down: false,
+            fly: false,
             primary: false,
             secondary: false,
             aim: CellPos::new(0, 0),
@@ -60,6 +86,9 @@ pub struct EntityState {
     pub y: Fixed,
     pub hp: f32,
     pub ducking: bool,
+    pub mode: GameMode,
+    pub burning: bool,
+    pub air: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -133,6 +162,12 @@ pub enum ServerMessage {
         name: String,
         text: String,
     },
+    System {
+        text: String,
+    },
+    Inventory {
+        counts: Vec<(MaterialId, u64)>,
+    },
     PixelBodySpawn {
         id: u32,
         width: u8,
@@ -152,5 +187,7 @@ pub enum ServerMessage {
     },
     TickEnd {
         tick: u64,
+        time_of_day: f32,
+        day: u32,
     },
 }

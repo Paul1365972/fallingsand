@@ -4,17 +4,19 @@ use crate::{AppState, ClientRegistry, PauseState};
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use fallingsand_core::{CellPos, MaterialId, Phase, TICK_RATE};
-use fallingsand_protocol::{ClientMessage, PlayerId, PlayerInput, ServerMessage};
+use fallingsand_protocol::{ClientMessage, GameMode, PlayerId, PlayerInput, ServerMessage};
 
 pub struct PlayerPlugin;
 
 pub const PLAYER_SIZE: Vec2 = Vec2::new(3.8, 11.0);
 pub const PLAYER_DUCK_SIZE: Vec2 = Vec2::new(3.8, 6.0);
 const SNAP_DISTANCE: f32 = 64.0;
+const DOUBLE_TAP_SECS: f32 = 0.3;
 
 #[derive(Component)]
 pub struct PlayerVisual {
     pub id: PlayerId,
+    pub burning: bool,
 }
 
 #[derive(Component)]
@@ -26,10 +28,38 @@ pub struct PlayerVisuals(pub HashMap<PlayerId, Entity>);
 #[derive(Resource, Default)]
 pub struct PlayerNames(pub HashMap<PlayerId, String>);
 
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
+pub struct LocalMode(pub GameMode);
+
+#[derive(Resource, Default)]
+pub struct FlyToggle(pub bool);
+
+#[derive(Resource, Default)]
+pub struct LocalInventory(pub Vec<(MaterialId, u64)>);
+
+impl LocalInventory {
+    pub fn count(&self, material: MaterialId) -> u64 {
+        self.0
+            .iter()
+            .find(|&&(id, _)| id == material)
+            .map(|&(_, count)| count)
+            .unwrap_or(0)
+    }
+}
+
 #[derive(Resource)]
 pub struct Hotbar {
-    pub materials: Vec<MaterialId>,
-    pub selected: usize,
+    pub palette: Vec<MaterialId>,
+    pub selected: MaterialId,
+}
+
+impl Hotbar {
+    pub fn visible(&self, mode: GameMode, inventory: &LocalInventory) -> Vec<MaterialId> {
+        match mode {
+            GameMode::Creative => self.palette.clone(),
+            GameMode::Survival => inventory.0.iter().map(|&(id, _)| id).collect(),
+        }
+    }
 }
 
 #[derive(Resource, Default)]
@@ -40,36 +70,73 @@ pub struct InputState {
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         let registry = &app.world().resource::<ClientRegistry>().0;
-        let materials: Vec<MaterialId> = registry
+        let palette: Vec<MaterialId> = registry
             .iter()
             .filter(|(_, material)| material.phase != Phase::Empty)
             .map(|(id, _)| id)
             .collect();
-        app.insert_resource(Hotbar {
-            materials,
-            selected: 0,
-        })
-        .init_resource::<PlayerVisuals>()
-        .init_resource::<PlayerNames>()
-        .init_resource::<InputState>()
-        .insert_resource(Time::<Fixed>::from_hz(TICK_RATE as f64))
-        .add_systems(
-            PreUpdate,
-            (track_names, apply_entity_states).chain().after(NetSet),
-        )
-        .add_systems(
-            FixedUpdate,
-            send_input.run_if(in_state(PauseState::Running)),
-        )
-        .add_systems(
-            Update,
-            (
-                select_material.run_if(in_state(PauseState::Running)),
-                update_nametags.run_if(resource_changed::<PlayerNames>),
-            ),
-        )
-        .add_systems(Update, cleanup_players.run_if(on_message::<SessionEnded>))
-        .add_systems(OnExit(AppState::InGame), cleanup_players);
+        let selected = palette.first().copied().unwrap_or(MaterialId::AIR);
+        app.insert_resource(Hotbar { palette, selected })
+            .init_resource::<PlayerVisuals>()
+            .init_resource::<PlayerNames>()
+            .init_resource::<InputState>()
+            .init_resource::<LocalMode>()
+            .init_resource::<FlyToggle>()
+            .init_resource::<LocalInventory>()
+            .insert_resource(Time::<Fixed>::from_hz(TICK_RATE as f64))
+            .add_systems(
+                PreUpdate,
+                (track_names, track_inventory, apply_entity_states)
+                    .chain()
+                    .after(NetSet),
+            )
+            .add_systems(
+                FixedUpdate,
+                send_input.run_if(in_state(PauseState::Running)),
+            )
+            .add_systems(
+                Update,
+                (
+                    (select_material, toggle_fly).run_if(in_state(PauseState::Running)),
+                    update_nametags.run_if(resource_changed::<PlayerNames>),
+                ),
+            )
+            .add_systems(Update, cleanup_players.run_if(on_message::<SessionEnded>))
+            .add_systems(OnExit(AppState::InGame), cleanup_players);
+    }
+}
+
+fn track_inventory(mut inventory: ResMut<LocalInventory>, mut messages: MessageReader<ServerMsg>) {
+    for ServerMsg(message) in messages.read() {
+        if let ServerMessage::Inventory { counts } = message {
+            inventory.0 = counts.clone();
+        }
+    }
+}
+
+fn toggle_fly(
+    keys: Res<ButtonInput<KeyCode>>,
+    chat_open: Res<crate::chat::ChatOpen>,
+    time: Res<Time>,
+    mode: Res<LocalMode>,
+    mut fly: ResMut<FlyToggle>,
+    mut last_tap: Local<f32>,
+) {
+    if mode.0 != GameMode::Creative {
+        fly.0 = false;
+        return;
+    }
+    if chat_open.0 {
+        return;
+    }
+    if keys.just_pressed(KeyCode::Space) {
+        let now = time.elapsed_secs();
+        if now - *last_tap < DOUBLE_TAP_SECS {
+            fly.0 = !fly.0;
+            *last_tap = 0.0;
+        } else {
+            *last_tap = now;
+        }
     }
 }
 
@@ -96,13 +163,15 @@ fn update_nametags(names: Res<PlayerNames>, mut tags: Query<(&NameTag, &mut Text
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn apply_entity_states(
     mut commands: Commands,
     mut visuals: ResMut<PlayerVisuals>,
     mut messages: MessageReader<ServerMsg>,
-    mut query: Query<(&mut Interpolated, &mut Sprite), With<PlayerVisual>>,
+    mut query: Query<(&mut Interpolated, &mut Sprite, &mut PlayerVisual)>,
     session: Option<Res<Session>>,
     names: Res<PlayerNames>,
+    mut mode: ResMut<LocalMode>,
 ) {
     let local = session.and_then(|session| session.player);
     let mut seen: Option<Vec<PlayerId>> = None;
@@ -112,6 +181,9 @@ fn apply_entity_states(
         };
         seen = Some(entities.iter().map(|state| state.player).collect());
         for state in entities {
+            if local == Some(state.player) && mode.0 != state.mode {
+                mode.0 = state.mode;
+            }
             let target = Vec2::new(state.x.to_f32(), state.y.to_f32());
             let size = if state.ducking {
                 PLAYER_DUCK_SIZE
@@ -119,12 +191,15 @@ fn apply_entity_states(
                 PLAYER_SIZE
             };
             if let Some(&entity) = visuals.0.get(&state.player) {
-                if let Ok((mut visual, mut sprite)) = query.get_mut(entity) {
+                if let Ok((mut visual, mut sprite, mut marker)) = query.get_mut(entity) {
                     let snap = visual.target_position().distance_squared(target)
                         > SNAP_DISTANCE * SNAP_DISTANCE;
                     visual.record(target, 0.0, snap);
                     if sprite.custom_size != Some(size) {
                         sprite.custom_size = Some(size);
+                    }
+                    if marker.burning != state.burning {
+                        marker.burning = state.burning;
                     }
                 }
             } else {
@@ -136,7 +211,10 @@ fn apply_entity_states(
                 };
                 let entity = commands
                     .spawn((
-                        PlayerVisual { id: state.player },
+                        PlayerVisual {
+                            id: state.player,
+                            burning: state.burning,
+                        },
                         Interpolated::snapped(target, 0.0),
                         Sprite::from_color(color, size),
                         Transform::from_xyz(target.x, target.y, 10.0),
@@ -177,25 +255,38 @@ fn apply_entity_states(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cleanup_players(
     mut commands: Commands,
     mut visuals: ResMut<PlayerVisuals>,
     mut names: ResMut<PlayerNames>,
     mut input: ResMut<InputState>,
+    mut mode: ResMut<LocalMode>,
+    mut fly: ResMut<FlyToggle>,
+    mut inventory: ResMut<LocalInventory>,
 ) {
     for (_, entity) in visuals.0.drain() {
         commands.entity(entity).despawn();
     }
     names.0.clear();
     *input = InputState::default();
+    *mode = LocalMode::default();
+    fly.0 = false;
+    inventory.0.clear();
 }
 
 fn select_material(
     keys: Res<ButtonInput<KeyCode>>,
     mut hotbar: ResMut<Hotbar>,
     chat_open: Res<crate::chat::ChatOpen>,
+    mode: Res<LocalMode>,
+    inventory: Res<LocalInventory>,
 ) {
     if chat_open.0 {
+        return;
+    }
+    let visible = hotbar.visible(mode.0, &inventory);
+    if visible.is_empty() {
         return;
     }
     const DIGITS: [KeyCode; 10] = [
@@ -211,19 +302,20 @@ fn select_material(
         KeyCode::Digit0,
     ];
     for (index, key) in DIGITS.iter().enumerate() {
-        if keys.just_pressed(*key) && index < hotbar.materials.len() {
-            hotbar.selected = index;
+        if keys.just_pressed(*key) && index < visible.len() {
+            hotbar.selected = visible[index];
         }
     }
-    let len = hotbar.materials.len();
-    if len == 0 {
-        return;
-    }
+    let len = visible.len();
+    let current = visible
+        .iter()
+        .position(|&id| id == hotbar.selected)
+        .unwrap_or(0);
     if keys.just_pressed(KeyCode::BracketLeft) {
-        hotbar.selected = (hotbar.selected + len - 1) % len;
+        hotbar.selected = visible[(current + len - 1) % len];
     }
     if keys.just_pressed(KeyCode::BracketRight) {
-        hotbar.selected = (hotbar.selected + 1) % len;
+        hotbar.selected = visible[(current + 1) % len];
     }
 }
 
@@ -235,6 +327,7 @@ fn send_input(
     camera: Single<(&Camera, &GlobalTransform)>,
     hotbar: Res<Hotbar>,
     chat_open: Res<crate::chat::ChatOpen>,
+    fly: Res<FlyToggle>,
     mut state: ResMut<InputState>,
     session: Option<ResMut<Session>>,
 ) {
@@ -252,11 +345,8 @@ fn send_input(
     if chat_open.0 {
         session.send(&ClientMessage::Input(PlayerInput {
             aim: state.aim,
-            selected: hotbar
-                .materials
-                .get(hotbar.selected)
-                .copied()
-                .unwrap_or(MaterialId::AIR),
+            selected: hotbar.selected,
+            fly: fly.0,
             ..default()
         }));
         return;
@@ -276,14 +366,11 @@ fn send_input(
             || keys.pressed(KeyCode::KeyW)
             || keys.pressed(KeyCode::ArrowUp),
         down: keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown),
+        fly: fly.0,
         primary: buttons.pressed(MouseButton::Left),
         secondary: buttons.pressed(MouseButton::Right),
         aim: state.aim,
-        selected: hotbar
-            .materials
-            .get(hotbar.selected)
-            .copied()
-            .unwrap_or(MaterialId::AIR),
+        selected: hotbar.selected,
     };
     session.send(&ClientMessage::Input(input));
 }

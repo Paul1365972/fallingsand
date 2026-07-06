@@ -10,10 +10,12 @@ mod identity;
 mod interpolation;
 mod menu;
 mod net;
+mod particles;
 mod pause;
 mod player;
 mod render;
 mod settings;
+mod sky;
 mod worldview;
 
 use bevy::prelude::*;
@@ -21,7 +23,6 @@ use fallingsand_core::MaterialRegistry;
 use std::sync::Arc;
 
 pub const MATERIALS_RON: &str = include_str!("../../../data/materials.ron");
-pub const BIOMES_RON: &str = include_str!("../../../data/biomes.ron");
 
 #[derive(States, Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum AppState {
@@ -91,10 +92,14 @@ fn main() {
         player::PlayerPlugin,
         camera::CameraPlugin,
         debug::DebugOverlayPlugin,
+    ))
+    .add_plugins((
         menu::MenuPlugin,
         pause::PausePlugin,
         hud::HudPlugin,
         chat::ChatPlugin,
+        particles::ParticlesPlugin,
+        sky::SkyPlugin,
         connscreen::ConnScreenPlugin,
         settings::SettingsPlugin,
     ));

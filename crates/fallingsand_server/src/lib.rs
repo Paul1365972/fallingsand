@@ -1,4 +1,6 @@
 pub mod bodies;
+pub mod commands;
+pub mod hazards;
 pub mod persistence;
 pub mod regions;
 pub mod session;
@@ -22,6 +24,7 @@ pub const TICK_DURATION: Duration = Duration::from_nanos(1_000_000_000 / TICK_RA
 pub const INTEREST_RADIUS_X: i32 = 6;
 pub const INTEREST_RADIUS_Y: i32 = 4;
 pub const MAX_HP: f32 = 100.0;
+pub use fallingsand_core::{DAY_SECS, MAX_AIR_SECS};
 
 #[derive(Resource)]
 pub struct SimWorld(pub CellWorld);
@@ -41,6 +44,24 @@ pub struct NetListener(pub Box<dyn Listener>);
 #[derive(Resource, Clone, Copy)]
 pub struct SpawnPoint(pub CellPos);
 
+#[derive(Resource, Default, Clone, Copy)]
+pub struct WorldClock {
+    pub t: f32,
+    pub day: u32,
+}
+
+impl WorldClock {
+    pub fn moon_phase(&self) -> u32 {
+        self.day % fallingsand_core::MOON_PHASES
+    }
+}
+
+#[derive(Resource, Clone)]
+pub struct WorldInfo {
+    pub seed: u64,
+    pub name: String,
+}
+
 #[derive(Resource, Default, Debug, Clone, Copy)]
 pub struct TickStats {
     pub tick: u64,
@@ -58,7 +79,6 @@ pub struct WorldConfig {
     pub name: String,
     pub seed: u64,
     pub save_path: Option<PathBuf>,
-    pub biomes_source: String,
 }
 
 pub struct ServerConfig {
@@ -124,30 +144,29 @@ impl Server {
             }
             None => None,
         };
-        let seed = match store.as_ref().and_then(|s| s.load_meta().transpose()) {
+        let meta = match store.as_ref().and_then(|s| s.load_meta().transpose()) {
             Some(meta) => {
                 let meta = meta?;
                 tracing::info!("loaded world \"{}\" (seed {:#x})", meta.name, meta.seed);
-                meta.seed
+                meta
             }
             None => {
-                let seed = config.world.seed;
+                let meta = WorldMeta {
+                    format_version: persistence::WORLD_FORMAT_VERSION,
+                    seed: config.world.seed,
+                    name: config.world.name.clone(),
+                    clock: 0.5,
+                    day: 0,
+                };
                 if let Some(store) = &store {
-                    store.save_meta(&WorldMeta {
-                        format_version: persistence::WORLD_FORMAT_VERSION,
-                        seed,
-                        name: config.world.name.clone(),
-                    })?;
+                    store.save_meta(&meta)?;
                 }
-                tracing::info!("created world \"{}\" (seed {:#x})", config.world.name, seed);
-                seed
+                tracing::info!("created world \"{}\" (seed {:#x})", meta.name, meta.seed);
+                meta
             }
         };
-        let generator = Arc::new(WorldGenerator::new(
-            seed,
-            &config.registry,
-            &config.world.biomes_source,
-        )?);
+        let seed = meta.seed;
+        let generator = Arc::new(WorldGenerator::new(seed, &config.registry)?);
 
         let spawn_x = 0;
         let spawn = CellPos::new(spawn_x, generator.surface_height(spawn_x) + 12);
@@ -166,23 +185,43 @@ impl Server {
         world.insert_resource(bodies::PixelBodies::default());
         world.insert_resource(SimObstacles::default());
         world.insert_resource(PlayerImpulses::default());
+        world.insert_resource(commands::PendingCommands::default());
+        world.insert_resource(hazards::CrushEvents::default());
+        world.insert_resource(WorldClock {
+            t: meta.clock.rem_euclid(1.0),
+            day: meta.day,
+        });
+        world.insert_resource(WorldInfo {
+            seed,
+            name: meta.name.clone(),
+        });
 
         let mut schedule = Schedule::default();
         schedule.add_systems(
             (
-                systems::drain_network,
-                systems::apply_player_inputs,
-                regions::compute_tickets,
-                regions::manage_regions,
-                systems::build_obstacles,
-                systems::step_simulation,
-                systems::step_physics,
-                bodies::step_bodies,
-                bodies::react_bodies,
-                systems::replicate,
-                bodies::replicate_bodies,
-                systems::finish_tick,
-                regions::autosave,
+                (
+                    systems::drain_network,
+                    commands::run_commands,
+                    systems::apply_player_inputs,
+                    regions::compute_tickets,
+                    regions::manage_regions,
+                    systems::build_obstacles,
+                    systems::step_simulation,
+                )
+                    .chain(),
+                (
+                    systems::step_physics,
+                    bodies::step_bodies,
+                    bodies::react_bodies,
+                    hazards::apply_hazards,
+                    systems::advance_clock,
+                    systems::sync_inventories,
+                    systems::replicate,
+                    bodies::replicate_bodies,
+                    systems::finish_tick,
+                    regions::autosave,
+                )
+                    .chain(),
             )
                 .chain(),
         );

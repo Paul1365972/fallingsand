@@ -61,7 +61,7 @@ crates/
 ├── fallingsand_server    # Authoritative server: library + dedicated headless binary
 └── fallingsand_client    # Bevy app; builds the `fallingsand` binary (native + trunk WASM)
 assets/                   # Client assets
-data/                     # Hand-authored definitions (materials.ron, biomes.ron, ...)
+data/                     # Hand-authored definitions (materials.ron)
 docs/                     # Design docs
 ```
 
@@ -259,7 +259,7 @@ Zero serialization shortcuts — the local pipe still moves `fallingsand_protoco
 - **Infinite-world layout**: a surface band at y≈0 (heightmap via noise), infinite depth below organized in progressive depth bands (biome/hazard/loot tiers keyed on Y), infinite sky above thinning toward emptiness.
   Horizontal variety comes from biome noise along X; vertical variety from depth bands — the two compose into a 2D biome lookup.
 - Layered pipeline: base terrain (noise: heights/caves via fBm + domain warping) → biome assignment (X-noise × Y-band) → material fill → features/structures → post-passes (ore veins, vegetation).
-- Biome and feature definitions are data-driven (`data/biomes.ron`) like materials.
+- Biome and feature definitions are hardcoded Rust in `fallingsand_worldgen` while the generator design is still moving fast; they return to data files once stable.
 - First iteration: surface band with height variation, a cave layer, 2–3 biomes, a handful of materials.
   Enough to prove the pipeline shape, not content-complete.
 - Next: a full overhaul — dramatic terrain, real cave systems, surface life and water, depth-tiered ores, ~6 biomes — with a PNG preview harness built first so generation is iterated offline, not in-game.

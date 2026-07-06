@@ -1,14 +1,15 @@
 use fallingsand_core::{
-    CHUNK_AREA, CHUNK_SIZE, Cell, ChunkOffset, DirtyRect, Fixed, MaterialId, REGION_AREA_CHUNKS,
-    Region, RegionPos,
+    CHUNK_AREA, CHUNK_SIZE, Cell, ChunkOffset, DirtyRect, Fixed, MaterialId, MaterialRegistry,
+    REGION_AREA_CHUNKS, Region, RegionPos,
 };
-use fallingsand_protocol::PlayerUuid;
+use fallingsand_protocol::{GameMode, PlayerUuid};
 use redb::{Database, ReadableDatabase, TableDefinition};
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 pub const REGION_FORMAT_VERSION: u8 = 2;
-pub const WORLD_FORMAT_VERSION: u16 = 3;
+pub const WORLD_FORMAT_VERSION: u16 = 4;
 const CELL_BYTES: usize = 3;
 const RECT_BYTES: usize = 4;
 const REGION_CELL_BYTES: usize = REGION_AREA_CHUNKS * CHUNK_AREA * CELL_BYTES;
@@ -23,13 +24,46 @@ pub struct WorldMeta {
     pub format_version: u16,
     pub seed: u64,
     pub name: String,
+    pub clock: f32,
+    pub day: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlayerRecord {
     pub x: Fixed,
     pub y: Fixed,
     pub hp: f32,
+    pub mode: GameMode,
+    pub air: f32,
+    pub burning: f32,
+    pub inventory: Vec<(String, u64)>,
+}
+
+pub fn inventory_to_record(
+    registry: &MaterialRegistry,
+    counts: &FxHashMap<MaterialId, u64>,
+) -> Vec<(String, u64)> {
+    let mut list: Vec<(String, u64)> = counts
+        .iter()
+        .filter(|&(_, &count)| count > 0)
+        .map(|(&id, &count)| (registry.get(id).name.clone(), count))
+        .collect();
+    list.sort();
+    list
+}
+
+pub fn inventory_from_record(
+    registry: &MaterialRegistry,
+    list: &[(String, u64)],
+) -> FxHashMap<MaterialId, u64> {
+    let mut counts = FxHashMap::default();
+    for (name, count) in list {
+        match registry.id_of(name) {
+            Some(id) if id != MaterialId::AIR => *counts.entry(id).or_insert(0) += count,
+            _ => tracing::warn!("dropping {count} of unknown material {name:?} from inventory"),
+        }
+    }
+    counts
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -40,7 +74,9 @@ pub enum StoreError {
     CorruptRegion(String),
     #[error("corrupt record: {0}")]
     CorruptRecord(#[from] postcard::Error),
-    #[error("unsupported world format {0} (server supports {WORLD_FORMAT_VERSION})")]
+    #[error(
+        "world format {0} is too old (current {WORLD_FORMAT_VERSION}); pre-release worlds carry no migrations — delete the world and create a new one"
+    )]
     UnsupportedWorld(u16),
     #[error("unsupported region format {0} (server supports {REGION_FORMAT_VERSION})")]
     UnsupportedRegion(u8),

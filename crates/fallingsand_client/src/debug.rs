@@ -88,10 +88,26 @@ fn toggle_overlay(
     mut visible: ResMut<DebugVisible>,
     mut borders: ResMut<BordersVisible>,
     mut combo: ResMut<F3ComboUsed>,
+    mode: Res<crate::player::LocalMode>,
+    session: Option<ResMut<Session>>,
 ) {
     if keys.pressed(KeyCode::F3) && keys.just_pressed(KeyCode::KeyG) {
         borders.0 = !borders.0;
         combo.0 = true;
+    }
+    if keys.pressed(KeyCode::F3) && keys.just_pressed(KeyCode::KeyN) {
+        combo.0 = true;
+        if let Some(mut session) = session
+            && session.player.is_some()
+        {
+            let target = match mode.0 {
+                fallingsand_protocol::GameMode::Creative => "s",
+                fallingsand_protocol::GameMode::Survival => "c",
+            };
+            session.send(&fallingsand_protocol::ClientMessage::Chat {
+                text: format!("/gm {target}"),
+            });
+        }
     }
     if keys.just_released(KeyCode::F3) {
         if !combo.0 {
@@ -247,6 +263,8 @@ fn update_overlay(
     hotbar: Res<Hotbar>,
     input: Res<InputState>,
     registry: Res<ClientRegistry>,
+    mode: Res<crate::player::LocalMode>,
+    fly: Res<crate::player::FlyToggle>,
     mut text: Single<&mut Text, With<DebugText>>,
 ) {
     if !visible.0 {
@@ -342,14 +360,16 @@ fn update_overlay(
                 "cursor: {},{} [{}]",
                 input.aim.x, input.aim.y, cursor_material
             ));
-            let selected = hotbar
-                .materials
-                .get(hotbar.selected)
-                .map(|&id| registry.0.get(id).name.as_str())
+            let selected = registry
+                .0
+                .try_get(hotbar.selected)
+                .map(|material| material.name.as_str())
                 .unwrap_or("none");
-            lines.push(format!("selected [1-9]: {selected}"));
+            lines.push(format!("selected [1-0, brackets]: {selected}"));
+            let fly = if fly.0 { ", flying" } else { "" };
+            lines.push(format!("mode: {}{fly} (F3+N switch)", mode.0.label()));
             lines.push(
-                "keys: AD move, space jump, LMB dig, RMB place, wheel zoom, IJKL pan, O follow, F3+G borders+rects, esc pause"
+                "keys: AD move, space jump (2x fly), LMB dig, RMB place, wheel zoom, IJKL pan, O follow, F3+G borders+rects, esc pause"
                     .to_string(),
             );
         }

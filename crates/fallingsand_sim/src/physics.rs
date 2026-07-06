@@ -58,6 +58,14 @@ impl Body {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct StepInput {
+    pub move_x: i8,
+    pub jump: bool,
+    pub down: bool,
+    pub fly: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Controller {
     coyote: f32,
     buffer: f32,
@@ -150,6 +158,8 @@ pub struct PlayerParams {
     pub swim_accel: Fixed,
     pub swim_reduce: Fixed,
     pub swim_max_rise: Fixed,
+    pub fly_max: Fixed,
+    pub fly_accel: Fixed,
 }
 
 impl Default for PlayerParams {
@@ -174,6 +184,8 @@ impl Default for PlayerParams {
             swim_accel: Fixed::from_int(600),
             swim_reduce: Fixed::from_int(400),
             swim_max_rise: Fixed::from_int(60),
+            fly_max: Fixed::from_int(160),
+            fly_accel: Fixed::from_int(1200),
         }
     }
 }
@@ -186,17 +198,16 @@ fn approach(value: Fixed, target: Fixed, delta: Fixed) -> Fixed {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn step_player<W: CellSource>(
     world: &W,
     registry: &MaterialRegistry,
     params: &PlayerParams,
     body: &mut Body,
     ctrl: &mut Controller,
-    move_x: i8,
-    jump_held: bool,
-    down_held: bool,
+    input: StepInput,
 ) -> MoveResult {
+    let jump_held = input.jump;
+    let down_held = input.down;
     let pressed = jump_held && !ctrl.jump_held;
     ctrl.jump_held = jump_held;
     ctrl.buffer = if pressed {
@@ -211,27 +222,33 @@ pub fn step_player<W: CellSource>(
     };
     ctrl.var_jump_timer = (ctrl.var_jump_timer - TICK_DT).max(0.0);
 
-    let move_x = move_x.clamp(-1, 1) as i32;
+    let move_x = input.move_x.clamp(-1, 1) as i32;
     let in_water = body_submerged(world, registry, body);
     let entered_water = in_water && !ctrl.in_water;
     ctrl.in_water = in_water;
-    let swimming = in_water && !(ctrl.var_jump_timer > 0.0 && body.vy > Fixed::ZERO);
-    if swimming {
-        swim_update(
-            world,
-            registry,
-            params,
-            body,
-            ctrl,
-            move_x,
-            jump_held,
-            down_held,
-            entered_water,
-        );
-    } else {
-        normal_update(
+    if input.fly {
+        fly_update(
             world, registry, params, body, ctrl, move_x, jump_held, down_held,
         );
+    } else {
+        let swimming = in_water && !(ctrl.var_jump_timer > 0.0 && body.vy > Fixed::ZERO);
+        if swimming {
+            swim_update(
+                world,
+                registry,
+                params,
+                body,
+                ctrl,
+                move_x,
+                jump_held,
+                down_held,
+                entered_water,
+            );
+        } else {
+            normal_update(
+                world, registry, params, body, ctrl, move_x, jump_held, down_held,
+            );
+        }
     }
 
     let result = move_body(world, registry, body);
@@ -239,6 +256,36 @@ pub fn step_player<W: CellSource>(
         ctrl.var_jump_timer = 0.0;
     }
     result
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fly_update<W: CellSource>(
+    world: &W,
+    registry: &MaterialRegistry,
+    params: &PlayerParams,
+    body: &mut Body,
+    ctrl: &mut Controller,
+    move_x: i32,
+    jump_held: bool,
+    down_held: bool,
+) {
+    ctrl.buffer = 0.0;
+    ctrl.coyote = 0.0;
+    ctrl.var_jump_timer = 0.0;
+    if ctrl.ducking && can_unduck(world, registry, params, body) {
+        unduck(params, body, ctrl);
+    }
+    let move_y = jump_held as i32 - down_held as i32;
+    body.vx = approach(
+        body.vx,
+        params.fly_max.mul_int(move_x),
+        params.fly_accel.per_tick(),
+    );
+    body.vy = approach(
+        body.vy,
+        params.fly_max.mul_int(move_y),
+        params.fly_accel.per_tick(),
+    );
 }
 
 fn same_direction(v: Fixed, dir: i32) -> bool {

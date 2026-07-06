@@ -1,7 +1,7 @@
-use crate::persistence::{PlayerRecord, WorldStore, encode_region};
+use crate::persistence::{PlayerRecord, WorldMeta, WorldStore, encode_region};
 use crate::session::Sessions;
-use crate::systems::{Health, PLAYER_HALF_H, PhysicsBody};
-use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y, SimWorld};
+use crate::systems::{Air, Burning, Health, Inventory, Mode, PhysicsBody, player_record};
+use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y, SimWorld, WorldClock, WorldInfo};
 use bevy_ecs::prelude::*;
 use fallingsand_core::{
     CellPos, ChunkOffset, ChunkPos, REGION_SIZE_CELLS, REGION_SIZE_CHUNKS, Region, RegionPos,
@@ -232,12 +232,25 @@ pub fn manage_regions(
     }
 }
 
+#[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments)]
 pub fn autosave(
     sim: Res<SimWorld>,
     mut regions: ResMut<RegionMap>,
     store: Res<Store>,
     sessions: Res<Sessions>,
-    query: Query<(&crate::session::Player, &PhysicsBody, &Health)>,
+    registry: Res<crate::Registry>,
+    info: Res<WorldInfo>,
+    clock: Res<WorldClock>,
+    query: Query<(
+        &crate::session::Player,
+        &PhysicsBody,
+        &Health,
+        &Mode,
+        &Air,
+        &Burning,
+        &Inventory,
+    )>,
 ) {
     let Some(store) = store.0.as_ref() else {
         return;
@@ -275,19 +288,28 @@ pub fn autosave(
         .iter()
         .filter_map(|session| {
             let entity = session.entity?;
-            let (player, body, health) = query.get(entity).ok()?;
+            let (player, body, health, mode, air, burning, inventory) = query.get(entity).ok()?;
             Some((
                 player.uuid,
-                PlayerRecord {
-                    x: body.0.x,
-                    y: body.0.y + (PLAYER_HALF_H - body.0.half_h),
-                    hp: health.hp,
-                },
+                player_record(&registry.0, &body.0, health, mode, air, burning, inventory),
             ))
         })
         .collect();
     if let Err(err) = store.save_players(&players) {
         tracing::error!("player autosave failed: {err}");
+    }
+    if let Err(err) = store.save_meta(&world_meta(&info, &clock)) {
+        tracing::error!("meta autosave failed: {err}");
+    }
+}
+
+pub fn world_meta(info: &WorldInfo, clock: &WorldClock) -> WorldMeta {
+    WorldMeta {
+        format_version: crate::persistence::WORLD_FORMAT_VERSION,
+        seed: info.seed,
+        name: info.name.clone(),
+        clock: clock.t,
+        day: clock.day,
     }
 }
 
@@ -365,20 +387,32 @@ pub fn save_everything(world: &mut bevy_ecs::world::World, final_save: bool) {
 
     let mut players: Vec<(PlayerUuid, PlayerRecord)> = Vec::new();
     {
-        let mut query = world.query::<(&crate::session::Player, &PhysicsBody, &Health)>();
-        for (player, body, health) in query.iter(world) {
+        let registry = world.resource::<crate::Registry>().0.clone();
+        let mut query = world.query::<(
+            &crate::session::Player,
+            &PhysicsBody,
+            &Health,
+            &Mode,
+            &Air,
+            &Burning,
+            &Inventory,
+        )>();
+        for (player, body, health, mode, air, burning, inventory) in query.iter(world) {
             players.push((
                 player.uuid,
-                PlayerRecord {
-                    x: body.0.x,
-                    y: body.0.y + (PLAYER_HALF_H - body.0.half_h),
-                    hp: health.hp,
-                },
+                player_record(&registry, &body.0, health, mode, air, burning, inventory),
             ));
         }
     }
     if let Err(err) = store.save_players(&players) {
         tracing::error!("final player save failed: {err}");
+    }
+    let meta = world_meta(
+        world.resource::<WorldInfo>(),
+        world.resource::<WorldClock>(),
+    );
+    if let Err(err) = store.save_meta(&meta) {
+        tracing::error!("final meta save failed: {err}");
     }
     tracing::info!(
         "world saved: {} regions, {} players in {:.1?}",

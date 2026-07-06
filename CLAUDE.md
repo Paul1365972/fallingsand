@@ -31,7 +31,7 @@ cargo run -p fallingsand_client --features dev
 - Dependency direction: `core ← sim ← {server, client}`, `core ← protocol ← {server, client}`.
 - Only `fallingsand_client` may depend on Bevy; only `fallingsand_server` on redb; tokio: server plus the client's native-only target.
 - No code comments, no doc comments (rare exceptions like `// SAFETY:`); docs are terse and standalone, no meta talk.
-- Game data is RON in `data/`; the sim dispatches on phase + properties, never material identity.
+- Material data is RON in `data/materials.ron`; the sim dispatches on phase + properties, never material identity. Worldgen (biomes, bands, ores) is hardcoded Rust in `fallingsand_worldgen` until its design stabilizes.
 - No tests unless asked; verify with clippy + build, then hand feel/UI verification to the user — never hack up self-verification.
 - Big features are built as one unit and playtested once at the end — no placeholder milestones or demo scaffolding.
 - Commit once at the end of a task (packets only when clearly separable): conventional subject, no body, no co-author; never push; leave the user's parallel WIP untouched.

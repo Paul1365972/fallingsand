@@ -1,0 +1,128 @@
+use crate::systems::{Air, Burning, Health, Mode, PhysicsBody};
+use crate::{MAX_AIR_SECS, MAX_HP, Registry, SimWorld};
+use bevy_ecs::prelude::*;
+use fallingsand_core::{CellPos, Fixed, MaterialRegistry, Phase, TICK_DT, TICK_RATE};
+use fallingsand_protocol::GameMode;
+use fallingsand_sim::physics::{Body, CellSource};
+use rustc_hash::FxHashMap;
+
+pub const BURN_SECS: f32 = 4.0;
+pub const BURN_DPS: f32 = 6.0;
+pub const DROWN_DPS: f32 = 10.0;
+pub const AIR_REFILL_MULT: f32 = 4.0;
+pub const CRUSH_THRESHOLD_DV: f32 = 120.0;
+pub const CRUSH_DAMAGE_PER_DV: f32 = 0.3;
+pub const REGEN_DELAY_SECS: f32 = 8.0;
+pub const REGEN_RATE: f32 = 2.0;
+const REGEN_DELAY_TICKS: u64 = (REGEN_DELAY_SECS * TICK_RATE as f32) as u64;
+
+#[derive(Resource, Default)]
+pub struct CrushEvents(pub Vec<(Entity, f32)>);
+
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct HazardSample {
+    pub contact_dps: f32,
+    pub hot: bool,
+    pub extinguish: bool,
+    pub head_submerged: bool,
+}
+
+pub fn sample_hazards<W: CellSource>(
+    world: &W,
+    registry: &MaterialRegistry,
+    hot_mask: u32,
+    body: &Body,
+) -> HazardSample {
+    let mut sample = HazardSample::default();
+    let x0 = (body.x - body.half_w).floor_cell() - 1;
+    let y0 = (body.y - body.half_h).floor_cell() - 1;
+    let x1 = (body.x + body.half_w).max_cell() + 1;
+    let y1 = (body.y + body.half_h).max_cell() + 1;
+    for y in y0..=y1 {
+        for x in x0..=x1 {
+            let Some(cell) = world.cell_at(CellPos::new(x, y)) else {
+                continue;
+            };
+            let material = registry.get(cell.material);
+            sample.contact_dps = sample.contact_dps.max(material.contact_damage);
+            let hot = registry.has_tag(cell.material, hot_mask);
+            sample.hot |= hot;
+            sample.extinguish |= material.phase == Phase::Liquid && !hot;
+        }
+    }
+    let head = CellPos::new(
+        body.x.floor_cell(),
+        (body.y + body.half_h - Fixed::HALF).floor_cell(),
+    );
+    sample.head_submerged = matches!(
+        world.cell_at(head),
+        Some(cell) if registry.get(cell.material).phase == Phase::Liquid
+    );
+    sample
+}
+
+pub fn crush_damage(dv: f32) -> f32 {
+    ((dv - CRUSH_THRESHOLD_DV) * CRUSH_DAMAGE_PER_DV).max(0.0)
+}
+
+#[allow(clippy::type_complexity)]
+pub fn apply_hazards(
+    sim: Res<SimWorld>,
+    registry: Res<Registry>,
+    mut crushes: ResMut<CrushEvents>,
+    mut query: Query<(
+        Entity,
+        &Mode,
+        &PhysicsBody,
+        &mut Health,
+        &mut Air,
+        &mut Burning,
+    )>,
+) {
+    let tick = sim.0.tick();
+    let hot_mask = registry.0.tag_mask("hot");
+    let mut crush: FxHashMap<Entity, f32> = FxHashMap::default();
+    for (entity, dv) in crushes.0.drain(..) {
+        let entry = crush.entry(entity).or_insert(0.0);
+        *entry = entry.max(dv);
+    }
+
+    for (entity, mode, body, mut health, mut air, mut burning) in &mut query {
+        if mode.0 != GameMode::Survival {
+            air.secs = MAX_AIR_SECS;
+            burning.secs = 0.0;
+            continue;
+        }
+        let sample = sample_hazards(&sim.0, &registry.0, hot_mask, &body.0);
+        let mut damage = sample.contact_dps * TICK_DT;
+        if sample.hot {
+            burning.secs = BURN_SECS;
+        }
+        if sample.extinguish {
+            burning.secs = 0.0;
+        }
+        if burning.active() {
+            damage += BURN_DPS * TICK_DT;
+            burning.secs = (burning.secs - TICK_DT).max(0.0);
+        }
+        if sample.head_submerged {
+            air.secs = (air.secs - TICK_DT).max(0.0);
+            if air.secs <= 0.0 {
+                damage += DROWN_DPS * TICK_DT;
+            }
+        } else {
+            air.secs = (air.secs + AIR_REFILL_MULT * TICK_DT).min(MAX_AIR_SECS);
+        }
+        if let Some(&dv) = crush.get(&entity) {
+            damage += crush_damage(dv);
+        }
+        if damage > 0.0 {
+            health.hp -= damage;
+            health.last_damage_tick = tick;
+        } else if health.hp < MAX_HP
+            && tick.saturating_sub(health.last_damage_tick) >= REGEN_DELAY_TICKS
+        {
+            health.hp = (health.hp + REGEN_RATE * TICK_DT).min(MAX_HP);
+        }
+    }
+}

@@ -522,7 +522,6 @@ pub mod embedded {
                         seed: derive_seed(&world_name),
                         name: world_name,
                         save_path: Some(save_path),
-                        biomes_source: crate::BIOMES_RON.to_string(),
                     },
                 })
                 .expect("embedded server init");

@@ -33,6 +33,10 @@ pub struct Material {
     #[serde(default)]
     pub fall_speed: f32,
     #[serde(default)]
+    pub hardness: f32,
+    #[serde(default)]
+    pub contact_damage: f32,
+    #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
     pub decay_rate: f32,
@@ -79,6 +83,7 @@ pub struct MaterialRegistry {
     materials: Vec<Material>,
     by_name: HashMap<String, MaterialId>,
     hash: u64,
+    tag_index: HashMap<String, u32>,
     tag_bits: Vec<u32>,
     sustain_bits: Vec<u32>,
     reactions: Vec<Option<Reaction>>,
@@ -314,10 +319,15 @@ impl MaterialRegistry {
             .collect();
 
         let hash = registry_hash(&materials, &reaction_defs);
+        let tag_index = tag_index
+            .into_iter()
+            .map(|(tag, index)| (tag.to_string(), index))
+            .collect();
         Ok(Self {
             materials,
             by_name,
             hash,
+            tag_index,
             tag_bits,
             sustain_bits,
             reactions,
@@ -389,6 +399,18 @@ impl MaterialRegistry {
     #[inline]
     pub fn sustains(&self, fire: MaterialId, neighbor: MaterialId) -> bool {
         self.sustain_bits[fire.0 as usize] & self.tag_bits[neighbor.0 as usize] != 0
+    }
+
+    pub fn tag_mask(&self, tag: &str) -> u32 {
+        self.tag_index
+            .get(tag)
+            .map(|&index| 1u32 << index)
+            .unwrap_or(0)
+    }
+
+    #[inline]
+    pub fn has_tag(&self, id: MaterialId, mask: u32) -> bool {
+        self.tag_bits[id.0 as usize] & mask != 0
     }
 }
 

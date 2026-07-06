@@ -48,7 +48,6 @@ fn main() -> anyhow::Result<()> {
     let domain = domain.or_else(|| std::env::var("FALLINGSAND_DOMAIN").ok());
 
     let materials = include_str!("../../../data/materials.ron");
-    let biomes = include_str!("../../../data/biomes.ron");
     let registry = Arc::new(MaterialRegistry::from_ron(materials)?);
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -109,7 +108,6 @@ fn main() -> anyhow::Result<()> {
             name: "dedicated".into(),
             seed: 0x5EED,
             save_path: Some("saves/dedicated/world.redb".into()),
-            biomes_source: biomes.into(),
         },
     })?;
 
