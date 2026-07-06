@@ -1,7 +1,7 @@
 # fallingsand
 
 Multiplayer Noita-like falling-sand game.
-docs/Idea.md is the single source of truth: read it first; flag any deviation you make.
+docs/ is the single source of truth: start at docs/Overview.md (it indexes the rest); read the relevant doc first and flag any deviation you make.
 
 ## Commands
 

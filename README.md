@@ -1,7 +1,7 @@
 # fallingsand
 
 A multiplayer Noita-like falling-sand game.
-See [docs/Idea.md](docs/Idea.md) for the full design.
+See [docs/Overview.md](docs/Overview.md) for the full design.
 
 Play the latest web build at [paul1365972.github.io/fallingsand](https://paul1365972.github.io/fallingsand/).
 
