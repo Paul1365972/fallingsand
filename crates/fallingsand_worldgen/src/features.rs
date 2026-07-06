@@ -2,9 +2,9 @@ use crate::biomes::{
     Canopy, DECOR_COLUMN_CHANCE, DECOR_SCAN_FLOOR, MUSHROOM_ANCHOR_GRID, MUSHROOM_CHANCE,
     MUSHROOM_MAX_Y, MUSHROOM_MIN_Y, Palette, TREE_MARGIN, VINE_MAX_DEPTH, WorldDef,
 };
-use crate::noise::{Xorshift, hash1, hash2};
 use crate::terrain::Terrain;
 use fallingsand_core::MaterialId;
+use fallingsand_rng::Hash;
 
 pub struct FeatureCell {
     pub x: i32,
@@ -48,11 +48,11 @@ pub fn trees_for_rect(
     clip: &Clip,
 ) -> Vec<FeatureCell> {
     let biome_count = def.biomes.len();
-    let candidate = |x: i32| -> Option<u64> {
+    let candidate = |x: i32| -> Option<Hash> {
         let biome = &def.biomes[terrain.biome_at(biome_count, x)];
         let tree = biome.tree.as_ref()?;
-        let hash = hash1(seed, "tree", x);
-        (((hash & 0xFFFF) as f32) < tree.density * 65536.0).then_some(hash)
+        let hash = Hash::seed(seed).bytes(b"tree").pos(x, 0);
+        hash.chance(tree.density).then_some(hash)
     };
 
     let mut cells = Vec::new();
@@ -88,8 +88,8 @@ pub fn trees_for_rect(
             _ => continue,
         }
 
-        let mut rng = Xorshift::new(key);
-        let height = rng.range(tree.trunk_height.0, tree.trunk_height.1);
+        let mut rng = key.stream();
+        let height = rng.draw().range(tree.trunk_height.0, tree.trunk_height.1);
         let mut canopy_top: Vec<(i32, i32)> = Vec::new();
         let mut leaf = |cells: &mut Vec<FeatureCell>, cx: i32, cy: i32| {
             clip.push(cells, cx, cy, tree.leaves);
@@ -105,8 +105,8 @@ pub fn trees_for_rect(
                     clip.push(&mut cells, x + 1, ground + dy, tree.wood);
                 }
                 let top = ground + height;
-                let rx = rng.range(5, 9);
-                let ry = rng.range(4, 7);
+                let rx = rng.draw().range(5, 9);
+                let ry = rng.draw().range(4, 7);
                 for dy in -ry..=ry {
                     for dx in -rx..=rx {
                         let nx = dx as f32 / rx as f32;
@@ -154,8 +154,11 @@ pub fn decorations_for_rect(
     let biome_count = def.biomes.len();
     let mut cells = Vec::new();
     for x in clip.min_x..=clip.max_x {
-        let column_hash = hash1(seed, "decor", x);
-        if ((column_hash & 0xFF) as f32) >= DECOR_COLUMN_CHANCE * 256.0 {
+        if !Hash::seed(seed)
+            .bytes(b"decor")
+            .pos(x, 0)
+            .chance(DECOR_COLUMN_CHANCE)
+        {
             continue;
         }
         let biome = &def.biomes[terrain.biome_at(biome_count, x)];
@@ -185,11 +188,11 @@ fn spike_material(
     biome: &crate::biomes::Biome,
     y: i32,
     depth: i32,
-    roll: u64,
+    roll: Hash,
 ) -> MaterialId {
     if biome.snow_cover && depth < 70 {
         palette.ice
-    } else if y < -380 && (roll & 0xFF) < 64 {
+    } else if y < -380 && roll.chance(0.25) {
         palette.crystal
     } else if y < -350 {
         palette.deepstone
@@ -209,21 +212,18 @@ fn ceiling_site(
     cells: &mut Vec<FeatureCell>,
     clip: &Clip,
 ) {
-    let hash = hash2(seed, "ceiling", x, top_air);
+    let mut rng = Hash::seed(seed).bytes(b"ceiling").pos(x, top_air).stream();
     let depth = surface - top_air;
-    if depth < VINE_MAX_DEPTH
-        && biome.vine_chance > 0.0
-        && ((hash & 0xFF) as f32) < biome.vine_chance * 256.0
-    {
-        let length = 3 + ((hash >> 8) % 8) as i32;
+    if depth < VINE_MAX_DEPTH && rng.draw().chance(biome.vine_chance) {
+        let length = rng.draw().range(3, 10);
         for dy in 0..length {
             clip.push(cells, x, top_air - dy, palette.moss);
         }
         return;
     }
-    if (hash >> 16) & 0xFF < 115 {
-        let length = 2 + ((hash >> 24) % 6) as i32;
-        let material = spike_material(palette, biome, top_air, depth, hash >> 32);
+    if rng.draw().chance(0.45) {
+        let length = rng.draw().range(2, 7);
+        let material = spike_material(palette, biome, top_air, depth, rng.draw());
         for dy in 0..length {
             clip.push(cells, x, top_air - dy, material);
         }
@@ -241,11 +241,11 @@ fn floor_site(
     cells: &mut Vec<FeatureCell>,
     clip: &Clip,
 ) {
-    let hash = hash2(seed, "floor", x, bottom_air);
-    if (hash & 0xFF) < 90 {
-        let length = 2 + ((hash >> 8) % 4) as i32;
+    let mut rng = Hash::seed(seed).bytes(b"floor").pos(x, bottom_air).stream();
+    if rng.draw().chance(0.35) {
+        let length = rng.draw().range(2, 5);
         let depth = surface - bottom_air;
-        let material = spike_material(palette, biome, bottom_air, depth, hash >> 16);
+        let material = spike_material(palette, biome, bottom_air, depth, rng.draw());
         for dy in 0..length {
             clip.push(cells, x, bottom_air + dy, material);
         }
@@ -271,13 +271,15 @@ pub fn mushrooms_for_rect(
         .min(MUSHROOM_MAX_Y.div_euclid(grid));
     for anchor_y in anchor_min_y..=anchor_max_y {
         for anchor_x in anchor_min_x..=anchor_max_x {
-            let hash = hash2(seed, "mushroom", anchor_x, anchor_y);
-            if ((hash & 0xFF) as f32) >= MUSHROOM_CHANCE * 256.0 {
+            let mut rng = Hash::seed(seed)
+                .bytes(b"mushroom")
+                .pos(anchor_x, anchor_y)
+                .stream();
+            if !rng.draw().chance(MUSHROOM_CHANCE) {
                 continue;
             }
-            let mut rng = Xorshift::new(hash);
-            let x = anchor_x * grid + rng.range(0, grid - 1);
-            let start = anchor_y * grid + rng.range(0, grid - 1);
+            let x = anchor_x * grid + rng.draw().range(0, grid - 1);
+            let start = anchor_y * grid + rng.draw().range(0, grid - 1);
             let mut floor_air = None;
             for y in (start - 20..=start + 20).rev() {
                 if !solid(x, y) && solid(x, y - 1) {
@@ -288,14 +290,14 @@ pub fn mushrooms_for_rect(
             let Some(base) = floor_air else {
                 continue;
             };
-            let stem = rng.range(5, 12);
-            let cap_rx = rng.range(3, 6);
-            let cap_ry = rng.range(2, 3);
+            let stem = rng.draw().range(5, 12);
+            let cap_rx = rng.draw().range(3, 6);
+            let cap_ry = rng.draw().range(2, 3);
             let headroom = stem + cap_ry + 2;
             if (0..headroom).any(|dy| solid(x, base + dy)) {
                 continue;
             }
-            let wide = rng.step() & 1 == 0;
+            let wide = rng.draw().bit();
             for dy in 0..stem {
                 clip.push(&mut cells, x, base + dy, palette.mushroom_stem);
                 if wide {

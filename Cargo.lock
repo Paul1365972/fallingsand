@@ -2567,6 +2567,7 @@ dependencies = [
  "fallingsand_core",
  "fallingsand_net",
  "fallingsand_protocol",
+ "fallingsand_rng",
  "fallingsand_server",
  "fallingsand_sim",
  "getrandom 0.3.4",

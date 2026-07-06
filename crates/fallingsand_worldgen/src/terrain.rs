@@ -1,5 +1,6 @@
 use crate::biomes::{POND_ANCHOR_GRID, WorldDef};
-use crate::noise::{Field, hash1, sub_seed};
+use crate::noise::{Field, noise_seed};
+use fallingsand_rng::Hash;
 use fastnoise_lite::{DomainWarpType, FastNoiseLite, FractalType, NoiseType};
 
 pub struct Terrain {
@@ -30,54 +31,54 @@ const BIOME_BLEND_CELLS: i32 = 64;
 
 impl Terrain {
     pub fn new(seed: u64) -> Self {
-        let mut continent = FastNoiseLite::with_seed(sub_seed(seed, "continent"));
+        let mut continent = FastNoiseLite::with_seed(noise_seed(seed, "continent"));
         continent.set_noise_type(Some(NoiseType::OpenSimplex2));
         continent.set_fractal_type(Some(FractalType::FBm));
         continent.set_fractal_octaves(Some(3));
         continent.set_frequency(Some(0.0006));
 
-        let mut hills = FastNoiseLite::with_seed(sub_seed(seed, "hills"));
+        let mut hills = FastNoiseLite::with_seed(noise_seed(seed, "hills"));
         hills.set_noise_type(Some(NoiseType::OpenSimplex2));
         hills.set_fractal_type(Some(FractalType::FBm));
         hills.set_fractal_octaves(Some(4));
         hills.set_frequency(Some(0.004));
 
-        let mut detail = FastNoiseLite::with_seed(sub_seed(seed, "detail"));
+        let mut detail = FastNoiseLite::with_seed(noise_seed(seed, "detail"));
         detail.set_noise_type(Some(NoiseType::OpenSimplex2));
         detail.set_frequency(Some(0.035));
 
-        let mut mesa = FastNoiseLite::with_seed(sub_seed(seed, "mesa"));
+        let mut mesa = FastNoiseLite::with_seed(noise_seed(seed, "mesa"));
         mesa.set_noise_type(Some(NoiseType::OpenSimplex2));
         mesa.set_frequency(Some(0.0016));
 
-        let mut canyon = FastNoiseLite::with_seed(sub_seed(seed, "canyon"));
+        let mut canyon = FastNoiseLite::with_seed(noise_seed(seed, "canyon"));
         canyon.set_noise_type(Some(NoiseType::OpenSimplex2));
         canyon.set_frequency(Some(0.0008));
 
-        let mut river = FastNoiseLite::with_seed(sub_seed(seed, "river"));
+        let mut river = FastNoiseLite::with_seed(noise_seed(seed, "river"));
         river.set_noise_type(Some(NoiseType::OpenSimplex2));
         river.set_frequency(Some(0.0007));
 
-        let mut mountain_mask = FastNoiseLite::with_seed(sub_seed(seed, "mountain_mask"));
+        let mut mountain_mask = FastNoiseLite::with_seed(noise_seed(seed, "mountain_mask"));
         mountain_mask.set_noise_type(Some(NoiseType::OpenSimplex2));
         mountain_mask.set_frequency(Some(0.00025));
 
-        let mut ridge = FastNoiseLite::with_seed(sub_seed(seed, "ridge"));
+        let mut ridge = FastNoiseLite::with_seed(noise_seed(seed, "ridge"));
         ridge.set_noise_type(Some(NoiseType::OpenSimplex2));
         ridge.set_fractal_type(Some(FractalType::FBm));
         ridge.set_fractal_octaves(Some(2));
         ridge.set_frequency(Some(0.0025));
 
-        let mut band_edge = FastNoiseLite::with_seed(sub_seed(seed, "band_edge"));
+        let mut band_edge = FastNoiseLite::with_seed(noise_seed(seed, "band_edge"));
         band_edge.set_noise_type(Some(NoiseType::OpenSimplex2));
         band_edge.set_frequency(Some(0.004));
 
-        let mut shape = FastNoiseLite::with_seed(sub_seed(seed, "shape"));
+        let mut shape = FastNoiseLite::with_seed(noise_seed(seed, "shape"));
         shape.set_noise_type(Some(NoiseType::OpenSimplex2S));
         shape.set_fractal_type(Some(FractalType::FBm));
         shape.set_fractal_octaves(Some(3));
         shape.set_frequency(Some(0.02));
-        let mut shape_warp = FastNoiseLite::with_seed(sub_seed(seed, "shape_warp"));
+        let mut shape_warp = FastNoiseLite::with_seed(noise_seed(seed, "shape_warp"));
         shape_warp.set_domain_warp_type(Some(DomainWarpType::OpenSimplex2));
         shape_warp.set_domain_warp_amp(Some(30.0));
         shape_warp.set_frequency(Some(0.01));
@@ -98,7 +99,10 @@ impl Terrain {
     }
 
     fn biome_of_cell(&self, count: usize, cell: i32) -> usize {
-        (hash1(self.seed, "biome_cell", cell) % count as u64) as usize
+        Hash::seed(self.seed)
+            .bytes(b"biome_cell")
+            .pos(cell, 0)
+            .range(0, count as i32 - 1) as usize
     }
 
     pub fn biome_mix(&self, count: usize, x: i32) -> (usize, usize, f32) {
@@ -186,14 +190,15 @@ impl Terrain {
         }
         let cell = x.div_euclid(POND_ANCHOR_GRID);
         for anchor in [cell - 1, cell, cell + 1] {
-            let hash = hash1(self.seed, "pond", anchor);
-            if (hash & 0xFF) as f32 >= chance * 256.0 {
+            let mut rng = Hash::seed(self.seed).bytes(b"pond").pos(anchor, 0).stream();
+            if !rng.draw().chance(chance) {
                 continue;
             }
             let center = anchor * POND_ANCHOR_GRID
                 + POND_ANCHOR_GRID / 4
-                + ((hash >> 8) % (POND_ANCHOR_GRID / 2) as u64) as i32;
-            let radius = 10 + ((hash >> 24) % 13) as i32;
+                + rng.draw().range(0, POND_ANCHOR_GRID / 2 - 1);
+            let radius = rng.draw().range(10, 22);
+            let depth = rng.draw().range(3, 7);
             let dx = x - center;
             if dx.abs() > radius {
                 continue;
@@ -205,7 +210,6 @@ impl Terrain {
             if center_surface <= def.sea_level + 2 {
                 continue;
             }
-            let depth = 3 + ((hash >> 40) % 5) as i32;
             let profile = 1.0 - (dx as f32 / radius as f32).powi(2);
             let floor = center_surface - 2 - (depth as f32 * profile).round() as i32;
             let level = center_surface - 1;

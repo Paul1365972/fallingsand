@@ -1,42 +1,8 @@
 use fallingsand_rng::Hash;
 use fastnoise_lite::FastNoiseLite;
 
-pub fn sub_seed(seed: u64, purpose: &str) -> i32 {
+pub fn noise_seed(seed: u64, purpose: &str) -> i32 {
     Hash::seed(seed).bytes(purpose.as_bytes()).get() as i32
-}
-
-pub fn hash2(seed: u64, purpose: &str, x: i32, y: i32) -> u64 {
-    Hash::seed(seed).bytes(purpose.as_bytes()).pos(x, y).get()
-}
-
-pub fn hash1(seed: u64, purpose: &str, x: i32) -> u64 {
-    Hash::seed(seed)
-        .bytes(purpose.as_bytes())
-        .add(x as u32 as u64)
-        .get()
-}
-
-pub struct Xorshift(u64);
-
-impl Xorshift {
-    pub fn new(state: u64) -> Self {
-        Self(state.max(1))
-    }
-
-    pub fn step(&mut self) -> u64 {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        self.0
-    }
-
-    pub fn unit(&mut self) -> f32 {
-        (self.step() >> 40) as f32 / (1u64 << 24) as f32
-    }
-
-    pub fn range(&mut self, min: i32, max: i32) -> i32 {
-        min + (self.step() % (max - min + 1).max(1) as u64) as i32
-    }
 }
 
 pub struct Field {

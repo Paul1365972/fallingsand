@@ -17,7 +17,7 @@ use fallingsand_core::{
     REGION_SIZE_CHUNKS, Region, RegionPos,
 };
 use fallingsand_rng::Hash;
-use noise::{Cached, hash1, hash2};
+use noise::Cached;
 use terrain::Terrain;
 use water::Waters;
 
@@ -170,7 +170,10 @@ impl Ctx<'_> {
         if band.aquifers
             && depth < MOSS_MAX_DEPTH as f32
             && depth > 8.0
-            && ((hash2(generator.seed, "moss", x, y) & 0xFF) as f32) < MOSS_CHANCE * 256.0
+            && Hash::seed(generator.seed)
+                .bytes(b"moss")
+                .pos(x, y)
+                .chance(MOSS_CHANCE)
         {
             let below = self.solid_depth(column, x, y - 1);
             let above = self.solid_depth(column, x, y + 1);
@@ -181,7 +184,7 @@ impl Ctx<'_> {
             }
         }
 
-        let jitter = ((hash2(generator.seed, "soil", x, y) & 0x3) as f32)
+        let jitter = Hash::seed(generator.seed).bytes(b"soil").pos(x, y).bits(2) as f32
             * biomes::SOIL_TRANSITION_JITTER
             * 0.5;
         let layered = depth + jitter;
@@ -253,13 +256,12 @@ impl WorldGenerator {
             Some((floor, level)) => (base_surface.min(floor), Some(level)),
             None => (base_surface, None),
         };
-        let tuft_hash = hash1(self.seed, "tuft", x);
-        let tuft_height = if biome.tuft_chance > 0.0
-            && surface > self.def.sea_level + 2
+        let mut tuft_rng = Hash::seed(self.seed).bytes(b"tuft").pos(x, 0).stream();
+        let tuft_height = if surface > self.def.sea_level + 2
             && pond_level.is_none_or(|level| surface > level)
-            && ((tuft_hash & 0xFF) as f32) < biome.tuft_chance * 256.0
+            && tuft_rng.draw().chance(biome.tuft_chance)
         {
-            1 + ((tuft_hash >> 8) & 1) as i32
+            tuft_rng.draw().range(1, 2)
         } else {
             0
         };

@@ -12,7 +12,7 @@ pub const fn pack(x: i32, y: i32) -> u64 {
     ((x as u32 as u64) << 32) | y as u32 as u64
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Hash(u64);
 
 impl Hash {
@@ -50,6 +50,11 @@ impl Hash {
             hash = hash.add(u64::from_le_bytes(buf));
         }
         hash
+    }
+
+    #[inline]
+    pub const fn stream(self) -> Stream {
+        Stream(self.0)
     }
 
     #[inline]
@@ -97,5 +102,21 @@ impl Default for Hash {
     #[inline]
     fn default() -> Self {
         Hash::new()
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Stream(u64);
+
+impl Stream {
+    #[inline]
+    pub const fn new(seed: u64) -> Self {
+        Stream(seed)
+    }
+
+    #[inline]
+    pub fn draw(&mut self) -> Hash {
+        self.0 = self.0.wrapping_add(GOLDEN);
+        Hash(mix(self.0))
     }
 }

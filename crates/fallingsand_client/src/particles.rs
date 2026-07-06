@@ -4,6 +4,7 @@ use crate::{AppState, ClientRegistry, GameState};
 use bevy::prelude::*;
 use fallingsand_core::{BRUSH_RADIUS, Phase, REACH, SURVIVAL_REACH};
 use fallingsand_protocol::GameMode;
+use fallingsand_rng::Stream;
 
 pub struct ParticlesPlugin;
 
@@ -34,16 +35,6 @@ impl Plugin for ParticlesPlugin {
     }
 }
 
-fn rand_unit(state: &mut u32) -> f32 {
-    if *state == 0 {
-        *state = 0x9E37_79B9;
-    }
-    *state ^= *state << 13;
-    *state ^= *state >> 17;
-    *state ^= *state << 5;
-    (*state >> 8) as f32 / (1u32 << 24) as f32
-}
-
 #[allow(clippy::too_many_arguments)]
 fn spawn_dig_spray(
     mut commands: Commands,
@@ -56,7 +47,7 @@ fn spawn_dig_spray(
     session: Option<Res<crate::net::Session>>,
     visuals: Res<PlayerVisuals>,
     transforms: Query<&Transform, With<PlayerVisual>>,
-    mut rng: Local<u32>,
+    mut rng: Local<Stream>,
 ) {
     if chat_open.0 || !buttons.pressed(MouseButton::Left) {
         return;
@@ -85,8 +76,8 @@ fn spawn_dig_spray(
             break;
         }
         let span = (2 * BRUSH_RADIUS + 1) as f32;
-        let ox = (rand_unit(&mut rng) * span) as i32 - BRUSH_RADIUS;
-        let oy = (rand_unit(&mut rng) * span) as i32 - BRUSH_RADIUS;
+        let ox = (rng.draw().unit() * span) as i32 - BRUSH_RADIUS;
+        let oy = (rng.draw().unit() * span) as i32 - BRUSH_RADIUS;
         if ox * ox + oy * oy > BRUSH_RADIUS * BRUSH_RADIUS {
             continue;
         }
@@ -101,8 +92,8 @@ fn spawn_dig_spray(
         let shade = (cell.shade_flags >> 4) as usize;
         let rgba = material.colors[shade % material.colors.len()];
         let color = Color::srgba_u8(rgba[0], rgba[1], rgba[2], 255);
-        let angle = std::f32::consts::FRAC_PI_4 + rand_unit(&mut rng) * std::f32::consts::FRAC_PI_2;
-        let speed = 25.0 + rand_unit(&mut rng) * 55.0;
+        let angle = std::f32::consts::FRAC_PI_4 + rng.draw().unit() * std::f32::consts::FRAC_PI_2;
+        let speed = 25.0 + rng.draw().unit() * 55.0;
         let velocity = Vec2::from_angle(angle) * speed;
         commands.spawn((
             Particle {
@@ -123,7 +114,7 @@ fn spawn_flames(
     time: Res<Time>,
     query: Query<(&Transform, &Sprite, &PlayerVisual)>,
     mut accumulator: Local<f32>,
-    mut rng: Local<u32>,
+    mut rng: Local<Stream>,
 ) {
     *accumulator += time.delta_secs();
     if *accumulator < FLAME_INTERVAL {
@@ -137,16 +128,16 @@ fn spawn_flames(
         let size = sprite.custom_size.unwrap_or(Vec2::splat(4.0));
         for _ in 0..2 {
             let offset = Vec2::new(
-                (rand_unit(&mut rng) - 0.5) * size.x,
-                (rand_unit(&mut rng) - 0.5) * size.y,
+                (rng.draw().unit() - 0.5) * size.x,
+                (rng.draw().unit() - 0.5) * size.y,
             );
-            let warm = rand_unit(&mut rng);
+            let warm = rng.draw().unit();
             let color = Color::srgba(1.0, 0.4 + warm * 0.5, 0.1, 0.95);
             commands.spawn((
                 Particle {
                     velocity: Vec2::new(
-                        (rand_unit(&mut rng) - 0.5) * 14.0,
-                        24.0 + rand_unit(&mut rng) * 26.0,
+                        (rng.draw().unit() - 0.5) * 14.0,
+                        24.0 + rng.draw().unit() * 26.0,
                     ),
                     gravity: -60.0,
                     ttl: FLAME_TTL,

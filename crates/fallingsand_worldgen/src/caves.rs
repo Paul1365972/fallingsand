@@ -2,7 +2,7 @@ use crate::biomes::{
     Band, CAVE_SURFACE_GATE, CAVERN_CHEESE_THRESHOLD, CAVERN_MIN_DEPTH, CAVERN_RARITY_THRESHOLD,
     SHAFT_WIDTH,
 };
-use crate::noise::{Field, sub_seed};
+use crate::noise::{Field, noise_seed};
 use fastnoise_lite::{DomainWarpType, FastNoiseLite, FractalType, NoiseType};
 
 pub struct Caves {
@@ -16,7 +16,7 @@ pub struct Caves {
 impl Caves {
     pub fn new(seed: u64) -> Self {
         let warp = |purpose: &str| {
-            let mut warp = FastNoiseLite::with_seed(sub_seed(seed, purpose));
+            let mut warp = FastNoiseLite::with_seed(noise_seed(seed, purpose));
             warp.set_domain_warp_type(Some(DomainWarpType::OpenSimplex2));
             warp.set_domain_warp_amp(Some(60.0));
             warp.set_frequency(Some(0.006));
@@ -25,23 +25,23 @@ impl Caves {
             warp
         };
         let tunnel = |purpose: &str, frequency: f32| {
-            let mut noise = FastNoiseLite::with_seed(sub_seed(seed, purpose));
+            let mut noise = FastNoiseLite::with_seed(noise_seed(seed, purpose));
             noise.set_noise_type(Some(NoiseType::OpenSimplex2S));
             noise.set_frequency(Some(frequency));
             noise
         };
 
-        let mut cheese = FastNoiseLite::with_seed(sub_seed(seed, "cheese"));
+        let mut cheese = FastNoiseLite::with_seed(noise_seed(seed, "cheese"));
         cheese.set_noise_type(Some(NoiseType::OpenSimplex2S));
         cheese.set_fractal_type(Some(FractalType::FBm));
         cheese.set_fractal_octaves(Some(3));
         cheese.set_frequency(Some(0.004));
 
-        let mut rarity = FastNoiseLite::with_seed(sub_seed(seed, "cavern_rarity"));
+        let mut rarity = FastNoiseLite::with_seed(noise_seed(seed, "cavern_rarity"));
         rarity.set_noise_type(Some(NoiseType::OpenSimplex2));
         rarity.set_frequency(Some(0.0007));
 
-        let mut shaft = FastNoiseLite::with_seed(sub_seed(seed, "shaft"));
+        let mut shaft = FastNoiseLite::with_seed(noise_seed(seed, "shaft"));
         shaft.set_noise_type(Some(NoiseType::OpenSimplex2));
         shaft.set_frequency(Some(0.0013));
 

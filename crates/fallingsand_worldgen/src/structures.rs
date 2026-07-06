@@ -4,8 +4,8 @@ use crate::biomes::{
     Palette, RUIN_ANCHOR_GRID, RUIN_CHANCE, STRUCTURE_MARGIN,
 };
 use crate::features::Clip;
-use crate::noise::{Xorshift, hash1, hash2};
 use fallingsand_core::MaterialId;
+use fallingsand_rng::{Hash, Stream};
 
 pub struct StructureCell {
     pub x: i32,
@@ -80,12 +80,11 @@ fn ruins(
     let anchor_min = (builder.clip.min_x - STRUCTURE_MARGIN).div_euclid(grid);
     let anchor_max = (builder.clip.max_x + STRUCTURE_MARGIN).div_euclid(grid);
     for anchor in anchor_min..=anchor_max {
-        let hash = hash1(seed, "ruin", anchor);
-        if ((hash & 0xFF) as f32) >= RUIN_CHANCE * 256.0 {
+        let mut rng = Hash::seed(seed).bytes(b"ruin").pos(anchor, 0).stream();
+        if !rng.draw().chance(RUIN_CHANCE) {
             continue;
         }
-        let mut rng = Xorshift::new(hash);
-        let center = anchor * grid + grid / 4 + rng.range(0, grid / 2);
+        let center = anchor * grid + grid / 4 + rng.draw().range(0, grid / 2);
         let surface = surface_of(center);
         let Some(ground) = (surface - GROUND_SCAN..=surface + GROUND_SCAN)
             .rev()
@@ -96,7 +95,7 @@ fn ruins(
         if ground <= water_top(center) {
             continue;
         }
-        if rng.step() & 1 == 0 {
+        if rng.draw().bit() {
             shack(palette, &mut rng, center, ground, covered, builder);
         } else {
             tower(palette, &mut rng, center, ground, covered, builder);
@@ -106,18 +105,18 @@ fn ruins(
 
 fn shack(
     palette: &Palette,
-    rng: &mut Xorshift,
+    rng: &mut Stream,
     center: i32,
     ground: i32,
     covered: &dyn Fn(i32, i32) -> bool,
     builder: &mut Builder,
 ) {
-    let half_w = rng.range(5, 8);
-    let height = rng.range(5, 7);
-    let door = if rng.step() & 1 == 0 { -1 } else { 1 };
+    let half_w = rng.draw().range(5, 8);
+    let height = rng.draw().range(5, 7);
+    let door = if rng.draw().bit() { -1 } else { 1 };
     for dx in -half_w..=half_w {
         let x = center + dx;
-        if rng.unit() > 0.12 {
+        if rng.draw().unit() > 0.12 {
             builder.put(x, ground, palette.planks, true);
         }
         if dx.abs() < half_w {
@@ -134,13 +133,13 @@ fn shack(
             if side == door && dy <= 3 {
                 continue;
             }
-            if rng.unit() > 0.18 {
+            if rng.draw().unit() > 0.18 {
                 builder.put(x, ground + dy, palette.planks, true);
             }
         }
     }
     for dx in -(half_w + 1)..=(half_w + 1) {
-        if rng.unit() > 0.2 {
+        if rng.draw().unit() > 0.2 {
             builder.put(center + dx, ground + height, palette.planks, true);
         }
     }
@@ -148,15 +147,15 @@ fn shack(
 
 fn tower(
     palette: &Palette,
-    rng: &mut Xorshift,
+    rng: &mut Stream,
     center: i32,
     ground: i32,
     covered: &dyn Fn(i32, i32) -> bool,
     builder: &mut Builder,
 ) {
-    let half_w = rng.range(4, 6);
-    let height = rng.range(18, 30);
-    let door = if rng.step() & 1 == 0 { -1 } else { 1 };
+    let half_w = rng.draw().range(4, 6);
+    let height = rng.draw().range(18, 30);
+    let door = if rng.draw().bit() { -1 } else { 1 };
     for dy in 0..=height {
         let y = ground + dy;
         let ruin_chance = 0.05 + 0.3 * (dy as f32 / height as f32).powi(2);
@@ -167,7 +166,7 @@ fn tower(
                 if (1..=3).contains(&dy) && dx.signum() == door {
                     continue;
                 }
-                if rng.unit() > ruin_chance {
+                if rng.draw().unit() > ruin_chance {
                     builder.put(x, y, palette.brick, true);
                 }
             } else if dy > 0 && dy % 8 == 0 {
@@ -179,7 +178,7 @@ fn tower(
     }
     for dy in 1..=2 {
         for dx in -half_w..=half_w {
-            if (dx + half_w) % 4 < 2 && rng.unit() > 0.25 {
+            if (dx + half_w) % 4 < 2 && rng.draw().unit() > 0.25 {
                 builder.put(center + dx, ground + height + dy, palette.brick, true);
             }
         }
@@ -193,25 +192,29 @@ fn mineshafts(seed: u64, palette: &Palette, builder: &mut Builder) {
     let anchor_max_y = (builder.clip.max_y + 32).div_euclid(MINESHAFT_ANCHOR_Y);
     for anchor_y in anchor_min_y..=anchor_max_y {
         for anchor_x in anchor_min_x..=anchor_max_x {
-            let hash = hash2(seed, "mineshaft", anchor_x, anchor_y);
-            if ((hash & 0xFF) as f32) >= MINESHAFT_CHANCE * 256.0 {
+            let mut rng = Hash::seed(seed)
+                .bytes(b"mineshaft")
+                .pos(anchor_x, anchor_y)
+                .stream();
+            if !rng.draw().chance(MINESHAFT_CHANCE) {
                 continue;
             }
-            let mut rng = Xorshift::new(hash);
-            let start_x = anchor_x * MINESHAFT_ANCHOR_X + rng.range(0, MINESHAFT_ANCHOR_X - 1);
-            let start_y = anchor_y * MINESHAFT_ANCHOR_Y + rng.range(0, MINESHAFT_ANCHOR_Y - 1);
+            let start_x =
+                anchor_x * MINESHAFT_ANCHOR_X + rng.draw().range(0, MINESHAFT_ANCHOR_X - 1);
+            let start_y =
+                anchor_y * MINESHAFT_ANCHOR_Y + rng.draw().range(0, MINESHAFT_ANCHOR_Y - 1);
             if !(MINESHAFT_MIN_Y..=MINESHAFT_MAX_Y).contains(&start_y) {
                 continue;
             }
-            let dir = if rng.step() & 1 == 0 { 1 } else { -1 };
-            let length = rng.range(90, 170);
+            let dir = if rng.draw().bit() { 1 } else { -1 };
+            let length = rng.draw().range(90, 170);
             let mut carve: Vec<(i32, i32)> = Vec::new();
             let mut furnish: Vec<(i32, i32, MaterialId)> = Vec::new();
             let mut floor = start_y;
             for i in 0..length {
                 let x = start_x + dir * i;
                 if i % 14 == 13 {
-                    floor += rng.range(-1, 1);
+                    floor += rng.draw().range(-1, 1);
                 }
                 for dy in 1..=4 {
                     carve.push((x, floor + dy));
@@ -225,7 +228,7 @@ fn mineshafts(seed: u64, palette: &Palette, builder: &mut Builder) {
                         furnish.push((x + dx, floor + 4, palette.wood));
                     }
                 }
-                if rng.unit() < 0.03 {
+                if rng.draw().unit() < 0.03 {
                     furnish.push((x, floor + 1, palette.coal));
                 }
             }
@@ -250,14 +253,16 @@ fn islands(seed: u64, palette: &Palette, builder: &mut Builder) {
         .min(ISLAND_MAX_Y.div_euclid(ISLAND_ANCHOR_Y));
     for anchor_y in anchor_min_y..=anchor_max_y {
         for anchor_x in anchor_min_x..=anchor_max_x {
-            let hash = hash2(seed, "island", anchor_x, anchor_y);
-            if ((hash & 0xFF) as f32) >= ISLAND_CHANCE * 256.0 {
+            let mut rng = Hash::seed(seed)
+                .bytes(b"island")
+                .pos(anchor_x, anchor_y)
+                .stream();
+            if !rng.draw().chance(ISLAND_CHANCE) {
                 continue;
             }
-            let mut rng = Xorshift::new(hash);
-            let center_x = anchor_x * ISLAND_ANCHOR_X + rng.range(0, ISLAND_ANCHOR_X - 1);
-            let center_y = anchor_y * ISLAND_ANCHOR_Y + rng.range(0, ISLAND_ANCHOR_Y - 1);
-            let rx = rng.range(22, 56);
+            let center_x = anchor_x * ISLAND_ANCHOR_X + rng.draw().range(0, ISLAND_ANCHOR_X - 1);
+            let center_y = anchor_y * ISLAND_ANCHOR_Y + rng.draw().range(0, ISLAND_ANCHOR_Y - 1);
+            let rx = rng.draw().range(22, 56);
             let ry_top = rx / 4 + 2;
             let ry_bottom = rx / 2 + 3;
             for dx in -rx..=rx {
@@ -277,9 +282,9 @@ fn islands(seed: u64, palette: &Palette, builder: &mut Builder) {
                     builder.put(center_x + dx, center_y + dy, material, false);
                 }
             }
-            if rng.unit() < 0.5 {
-                let gold_x = center_x + rng.range(-rx / 3, rx / 3);
-                let gold_y = center_y - rng.range(1, ry_bottom / 2);
+            if rng.draw().unit() < 0.5 {
+                let gold_x = center_x + rng.draw().range(-rx / 3, rx / 3);
+                let gold_y = center_y - rng.draw().range(1, ry_bottom / 2);
                 for dy in -1..=1 {
                     for dx in -1..=1 {
                         if dx * dx + dy * dy <= 2 {
@@ -288,13 +293,13 @@ fn islands(seed: u64, palette: &Palette, builder: &mut Builder) {
                     }
                 }
             }
-            if rx > 30 && rng.unit() < 0.6 {
+            if rx > 30 && rng.draw().unit() < 0.6 {
                 let top = center_y + ry_top;
-                let trunk = rng.range(8, 14);
+                let trunk = rng.draw().range(8, 14);
                 for dy in 1..=trunk {
                     builder.put(center_x, top + dy, palette.wood, false);
                 }
-                let canopy = rng.range(4, 6);
+                let canopy = rng.draw().range(4, 6);
                 for dy in -canopy..=canopy {
                     for dx in -canopy..=canopy {
                         if dx * dx + dy * dy <= canopy * canopy {
