@@ -9,8 +9,14 @@ const BUFFER_SECS: f32 = 0.1;
 const VAR_JUMP_TIME: f32 = 0.2;
 const CEILING_VAR_JUMP_GRACE: f32 = 0.15;
 const UPWARD_CORNER_CORRECTION: i32 = 4;
-const SWIM_BEGIN_DAMP: Fixed = Fixed::from_f32(0.5);
-const UNDERWATER_PROBE_ABOVE_FEET: Fixed = Fixed::from_int(9);
+pub const FLUID_DRAG_LINEAR: f32 = 2.5;
+pub const FLUID_DRAG_QUAD: f32 = 0.0625;
+pub const MAX_FLUID_DRAG: f32 = 0.9;
+const SNAP_DOWN_MAX_SUBMERSION: f32 = 0.5;
+const SWIM_CONTROL_MIN_SUBMERSION: f32 = 0.5;
+const BANK_VAULT_MIN_SUBMERSION: f32 = 0.2;
+const BANK_VAULT_MAX_SUBMERSION: f32 = 0.95;
+const BANK_VAULT_MAX_SINK: Fixed = Fixed::from_int(20);
 const BANK_PROBE_CELLS: i32 = 3;
 const WADE_UP_CELLS: usize = 4;
 const WADE_SIDE_CELLS: usize = 2;
@@ -75,7 +81,6 @@ pub struct Controller {
     var_jump_speed: Fixed,
     max_fall: Fixed,
     ducking: bool,
-    in_water: bool,
 }
 
 impl Controller {
@@ -130,12 +135,41 @@ fn rect_blocked<W: CellSource>(
     false
 }
 
-pub fn body_submerged<W: CellSource>(world: &W, registry: &MaterialRegistry, body: &Body) -> bool {
-    cell_liquid(
-        world,
-        registry,
-        CellPos::new(body.x.floor_cell(), body.y.floor_cell()),
-    )
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Submersion {
+    pub fraction: f32,
+    pub liquid_density: f32,
+}
+
+pub fn body_submersion<W: CellSource>(
+    world: &W,
+    registry: &MaterialRegistry,
+    body: &Body,
+) -> Submersion {
+    let (x0, y0, x1, y1) = cell_bounds(body.x, body.y, body.half_w, body.half_h);
+    let mut total = 0u32;
+    let mut liquid = 0u32;
+    let mut density_sum = 0.0f32;
+    for y in y0..=y1 {
+        for x in x0..=x1 {
+            total += 1;
+            let Some(cell) = world.cell_at(CellPos::new(x, y)) else {
+                continue;
+            };
+            let material = registry.get(cell.material);
+            if material.phase == Phase::Liquid {
+                liquid += 1;
+                density_sum += material.density;
+            }
+        }
+    }
+    if liquid == 0 {
+        return Submersion::default();
+    }
+    Submersion {
+        fraction: liquid as f32 / total as f32,
+        liquid_density: density_sum / liquid as f32,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,13 +188,8 @@ pub struct PlayerParams {
     pub jump_h_boost: Fixed,
     pub stand_half_h: Fixed,
     pub duck_half_h: Fixed,
-    pub swim_max: Fixed,
-    pub swim_underwater_max: Fixed,
-    pub swim_accel: Fixed,
-    pub swim_reduce: Fixed,
-    pub swim_sink: Fixed,
-    pub swim_tread: Fixed,
-    pub swim_hop: Fixed,
+    pub swim_thrust: Fixed,
+    pub density: f32,
     pub wade_run_mult: Fixed,
     pub fly_max: Fixed,
     pub fly_accel: Fixed,
@@ -183,14 +212,9 @@ impl Default for PlayerParams {
             jump_h_boost: Fixed::from_int(40),
             stand_half_h: Fixed::from_f32(5.5),
             duck_half_h: Fixed::from_int(3),
-            swim_max: Fixed::from_int(80),
-            swim_underwater_max: Fixed::from_int(60),
-            swim_accel: Fixed::from_int(600),
-            swim_reduce: Fixed::from_int(400),
-            swim_sink: Fixed::from_int(12),
-            swim_tread: Fixed::from_int(25),
-            swim_hop: Fixed::from_int(55),
-            wade_run_mult: Fixed::from_f32(0.6),
+            swim_thrust: Fixed::from_int(600),
+            density: 1050.0,
+            wade_run_mult: Fixed::from_f32(0.7),
             fly_max: Fixed::from_int(160),
             fly_accel: Fixed::from_int(1200),
         }
@@ -230,35 +254,18 @@ pub fn step_player<W: CellSource>(
     ctrl.var_jump_timer = (ctrl.var_jump_timer - TICK_DT).max(0.0);
 
     let move_x = input.move_x.clamp(-1, 1) as i32;
-    let in_water = body_submerged(world, registry, body);
-    let entered_water = in_water && !ctrl.in_water;
-    ctrl.in_water = in_water;
+    let submersion = body_submersion(world, registry, body);
     if input.fly {
         fly_update(
             world, registry, params, body, ctrl, move_x, jump_held, down_held,
         );
     } else {
-        let swimming = in_water && !(ctrl.var_jump_timer > 0.0 && body.vy > Fixed::ZERO);
-        if swimming {
-            swim_update(
-                world,
-                registry,
-                params,
-                body,
-                ctrl,
-                move_x,
-                jump_held,
-                down_held,
-                entered_water,
-            );
-        } else {
-            normal_update(
-                world, registry, params, body, ctrl, move_x, jump_held, down_held,
-            );
-        }
+        normal_update(
+            world, registry, params, body, ctrl, move_x, jump_held, down_held, submersion,
+        );
     }
 
-    let result = move_body(world, registry, body);
+    let result = move_body(world, registry, body, submersion.fraction);
     if result.hit_ceiling && ctrl.var_jump_timer < CEILING_VAR_JUMP_GRACE {
         ctrl.var_jump_timer = 0.0;
     }

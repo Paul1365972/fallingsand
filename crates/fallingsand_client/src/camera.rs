@@ -15,15 +15,11 @@ const MAX_ZOOM: f32 = 2.0;
 #[derive(Resource)]
 pub struct CameraControl {
     pub zoom: f32,
-    pub free_pan: Option<Vec2>,
 }
 
 impl Default for CameraControl {
     fn default() -> Self {
-        Self {
-            zoom: 1.0,
-            free_pan: None,
-        }
+        Self { zoom: 1.0 }
     }
 }
 
@@ -35,7 +31,6 @@ impl Plugin for CameraPlugin {
                 Update,
                 (
                     zoom_input.run_if(in_state(PauseState::Running)),
-                    pan_input.run_if(in_state(PauseState::Running)),
                     follow_player.after(crate::interpolation::interpolate),
                 )
                     .chain(),
@@ -90,47 +85,13 @@ fn zoom_input(
     }
 }
 
-fn pan_input(
-    keys: Res<ButtonInput<KeyCode>>,
-    time: Res<Time>,
-    mut control: ResMut<CameraControl>,
-    camera: Single<&Transform, With<Camera2d>>,
-) {
-    let mut direction = Vec2::ZERO;
-    if keys.pressed(KeyCode::KeyJ) {
-        direction.x -= 1.0;
-    }
-    if keys.pressed(KeyCode::KeyL) {
-        direction.x += 1.0;
-    }
-    if keys.pressed(KeyCode::KeyI) {
-        direction.y += 1.0;
-    }
-    if keys.pressed(KeyCode::KeyK) {
-        direction.y -= 1.0;
-    }
-    if direction != Vec2::ZERO {
-        let base = control
-            .free_pan
-            .unwrap_or_else(|| camera.translation.truncate());
-        control.free_pan =
-            Some(base + direction.normalize() * 300.0 * control.zoom * time.delta_secs());
-    }
-    if keys.just_pressed(KeyCode::KeyO) {
-        control.free_pan = None;
-    }
-}
-
 fn follow_player(
     time: Res<Time>,
-    control: Res<CameraControl>,
     session: Option<Res<Session>>,
     players: Query<(&PlayerVisual, &Transform), Without<Camera2d>>,
     mut camera: Single<&mut Transform, With<Camera2d>>,
 ) {
-    let target = if let Some(pan) = control.free_pan {
-        pan
-    } else if let Some(id) = session.and_then(|session| session.player)
+    let target = if let Some(id) = session.and_then(|session| session.player)
         && let Some((_, transform)) = players.iter().find(|(visual, _)| visual.id == id)
     {
         transform.translation.truncate()

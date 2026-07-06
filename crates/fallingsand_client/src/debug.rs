@@ -370,7 +370,7 @@ fn update_overlay(
             let fly = if fly.0 { ", flying" } else { "" };
             lines.push(format!("mode: {}{fly} (F3+N switch)", mode.0.label()));
             lines.push(
-                "keys: AD move, space jump (2x fly), LMB dig, RMB place, wheel zoom, IJKL pan, O follow, F3+G borders+rects, esc pause"
+                "keys: AD move, space jump (2x fly), LMB dig, RMB place, wheel zoom, F3+G borders+rects, esc pause"
                     .to_string(),
             );
         }
