@@ -27,12 +27,9 @@ pub fn veins_for_rect(
             let mut rng = Xorshift::new(hash);
             let center_x = anchor_x * ORE_ANCHOR_GRID + rng.range(0, ORE_ANCHOR_GRID - 1);
             let center_y = anchor_y * ORE_ANCHOR_GRID + rng.range(0, ORE_ANCHOR_GRID - 1);
-            let roll = rng.unit();
-            let Some(ore) = def
-                .ores
-                .iter()
-                .find(|ore| center_y >= ore.min_y && center_y <= ore.max_y && roll < ore.chance)
-            else {
+            let Some(ore) = def.ores.iter().find(|ore| {
+                center_y >= ore.min_y && center_y <= ore.max_y && rng.unit() < ore.chance
+            }) else {
                 continue;
             };
             let steps = rng.range(ore.steps.0, ore.steps.1);

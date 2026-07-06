@@ -3,12 +3,13 @@ pub mod caves;
 pub mod features;
 pub mod noise;
 pub mod ores;
+pub mod structures;
 pub mod terrain;
 pub mod water;
 
 use biomes::{
     BEACH_DEPTH, BEACH_RANGE, Band, Beach, MAX_OVERHANG, MOSS_CHANCE, MOSS_MAX_DEPTH,
-    OVERHANG_AMPLITUDE, Palette, WorldDef, world_def,
+    OVERHANG_AMPLITUDE, Palette, SNOW_COVER_DEPTH, SNOW_LINE, WorldDef, world_def,
 };
 use caves::Caves;
 use fallingsand_core::{
@@ -37,6 +38,7 @@ pub struct WorldGenerator {
 
 const MARGIN: i32 = 64;
 
+#[derive(Clone, Copy)]
 struct Column {
     surface: i32,
     biome: usize,
@@ -62,9 +64,13 @@ struct Ctx<'g> {
 }
 
 impl Ctx<'_> {
-    fn column(&self, x: i32) -> &Column {
-        let index = (x - self.min_x).clamp(0, self.columns.len() as i32 - 1);
-        &self.columns[index as usize]
+    fn column(&self, x: i32) -> Column {
+        let index = x - self.min_x;
+        if index >= 0 && (index as usize) < self.columns.len() {
+            self.columns[index as usize]
+        } else {
+            self.generator.build_column(x)
+        }
     }
 
     fn solid_depth(&self, column: &Column, x: i32, y: i32) -> f32 {
@@ -99,12 +105,12 @@ impl Ctx<'_> {
 
     fn solid_at(&self, x: i32, y: i32) -> bool {
         let column = self.column(x);
-        let depth = self.solid_depth(column, x, y);
+        let depth = self.solid_depth(&column, x, y);
         if depth <= 0.0 {
             return false;
         }
         let band = self.generator.band_at(x, y);
-        !self.carved(column, band, x, y, depth)
+        !self.carved(&column, band, x, y, depth)
     }
 
     fn cell_for(&self, x: i32, y: i32) -> Cell {
@@ -112,6 +118,7 @@ impl Ctx<'_> {
         let def = &generator.def;
         let palette = &generator.palette;
         let column = self.column(x);
+        let column = &column;
         let biome = &def.biomes[column.biome];
         let depth = self.solid_depth(column, x, y);
 
@@ -129,6 +136,12 @@ impl Ctx<'_> {
                     return shaded(palette.ice, x, y);
                 }
                 return shaded(palette.water, x, y);
+            }
+            if (biome.snow_cover || column.surface > SNOW_LINE)
+                && y <= column.surface + SNOW_COVER_DEPTH
+                && depth > -(SNOW_COVER_DEPTH as f32 + 1.0)
+            {
+                return shaded(palette.snow, x, y);
             }
             if column.tuft_height > 0 && y <= column.surface + column.tuft_height {
                 return shaded(biome.surface, x, y);
@@ -175,6 +188,8 @@ impl Ctx<'_> {
         let material =
             if column.beach && biome.beach == Beach::Sand && layered <= BEACH_DEPTH as f32 {
                 palette.sand
+            } else if column.surface > SNOW_LINE && layered <= 3.0 {
+                palette.snow
             } else if layered <= 1.5 {
                 if column.surface < def.sea_level {
                     biome.soil
@@ -342,19 +357,84 @@ impl WorldGenerator {
                 .unwrap_or(i32::MIN)
                 .max(sea_level + 2)
         };
-        let tree_cells = features::trees_for_rect(
+        let covered = |x: i32, y: i32| {
+            let column = ctx_ref.column(x);
+            ctx_ref.solid_depth(&column, x, y) > 10.0
+        };
+        let clip = features::Clip {
+            min_x: base.x,
+            min_y: base.y,
+            max_x: base.x + size - 1,
+            max_y: base.y + size - 1,
+        };
+
+        for cell in structures::structures_for_rect(
+            self.seed,
+            &self.palette,
+            &solid,
+            &surface_of,
+            &water_top,
+            &covered,
+            &clip,
+        ) {
+            if cell.replace {
+                let value = if cell.material == MaterialId::AIR {
+                    Cell::AIR
+                } else {
+                    shaded(cell.material, cell.x, cell.y)
+                };
+                region_set(&mut region, base.x, base.y, cell.x, cell.y, value);
+            } else if cell.material != MaterialId::AIR
+                && region_get(&region, base.x, base.y, cell.x, cell.y).material == MaterialId::AIR
+            {
+                region_set(
+                    &mut region,
+                    base.x,
+                    base.y,
+                    cell.x,
+                    cell.y,
+                    shaded(cell.material, cell.x, cell.y),
+                );
+            }
+        }
+
+        let mut into_air = Vec::new();
+        into_air.extend(features::decorations_for_rect(
             self.seed,
             &self.def,
+            &self.palette,
+            &self.terrain,
+            &solid,
+            &surface_of,
+            &clip,
+        ));
+        into_air.extend(features::mushrooms_for_rect(
+            self.seed,
+            &self.palette,
+            &solid,
+            &clip,
+        ));
+        into_air.extend(features::trees_for_rect(
+            self.seed,
+            &self.def,
+            &self.palette,
             &self.terrain,
             &solid,
             &surface_of,
             &water_top,
-            base.x,
-            base.y,
-            base.x + size - 1,
-            base.y + size - 1,
-        );
-        for cell in tree_cells {
+            &clip,
+        ));
+        into_air.extend(features::cacti_for_rect(
+            self.seed,
+            &self.def,
+            &self.palette,
+            &self.terrain,
+            &solid,
+            &surface_of,
+            &water_top,
+            &clip,
+        ));
+        for cell in into_air {
             if region_get(&region, base.x, base.y, cell.x, cell.y).material == MaterialId::AIR {
                 region_set(
                     &mut region,

@@ -4,13 +4,14 @@ use fastnoise_lite::{DomainWarpType, FastNoiseLite, FractalType, NoiseType};
 
 pub struct Terrain {
     seed: u64,
-    biome_noise: FastNoiseLite,
     continent: FastNoiseLite,
     hills: FastNoiseLite,
     detail: FastNoiseLite,
     mesa: FastNoiseLite,
     canyon: FastNoiseLite,
     river: FastNoiseLite,
+    mountain_mask: FastNoiseLite,
+    ridge: FastNoiseLite,
     band_edge: FastNoiseLite,
     pub shape: Field,
 }
@@ -22,14 +23,13 @@ const TERRACE_STEP: f32 = 26.0;
 const CANYON_WIDTH: f32 = 0.09;
 const CANYON_DEPTH: f32 = 110.0;
 const RIVER_WIDTH: f32 = 0.028;
-const BIOME_BLEND: f32 = 0.15;
+const MOUNTAIN_AMPLITUDE: f32 = 260.0;
+const MOUNTAIN_MASK_START: f32 = 0.18;
+const BIOME_CELL: i32 = 1400;
+const BIOME_BLEND_CELLS: i32 = 64;
 
 impl Terrain {
     pub fn new(seed: u64) -> Self {
-        let mut biome_noise = FastNoiseLite::with_seed(sub_seed(seed, "biome"));
-        biome_noise.set_noise_type(Some(NoiseType::OpenSimplex2));
-        biome_noise.set_frequency(Some(0.0005));
-
         let mut continent = FastNoiseLite::with_seed(sub_seed(seed, "continent"));
         continent.set_noise_type(Some(NoiseType::OpenSimplex2));
         continent.set_fractal_type(Some(FractalType::FBm));
@@ -58,6 +58,16 @@ impl Terrain {
         river.set_noise_type(Some(NoiseType::OpenSimplex2));
         river.set_frequency(Some(0.0007));
 
+        let mut mountain_mask = FastNoiseLite::with_seed(sub_seed(seed, "mountain_mask"));
+        mountain_mask.set_noise_type(Some(NoiseType::OpenSimplex2));
+        mountain_mask.set_frequency(Some(0.00025));
+
+        let mut ridge = FastNoiseLite::with_seed(sub_seed(seed, "ridge"));
+        ridge.set_noise_type(Some(NoiseType::OpenSimplex2));
+        ridge.set_fractal_type(Some(FractalType::FBm));
+        ridge.set_fractal_octaves(Some(2));
+        ridge.set_frequency(Some(0.0025));
+
         let mut band_edge = FastNoiseLite::with_seed(sub_seed(seed, "band_edge"));
         band_edge.set_noise_type(Some(NoiseType::OpenSimplex2));
         band_edge.set_frequency(Some(0.004));
@@ -74,32 +84,38 @@ impl Terrain {
 
         Self {
             seed,
-            biome_noise,
             continent,
             hills,
             detail,
             mesa,
             canyon,
             river,
+            mountain_mask,
+            ridge,
             band_edge,
             shape: Field::new(shape, Some(shape_warp), 4),
         }
     }
 
+    fn biome_of_cell(&self, count: usize, cell: i32) -> usize {
+        (hash1(self.seed, "biome_cell", cell) % count as u64) as usize
+    }
+
     pub fn biome_mix(&self, count: usize, x: i32) -> (usize, usize, f32) {
-        let count_f = count as f32;
-        let t = (self.biome_noise.get_noise_2d(x as f32, 0.0) + 1.0) * 0.5 * count_f;
-        let scaled = t.clamp(0.0, count_f - 1e-3);
-        let index = scaled as usize;
-        let frac = scaled - index as f32;
-        if frac > 1.0 - BIOME_BLEND && index + 1 < count {
-            let mix = (frac - (1.0 - BIOME_BLEND)) / (2.0 * BIOME_BLEND);
-            (index, index + 1, mix.clamp(0.0, 0.5))
-        } else if frac < BIOME_BLEND && index > 0 {
-            let mix = 0.5 + frac / (2.0 * BIOME_BLEND);
-            (index - 1, index, mix.clamp(0.5, 1.0))
+        let cell = x.div_euclid(BIOME_CELL);
+        let offset = x - cell * BIOME_CELL;
+        let own = self.biome_of_cell(count, cell);
+        if offset < BIOME_BLEND_CELLS {
+            let left = self.biome_of_cell(count, cell - 1);
+            let mix = 0.5 + offset as f32 / (2.0 * BIOME_BLEND_CELLS as f32);
+            (left, own, mix.clamp(0.5, 1.0))
+        } else if offset >= BIOME_CELL - BIOME_BLEND_CELLS {
+            let right = self.biome_of_cell(count, cell + 1);
+            let mix = (offset - (BIOME_CELL - BIOME_BLEND_CELLS)) as f32
+                / (2.0 * BIOME_BLEND_CELLS as f32);
+            (own, right, mix.clamp(0.0, 0.5))
         } else {
-            (index, index, 0.0)
+            (own, own, 0.0)
         }
     }
 
@@ -122,6 +138,13 @@ impl Terrain {
         let hills = self.hills.get_noise_2d(fx, 100.0) * amplitude;
         let detail = self.detail.get_noise_2d(fx, 200.0) * DETAIL_AMPLITUDE;
         let mut height = BASE_HEIGHT + continent + hills + detail;
+
+        let mask = self.mountain_mask.get_noise_2d(fx, 600.0);
+        if mask > MOUNTAIN_MASK_START {
+            let strength = ((mask - MOUNTAIN_MASK_START) / 0.5).clamp(0.0, 1.0);
+            let ridge = 1.0 - self.ridge.get_noise_2d(fx, 700.0).abs();
+            height += strength * ridge * ridge * MOUNTAIN_AMPLITUDE;
+        }
 
         let mesa = self.mesa.get_noise_2d(fx, 300.0);
         if mesa > 0.25 {

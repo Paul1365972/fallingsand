@@ -1,4 +1,4 @@
-use crate::GenError;
+﻿use crate::GenError;
 use fallingsand_core::{MaterialId, MaterialRegistry};
 
 pub struct Palette {
@@ -23,6 +23,12 @@ pub struct Palette {
     pub coal: MaterialId,
     pub iron_ore: MaterialId,
     pub gold_ore: MaterialId,
+    pub crystal: MaterialId,
+    pub brick: MaterialId,
+    pub cactus: MaterialId,
+    pub mushroom_stem: MaterialId,
+    pub glowshroom: MaterialId,
+    pub planks: MaterialId,
 }
 
 impl Palette {
@@ -54,6 +60,12 @@ impl Palette {
             coal: id("coal")?,
             iron_ore: id("iron_ore")?,
             gold_ore: id("gold_ore")?,
+            crystal: id("crystal")?,
+            brick: id("brick")?,
+            cactus: id("cactus")?,
+            mushroom_stem: id("mushroom_stem")?,
+            glowshroom: id("glowshroom")?,
+            planks: id("planks")?,
         })
     }
 }
@@ -77,6 +89,7 @@ pub struct TreeDef {
     pub wood: MaterialId,
     pub leaves: MaterialId,
     pub canopy: Canopy,
+    pub snow_capped: bool,
 }
 
 pub struct Biome {
@@ -92,6 +105,9 @@ pub struct Biome {
     pub beach: Beach,
     pub pond_chance: f32,
     pub shallow_aquifer: Option<MaterialId>,
+    pub cactus_chance: f32,
+    pub snow_cover: bool,
+    pub vine_chance: f32,
 }
 
 pub struct Band {
@@ -140,6 +156,28 @@ pub const ORE_ANCHOR_GRID: i32 = 32;
 pub const ORE_MARGIN: i32 = 48;
 pub const TREE_MARGIN: i32 = 48;
 pub const POND_ANCHOR_GRID: i32 = 192;
+pub const SNOW_LINE: i32 = 140;
+pub const SNOW_COVER_DEPTH: i32 = 2;
+pub const DECOR_COLUMN_CHANCE: f32 = 0.30;
+pub const DECOR_SCAN_FLOOR: i32 = -340;
+pub const VINE_MAX_DEPTH: i32 = 80;
+pub const MUSHROOM_ANCHOR_GRID: i32 = 96;
+pub const MUSHROOM_CHANCE: f32 = 0.30;
+pub const MUSHROOM_MIN_Y: i32 = -330;
+pub const MUSHROOM_MAX_Y: i32 = -30;
+pub const RUIN_ANCHOR_GRID: i32 = 448;
+pub const RUIN_CHANCE: f32 = 0.30;
+pub const MINESHAFT_ANCHOR_X: i32 = 416;
+pub const MINESHAFT_ANCHOR_Y: i32 = 224;
+pub const MINESHAFT_CHANCE: f32 = 0.22;
+pub const MINESHAFT_MIN_Y: i32 = -640;
+pub const MINESHAFT_MAX_Y: i32 = -100;
+pub const ISLAND_ANCHOR_X: i32 = 448;
+pub const ISLAND_ANCHOR_Y: i32 = 256;
+pub const ISLAND_CHANCE: f32 = 0.22;
+pub const ISLAND_MIN_Y: i32 = 220;
+pub const ISLAND_MAX_Y: i32 = 1400;
+pub const STRUCTURE_MARGIN: i32 = 200;
 
 pub fn world_def(palette: &Palette) -> WorldDef {
     WorldDef {
@@ -160,11 +198,15 @@ pub fn world_def(palette: &Palette) -> WorldDef {
                     wood: palette.wood,
                     leaves: palette.leaves,
                     canopy: Canopy::Round,
+                    snow_capped: false,
                 }),
                 tuft_chance: 0.28,
                 beach: Beach::Sand,
                 pond_chance: 0.35,
                 shallow_aquifer: None,
+                cactus_chance: 0.0,
+                snow_cover: false,
+                vine_chance: 0.06,
             },
             Biome {
                 name: "forest",
@@ -181,11 +223,15 @@ pub fn world_def(palette: &Palette) -> WorldDef {
                     wood: palette.wood,
                     leaves: palette.leaves,
                     canopy: Canopy::Round,
+                    snow_capped: false,
                 }),
                 tuft_chance: 0.18,
                 beach: Beach::Sand,
                 pond_chance: 0.25,
                 shallow_aquifer: None,
+                cactus_chance: 0.0,
+                snow_cover: false,
+                vine_chance: 0.14,
             },
             Biome {
                 name: "desert",
@@ -200,6 +246,9 @@ pub fn world_def(palette: &Palette) -> WorldDef {
                 beach: Beach::Sand,
                 pond_chance: 0.0,
                 shallow_aquifer: None,
+                cactus_chance: 0.05,
+                snow_cover: false,
+                vine_chance: 0.0,
             },
             Biome {
                 name: "rocklands",
@@ -214,6 +263,9 @@ pub fn world_def(palette: &Palette) -> WorldDef {
                 beach: Beach::Sand,
                 pond_chance: 0.0,
                 shallow_aquifer: None,
+                cactus_chance: 0.0,
+                snow_cover: false,
+                vine_chance: 0.03,
             },
             Biome {
                 name: "snowlands",
@@ -230,11 +282,15 @@ pub fn world_def(palette: &Palette) -> WorldDef {
                     wood: palette.wood,
                     leaves: palette.leaves,
                     canopy: Canopy::Conifer,
+                    snow_capped: true,
                 }),
                 tuft_chance: 0.0,
                 beach: Beach::Ice,
                 pond_chance: 0.15,
                 shallow_aquifer: None,
+                cactus_chance: 0.0,
+                snow_cover: true,
+                vine_chance: 0.0,
             },
             Biome {
                 name: "swamp",
@@ -251,11 +307,15 @@ pub fn world_def(palette: &Palette) -> WorldDef {
                     wood: palette.wood,
                     leaves: palette.leaves,
                     canopy: Canopy::Round,
+                    snow_capped: false,
                 }),
                 tuft_chance: 0.32,
                 beach: Beach::Sand,
                 pond_chance: 0.8,
                 shallow_aquifer: Some(palette.oil),
+                cactus_chance: 0.0,
+                snow_cover: false,
+                vine_chance: 0.30,
             },
         ],
         bands: vec![
@@ -314,6 +374,54 @@ pub fn world_def(palette: &Palette) -> WorldDef {
                 chance: 0.10,
                 steps: (4, 8),
                 radius: (1, 2),
+            },
+            OreDef {
+                material: palette.crystal,
+                min_y: -900,
+                max_y: -380,
+                chance: 0.08,
+                steps: (3, 6),
+                radius: (2, 3),
+            },
+            OreDef {
+                material: palette.dirt,
+                min_y: -320,
+                max_y: 30,
+                chance: 0.22,
+                steps: (6, 14),
+                radius: (2, 3),
+            },
+            OreDef {
+                material: palette.gravel,
+                min_y: -620,
+                max_y: 0,
+                chance: 0.18,
+                steps: (6, 12),
+                radius: (2, 3),
+            },
+            OreDef {
+                material: palette.clay,
+                min_y: -180,
+                max_y: 15,
+                chance: 0.14,
+                steps: (5, 10),
+                radius: (2, 3),
+            },
+            OreDef {
+                material: palette.sand,
+                min_y: -130,
+                max_y: 25,
+                chance: 0.12,
+                steps: (5, 10),
+                radius: (2, 3),
+            },
+            OreDef {
+                material: palette.basalt,
+                min_y: -880,
+                max_y: -420,
+                chance: 0.10,
+                steps: (6, 12),
+                radius: (2, 3),
             },
         ],
     }
