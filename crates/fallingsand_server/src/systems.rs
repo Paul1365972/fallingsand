@@ -157,7 +157,6 @@ pub fn drain_network(
     sim: Res<SimWorld>,
     spawn_point: Res<SpawnPoint>,
     store: Res<Store>,
-    bodies: Res<crate::bodies::PixelBodies>,
 ) {
     while let Some(conn) = listener.0.poll_accept() {
         sessions.sessions.push(Session::new(conn));
@@ -310,9 +309,6 @@ pub fn drain_network(
                         tick: sim.0.tick(),
                         spawn,
                     }));
-                    for message in crate::bodies::full_body_sync(&bodies) {
-                        session.conn.send(message);
-                    }
                     session
                         .conn
                         .send(encode_message(&ServerMessage::PlayerJoined {
@@ -612,7 +608,6 @@ pub fn build_obstacles(
     mut sim: ResMut<SimWorld>,
     registry: Res<Registry>,
     mut obstacles: ResMut<SimObstacles>,
-    bodies: Res<crate::bodies::PixelBodies>,
     query: Query<&PhysicsBody>,
 ) {
     let boxes: Vec<EntityBox> = query
@@ -624,9 +619,7 @@ pub fn build_obstacles(
             half_h: body.0.half_h,
         })
         .collect();
-    obstacles
-        .0
-        .rebuild(&mut sim.0, &registry.0, &boxes, &bodies.bodies);
+    obstacles.0.rebuild(&mut sim.0, &registry.0, &boxes);
 }
 
 pub fn step_simulation(
@@ -678,22 +671,19 @@ pub fn step_physics(
             body.0.vy = body.0.vy.add_f32(dvy);
             crushes.0.push((entity, dvx.hypot(dvy)));
         }
-        let result = {
-            let source = obstacles.0.overlay(&sim.0);
-            step_player(
-                &source,
-                &registry.0,
-                &params,
-                &mut body.0,
-                &mut control.0,
-                StepInput {
-                    move_x: player.input.move_x,
-                    jump: player.input.jump,
-                    down: player.input.down,
-                    fly: player.input.fly && mode.0 == GameMode::Creative,
-                },
-            )
-        };
+        let result = step_player(
+            &sim.0,
+            &registry.0,
+            &params,
+            &mut body.0,
+            &mut control.0,
+            StepInput {
+                move_x: player.input.move_x,
+                jump: player.input.jump,
+                down: player.input.down,
+                fly: player.input.fly && mode.0 == GameMode::Creative,
+            },
+        );
         if !result.displaced.is_empty() {
             scatter_powder(
                 &mut sim.0,
@@ -704,10 +694,14 @@ pub fn step_physics(
             );
         }
         for blocked in &result.blocked {
-            let Some((id, _)) = obstacles.0.body_at(blocked.pos) else {
+            if !sim
+                .0
+                .get_cell(blocked.pos)
+                .is_some_and(|cell| cell.is_body())
+            {
                 continue;
-            };
-            let Some(pixel_body) = bodies.body_mut(id) else {
+            }
+            let Some(pixel_body) = bodies.body_at_mut(blocked.pos) else {
                 continue;
             };
             let jx = PLAYER_MASS * blocked.dvx;

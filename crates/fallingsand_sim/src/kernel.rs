@@ -86,18 +86,21 @@ fn run_phase(
     }
 
     let mut structural: Vec<CellPos> = Vec::new();
+    let mut damage: Vec<CellPos> = Vec::new();
     for window in windows {
-        let (origin, slots, window_structural) = window.into_parts();
-        structural.extend(window_structural);
-        for (index, slot) in slots.into_iter().enumerate() {
+        let parts = window.into_parts();
+        structural.extend(parts.structural);
+        damage.extend(parts.damage);
+        for (index, slot) in parts.slots.into_iter().enumerate() {
             if let Some(chunk) = slot {
                 let sx = index as i32 % WINDOW_CHUNKS;
                 let sy = index as i32 / WINDOW_CHUNKS;
-                map.insert(origin.translated(sx, sy), chunk);
+                map.insert(parts.origin.translated(sx, sy), chunk);
             }
         }
     }
     world.push_structural(structural);
+    world.push_damage(damage);
 }
 
 fn process_block(

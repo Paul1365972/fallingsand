@@ -1,4 +1,3 @@
-mod bodyview;
 mod camera;
 mod chat;
 mod connscreen;
@@ -87,7 +86,6 @@ fn main() {
         net::NetPlugin,
         render::ChunkRenderPlugin,
         worldview::WorldViewPlugin,
-        bodyview::BodyViewPlugin,
         interpolation::InterpolationPlugin,
         player::PlayerPlugin,
         camera::CameraPlugin,

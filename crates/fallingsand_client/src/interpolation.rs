@@ -18,7 +18,6 @@ pub struct Interpolated {
     previous: (Vec2, f32),
     target: (Vec2, f32),
     blend: f32,
-    pivot: Vec2,
 }
 
 impl Interpolated {
@@ -27,13 +26,7 @@ impl Interpolated {
             previous: (position, angle),
             target: (position, angle),
             blend: 1.0,
-            pivot: Vec2::ZERO,
         }
-    }
-
-    pub fn with_pivot(mut self, pivot: Vec2) -> Self {
-        self.pivot = pivot;
-        self
     }
 
     pub fn target_position(&self) -> Vec2 {
@@ -58,9 +51,8 @@ pub fn interpolate(time: Res<Time>, mut query: Query<(&mut Interpolated, &mut Tr
         let alpha = interp.blend.clamp(0.0, 1.0);
         let position = interp.previous.0.lerp(interp.target.0, alpha);
         let angle = interp.previous.1 + (interp.target.1 - interp.previous.1) * alpha;
-        let offset = Vec2::from_angle(angle).rotate(interp.pivot);
-        transform.translation.x = position.x + offset.x;
-        transform.translation.y = position.y + offset.y;
+        transform.translation.x = position.x;
+        transform.translation.y = position.y;
         transform.rotation = Quat::from_rotation_z(angle);
     }
 }

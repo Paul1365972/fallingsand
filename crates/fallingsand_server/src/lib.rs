@@ -212,12 +212,10 @@ impl Server {
                 (
                     systems::step_physics,
                     bodies::step_bodies,
-                    bodies::react_bodies,
                     hazards::apply_hazards,
                     systems::advance_clock,
                     systems::sync_inventories,
                     systems::replicate,
-                    bodies::replicate_bodies,
                     systems::finish_tick,
                     regions::autosave,
                 )

@@ -1,5 +1,4 @@
 use crate::ClientRegistry;
-use crate::bodyview::BodyVisuals;
 use crate::net::{EmbeddedServerStats, ServerMsg, Session, Supervisor};
 use crate::player::{Hotbar, InputState, PlayerNames};
 use crate::render::ChunkVisuals;
@@ -259,7 +258,6 @@ fn update_overlay(
     view: Res<WorldView>,
     visuals: Res<ChunkVisuals>,
     names: Res<PlayerNames>,
-    bodies: Res<BodyVisuals>,
     hotbar: Res<Hotbar>,
     input: Res<InputState>,
     registry: Res<ClientRegistry>,
@@ -345,12 +343,15 @@ fn update_overlay(
             }
             lines.push(net);
 
-            let (players, pixel_bodies) = if embedded {
-                (server.players, server.pixel_bodies)
+            let mut population = if embedded {
+                format!("players: {}", server.players)
             } else {
-                (names.0.len(), bodies.0.len())
+                format!("players: {}", names.0.len())
             };
-            lines.push(format!("players: {players}, pixel bodies: {pixel_bodies}"));
+            if embedded {
+                population.push_str(&format!(", pixel bodies: {}", server.pixel_bodies));
+            }
+            lines.push(population);
 
             let cursor_material = view
                 .get_cell(input.aim)

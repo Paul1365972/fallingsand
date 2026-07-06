@@ -91,14 +91,6 @@ pub struct EntityState {
     pub air: f32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct PixelBodyState {
-    pub id: u32,
-    pub x: Fixed,
-    pub y: Fixed,
-    pub angle: f32,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChunkDebugRects {
     pub pos: ChunkPos,
@@ -167,20 +159,6 @@ pub enum ServerMessage {
     },
     Inventory {
         counts: Vec<(MaterialId, u64)>,
-    },
-    PixelBodySpawn {
-        id: u32,
-        width: u8,
-        height: u8,
-        com_x: f32,
-        com_y: f32,
-        cells: Vec<u8>,
-    },
-    PixelBodyDespawn {
-        id: u32,
-    },
-    PixelBodyStates {
-        bodies: Vec<PixelBodyState>,
     },
     DebugRects {
         chunks: Vec<ChunkDebugRects>,

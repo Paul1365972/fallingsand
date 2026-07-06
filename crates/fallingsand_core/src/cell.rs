@@ -58,6 +58,18 @@ impl Cell {
         }
     }
 
+    pub const fn is_body(self) -> bool {
+        self.shade_flags & 0x08 != 0
+    }
+
+    pub fn set_body(&mut self, body: bool) {
+        if body {
+            self.shade_flags |= 0x08;
+        } else {
+            self.shade_flags &= !0x08;
+        }
+    }
+
     pub const fn is_air(self) -> bool {
         self.material.0 == MaterialId::AIR.0
     }

@@ -1,16 +1,20 @@
-use crate::obstacles::{EntityBox, Obstacles};
+use crate::obstacles::EntityBox;
 use crate::world::CellWorld;
-use fallingsand_core::{Cell, CellPos, Fixed, MaterialId, MaterialRegistry, Phase, TICK_DT};
-use rustc_hash::{FxHashMap, FxHashSet};
+use fallingsand_core::{
+    Cell, CellPos, ChunkPos, Fixed, MaterialId, MaterialRegistry, Phase, TICK_DT,
+};
+use rustc_hash::FxHashSet;
 use std::collections::VecDeque;
-use std::hash::{Hash, Hasher};
 
 pub const MAX_ISLAND_EXTENT: i32 = 48;
 pub const MAX_ISLAND_CELLS: usize = 2048;
 pub const SETTLE_SECS: f32 = 0.33;
+pub const ANGLE_STEPS: u32 = 1024;
 const SETTLE_SPEED_SQ: f32 = 100.0;
 const SETTLE_SPIN: f32 = 1.5;
+const SUPPORT_NORMAL_Y: f32 = 0.25;
 const CONTACT_DAMPING: f32 = 0.94;
+const BLOCKED_DAMPING: f32 = 0.5;
 const RESTITUTION: f32 = 0.0;
 const FRICTION: f32 = 0.4;
 const CONTACT_ITERATIONS: usize = 4;
@@ -18,9 +22,18 @@ const PENETRATION_CORRECTION: f32 = 0.5;
 const SUBSTEP_TRAVEL: f32 = 0.5;
 const FLUID_DRAG: f32 = 2.5;
 const REFERENCE_DENSITY: f32 = 1000.0;
+const RELOCATE_RADIUS: i32 = 8;
+const NEIGHBORS: [(i32, i32); 4] = [(0, -1), (-1, 0), (1, 0), (0, 1)];
 
 pub fn cell_mass(registry: &MaterialRegistry, material: MaterialId) -> f32 {
     registry.get(material).density / REFERENCE_DENSITY
+}
+
+fn quantized_trig(angle: f32) -> (f32, f32) {
+    const STEP: f32 = std::f32::consts::TAU / ANGLE_STEPS as f32;
+    let k = (angle / STEP).round() as i64;
+    let k = k.rem_euclid(ANGLE_STEPS as i64);
+    (k as f32 * STEP).sin_cos()
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -29,6 +42,18 @@ pub struct EntityDynamics {
     pub vx: f32,
     pub vy: f32,
     pub inv_mass: f32,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Raster {
+    pub cells: Vec<(CellPos, u16)>,
+    pub set: FxHashSet<CellPos>,
+}
+
+impl Raster {
+    pub fn covers(&self, pos: CellPos) -> bool {
+        self.set.contains(&pos)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -48,6 +73,8 @@ pub struct PixelBody {
     pub inv_mass: f32,
     pub inv_inertia: f32,
     pub rest_secs: f32,
+    pub raster: Raster,
+    pub frozen: bool,
 }
 
 impl PixelBody {
@@ -55,19 +82,38 @@ impl PixelBody {
         self.cells[y as usize * self.width as usize + x as usize]
     }
 
-    pub fn local_offset(&self, lx: f32, ly: f32) -> (f32, f32) {
+    fn offset_with(&self, sin: f32, cos: f32, lx: f32, ly: f32) -> (f32, f32) {
         let (dx, dy) = (lx - self.com_local.0, ly - self.com_local.1);
-        let (sin, cos) = self.angle.sin_cos();
         (dx * cos - dy * sin, dx * sin + dy * cos)
     }
 
-    pub fn world_cell(&self, lx: f32, ly: f32) -> CellPos {
-        let (ox, oy) = self.local_offset(lx, ly);
-        CellPos::new(
-            self.x.add_f32(ox).floor_cell(),
-            self.y.add_f32(oy).floor_cell(),
-        )
+    fn world_cell_with(&self, sin: f32, cos: f32, x: Fixed, y: Fixed, lx: f32, ly: f32) -> CellPos {
+        let (ox, oy) = self.offset_with(sin, cos, lx, ly);
+        CellPos::new(x.add_f32(ox).floor_cell(), y.add_f32(oy).floor_cell())
     }
+
+    pub fn local_offset(&self, lx: f32, ly: f32) -> (f32, f32) {
+        let (sin, cos) = quantized_trig(self.angle);
+        self.offset_with(sin, cos, lx, ly)
+    }
+}
+
+fn rasterize_at(body: &PixelBody, x: Fixed, y: Fixed, angle: f32) -> Raster {
+    let (sin, cos) = quantized_trig(angle);
+    let mut raster = Raster::default();
+    for ly in 0..body.height {
+        for lx in 0..body.width {
+            let index = ly as usize * body.width as usize + lx as usize;
+            if body.cells[index].is_air() {
+                continue;
+            }
+            let pos = body.world_cell_with(sin, cos, x, y, lx as f32 + 0.5, ly as f32 + 0.5);
+            if raster.set.insert(pos) {
+                raster.cells.push((pos, index as u16));
+            }
+        }
+    }
+    raster
 }
 
 struct Shape {
@@ -139,18 +185,11 @@ fn derive_shape(
 
 fn is_rigid(world: &CellWorld, registry: &MaterialRegistry, pos: CellPos) -> Option<Cell> {
     let cell = world.get_cell(pos)?;
+    if cell.is_body() {
+        return None;
+    }
     let material = registry.get(cell.material);
     (material.phase == Phase::Solid && material.rigid_capable).then_some(cell)
-}
-
-fn blocks_body(world: &CellWorld, registry: &MaterialRegistry, pos: CellPos) -> bool {
-    match world.get_cell(pos) {
-        Some(cell) => matches!(
-            registry.get(cell.material).phase,
-            Phase::Solid | Phase::Powder
-        ),
-        None => true,
-    }
 }
 
 pub fn detect_island(
@@ -188,7 +227,7 @@ pub fn detect_island(
     Some(visited.into_iter().collect())
 }
 
-pub fn extract_body(
+pub fn register_body(
     world: &mut CellWorld,
     registry: &MaterialRegistry,
     id: u32,
@@ -203,14 +242,14 @@ pub fn extract_body(
 
     let mut cells = vec![Cell::AIR; width as usize * height as usize];
     for pos in island {
-        let cell = world.get_cell(*pos).unwrap();
+        let mut cell = world.get_cell(*pos).unwrap();
+        cell.set_body(false);
         let (lx, ly) = ((pos.x - min_x) as usize, (pos.y - min_y) as usize);
         cells[ly * width as usize + lx] = cell;
-        world.place_material(*pos, MaterialId::AIR);
     }
 
     let shape = derive_shape(registry, &cells, width, height).expect("island has cells");
-    PixelBody {
+    let mut body = PixelBody {
         id,
         width,
         height,
@@ -226,12 +265,71 @@ pub fn extract_body(
         inv_mass: 1.0 / shape.mass,
         inv_inertia: 1.0 / shape.inertia,
         rest_secs: 0.0,
+        raster: Raster::default(),
+        frozen: false,
+    };
+    body.raster = rasterize_at(&body, body.x, body.y, body.angle);
+    debug_assert_eq!(body.raster.cells.len(), island.len());
+    for &(pos, local) in &body.raster.cells {
+        let mut cell = body.cells[local as usize];
+        cell.set_body(true);
+        world.set_cell_raw(pos, cell);
+    }
+    body
+}
+
+pub fn apply_damage(
+    world: &mut CellWorld,
+    registry: &MaterialRegistry,
+    bodies: &mut Vec<PixelBody>,
+    mut notes: Vec<CellPos>,
+    mut next_id: impl FnMut() -> u32,
+) {
+    notes.sort_unstable_by_key(|pos| (pos.y, pos.x));
+    notes.dedup();
+    let mut touched: FxHashSet<usize> = FxHashSet::default();
+    for pos in notes {
+        let Some(index) = bodies.iter().position(|body| body.raster.covers(pos)) else {
+            continue;
+        };
+        let body = &mut bodies[index];
+        let entry = body
+            .raster
+            .cells
+            .iter()
+            .position(|&(p, _)| p == pos)
+            .expect("raster set matches entries");
+        let local = body.raster.cells[entry].1 as usize;
+        let world_cell = world.get_cell(pos).unwrap_or(Cell::AIR);
+        let adopt = !world_cell.is_air()
+            && !world_cell.is_body()
+            && registry.get(world_cell.material).phase == Phase::Solid;
+        if adopt {
+            body.cells[local] = world_cell;
+            let mut flagged = world_cell;
+            flagged.set_body(true);
+            world.set_cell_raw(pos, flagged);
+        } else {
+            body.cells[local] = Cell::AIR;
+            body.raster.cells.remove(entry);
+            body.raster.set.remove(&pos);
+        }
+        touched.insert(index);
+    }
+
+    let mut touched: Vec<usize> = touched.into_iter().collect();
+    touched.sort_unstable_by(|a, b| b.cmp(a));
+    for index in touched {
+        let body = bodies.swap_remove(index);
+        let parts = split_body(world, registry, body, &mut next_id);
+        bodies.extend(parts);
     }
 }
 
-pub fn refresh_body(
-    body: &PixelBody,
+fn split_body(
+    world: &mut CellWorld,
     registry: &MaterialRegistry,
+    body: PixelBody,
     mut next_id: impl FnMut() -> u32,
 ) -> Vec<PixelBody> {
     let width = body.width as usize;
@@ -260,11 +358,9 @@ pub fn refresh_body(
             }
         }
     }
-    if count == 0 {
-        return Vec::new();
-    }
 
-    let mut parts = Vec::new();
+    let mut remap: Vec<Option<(u16, u16)>> = vec![None; body.cells.len()];
+    let mut parts: Vec<PixelBody> = Vec::new();
     for part in 1..=count {
         let mut min_x = usize::MAX;
         let mut min_y = usize::MAX;
@@ -288,9 +384,18 @@ pub fn refresh_body(
                 continue;
             }
             let (lx, ly) = (index % width, index / width);
-            cells[(ly - min_y) * part_w as usize + (lx - min_x)] = body.cells[index];
+            let new_local = (ly - min_y) * part_w as usize + (lx - min_x);
+            cells[new_local] = body.cells[index];
+            remap[index] = Some((parts.len() as u16, new_local as u16));
         }
         let Some(shape) = derive_shape(registry, &cells, part_w, part_h) else {
+            for slot in remap.iter_mut() {
+                if let Some((owner, _)) = slot
+                    && *owner == parts.len() as u16
+                {
+                    *slot = None;
+                }
+            }
             continue;
         };
         let old_local = (min_x as f32 + shape.com.0, min_y as f32 + shape.com.1);
@@ -311,7 +416,25 @@ pub fn refresh_body(
             inv_mass: 1.0 / shape.mass,
             inv_inertia: 1.0 / shape.inertia,
             rest_secs: 0.0,
+            raster: Raster::default(),
+            frozen: false,
         });
+    }
+
+    for &(pos, local) in &body.raster.cells {
+        match remap[local as usize] {
+            Some((owner, new_local)) => {
+                let part = &mut parts[owner as usize];
+                part.raster.cells.push((pos, new_local));
+                part.raster.set.insert(pos);
+            }
+            None => {
+                if let Some(mut cell) = world.get_cell(pos) {
+                    cell.set_body(false);
+                    world.set_cell_raw(pos, cell);
+                }
+            }
+        }
     }
     parts
 }
@@ -348,68 +471,93 @@ struct Contact {
 fn obstructed(
     world: &CellWorld,
     registry: &MaterialRegistry,
-    obstacles: &Obstacles,
     entities: &[EntityDynamics],
-    self_id: u32,
+    own: &FxHashSet<CellPos>,
     pos: CellPos,
 ) -> bool {
-    blocks_body(world, registry, pos)
-        || entities.iter().any(|entity| entity.bbox.contains_cell(pos))
-        || obstacles.body_at(pos).is_some_and(|(id, _)| id != self_id)
+    if own.contains(&pos) {
+        return false;
+    }
+    let solid = match world.get_cell(pos) {
+        Some(cell) => matches!(
+            registry.get(cell.material).phase,
+            Phase::Solid | Phase::Powder
+        ),
+        None => true,
+    };
+    solid || entities.iter().any(|entity| entity.bbox.contains_cell(pos))
 }
 
 fn find_contacts(
     world: &CellWorld,
     registry: &MaterialRegistry,
-    obstacles: &Obstacles,
     entities: &[EntityDynamics],
     bodies: &[PixelBody],
     index: usize,
-    id_to_index: &FxHashMap<u32, usize>,
 ) -> Vec<Contact> {
     let body = &bodies[index];
+    let (sin, cos) = quantized_trig(body.angle);
     let mut contacts: Vec<Contact> = Vec::new();
     for &(lx, ly) in &body.perimeter {
-        let (ox, oy) = body.local_offset(lx as f32 + 0.5, ly as f32 + 0.5);
+        let (ox, oy) = body.offset_with(sin, cos, lx as f32 + 0.5, ly as f32 + 0.5);
         let (wx, wy) = (body.x.add_f32(ox), body.y.add_f32(oy));
         let pos = CellPos::new(wx.floor_cell(), wy.floor_cell());
+        if body.raster.covers(pos) {
+            continue;
+        }
 
         let mut depth = 0.5;
-        let other = if blocks_body(world, registry, pos) {
-            Other::Terrain
-        } else if let Some(entity_index) = entities
-            .iter()
-            .position(|entity| entity.bbox.contains_cell(pos))
-        {
-            let entity = &entities[entity_index];
-            let depth_x = entity.bbox.half_w.to_f32() + 0.5 - (wx - entity.bbox.x).to_f32().abs();
-            let depth_y = entity.bbox.half_h.to_f32() + 0.5 - (wy - entity.bbox.y).to_f32().abs();
-            depth = depth_x.min(depth_y).clamp(0.5, 4.0);
-            Other::Entity {
-                index: entity_index,
-                inv_mass: entity.inv_mass,
-                vx: entity.vx,
-                vy: entity.vy,
+        let other = match world.get_cell(pos) {
+            None => Other::Terrain,
+            Some(cell) if cell.is_body() => {
+                let owner = bodies
+                    .iter()
+                    .position(|other| other.id != body.id && other.raster.covers(pos));
+                match owner {
+                    Some(other_index) => {
+                        let other = &bodies[other_index];
+                        Other::Body {
+                            index: other_index,
+                            inv_mass: other.inv_mass,
+                            inv_inertia: other.inv_inertia,
+                            vx: other.vx.to_f32(),
+                            vy: other.vy.to_f32(),
+                            spin: other.spin,
+                            rx: (wx - other.x).to_f32(),
+                            ry: (wy - other.y).to_f32(),
+                        }
+                    }
+                    None => Other::Terrain,
+                }
             }
-        } else if let Some(other_index) = obstacles
-            .body_at(pos)
-            .filter(|&(id, _)| id != body.id)
-            .and_then(|(id, _)| id_to_index.get(&id).copied())
-            .filter(|&other_index| other_index != index)
-        {
-            let other = &bodies[other_index];
-            Other::Body {
-                index: other_index,
-                inv_mass: other.inv_mass,
-                inv_inertia: other.inv_inertia,
-                vx: other.vx.to_f32(),
-                vy: other.vy.to_f32(),
-                spin: other.spin,
-                rx: (wx - other.x).to_f32(),
-                ry: (wy - other.y).to_f32(),
+            Some(cell)
+                if matches!(
+                    registry.get(cell.material).phase,
+                    Phase::Solid | Phase::Powder
+                ) =>
+            {
+                Other::Terrain
             }
-        } else {
-            continue;
+            Some(_) => {
+                let Some(entity_index) = entities
+                    .iter()
+                    .position(|entity| entity.bbox.contains_cell(pos))
+                else {
+                    continue;
+                };
+                let entity = &entities[entity_index];
+                let depth_x =
+                    entity.bbox.half_w.to_f32() + 0.5 - (wx - entity.bbox.x).to_f32().abs();
+                let depth_y =
+                    entity.bbox.half_h.to_f32() + 0.5 - (wy - entity.bbox.y).to_f32().abs();
+                depth = depth_x.min(depth_y).clamp(0.5, 4.0);
+                Other::Entity {
+                    index: entity_index,
+                    inv_mass: entity.inv_mass,
+                    vx: entity.vx,
+                    vy: entity.vy,
+                }
+            }
         };
 
         let mut nx = 0.0f32;
@@ -422,9 +570,8 @@ fn find_contacts(
                 if !obstructed(
                     world,
                     registry,
-                    obstacles,
                     entities,
-                    body.id,
+                    &body.raster.set,
                     pos.translated(dx, dy),
                 ) {
                     nx += dx as f32;
@@ -455,59 +602,63 @@ pub struct BodiesStep {
     pub entity_impulses: Vec<(f32, f32)>,
 }
 
-pub fn step_bodies(
+fn span_simulated(
     world: &CellWorld,
+    simulated: &dyn Fn(ChunkPos) -> bool,
+    body: &PixelBody,
+) -> bool {
+    let radius = (0.5 * (body.width as f32).hypot(body.height as f32)).ceil() as i32 + 1;
+    let (cx, cy) = (body.x.floor_cell(), body.y.floor_cell());
+    let min = CellPos::new(cx - radius, cy - radius).chunk();
+    let max = CellPos::new(cx + radius, cy + radius).chunk();
+    for y in min.y..=max.y {
+        for x in min.x..=max.x {
+            let pos = ChunkPos::new(x, y);
+            if world.chunk(pos).is_none() || !simulated(pos) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+pub fn step_bodies(
+    world: &mut CellWorld,
     registry: &MaterialRegistry,
-    obstacles: &Obstacles,
     bodies: &mut [PixelBody],
     entities: &[EntityDynamics],
     gravity: Fixed,
+    simulated: &dyn Fn(ChunkPos) -> bool,
 ) -> BodiesStep {
     let mut result = BodiesStep {
         settled: Vec::new(),
         entity_impulses: vec![(0.0, 0.0); entities.len()],
     };
-    let id_to_index: FxHashMap<u32, usize> = bodies
-        .iter()
-        .enumerate()
-        .map(|(index, body)| (body.id, index))
-        .collect();
+    let entity_boxes: Vec<EntityBox> = entities.iter().map(|entity| entity.bbox).collect();
 
-    for index in 0..bodies.len() {
+    let mut order: Vec<usize> = (0..bodies.len()).collect();
+    order.sort_unstable_by_key(|&index| {
+        (
+            bodies[index].y.raw(),
+            bodies[index].x.raw(),
+            bodies[index].id,
+        )
+    });
+
+    for &index in &order {
+        let frozen = !span_simulated(world, simulated, &bodies[index]);
+        bodies[index].frozen = frozen;
+        if frozen {
+            continue;
+        }
+
+        let (start_x, start_y, start_angle) = {
+            let body = &bodies[index];
+            (body.x, body.y, body.angle)
+        };
         let substeps = {
             let body = &mut bodies[index];
-
-            let mut cell_count = 0.0f32;
-            let mut buoyant = 0.0f32;
-            let mut wet = 0.0f32;
-            for ly in 0..body.height {
-                for lx in 0..body.width {
-                    let cell = body.cell_at(lx, ly);
-                    if cell.is_air() {
-                        continue;
-                    }
-                    cell_count += 1.0;
-                    let pos = body.world_cell(lx as f32 + 0.5, ly as f32 + 0.5);
-                    if let Some(world_cell) = world.get_cell(pos) {
-                        let material = registry.get(world_cell.material);
-                        if material.phase == Phase::Liquid {
-                            buoyant += material.density / REFERENCE_DENSITY;
-                            wet += 1.0;
-                        }
-                    }
-                }
-            }
-            if buoyant > 0.0 {
-                body.vy = body
-                    .vy
-                    .add_f32(-gravity.to_f32() * buoyant * body.inv_mass * TICK_DT);
-                let submersion = wet / cell_count.max(1.0);
-                let drag = (FLUID_DRAG * submersion * TICK_DT).min(0.9);
-                let keep = Fixed::from_f32(1.0 - drag);
-                body.vx = body.vx.mul(keep);
-                body.vy = body.vy.mul(keep);
-                body.spin *= 1.0 - drag;
-            }
+            apply_buoyancy(world, registry, body, gravity);
             body.vy += gravity.per_tick();
 
             let radius = 0.5 * (body.width as f32).hypot(body.height as f32);
@@ -521,16 +672,23 @@ pub fn step_bodies(
             step_substep(
                 world,
                 registry,
-                obstacles,
                 bodies,
                 entities,
                 index,
-                &id_to_index,
                 damping,
                 substeps,
                 &mut result.entity_impulses,
             );
         }
+        restamp(
+            world,
+            registry,
+            &entity_boxes,
+            &mut bodies[index],
+            start_x,
+            start_y,
+            start_angle,
+        );
         if bodies[index].rest_secs >= SETTLE_SECS {
             result.settled.push(index);
         }
@@ -538,15 +696,75 @@ pub fn step_bodies(
     result
 }
 
+fn apply_buoyancy(
+    world: &CellWorld,
+    registry: &MaterialRegistry,
+    body: &mut PixelBody,
+    gravity: Fixed,
+) {
+    let (sin, cos) = quantized_trig(body.angle);
+    let mut density_sum = 0.0f32;
+    let mut samples = 0u32;
+    let mut waterline = i32::MIN;
+    for &(lx, ly) in &body.perimeter {
+        let pos = body.world_cell_with(sin, cos, body.x, body.y, lx as f32 + 0.5, ly as f32 + 0.5);
+        for (dx, dy) in NEIGHBORS {
+            let neighbor = pos.translated(dx, dy);
+            if body.raster.covers(neighbor) {
+                continue;
+            }
+            let Some(cell) = world.get_cell(neighbor) else {
+                continue;
+            };
+            let material = registry.get(cell.material);
+            if material.phase == Phase::Liquid {
+                density_sum += material.density;
+                samples += 1;
+                waterline = waterline.max(neighbor.y);
+            }
+        }
+    }
+    if samples == 0 {
+        return;
+    }
+
+    let mut submerged = 0u32;
+    let mut count = 0u32;
+    for ly in 0..body.height {
+        for lx in 0..body.width {
+            if body.cell_at(lx, ly).is_air() {
+                continue;
+            }
+            count += 1;
+            let pos =
+                body.world_cell_with(sin, cos, body.x, body.y, lx as f32 + 0.5, ly as f32 + 0.5);
+            if pos.y <= waterline {
+                submerged += 1;
+            }
+        }
+    }
+    if submerged == 0 {
+        return;
+    }
+    let buoyant = submerged as f32 * (density_sum / samples as f32) / REFERENCE_DENSITY;
+    body.vy = body
+        .vy
+        .add_f32(-gravity.to_f32() * buoyant * body.inv_mass * TICK_DT);
+    let submersion = submerged as f32 / count.max(1) as f32;
+    let drag = (FLUID_DRAG * submersion * TICK_DT).min(0.9);
+    let keep = Fixed::from_f32(1.0 - drag);
+    body.vx = body.vx.mul(keep);
+    body.vy = body.vy.mul(keep);
+    body.spin *= 1.0 - drag;
+}
+
 #[allow(clippy::too_many_arguments)]
 fn step_substep(
     world: &CellWorld,
     registry: &MaterialRegistry,
-    obstacles: &Obstacles,
     bodies: &mut [PixelBody],
     entities: &[EntityDynamics],
     index: usize,
-    id_to_index: &FxHashMap<u32, usize>,
     damping: f32,
     substeps: u32,
     entity_impulses: &mut [(f32, f32)],
@@ -557,23 +775,18 @@ fn step_substep(
         let prev = (body.x, body.y, body.angle);
         body.x += body.vx.per_substep(substeps);
         body.y += body.vy.per_substep(substeps);
-        body.angle += body.spin * sub_dt;
+        body.angle = (body.angle + body.spin * sub_dt).rem_euclid(std::f32::consts::TAU);
         prev
     };
 
-    let contacts = find_contacts(
-        world,
-        registry,
-        obstacles,
-        entities,
-        bodies,
-        index,
-        id_to_index,
-    );
+    let contacts = find_contacts(world, registry, entities, bodies, index);
     let touching = !contacts.is_empty();
     let terrain_only = contacts
         .iter()
         .all(|contact| matches!(contact.other, Other::Terrain));
+    let supported = contacts
+        .iter()
+        .any(|contact| matches!(contact.other, Other::Terrain) && contact.ny > SUPPORT_NORMAL_Y);
 
     let mut body_impulses: Vec<(usize, f32, f32, f32)> = Vec::new();
     {
@@ -661,7 +874,7 @@ fn step_substep(
         }
 
         let slow = vx * vx + vy * vy < SETTLE_SPEED_SQ && body.spin.abs() < SETTLE_SPIN;
-        if touching && slow && terrain_only {
+        if touching && slow && terrain_only && supported {
             body.x = prev_x;
             body.y = prev_y;
             body.angle = prev_angle;
@@ -714,169 +927,204 @@ fn apply_to_other(
     }
 }
 
-const STAMP_RELOCATE_RADIUS: i32 = 8;
+fn restamp(
+    world: &mut CellWorld,
+    registry: &MaterialRegistry,
+    entities: &[EntityBox],
+    body: &mut PixelBody,
+    start_x: Fixed,
+    start_y: Fixed,
+    start_angle: f32,
+) {
+    let full = (body.x, body.y, body.angle);
+    let candidates = [
+        full,
+        (body.x, body.y, start_angle),
+        (start_x, start_y, body.angle),
+    ];
+    for (attempt, &(x, y, angle)) in candidates.iter().enumerate() {
+        if attempt > 0 && (x, y, angle) == full {
+            continue;
+        }
+        let raster = rasterize_at(body, x, y, angle);
+        let committed = if raster.cells == body.raster.cells {
+            body.raster = raster;
+            true
+        } else {
+            plan_and_commit(world, registry, entities, body, raster)
+        };
+        if committed {
+            body.x = x;
+            body.y = y;
+            body.angle = angle;
+            match attempt {
+                1 => body.spin *= BLOCKED_DAMPING,
+                2 => {
+                    body.vx = body.vx.mul(Fixed::from_f32(BLOCKED_DAMPING));
+                    body.vy = body.vy.mul(Fixed::from_f32(BLOCKED_DAMPING));
+                }
+                _ => {}
+            }
+            return;
+        }
+    }
 
-pub fn try_stamp(
+    body.x = start_x;
+    body.y = start_y;
+    body.angle = start_angle;
+    body.vx = body.vx.mul(Fixed::from_f32(BLOCKED_DAMPING));
+    body.vy = body.vy.mul(Fixed::from_f32(BLOCKED_DAMPING));
+    body.spin *= BLOCKED_DAMPING;
+}
+
+fn plan_and_commit(
+    world: &mut CellWorld,
+    registry: &MaterialRegistry,
+    entities: &[EntityBox],
+    body: &mut PixelBody,
+    new: Raster,
+) -> bool {
+    let mut displaced: Vec<(CellPos, Cell)> = Vec::new();
+    for &(pos, _) in &new.cells {
+        if body.raster.covers(pos) {
+            continue;
+        }
+        let Some(cell) = world.get_cell(pos) else {
+            return false;
+        };
+        if cell.is_body() {
+            return false;
+        }
+        match registry.get(cell.material).phase {
+            Phase::Solid | Phase::Powder => return false,
+            Phase::Empty => {}
+            Phase::Liquid | Phase::Gas | Phase::Fire => displaced.push((pos, cell)),
+        }
+        if entities.iter().any(|entity| entity.contains_cell(pos)) {
+            return false;
+        }
+    }
+
+    let mut vacated: Vec<CellPos> = body
+        .raster
+        .set
+        .iter()
+        .filter(|pos| !new.set.contains(pos))
+        .copied()
+        .collect();
+    vacated.sort_unstable_by_key(|pos| (pos.y, pos.x));
+    displaced.sort_unstable_by_key(|&(pos, _)| (pos.y, pos.x));
+
+    let mut writes: Vec<(CellPos, Cell)> = Vec::new();
+    let mut claimed: FxHashSet<CellPos> = FxHashSet::default();
+    let mut receptacles = vacated.iter();
+    let mut spill: Vec<(CellPos, Cell)> = Vec::new();
+    for &(pos, cell) in &displaced {
+        match receptacles.next() {
+            Some(&target) => writes.push((target, cell)),
+            None => spill.push((pos, cell)),
+        }
+    }
+    for &target in receptacles {
+        writes.push((target, Cell::AIR));
+    }
+    for (from, cell) in spill {
+        let Some(spot) = relocation_spot(world, registry, entities, &claimed, &new.set, from)
+        else {
+            return false;
+        };
+        claimed.insert(spot);
+        writes.push((spot, cell));
+    }
+
+    for (pos, cell) in writes {
+        world.set_cell_raw(pos, cell);
+    }
+    for &(pos, local) in &new.cells {
+        let mut cell = body.cells[local as usize];
+        cell.set_body(true);
+        world.set_cell_raw(pos, cell);
+    }
+    body.raster = new;
+    true
+}
+
+pub fn settle_body(
     world: &mut CellWorld,
     registry: &MaterialRegistry,
     entities: &[EntityBox],
     body: &PixelBody,
+    forced: bool,
 ) -> bool {
-    let mut writes: Vec<(CellPos, Cell)> = Vec::new();
+    let mut winner = vec![false; body.cells.len()];
+    for &(_, local) in &body.raster.cells {
+        winner[local as usize] = true;
+    }
+    let (sin, cos) = quantized_trig(body.angle);
     let mut claimed: FxHashSet<CellPos> = FxHashSet::default();
+    let mut writes: Vec<(CellPos, Cell)> = Vec::new();
     for ly in 0..body.height {
         for lx in 0..body.width {
-            let cell = body.cell_at(lx, ly);
-            if cell.is_air() {
+            let index = ly as usize * body.width as usize + lx as usize;
+            let cell = body.cells[index];
+            if cell.is_air() || winner[index] {
                 continue;
             }
-            let base = body.world_cell(lx as f32 + 0.5, ly as f32 + 0.5);
+            let base =
+                body.world_cell_with(sin, cos, body.x, body.y, lx as f32 + 0.5, ly as f32 + 0.5);
             let target = [(0, 0), (0, 1), (1, 0), (-1, 0), (0, 2), (0, -1)]
                 .iter()
                 .map(|&(dx, dy)| base.translated(dx, dy))
                 .find(|&pos| {
-                    if claimed.contains(&pos)
-                        || entities.iter().any(|entity| entity.contains_cell(pos))
-                    {
-                        return false;
-                    }
-                    match world.get_cell(pos) {
-                        Some(existing) => !matches!(
-                            registry.get(existing.material).phase,
-                            Phase::Solid | Phase::Powder
-                        ),
-                        None => false,
-                    }
+                    !claimed.contains(&pos)
+                        && !body.raster.covers(pos)
+                        && !entities.iter().any(|entity| entity.contains_cell(pos))
+                        && world.get_cell(pos).is_some_and(|existing| {
+                            !existing.is_body()
+                                && !matches!(
+                                    registry.get(existing.material).phase,
+                                    Phase::Solid | Phase::Powder
+                                )
+                        })
+                })
+                .or_else(|| {
+                    relocation_spot(world, registry, entities, &claimed, &body.raster.set, base)
                 });
             let Some(pos) = target else {
+                if forced {
+                    continue;
+                }
                 return false;
             };
-            let displaced = world.get_cell(pos).expect("stamp target is loaded");
-            if !displaced.is_air() {
-                let Some(spot) = relocation_spot(world, registry, entities, &claimed, pos) else {
+            let existing = world.get_cell(pos).expect("settle target is loaded");
+            if !existing.is_air() {
+                let Some(spot) =
+                    relocation_spot(world, registry, entities, &claimed, &body.raster.set, pos)
+                else {
+                    if forced {
+                        continue;
+                    }
                     return false;
                 };
                 claimed.insert(spot);
-                writes.push((spot, displaced));
+                writes.push((spot, existing));
             }
             claimed.insert(pos);
-            writes.push((pos, cell));
+            let mut placed = cell;
+            placed.set_body(false);
+            writes.push((pos, placed));
         }
+    }
+
+    for &(pos, local) in &body.raster.cells {
+        let mut cell = body.cells[local as usize];
+        cell.set_body(false);
+        writes.push((pos, cell));
     }
     for (pos, cell) in writes {
-        world.set_cell(pos, cell);
+        world.set_cell_raw(pos, cell);
     }
     true
-}
-
-const SALT_BODY_REACT: u32 = 7;
-const NEIGHBORS: [(i32, i32); 4] = [(0, -1), (-1, 0), (1, 0), (0, 1)];
-
-pub fn react_body(
-    world: &mut CellWorld,
-    registry: &MaterialRegistry,
-    body: &mut PixelBody,
-    tick: u64,
-) -> bool {
-    let mut mutated = false;
-    for &(lx, ly) in &body.perimeter {
-        let index = ly as usize * body.width as usize + lx as usize;
-        let cell = body.cells[index];
-        if cell.is_air() || !registry.is_reactive(cell.material) {
-            continue;
-        }
-        let pos = body.world_cell(lx as f32 + 0.5, ly as f32 + 0.5);
-        for (dx, dy) in NEIGHBORS {
-            let neighbor_pos = pos.translated(dx, dy);
-            let Some(neighbor) = world.get_cell(neighbor_pos) else {
-                continue;
-            };
-            let Some(reaction) = registry.reaction(cell.material, neighbor.material) else {
-                continue;
-            };
-            if !roll(pos, tick, SALT_BODY_REACT, reaction.chance) {
-                continue;
-            }
-            let product = reaction.becomes;
-            let solid_product =
-                product != MaterialId::AIR && registry.get(product).phase == Phase::Solid;
-            let needs_spot = product != MaterialId::AIR && !solid_product;
-            let spawn_spot = if needs_spot {
-                match escape_spot(world, registry, pos) {
-                    Some(spot) => Some(spot),
-                    None => continue,
-                }
-            } else {
-                None
-            };
-            world.set_cell(
-                neighbor_pos,
-                product_cell(reaction.other_becomes, neighbor_pos, tick),
-            );
-            if solid_product {
-                body.cells[index] = product_cell(product, pos, tick);
-            } else {
-                body.cells[index] = Cell::AIR;
-                if let Some(spot) = spawn_spot {
-                    world.set_cell(spot, product_cell(product, spot, tick));
-                }
-            }
-            mutated = true;
-            break;
-        }
-    }
-    mutated
-}
-
-fn escape_spot(world: &CellWorld, registry: &MaterialRegistry, pos: CellPos) -> Option<CellPos> {
-    [(0, 0), (0, 1), (1, 0), (-1, 0), (0, -1)]
-        .iter()
-        .map(|&(dx, dy)| pos.translated(dx, dy))
-        .find(|&spot| {
-            world
-                .get_cell(spot)
-                .is_some_and(|cell| registry.get(cell.material).phase == Phase::Empty)
-        })
-}
-
-fn product_cell(material: MaterialId, pos: CellPos, tick: u64) -> Cell {
-    let mut hasher = rustc_hash::FxHasher::default();
-    (pos.x, pos.y, tick).hash(&mut hasher);
-    Cell::new(material, (hasher.finish() & 0xF) as u8)
-}
-
-fn roll(pos: CellPos, tick: u64, salt: u32, chance: f32) -> bool {
-    if chance <= 0.0 {
-        return false;
-    }
-    let mut hasher = rustc_hash::FxHasher::default();
-    (pos.x, pos.y, tick, salt).hash(&mut hasher);
-    ((hasher.finish() as u32) as f32) < chance * u32::MAX as f32
-}
-
-pub fn stamp_body(world: &mut CellWorld, registry: &MaterialRegistry, body: &PixelBody) {
-    for ly in 0..body.height {
-        for lx in 0..body.width {
-            let cell = body.cell_at(lx, ly);
-            if cell.is_air() {
-                continue;
-            }
-            let base = body.world_cell(lx as f32 + 0.5, ly as f32 + 0.5);
-            let target = [(0, 0), (0, 1), (1, 0), (-1, 0), (0, 2), (0, -1)]
-                .iter()
-                .map(|&(dx, dy)| base.translated(dx, dy))
-                .find(|&pos| match world.get_cell(pos) {
-                    Some(existing) => !matches!(
-                        registry.get(existing.material).phase,
-                        Phase::Solid | Phase::Powder
-                    ),
-                    None => false,
-                });
-            if let Some(pos) = target {
-                world.set_cell(pos, cell);
-            }
-        }
-    }
 }
 
 fn relocation_spot(
@@ -884,9 +1132,10 @@ fn relocation_spot(
     registry: &MaterialRegistry,
     entities: &[EntityBox],
     claimed: &FxHashSet<CellPos>,
+    exclude: &FxHashSet<CellPos>,
     from: CellPos,
 ) -> Option<CellPos> {
-    for radius in 1..=STAMP_RELOCATE_RADIUS {
+    for radius in 1..=RELOCATE_RADIUS {
         let mut ring: Vec<(i32, i32)> = Vec::new();
         for dy in -radius..=radius {
             for dx in -radius..=radius {
@@ -898,7 +1147,10 @@ fn relocation_spot(
         ring.sort_by_key(|&(dx, dy)| (-dy, dx.abs()));
         for (dx, dy) in ring {
             let pos = from.translated(dx, dy);
-            if claimed.contains(&pos) || entities.iter().any(|entity| entity.contains_cell(pos)) {
+            if claimed.contains(&pos)
+                || exclude.contains(&pos)
+                || entities.iter().any(|entity| entity.contains_cell(pos))
+            {
                 continue;
             }
             let empty = world

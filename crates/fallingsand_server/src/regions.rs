@@ -7,7 +7,7 @@ use fallingsand_core::{
     CellPos, ChunkOffset, ChunkPos, REGION_SIZE_CELLS, REGION_SIZE_CHUNKS, Region, RegionPos,
 };
 use fallingsand_protocol::PlayerUuid;
-use fallingsand_sim::bodies::{stamp_body, try_stamp};
+use fallingsand_sim::bodies::settle_body;
 use fallingsand_sim::{CellWorld, PixelBody};
 use fallingsand_worldgen::WorldGenerator;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -94,6 +94,17 @@ pub fn wanted_regions(tickets: &ChunkTickets) -> FxHashSet<RegionPos> {
         .collect()
 }
 
+fn strip_body_flags(region: &mut Region) {
+    for index in 0..REGION_SIZE_CHUNKS * REGION_SIZE_CHUNKS {
+        let chunk = region.chunk_mut(ChunkOffset::from_index(index));
+        for cell in chunk.cells_mut().iter_mut() {
+            if cell.is_body() {
+                cell.set_body(false);
+            }
+        }
+    }
+}
+
 fn insert_region(sim: &mut CellWorld, pos: RegionPos, region: Region) {
     let base = pos.base_chunk();
     let chunks = *region.into_chunks();
@@ -161,7 +172,13 @@ pub fn manage_regions(
                 None
             })
         });
-        let region = loaded.unwrap_or_else(|| generator.0.generate_region(pos));
+        let region = match loaded {
+            Some(mut region) => {
+                strip_body_flags(&mut region);
+                region
+            }
+            None => generator.0.generate_region(pos),
+        };
         insert_region(&mut sim.0, pos, region);
         regions.states.insert(
             pos,
@@ -190,10 +207,7 @@ pub fn manage_regions(
                 .any(|&pos| body_overlaps_region(&bodies.bodies[index], pos));
             if unloading {
                 let body = bodies.bodies.swap_remove(index);
-                if !try_stamp(&mut sim.0, &registry.0, &[], &body) {
-                    stamp_body(&mut sim.0, &registry.0, &body);
-                }
-                bodies.despawned.push(body.id);
+                settle_body(&mut sim.0, &registry.0, &[], &body, true);
             } else {
                 index += 1;
             }
@@ -327,10 +341,8 @@ pub fn save_everything(world: &mut bevy_ecs::world::World, final_save: bool) {
             let mut touched: FxHashSet<RegionPos> = FxHashSet::default();
             {
                 let mut sim = world.resource_mut::<SimWorld>();
-                for body in &bodies.bodies {
-                    if !try_stamp(&mut sim.0, &registry, &[], body) {
-                        stamp_body(&mut sim.0, &registry, body);
-                    }
+                for body in bodies.bodies.drain(..) {
+                    settle_body(&mut sim.0, &registry, &[], &body, true);
                     let radius =
                         ((body.width as f32).hypot(body.height as f32) + 1.0).ceil() as i32;
                     let (cx, cy) = (body.x.floor_cell(), body.y.floor_cell());
@@ -342,9 +354,6 @@ pub fn save_everything(world: &mut bevy_ecs::world::World, final_save: bool) {
                         }
                     }
                 }
-            }
-            for body in bodies.bodies.drain(..) {
-                bodies.despawned.push(body.id);
             }
             let mut regions = world.resource_mut::<RegionMap>();
             for pos in touched {

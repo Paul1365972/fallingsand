@@ -41,7 +41,7 @@ The loop is DST-flavored — gather, build, defend, expand — but every mechani
 | Platforms | **Native (Win/Linux/macOS) + Web client** | Server and single player are native-only. The browser build is a *client only* that joins remote servers. This constrains the client crate (WASM-compatible deps, no threads assumed, no filesystem) but not the server. |
 | Network authority | **Authoritative server + delta replication** | Server owns the world. Clients receive delta-compressed dirty-region updates for chunks in their interest area. No determinism requirement across machines; robust to packet loss and late joins. Bandwidth is the engineering cost — paid via dirty rects + compression. |
 | Transport | **WebTransport (QUIC)** via the `web-transport` crate family (`web-transport-quinn` native, `web-transport-wasm` browser); in-memory channels for the embedded local server | One reliable ordered stream per connection carries the whole protocol — no datagram machinery, no loss handling above the transport. Works in browsers, one `Session` API across server, native client, and wasm client. Actively maintained (MoQ project); pin versions — roughly one breaking release per quarter. Single player bypasses the network entirely through the same transport trait. |
-| Terrain physics | **Rigid bodies built into the architecture** | Pixel-terrain ↔ rigid-body conversion (flood-fill → pixel bodies) is part of the world model, protocol, and renderer even though the first playable ships only cellular automata + entity collision. Retrofitting this is what kills falling-sand engines. |
+| Terrain physics | **Rigid bodies built into the architecture** | Pixel-terrain ↔ rigid-body conversion (flood-fill → pixel bodies) is part of the world model from day one. Bodies stay rasterized in the cell grid at all times, so protocol, renderer, and persistence only ever see cells. Retrofitting this is what kills falling-sand engines. |
 | Physics engine | **Custom, purpose-built** | Physics here is inseparable from the cell grid: bodies are made of cells, terrain changes every tick, and collision must be pixel-perfect. A general-purpose engine fights that coupling; a small bespoke solver (kinematic character movement + impulse-based pixel bodies) covers exactly what the game needs and nothing more. |
 | Server core | **`bevy_ecs` standalone** | Just the ECS crate — no Bevy app, windowing, or render on the server. Battle-tested parallel scheduler; entity component types are shared with the client naturally. |
 | Client engine | **Bevy** (display/input/UI layer only) | Bevy never drives game logic. It renders world state, plays audio, and collects input. |
@@ -93,8 +93,8 @@ Target **4 bytes/cell**:
 struct Cell {
     material: MaterialId,  // u16 — index into the material registry
     shade_flags: u8,       // high nibble: color variation (visual only),
-                           // low nibble: 2 bits fluid flow direction, 1 bit flow spent, 1 reserved
-                           // (burning is the fire phase, not a flag)
+                           // low nibble: 2 bits fluid flow direction, 1 bit flow spent,
+                           // 1 bit live-pixel-body membership (burning is the fire phase, not a flag)
     updated: u8,           // last-updated tick (low byte)
 }
 ```
@@ -156,26 +156,29 @@ Everything collides against the cell grid directly, so changing terrain never re
 - **The character controller is feel-first** (Celeste's movement formulas ported 1:1 in cells/s, tuned server-side since the server is authoritative): coyote time and jump buffering, variable jump height (holding jump sustains the launch speed for a short window), half gravity near the jump apex while jump is held, an eased fall-speed cap with fast-fall on down, a single run acceleration with a gentler over-speed reduce, feet-anchored ducking under a shrunken hitbox, ceiling corner correction that nudges near-miss jumps around corners, Minecraft-flavored swimming (drag-limited swim speeds toward input targets, passive slow sink when idle, treading with an emergent surface bob while holding jump, a full vault jump out of the water against a bank versus a small hop in open water, and wading drag while running through shallow liquid), and step-up/step-down assists that preserve momentum over rough terrain.
 - **Players wade through small amounts of granular matter**: movement blocked only by a few powder cells pushes through them with a speed penalty per grain, displacing the grains to nearby free cells (conserved, not destroyed).
   Loose sand can slow, bury, and trap you — but you can always struggle out; only true solids (rock) pin you permanently.
-- **Solidity is phase-based**: every tick, entity AABBs and in-flight pixel-body cells rasterize into an obstacle mask over the grid.
-  Powders treat all masked cells as ground — sand piles on a player's head and on flying debris instead of passing through.
-  Liquids and gases split the mask: entity volumes stay permeable (swimming and submersion work at cell scale), but pixel-body cells are real matter and block fluid inflow.
-  Fluid already overlapped by a moving body is never destroyed — inflow is blocked but outflow is free, so it drains out on its own, which is displacement made literal.
-  When a mask moves, vacated and newly covered cells with powder or fluid nearby are dirty-marked so piles collapse and water refills.
+- **Solidity is phase-based**: every tick, entity AABBs rasterize into an obstacle mask over the grid — the mask is entity-only.
+  Powders treat masked cells as ground (sand piles on a player's head) while entity volumes stay permeable to liquids and gases (swimming and submersion work at cell scale).
+  Pixel-body cells need no mask: they are real solid cells in the grid, so powders pile on flying debris and fluids are walled off by it like any terrain, both ways, with no overlap states to reason about.
+  When an entity mask moves, vacated cells with powder or fluid nearby are dirty-marked so piles collapse and water refills; body movement wakes neighbors through ordinary dirty rects because moving a body writes real cells.
 - **Everything overlapping exchanges momentum instead of blocking statically.**
   Cells already overlapping an entity's hitbox never obstruct its movement (depenetration law: you can always move out of an overlap, never deeper through fresh cells), so debris rasterized into your hull can't lock you in place.
   Both sides carry mass (players ~cell area at flesh density, body cells at material density): a body landing on a player shoves them down and gets shoved back, a player pushes light debris out of the way and merely bounces off a heavy slab, standing on a body transfers weight onto it, and a jump headbutts loose planks away.
   Momentum is conserved in every exchange; contacts are inelastic, so energy only dissipates.
-- **Pixel bodies** are rigid bodies made of cells.
+- **Pixel bodies** are rigid bodies made of cells, and they stay rasterized in the grid at all times: a body is a motion record (local cell buffer, `Fixed` position and velocity, quantized 1/1024-turn rotation, spin, density-weighted mass and inertia) over real flagged world cells — one cell, one owner, with the flag meaning exactly "a live body's raster covers this cell".
   Solid materials marked `rigid_capable` in the registry participate.
-  Flood-fill detects disconnected solid islands and lifts their cells out of the grid into a pixel body (a small cell buffer + position/rotation/velocity, density-weighted mass and inertia).
+  Flood-fill detects disconnected solid islands and registers them in place: cells never leave the grid, they just gain the body flag.
   Island checks are seeded by anything that removes support: dig brushes, reactions consuming solids, and powder draining out from under a rigid solid — all feed one structural-notification queue.
-- Pixel-body integration is impulse-based: collision detection samples the body's perimeter cells against the grid; contacts against terrain are static, contacts against entities and other bodies are dynamic (impulses split by inverse mass, applied to both sides).
-  Submerged body cells get buoyancy from the liquid they overlap plus drag — wood floats, stone sinks, no special cases.
-- Pixel bodies react like terrain: perimeter cells run the same material reaction table against their grid neighbors each tick (a fallen tree burns), products that stop being solid leave the body as world cells, and bodies that burn through split by connectivity or despawn when empty.
-- When a pixel body comes to rest on terrain alone it is stamped back into the grid and becomes terrain again.
-  Stamping is all-or-nothing and conserving: it never overwrites matter (displaced fluid is relocated), never writes into an entity, and a body that cannot stamp cleanly just stays live and tries again later.
-- Rendering: pixel bodies are just small textures with a transform.
-- The first playable may cap pixel-body count aggressively; the important part is that the world model, protocol, and renderer all know pixel bodies exist from day one.
+- Pixel-body integration is impulse-based: substepped contact solving samples the transformed perimeter against the grid (the body's own stamped footprint reads as free; everything else — terrain, other bodies' flagged cells, entity AABBs — is a contact with impulses split by inverse mass), then one transactional re-stamp per tick moves the footprint.
+  The re-stamp is plan-then-commit: conflicts with solids, powders, other bodies, or entities fail the plan; displaced fluid is paired into vacated cells with surplus relocated nearby; failure falls back to translation-only, then rotation-only, then a velocity-damped abort.
+  Nothing is ever half-written, bodies can never enter players or overwrite matter, and an unchanged raster writes nothing — resting bodies keep their chunks asleep.
+  Rotation projects N local cells onto M ≤ N world cells; the raster tracks the visible winner per world cell, and hidden overlap mass stays in the body buffer, re-appearing on later re-stamps — matter is never created or destroyed.
+  Buoyancy comes from liquid adjacent to the footprint (an estimated waterline scales a submerged fraction) plus drag — wood floats with draft, stone sinks, no special cases.
+- Pixel bodies react like terrain because they literally are terrain cells: the ordinary CA runs reactions and decay on the footprint (a fallen tree burns).
+  Any write that unflags a body cell — reactions, decay, digs, world edits — feeds a damage queue through one central hook in the cell-write path; the bodies pass reconciles it before moving anything: solid products are re-adopted into the body, everything else leaves it, and bodies split by connectivity or despawn when empty.
+- When a pixel body comes to rest on terrain it settles in place: the record is dropped and the flags are cleared where the cells already lie, with hidden overlap mass placed nearby (conserving, never into an entity).
+  Settling never moves visible matter and cannot be blocked by it; a body whose hidden mass cannot be placed stays live and retries.
+- Rendering and replication: body cells render inside the chunk textures and travel in ordinary chunk deltas like all other matter — no body protocol, no body renderer, no interpolation; motion is cell-snapped at tick rate.
+- The first playable may cap pixel-body count aggressively; the important part is that the world model knows pixel bodies exist from day one.
 
 ## Server Architecture
 
@@ -191,7 +194,7 @@ A `fallingsand_server::Server` is a library value you construct and tick — the
   2. Apply player inputs (movement intents, actions → world edits)
   3. Load/generate/unload regions per chunk-ticket changes
   4. Step cellular automata (4 block phases, rayon), apply deferred world edits
-  5. Step physics (entities + pixel bodies), settle resting pixel bodies back into grid
+  5. Step physics (entities, then the serial bodies pass: damage reconciliation → island registration → dynamics + re-stamp → settle-in-place)
   6. Run game logic systems (health, interactions, inventory…)
   7. Snapshot dirty state → replication → send
   8. Periodic: persistence flush (dirty regions → redb), autosave entities
@@ -199,14 +202,14 @@ A `fallingsand_server::Server` is a library value you construct and tick — the
 ### Interest management: chunk tickets
 
 - Every **ticket source** (player, spawn anchor, scripted camera) projects tickets onto chunks: `Active` (simulate + replicate), `Border` (loaded, simulated so edges behave, not replicated), `Loaded` (in memory only).
-- Regions with zero tickets get persisted and unloaded after a grace period; in-flight pixel bodies over an unloading region are stamped back into the grid first so they persist.
+- Regions with zero tickets get persisted and unloaded after a grace period; in-flight pixel bodies over an unloading region settle in place first (record dropped, flags cleared) so their cells persist as terrain.
 - Replication distance and simulation distance are separate knobs per source.
 - Implemented as a per-tick `ChunkTickets` set computed from player positions (the only source type so far); load/unload stays region-granular, and chunks outside Active∪Border freeze in place (rects preserved) until re-entered.
 
 ### Persistence
 
 - redb tables: `regions` (z-order key → lz4 blob, format-versioned), `players` (uuid → name/position/hp), `meta` (seed, world version, name); an `entities` table (region key → entity set) joins when non-player entities exist.
-- Pixel bodies are not stored separately: unsettled bodies are stamped back into the grid on region unload and on final save, so their cells persist as terrain.
+- Pixel bodies are not stored separately: their cells are always in the grid, so they persist with regions; unload and final save settle them in place (motion state is lost), and region load strips any leftover body flags so a crash degrades in-flight bodies to plain terrain at the last autosave.
 - Region blobs carry each chunk's **resume rect** (the union of its change and keep-alive rects at save time) alongside the cells; on load it is restored as a keep-alive rect, so in-flight processes (falling powder, flowing liquids, pending reactions) continue after unload/reload — and, being a keep-alive, restoring costs no replication bandwidth and never fakes a change.
 - Regions are written **only when dirty**, on unload and on periodic autosave.
   Writes go through redb transactions so a crash never corrupts the world.
@@ -217,14 +220,15 @@ A `fallingsand_server::Server` is a library value you construct and tick — the
 ### Protocol (`fallingsand_protocol`)
 
 All messages are serde enums, postcard-encoded, lz4-compressed above a size threshold.
-Everything flows over **one reliable ordered stream** per connection — handshake, chunk loads/unloads, per-tick dirty-rect deltas, entity and pixel-body state, player input.
+Everything flows over **one reliable ordered stream** per connection — handshake, chunk loads/unloads, per-tick dirty-rect deltas, entity state, player input. Pixel bodies have no wire presence: their cells ride the chunk deltas.
 Because delivery is reliable and ordered, deltas always apply cleanly on top of the last state: no per-chunk versioning, no resync protocol, no input sequence numbers.
 Packet loss costs a retransmit delay (head-of-line blocking for roughly one RTT), never correctness — an acceptable trade for a ~10-player co-op game, and the reason the protocol stays radically simple.
 If profiling ever shows loss-induced stutter matters, moving hot state back to datagrams is a contained change behind the transport trait.
 
 ### Client-side latency handling
 
-- **Interpolate everything** (players, remote entities, pixel bodies) between the last two received states — plain lerp, no prediction, no reconciliation.
+- **Interpolate everything** (players, remote entities) between the last two received states — plain lerp, no prediction, no reconciliation.
+  Pixel bodies are cells and move like cells: cell-snapped, uninterpolated, live at 60 Hz replication.
   Local-player prediction is a deliberate non-feature until latency demands it; the shared `step_player` in `fallingsand_sim` keeps the insertion point ready.
 - **Do not predict the sand.**
   Cell deltas apply as they arrive; at 60 Hz server ticks the world feels live.
@@ -243,7 +247,7 @@ Zero serialization shortcuts — the local pipe still moves `fallingsand_protoco
   Material id + shade resolve to color via a palette texture in a fragment shader — no per-pixel CPU loop.
 - **Camera & scale**: Noita-like virtual resolution of ~424×242 cells fit to the window via Bevy's `AutoMin` scaling with a clamped zoom range (accepted deviation from integer scaling; revisit if grain shimmer bothers).
   Replication/interest budgets are sized for the default zoom — zooming out never expands the server's obligations.
-- **Pixel bodies & entities**: sprites/textures with transforms, interpolated.
+- **Entities**: sprites/textures with transforms, interpolated; pixel bodies arrive as chunk deltas and render as terrain.
 - **UI**: Bevy UI for the first iteration (menu, HUD, chat, debug overlay).
   The main menu: world list (create/load/delete), direct-connect, player name + window settings; a server browser is deferred (join-by-address per the auth open question).
 - **Debug tooling from day one**: F3-style overlay (tick time, chunk counts incl. ticket tiers, dirty stats, bandwidth, upload bytes), F4 chunk-boundary/delta-rect visualizer, material inspector under cursor.
@@ -301,6 +305,6 @@ Each milestone is playable/demoable.
   First playable.
 - **M3 — Persist & generate**: `fallingsand_worldgen` pipeline + redb persistence; create/load/save worlds; region streaming via chunk tickets as the player moves.
 - **M4 — Multiplayer**: WebTransport transport, protocol handshake, delta replication, prediction/interpolation, dedicated server binary, web client joins a native server.
-- **M5 — Break it**: pixel bodies — flood-fill island detection, impulse-based dynamics with pixel-perfect terrain collision, settle-back, replicated to clients.
+- **M5 — Break it**: pixel bodies — flood-fill island detection, always-rasterized impulse dynamics (pixel-perfect and overlap-free by construction), settle-in-place, replicated as chunk deltas.
   The Noita moment.
 - **M6 — Feel like a game**: main menu (worlds, server browser, settings), HUD, basic survival loop (health, a few tools/items), polish pass on rendering (palette work, particles for impacts).

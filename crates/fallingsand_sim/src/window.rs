@@ -10,6 +10,14 @@ pub struct SimWindow {
     slots: [Option<Chunk>; WINDOW_SLOTS],
     tick: u64,
     structural: Vec<CellPos>,
+    damage: Vec<CellPos>,
+}
+
+pub(crate) struct WindowParts {
+    pub origin: ChunkPos,
+    pub slots: [Option<Chunk>; WINDOW_SLOTS],
+    pub structural: Vec<CellPos>,
+    pub damage: Vec<CellPos>,
 }
 
 impl SimWindow {
@@ -19,11 +27,17 @@ impl SimWindow {
             slots,
             tick,
             structural: Vec::new(),
+            damage: Vec::new(),
         }
     }
 
-    pub(crate) fn into_parts(self) -> (ChunkPos, [Option<Chunk>; WINDOW_SLOTS], Vec<CellPos>) {
-        (self.origin, self.slots, self.structural)
+    pub(crate) fn into_parts(self) -> WindowParts {
+        WindowParts {
+            origin: self.origin,
+            slots: self.slots,
+            structural: self.structural,
+            damage: self.damage,
+        }
     }
 
     pub fn note_structural(&mut self, pos: CellPos) {
@@ -73,7 +87,11 @@ impl SimWindow {
             chunk.normalize_updated((self.tick as u8).wrapping_sub(1));
             chunk.sleeping = false;
         }
+        let old = chunk.get(pos.offset());
         chunk.set(pos.offset(), cell);
+        if old.is_body() && !cell.is_body() {
+            self.damage.push(pos);
+        }
     }
 
     pub fn mark(&mut self, pos: CellPos) {

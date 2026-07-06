@@ -1,8 +1,6 @@
-use crate::bodies::PixelBody;
-use crate::physics::CellSource;
 use crate::world::CellWorld;
-use fallingsand_core::{Cell, CellPos, Fixed, MaterialRegistry, Phase};
-use rustc_hash::{FxHashMap, FxHashSet};
+use fallingsand_core::{CellPos, Fixed, MaterialRegistry, Phase};
+use rustc_hash::FxHashSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EntityBox {
@@ -23,27 +21,11 @@ impl EntityBox {
 pub struct Obstacles {
     pub entity_boxes: Vec<EntityBox>,
     entity_cells: FxHashSet<CellPos>,
-    body_cells: FxHashMap<CellPos, (u32, Cell)>,
 }
 
 impl Obstacles {
     pub fn occupied(&self, pos: CellPos) -> bool {
-        self.entity_cells.contains(&pos) || self.body_cells.contains_key(&pos)
-    }
-
-    pub fn blocks_fluid(&self, pos: CellPos) -> bool {
-        self.body_cells.contains_key(&pos)
-    }
-
-    pub fn body_at(&self, pos: CellPos) -> Option<(u32, Cell)> {
-        self.body_cells.get(&pos).copied()
-    }
-
-    pub fn overlay<'a, W: CellSource>(&'a self, base: &'a W) -> ObstacleOverlay<'a, W> {
-        ObstacleOverlay {
-            base,
-            obstacles: self,
-        }
+        self.entity_cells.contains(&pos)
     }
 
     pub fn rebuild(
@@ -51,7 +33,6 @@ impl Obstacles {
         world: &mut CellWorld,
         registry: &MaterialRegistry,
         entities: &[EntityBox],
-        bodies: &[PixelBody],
     ) {
         let mut entity_cells = FxHashSet::default();
         for entity in entities {
@@ -66,41 +47,14 @@ impl Obstacles {
             }
         }
 
-        let mut body_cells = FxHashMap::default();
-        for body in bodies {
-            for ly in 0..body.height {
-                for lx in 0..body.width {
-                    let cell = body.cell_at(lx, ly);
-                    if cell.is_air() {
-                        continue;
-                    }
-                    body_cells.insert(
-                        body.world_cell(lx as f32 + 0.5, ly as f32 + 0.5),
-                        (body.id, cell),
-                    );
-                }
-            }
-        }
-
         for &pos in self.entity_cells.iter() {
             if !entity_cells.contains(&pos) {
                 wake_vacated(world, registry, pos);
             }
         }
-        for &pos in self.body_cells.keys() {
-            if !body_cells.contains_key(&pos) {
-                wake_vacated(world, registry, pos);
-            }
-        }
-        for &pos in body_cells.keys() {
-            if !self.body_cells.contains_key(&pos) && fluid_at(world, registry, pos) {
-                world.mark_keep(pos);
-            }
-        }
 
         self.entity_boxes = entities.to_vec();
         self.entity_cells = entity_cells;
-        self.body_cells = body_cells;
     }
 }
 
@@ -129,18 +83,4 @@ fn fluid_at(world: &CellWorld, registry: &MaterialRegistry, pos: CellPos) -> boo
             Phase::Liquid | Phase::Gas | Phase::Fire
         )
     })
-}
-
-pub struct ObstacleOverlay<'a, W> {
-    base: &'a W,
-    obstacles: &'a Obstacles,
-}
-
-impl<W: CellSource> CellSource for ObstacleOverlay<'_, W> {
-    fn cell_at(&self, pos: CellPos) -> Option<Cell> {
-        self.obstacles
-            .body_at(pos)
-            .map(|(_, cell)| cell)
-            .or_else(|| self.base.cell_at(pos))
-    }
 }

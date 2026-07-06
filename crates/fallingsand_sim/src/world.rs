@@ -8,6 +8,7 @@ pub struct CellWorld {
     chunks: FxHashMap<ChunkPos, Chunk>,
     edits: Vec<WorldEdit>,
     structural: Vec<CellPos>,
+    damage: Vec<CellPos>,
     tick: u64,
 }
 
@@ -56,6 +57,22 @@ impl CellWorld {
             chunk.normalize_updated(self.tick as u8);
             chunk.sleeping = false;
         }
+        let old = chunk.get(pos.offset());
+        cell.updated = self.tick as u8;
+        chunk.set(pos.offset(), cell);
+        if old.is_body() && !cell.is_body() {
+            self.damage.push(pos);
+        }
+    }
+
+    pub(crate) fn set_cell_raw(&mut self, pos: CellPos, mut cell: Cell) {
+        let Some(chunk) = self.chunks.get_mut(&pos.chunk()) else {
+            return;
+        };
+        if chunk.sleeping {
+            chunk.normalize_updated(self.tick as u8);
+            chunk.sleeping = false;
+        }
         cell.updated = self.tick as u8;
         chunk.set(pos.offset(), cell);
     }
@@ -88,6 +105,14 @@ impl CellWorld {
 
     pub fn take_structural(&mut self) -> Vec<CellPos> {
         std::mem::take(&mut self.structural)
+    }
+
+    pub(crate) fn push_damage(&mut self, positions: Vec<CellPos>) {
+        self.damage.extend(positions);
+    }
+
+    pub fn take_damage(&mut self) -> Vec<CellPos> {
+        std::mem::take(&mut self.damage)
     }
 
     pub(crate) fn apply_edits(&mut self) {

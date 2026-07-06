@@ -43,4 +43,5 @@ cargo run -p fallingsand_client --features dev
 - Change rects (`bounds`) feed replication/persistence; keep-alive rects (`keep_bounds`) only feed sim scheduling. `window.mark` for "simulate again", `window.set` for real changes.
 - Sleep, unload, and reload must preserve pending activity — in-flight processes never freeze in time.
 - Same seed + inputs → same world on one machine; randomness is tick-seeded FxHash, no RNG state, no iteration-order-dependent containers in sim paths.
+- Pixel bodies are always rasterized: body flag ⇔ exactly one live body's raster covers the cell. The bodies pass is a serial post-CA stage using raw writes; every re-stamp is a plan-then-commit transaction that never half-fails. Public cell writes only produce unflagged cells and notify the owning body via the damage queue.
 - Tuning constants are seconds-based, never per-tick.
