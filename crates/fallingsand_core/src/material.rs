@@ -62,7 +62,7 @@ fn default_rate() -> f32 {
     f32::INFINITY
 }
 
-fn per_tick_chance(rate: f32) -> f32 {
+pub fn per_tick_chance(rate: f32) -> f32 {
     1.0 - (-rate * crate::TICK_DT).exp()
 }
 

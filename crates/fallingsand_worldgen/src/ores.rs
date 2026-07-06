@@ -23,10 +23,7 @@ pub fn veins_for_rect(
     let anchor_max_y = (max_y + ORE_MARGIN).div_euclid(ORE_ANCHOR_GRID);
     for anchor_y in anchor_min_y..=anchor_max_y {
         for anchor_x in anchor_min_x..=anchor_max_x {
-            let mut rng = Hash::seed(seed)
-                .bytes(b"ore")
-                .pos(anchor_x, anchor_y)
-                .stream();
+            let mut rng = Hash::seed(seed).bytes(b"ore").pos(anchor_x, anchor_y).rng();
             let center_x = anchor_x * ORE_ANCHOR_GRID + rng.draw().range(0, ORE_ANCHOR_GRID - 1);
             let center_y = anchor_y * ORE_ANCHOR_GRID + rng.draw().range(0, ORE_ANCHOR_GRID - 1);
             let Some(ore) = def.ores.iter().find(|ore| {

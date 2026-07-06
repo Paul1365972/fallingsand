@@ -53,8 +53,8 @@ impl Hash {
     }
 
     #[inline]
-    pub const fn stream(self) -> Stream {
-        Stream(self.0)
+    pub const fn rng(self) -> Rng {
+        Rng(self.0)
     }
 
     #[inline]
@@ -106,12 +106,12 @@ impl Default for Hash {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct Stream(u64);
+pub struct Rng(u64);
 
-impl Stream {
+impl Rng {
     #[inline]
     pub const fn new(seed: u64) -> Self {
-        Stream(seed)
+        Rng(seed)
     }
 
     #[inline]

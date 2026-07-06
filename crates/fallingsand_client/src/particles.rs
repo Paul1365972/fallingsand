@@ -4,7 +4,7 @@ use crate::{AppState, ClientRegistry, GameState};
 use bevy::prelude::*;
 use fallingsand_core::{BRUSH_RADIUS, Phase, REACH, SURVIVAL_REACH};
 use fallingsand_protocol::GameMode;
-use fallingsand_rng::Stream;
+use fallingsand_rng::Rng;
 
 pub struct ParticlesPlugin;
 
@@ -47,7 +47,7 @@ fn spawn_dig_spray(
     session: Option<Res<crate::net::Session>>,
     visuals: Res<PlayerVisuals>,
     transforms: Query<&Transform, With<PlayerVisual>>,
-    mut rng: Local<Stream>,
+    mut rng: Local<Rng>,
 ) {
     if chat_open.0 || !buttons.pressed(MouseButton::Left) {
         return;
@@ -114,7 +114,7 @@ fn spawn_flames(
     time: Res<Time>,
     query: Query<(&Transform, &Sprite, &PlayerVisual)>,
     mut accumulator: Local<f32>,
-    mut rng: Local<Stream>,
+    mut rng: Local<Rng>,
 ) {
     *accumulator += time.delta_secs();
     if *accumulator < FLAME_INTERVAL {

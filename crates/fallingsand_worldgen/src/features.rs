@@ -88,7 +88,7 @@ pub fn trees_for_rect(
             _ => continue,
         }
 
-        let mut rng = key.stream();
+        let mut rng = key.rng();
         let height = rng.draw().range(tree.trunk_height.0, tree.trunk_height.1);
         let mut canopy_top: Vec<(i32, i32)> = Vec::new();
         let mut leaf = |cells: &mut Vec<FeatureCell>, cx: i32, cy: i32| {
@@ -212,7 +212,7 @@ fn ceiling_site(
     cells: &mut Vec<FeatureCell>,
     clip: &Clip,
 ) {
-    let mut rng = Hash::seed(seed).bytes(b"ceiling").pos(x, top_air).stream();
+    let mut rng = Hash::seed(seed).bytes(b"ceiling").pos(x, top_air).rng();
     let depth = surface - top_air;
     if depth < VINE_MAX_DEPTH && rng.draw().chance(biome.vine_chance) {
         let length = rng.draw().range(3, 10);
@@ -241,7 +241,7 @@ fn floor_site(
     cells: &mut Vec<FeatureCell>,
     clip: &Clip,
 ) {
-    let mut rng = Hash::seed(seed).bytes(b"floor").pos(x, bottom_air).stream();
+    let mut rng = Hash::seed(seed).bytes(b"floor").pos(x, bottom_air).rng();
     if rng.draw().chance(0.35) {
         let length = rng.draw().range(2, 5);
         let depth = surface - bottom_air;
@@ -274,7 +274,7 @@ pub fn mushrooms_for_rect(
             let mut rng = Hash::seed(seed)
                 .bytes(b"mushroom")
                 .pos(anchor_x, anchor_y)
-                .stream();
+                .rng();
             if !rng.draw().chance(MUSHROOM_CHANCE) {
                 continue;
             }

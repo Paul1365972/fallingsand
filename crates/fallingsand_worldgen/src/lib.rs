@@ -256,7 +256,7 @@ impl WorldGenerator {
             Some((floor, level)) => (base_surface.min(floor), Some(level)),
             None => (base_surface, None),
         };
-        let mut tuft_rng = Hash::seed(self.seed).bytes(b"tuft").pos(x, 0).stream();
+        let mut tuft_rng = Hash::seed(self.seed).bytes(b"tuft").pos(x, 0).rng();
         let tuft_height = if surface > self.def.sea_level + 2
             && pond_level.is_none_or(|level| surface > level)
             && tuft_rng.draw().chance(biome.tuft_chance)

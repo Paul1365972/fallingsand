@@ -190,7 +190,7 @@ impl Terrain {
         }
         let cell = x.div_euclid(POND_ANCHOR_GRID);
         for anchor in [cell - 1, cell, cell + 1] {
-            let mut rng = Hash::seed(self.seed).bytes(b"pond").pos(anchor, 0).stream();
+            let mut rng = Hash::seed(self.seed).bytes(b"pond").pos(anchor, 0).rng();
             if !rng.draw().chance(chance) {
                 continue;
             }

@@ -5,7 +5,7 @@ use crate::biomes::{
 };
 use crate::features::Clip;
 use fallingsand_core::MaterialId;
-use fallingsand_rng::{Hash, Stream};
+use fallingsand_rng::{Hash, Rng};
 
 pub struct StructureCell {
     pub x: i32,
@@ -80,7 +80,7 @@ fn ruins(
     let anchor_min = (builder.clip.min_x - STRUCTURE_MARGIN).div_euclid(grid);
     let anchor_max = (builder.clip.max_x + STRUCTURE_MARGIN).div_euclid(grid);
     for anchor in anchor_min..=anchor_max {
-        let mut rng = Hash::seed(seed).bytes(b"ruin").pos(anchor, 0).stream();
+        let mut rng = Hash::seed(seed).bytes(b"ruin").pos(anchor, 0).rng();
         if !rng.draw().chance(RUIN_CHANCE) {
             continue;
         }
@@ -105,7 +105,7 @@ fn ruins(
 
 fn shack(
     palette: &Palette,
-    rng: &mut Stream,
+    rng: &mut Rng,
     center: i32,
     ground: i32,
     covered: &dyn Fn(i32, i32) -> bool,
@@ -147,7 +147,7 @@ fn shack(
 
 fn tower(
     palette: &Palette,
-    rng: &mut Stream,
+    rng: &mut Rng,
     center: i32,
     ground: i32,
     covered: &dyn Fn(i32, i32) -> bool,
@@ -195,7 +195,7 @@ fn mineshafts(seed: u64, palette: &Palette, builder: &mut Builder) {
             let mut rng = Hash::seed(seed)
                 .bytes(b"mineshaft")
                 .pos(anchor_x, anchor_y)
-                .stream();
+                .rng();
             if !rng.draw().chance(MINESHAFT_CHANCE) {
                 continue;
             }
@@ -256,7 +256,7 @@ fn islands(seed: u64, palette: &Palette, builder: &mut Builder) {
             let mut rng = Hash::seed(seed)
                 .bytes(b"island")
                 .pos(anchor_x, anchor_y)
-                .stream();
+                .rng();
             if !rng.draw().chance(ISLAND_CHANCE) {
                 continue;
             }

@@ -1,16 +1,12 @@
 use crate::obstacles::Obstacles;
 use crate::window::SimWindow;
-use fallingsand_core::{Cell, CellPos, MaterialId, MaterialRegistry, Phase};
-use fallingsand_rng::Hash;
+use fallingsand_core::{Cell, CellPos, MaterialId, MaterialRegistry, Phase, per_tick_chance};
+use fallingsand_rng::{Hash, Rng};
+use std::sync::LazyLock;
 
 const NEIGHBORS: [(i32, i32); 4] = [(0, -1), (-1, 0), (1, 0), (0, 1)];
-const SALT_REACT: u32 = 1;
-const SALT_DECAY: u32 = 2;
-const SALT_FLICKER: u32 = 3;
-const SALT_FLOW: u32 = 4;
-const SALT_FALL: u32 = 5;
 const FLICKER_RATE: f32 = 18.0;
-const FLICKER_CHANCE: f32 = FLICKER_RATE * fallingsand_core::TICK_DT;
+static FLICKER_CHANCE: LazyLock<f32> = LazyLock::new(|| per_tick_chance(FLICKER_RATE));
 
 pub(crate) fn update_cell(
     window: &mut SimWindow,
@@ -26,15 +22,18 @@ pub(crate) fn update_cell(
     if cell.updated == tick_byte {
         return;
     }
-    if registry.is_reactive(cell.material) && react(window, registry, pos, cell, tick, tick_byte) {
+    let mut rng = Hash::seed(tick).pos(pos.x, pos.y).rng();
+    if registry.is_reactive(cell.material)
+        && react(window, registry, pos, cell, &mut rng, tick_byte)
+    {
         return;
     }
     let material = registry.get(cell.material);
     match material.phase {
         Phase::Empty | Phase::Solid => {}
-        Phase::Powder => update_powder(window, registry, obstacles, pos, cell, tick),
-        Phase::Liquid => update_liquid(window, registry, pos, cell, tick),
-        Phase::Gas | Phase::Fire => update_gas(window, registry, pos, cell, tick),
+        Phase::Powder => update_powder(window, registry, obstacles, pos, cell, &mut rng),
+        Phase::Liquid => update_liquid(window, registry, pos, cell, &mut rng, tick_byte),
+        Phase::Gas | Phase::Fire => update_gas(window, registry, pos, cell, &mut rng),
     }
 }
 
@@ -43,7 +42,7 @@ fn react(
     registry: &MaterialRegistry,
     pos: CellPos,
     cell: Cell,
-    tick: u64,
+    rng: &mut Rng,
     tick_byte: u8,
 ) -> bool {
     let mut keep = false;
@@ -54,16 +53,16 @@ fn react(
         };
         if let Some(reaction) = registry.reaction(cell.material, neighbor.material) {
             keep = true;
-            if roll(pos, tick, SALT_REACT, reaction.chance) {
+            if rng.draw().chance(reaction.chance) {
                 note_structural(window, registry, pos, cell.material);
                 note_structural(window, registry, neighbor_pos, neighbor.material);
-                set_product(window, registry, pos, reaction.becomes, tick, tick_byte);
+                set_product(window, registry, pos, reaction.becomes, rng, tick_byte);
                 set_product(
                     window,
                     registry,
                     neighbor_pos,
                     reaction.other_becomes,
-                    tick,
+                    rng,
                     tick_byte,
                 );
                 return true;
@@ -73,9 +72,9 @@ fn react(
     if let Some((chance, product)) = registry.decay(cell.material) {
         let material = registry.get(cell.material);
         if material.phase == Phase::Fire && sustained(window, registry, pos, cell.material) {
-            if roll(pos, tick, SALT_FLICKER, FLICKER_CHANCE) {
+            if rng.draw().chance(*FLICKER_CHANCE) {
                 let mut flicker = cell;
-                flicker.set_shade(hash_shade(pos, tick));
+                flicker.set_shade(rng.draw().bits(4) as u8);
                 flicker.updated = tick_byte;
                 window.set(pos, flicker);
             } else {
@@ -83,8 +82,8 @@ fn react(
             }
             return true;
         }
-        if roll(pos, tick, SALT_DECAY, chance) {
-            set_product(window, registry, pos, product, tick, tick_byte);
+        if rng.draw().chance(chance) {
+            set_product(window, registry, pos, product, rng, tick_byte);
             return true;
         }
         keep = true;
@@ -127,10 +126,10 @@ fn set_product(
     registry: &MaterialRegistry,
     pos: CellPos,
     material: MaterialId,
-    tick: u64,
+    rng: &mut Rng,
     tick_byte: u8,
 ) {
-    let mut cell = Cell::new(material, hash_shade(pos, tick));
+    let mut cell = Cell::new(material, rng.draw().bits(4) as u8);
     cell.updated = tick_byte;
     window.set(pos, cell);
     if matches!(
@@ -139,17 +138,6 @@ fn set_product(
     ) {
         wake_range(window, pos);
     }
-}
-
-fn hash_shade(pos: CellPos, tick: u64) -> u8 {
-    Hash::seed(tick).pos(pos.x, pos.y).bits(4) as u8
-}
-
-fn roll(pos: CellPos, tick: u64, salt: u32, chance: f32) -> bool {
-    Hash::seed(tick)
-        .add(salt as u64)
-        .pos(pos.x, pos.y)
-        .chance(chance)
 }
 
 fn fluid_displaceable(
@@ -225,20 +213,20 @@ fn wake_range(window: &mut SimWindow, pos: CellPos) {
     }
 }
 
-fn flows(pos: CellPos, tick: u64, chance: f32) -> bool {
-    chance >= 1.0 || roll(pos, tick, SALT_FLOW, chance)
+fn flows(rng: &mut Rng, chance: f32) -> bool {
+    chance >= 1.0 || rng.draw().chance(chance)
 }
 
-fn fall_count(registry: &MaterialRegistry, id: MaterialId, pos: CellPos, tick: u64) -> i32 {
+fn fall_count(registry: &MaterialRegistry, id: MaterialId, rng: &mut Rng) -> i32 {
     let (base, frac) = registry.fall_steps(id);
-    base as i32 + roll(pos, tick, SALT_FALL, frac) as i32
+    base as i32 + rng.draw().chance(frac) as i32
 }
 
-fn flow_order(cell: Cell, pos: CellPos, tick: u64) -> [i32; 2] {
+fn flow_order(cell: Cell, rng: &mut Rng) -> [i32; 2] {
     match cell.flow_state() {
         Cell::FLOW_LEFT => [-1, 1],
         Cell::FLOW_RIGHT => [1, -1],
-        _ => side_order(pos, tick),
+        _ => side_order(rng),
     }
 }
 
@@ -269,16 +257,8 @@ fn stamp_flow_dir(window: &mut SimWindow, pos: CellPos, state: u8) {
     }
 }
 
-fn coin_flip(pos: CellPos, tick: u64) -> bool {
-    Hash::seed(tick).pos(pos.x, pos.y).bit()
-}
-
-fn side_order(pos: CellPos, tick: u64) -> [i32; 2] {
-    if coin_flip(pos, tick) {
-        [1, -1]
-    } else {
-        [-1, 1]
-    }
+fn side_order(rng: &mut Rng) -> [i32; 2] {
+    if rng.draw().bit() { [1, -1] } else { [-1, 1] }
 }
 
 fn update_powder(
@@ -287,12 +267,12 @@ fn update_powder(
     obstacles: &Obstacles,
     pos: CellPos,
     cell: Cell,
-    tick: u64,
+    rng: &mut Rng,
 ) {
     let density = registry.get(cell.material).density;
     let below = pos.translated(0, -1);
     if fluid_displaceable(window, registry, density, below) && !obstacles.occupied(below) {
-        let steps = fall_count(registry, cell.material, pos, tick);
+        let steps = fall_count(registry, cell.material, rng);
         if steps == 0 {
             window.mark(pos);
             return;
@@ -316,7 +296,7 @@ fn update_powder(
         return;
     }
     let below_open = passable(window, registry, below) && !obstacles.occupied(below);
-    for side in side_order(pos, tick) {
+    for side in side_order(rng) {
         let beside = pos.translated(side, 0);
         let beside_open = passable(window, registry, beside) && !obstacles.occupied(beside);
         if !below_open && !beside_open {
@@ -348,7 +328,8 @@ fn update_liquid(
     registry: &MaterialRegistry,
     pos: CellPos,
     cell: Cell,
-    tick: u64,
+    rng: &mut Rng,
+    tick_byte: u8,
 ) {
     let material = registry.get(cell.material);
     let density = material.density;
@@ -360,7 +341,7 @@ fn update_liquid(
     }
     if fluid_displaceable(window, registry, density, below) {
         if free_path(window, registry, below) {
-            let steps = fall_count(registry, cell.material, pos, tick);
+            let steps = fall_count(registry, cell.material, rng);
             if steps == 0 {
                 window.mark(pos);
                 return;
@@ -378,11 +359,11 @@ fn update_liquid(
             window.swap(pos, target);
             wake_range(window, pos);
             let splash = match cell.flow_state() {
-                Cell::FLOW_NONE => dir_state(if coin_flip(pos, tick) { 1 } else { -1 }),
+                Cell::FLOW_NONE => dir_state(if rng.draw().bit() { 1 } else { -1 }),
                 state => state,
             };
             stamp_flow_state(window, target, splash);
-        } else if flows(pos, tick, flow_chance) {
+        } else if flows(rng, flow_chance) {
             window.swap(pos, below);
             wake_range(window, pos);
         } else {
@@ -390,13 +371,13 @@ fn update_liquid(
         }
         return;
     }
-    let order = flow_order(cell, pos, tick);
+    let order = flow_order(cell, rng);
     let Some((target, dir)) = liquid_flow_target(window, registry, pos, density, dispersion, order)
     else {
-        creep(window, registry, pos, cell, tick, flow_chance);
+        creep(window, registry, pos, cell, rng, tick_byte, flow_chance);
         return;
     };
-    if flows(pos, tick, flow_chance) {
+    if flows(rng, flow_chance) {
         window.swap(pos, target);
         wake_range(window, pos);
         stamp_flow_state(window, target, dir_state(dir));
@@ -410,7 +391,8 @@ fn creep(
     registry: &MaterialRegistry,
     pos: CellPos,
     cell: Cell,
-    tick: u64,
+    rng: &mut Rng,
+    tick_byte: u8,
     flow_chance: f32,
 ) {
     let below = pos.translated(0, -1);
@@ -434,7 +416,7 @@ fn creep(
         Cell::FLOW_LEFT => -1,
         Cell::FLOW_RIGHT => 1,
         _ => {
-            let Some(dir) = side_order(pos, tick)
+            let Some(dir) = side_order(rng)
                 .into_iter()
                 .find(|&side| surface_on(window, side))
             else {
@@ -444,7 +426,7 @@ fn creep(
         }
     };
     if open(window, dir) {
-        if flows(pos, tick, flow_chance) {
+        if flows(rng, flow_chance) {
             let target = pos.translated(dir, 0);
             window.swap(pos, target);
             wake_range(window, pos);
@@ -456,7 +438,7 @@ fn creep(
         let mut reversed = cell;
         reversed.set_flow_state(dir_state(-dir));
         reversed.set_flow_spent(true);
-        reversed.updated = tick as u8;
+        reversed.updated = tick_byte;
         window.set(pos, reversed);
     }
 }
@@ -503,7 +485,7 @@ fn update_gas(
     registry: &MaterialRegistry,
     pos: CellPos,
     cell: Cell,
-    tick: u64,
+    rng: &mut Rng,
 ) {
     let material = registry.get(cell.material);
     let density = material.density;
@@ -511,7 +493,7 @@ fn update_gas(
     let flow_chance = registry.flow_chance(cell.material);
     let above = pos.translated(0, 1);
     if lighter_fluid_above(window, registry, density, above) {
-        if free_path(window, registry, above) || flows(pos, tick, flow_chance) {
+        if free_path(window, registry, above) || flows(rng, flow_chance) {
             window.swap(pos, above);
             wake_range(window, pos);
         } else {
@@ -519,12 +501,12 @@ fn update_gas(
         }
         return;
     }
-    let order = flow_order(cell, pos, tick);
+    let order = flow_order(cell, rng);
     let Some((target, dir)) = gas_flow_target(window, registry, pos, density, dispersion, order)
     else {
         return;
     };
-    if flows(pos, tick, flow_chance) {
+    if flows(rng, flow_chance) {
         window.swap(pos, target);
         wake_range(window, pos);
         stamp_flow_state(window, target, dir_state(dir));
