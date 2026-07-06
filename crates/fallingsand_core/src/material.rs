@@ -29,6 +29,10 @@ pub struct Material {
     #[serde(default)]
     pub dispersion: u8,
     #[serde(default)]
+    pub flow_rate: f32,
+    #[serde(default)]
+    pub fall_speed: f32,
+    #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
     pub decay_rate: f32,
@@ -80,6 +84,8 @@ pub struct MaterialRegistry {
     reactions: Vec<Option<Reaction>>,
     decays: Vec<Option<(f32, MaterialId)>>,
     reactive: Vec<bool>,
+    flow_chances: Vec<f32>,
+    falls: Vec<(u8, f32)>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -284,6 +290,29 @@ impl MaterialRegistry {
             })
             .collect();
 
+        let flow_chances: Vec<f32> = materials
+            .iter()
+            .map(|material| {
+                if material.flow_rate > 0.0 {
+                    per_tick_chance(material.flow_rate)
+                } else {
+                    1.0
+                }
+            })
+            .collect();
+
+        let falls: Vec<(u8, f32)> = materials
+            .iter()
+            .map(|material| {
+                if material.fall_speed <= 0.0 {
+                    return (1, 0.0);
+                }
+                let cells = (material.fall_speed * crate::TICK_DT).clamp(0.0, 16.0);
+                let base = cells.floor();
+                (base as u8, cells - base)
+            })
+            .collect();
+
         let hash = registry_hash(&materials, &reaction_defs);
         Ok(Self {
             materials,
@@ -294,6 +323,8 @@ impl MaterialRegistry {
             reactions,
             decays,
             reactive,
+            flow_chances,
+            falls,
         })
     }
 
@@ -343,6 +374,16 @@ impl MaterialRegistry {
     #[inline]
     pub fn is_reactive(&self, id: MaterialId) -> bool {
         self.reactive[id.0 as usize]
+    }
+
+    #[inline]
+    pub fn flow_chance(&self, id: MaterialId) -> f32 {
+        self.flow_chances[id.0 as usize]
+    }
+
+    #[inline]
+    pub fn fall_steps(&self, id: MaterialId) -> (u8, f32) {
+        self.falls[id.0 as usize]
     }
 
     #[inline]

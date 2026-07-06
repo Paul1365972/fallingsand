@@ -215,6 +215,16 @@ fn select_material(
             hotbar.selected = index;
         }
     }
+    let len = hotbar.materials.len();
+    if len == 0 {
+        return;
+    }
+    if keys.just_pressed(KeyCode::BracketLeft) {
+        hotbar.selected = (hotbar.selected + len - 1) % len;
+    }
+    if keys.just_pressed(KeyCode::BracketRight) {
+        hotbar.selected = (hotbar.selected + 1) % len;
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

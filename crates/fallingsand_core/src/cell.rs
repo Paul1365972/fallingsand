@@ -34,6 +34,30 @@ impl Cell {
         self.shade_flags = (self.shade_flags & 0x0F) | (shade << 4);
     }
 
+    pub const FLOW_NONE: u8 = 0;
+    pub const FLOW_LEFT: u8 = 1;
+    pub const FLOW_RIGHT: u8 = 2;
+
+    pub const fn flow_state(self) -> u8 {
+        self.shade_flags & 0x03
+    }
+
+    pub fn set_flow_state(&mut self, state: u8) {
+        self.shade_flags = (self.shade_flags & !0x03) | (state & 0x03);
+    }
+
+    pub const fn flow_spent(self) -> bool {
+        self.shade_flags & 0x04 != 0
+    }
+
+    pub fn set_flow_spent(&mut self, spent: bool) {
+        if spent {
+            self.shade_flags |= 0x04;
+        } else {
+            self.shade_flags &= !0x04;
+        }
+    }
+
     pub const fn is_air(self) -> bool {
         self.material.0 == MaterialId::AIR.0
     }

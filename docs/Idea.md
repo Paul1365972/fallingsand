@@ -93,7 +93,8 @@ Target **4 bytes/cell**:
 struct Cell {
     material: MaterialId,  // u16 — index into the material registry
     shade_flags: u8,       // high nibble: color variation (visual only),
-                           // low nibble: reserved (burning is the fire phase, not a flag)
+                           // low nibble: 2 bits fluid flow direction, 1 bit flow spent, 1 reserved
+                           // (burning is the fire phase, not a flag)
     updated: u8,           // last-updated tick (low byte)
 }
 ```
@@ -125,6 +126,15 @@ Instead:
 - **Deferred world edits**: anything that reaches farther — explosions, structure placement — goes into a world-edit queue applied between phases instead of writing in-pass.
 - **Alternating raster order** per row + tick-seeded FxHash for left/right tie-breaking: cheap, stateless, reproducible randomness.
 - **Bottom-up scan** for gravity-dominated updates; per-material update rules dispatch on phase.
+- **Movement rules** (each grounded in a physical cause):
+  - **Corner sealing**: a diagonal move needs an open orthogonal path cell (below or beside; above or beside for gases) — two diagonally touching solids seal the gap, nothing passes a zero-width crack. Applies to powders, liquids, and gases.
+  - **Drop-seeking flow**: liquids move horizontally only toward a drop (gases mirrored, toward a rise). The scan range is universal (32 cells — pressure communicates across the surface regardless of material); `dispersion` caps how far the cell moves per event, and the momentum flag plus creep carry it the rest of the way. Flow is driven by a gradient toward somewhere lower; on a locally flat surface there is none, so blocked cells write nothing and pools sleep.
+  - **Pressure wake**: every move that vacates a cell marks a keep-alive strip (±32, three rows) around the vacancy, and reactions/decay that open a passage do the same — any sleeper whose scan range gained a drop gets re-evaluated. Wake reach always covers rule dependency reach; strips die the tick motion stops, so settled worlds still cost nothing. Leveling is exact within the 64-cell speed-of-light window; a bead and a dimple farther apart than that stay as ±1 surface texture until real pressure exists (open question below).
+  - **Terminal velocity as `fall_speed`** (cells per second, 0 = one cell per tick): falling cells cover multiple cells per tick through open air/gas, stopping above liquid surfaces (entry is percolation, one cell per tick). Drag balances gravity almost instantly at cell scale, so fall speed is a constant material property; fractional speeds resolve by tick-seeded roll.
+  - **Viscosity as `flow_rate`** (flow steps per second, 0 = unlimited): free fall through air always runs at full speed — gravity is material-independent — but diagonal, horizontal, and percolation moves only execute when a tick-seeded roll passes. A delayed move marks keep-alive (still flowing, zero bandwidth); no possible move marks nothing (settled). Lava oozes, water pours.
+  - **Momentum flag** (two Cell direction bits plus one spent bit): sideways and diagonal moves stamp the cell's horizontal direction, falls carry it along, and a landing splash stamps a coin direction on cells that fell in without one — impact deflects vertical motion sideways. Gravity moves (falls, diagonals, drop-seek) clear the spent bit: only descending buys new travel budget.
+  - **Surface creep** (what levels pools regardless of width — scan range only accelerates it): a liquid cell with a direction flag, no drop in reach, and liquid beneath glides on in its direction, descending every step it crosses until it rests in the lowest reachable spot. A fresh cell (no direction) sitting on liquid with an open side that continues the surface may start gliding once — this drains terrace edges. A blocked glider with an unspent budget reverses once (setting spent) — this frees beads wedged against a step face; blocked and spent, it stays silent but keeps its direction and resumes the moment its blocker drains. At most two monotone traversals per energy input, so motion always terminates; blocked cells write nothing, so finished pools sleep. Droplets on solids carry no creep (surface tension beads them in place). Water converges to flat ±1; viscous fluids may keep ±1 texture around the level (yield stress).
+  - **Condensation**: steam decays back into water — gas pockets resolve into drips instead of persisting forever, and no mass is created or destroyed.
 - **Dirty rects per chunk**: each chunk tracks the bounding rect of cells changed last tick (double-buffered: `bounds` / `old_bounds`).
   Every consumer keys off this:
   - the sim skips chunks with empty dirty rects (**chunk sleeping**),
