@@ -754,13 +754,15 @@ fn apply_buoyancy(
     body: &mut PixelBody,
     gravity: Fixed,
 ) {
+    const BEARING: [(i32, i32); 3] = [(0, -1), (-1, 0), (1, 0)];
     let (sin, cos) = quantized_trig(body.angle);
     let mut density_sum = 0.0f32;
     let mut samples = 0u32;
-    let mut waterline = i32::MIN;
+    let mut wet = 0u32;
     for &(lx, ly) in &body.perimeter {
         let pos = body.world_cell_with(sin, cos, body.x, body.y, lx as f32 + 0.5, ly as f32 + 0.5);
-        for (dx, dy) in NEIGHBORS {
+        let mut bearing = false;
+        for (dx, dy) in BEARING {
             let neighbor = pos.translated(dx, dy);
             if body.raster.covers(neighbor) {
                 continue;
@@ -772,37 +774,21 @@ fn apply_buoyancy(
             if material.phase == Phase::Liquid {
                 density_sum += material.density;
                 samples += 1;
-                waterline = waterline.max(neighbor.y);
+                bearing = true;
             }
         }
+        wet += bearing as u32;
     }
-    if samples == 0 {
+    if wet == 0 {
         return;
     }
 
-    let mut submerged = 0u32;
-    let mut count = 0u32;
-    for ly in 0..body.height {
-        for lx in 0..body.width {
-            if body.cell_at(lx, ly).is_air() {
-                continue;
-            }
-            count += 1;
-            let pos =
-                body.world_cell_with(sin, cos, body.x, body.y, lx as f32 + 0.5, ly as f32 + 0.5);
-            if pos.y <= waterline {
-                submerged += 1;
-            }
-        }
-    }
-    if submerged == 0 {
-        return;
-    }
-    let buoyant = submerged as f32 * (density_sum / samples as f32) / REFERENCE_DENSITY;
+    let count = body.cells.iter().filter(|cell| !cell.is_air()).count();
+    let submersion = wet as f32 / body.perimeter.len().max(1) as f32;
+    let buoyant = submersion * count as f32 * (density_sum / samples as f32) / REFERENCE_DENSITY;
     body.vy = body
         .vy
         .add_f32(-gravity.to_f32() * buoyant * body.inv_mass * TICK_DT);
-    let submersion = submerged as f32 / count.max(1) as f32;
     let speed = body.vx.to_f32().hypot(body.vy.to_f32());
     let drag =
         ((FLUID_DRAG_LINEAR + FLUID_DRAG_QUAD * speed) * submersion * TICK_DT).min(MAX_FLUID_DRAG);
