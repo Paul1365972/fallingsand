@@ -35,6 +35,8 @@ pub struct Material {
     #[serde(default)]
     pub hardness: f32,
     #[serde(default)]
+    pub restitution: f32,
+    #[serde(default)]
     pub contact_damage: f32,
     #[serde(default)]
     pub tags: Vec<String>,

@@ -110,7 +110,7 @@ Cheap, happens rarely, kills the bug class.
 A hardcoded material enum doesn't scale to a real material catalogue.
 Instead:
 
-- `data/materials.ron` defines materials: id, name, phase (solid/powder/liquid/gas/fire — Noita-style, fire is a cell phase), density, color palette, tags, decay chances, plus a reactions list with per-pair probability and tag operands (e.g. water + lava → steam + stone, fire + [burnable] → fire + fire).
+- `data/materials.ron` defines materials: id, name, phase (solid/powder/liquid/gas/fire — Noita-style, fire is a cell phase), density, restitution, color palette, tags, decay chances, plus a reactions list with per-pair probability and tag operands (e.g. water + lava → steam + stone, fire + [burnable] → fire + fire).
   Burn duration is probabilistic decay instead of Noita's per-cell fire_hp, keeping Cell at 4 bytes.
 - Loaded into a `MaterialRegistry` at startup.
   The server sends the client a hash to detect mismatch; later this enables server-side custom materials.
@@ -163,7 +163,7 @@ Everything collides against the cell grid directly, so changing terrain never re
 - **Everything overlapping exchanges momentum instead of blocking statically.**
   Cells already overlapping an entity's hitbox never obstruct its movement (depenetration law: you can always move out of an overlap, never deeper through fresh cells), so debris rasterized into your hull can't lock you in place.
   Both sides carry mass (players ~cell area at flesh density, body cells at material density): a body landing on a player shoves them down and gets shoved back, a player pushes light debris out of the way and merely bounces off a heavy slab, standing on a body transfers weight onto it, and a jump headbutts loose planks away.
-  Momentum is conserved in every exchange; contacts are inelastic, so energy only dissipates.
+  Momentum is conserved in every exchange; restitution is a material property (0 ≤ e < 1, from `materials.ron`, mass-weighted per body, max of the two sides per contact, inelastic below a small approach speed so things still come to rest), so a contact returns at most the energy it received — wood clatters, crystal rings, dirt thuds.
 - **Pixel bodies** are rigid bodies made of cells, and they stay rasterized in the grid at all times: a body is a motion record (local cell buffer, `Fixed` position and velocity, quantized 1/1024-turn rotation, spin, density-weighted mass and inertia) over real flagged world cells — one cell, one owner, with the flag meaning exactly "a live body's raster covers this cell".
   Solid materials marked `rigid_capable` in the registry participate.
   Flood-fill detects disconnected solid islands and registers them in place: cells never leave the grid, they just gain the body flag.

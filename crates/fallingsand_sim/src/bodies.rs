@@ -14,9 +14,9 @@ const WAKE_SPEED: f32 = 0.5;
 const SETTLE_SPEED_SQ: f32 = 100.0;
 const SETTLE_SPIN: f32 = 1.5;
 const SUPPORT_NORMAL_Y: f32 = 0.25;
-const CONTACT_DAMPING: f32 = 0.94;
+const CONTACT_KEEP_PER_SEC: f32 = 0.25;
 const BLOCKED_DAMPING: f32 = 0.5;
-const RESTITUTION: f32 = 0.0;
+const BOUNCE_MIN_SPEED: f32 = 30.0;
 const FRICTION: f32 = 0.4;
 const CONTACT_ITERATIONS: usize = 4;
 const PENETRATION_CORRECTION: f32 = 0.5;
@@ -73,6 +73,7 @@ pub struct PixelBody {
     pub spin: f32,
     pub inv_mass: f32,
     pub inv_inertia: f32,
+    pub restitution: f32,
     pub rest_secs: f32,
     pub raster: Raster,
     pub frozen: bool,
@@ -132,6 +133,7 @@ struct Shape {
     mass: f32,
     com: (f32, f32),
     inertia: f32,
+    restitution: f32,
     perimeter: Vec<(u8, u8)>,
 }
 
@@ -143,6 +145,7 @@ fn derive_shape(
 ) -> Option<Shape> {
     let mut mass = 0.0f32;
     let mut com = (0.0f32, 0.0f32);
+    let mut restitution = 0.0f32;
     for ly in 0..height {
         for lx in 0..width {
             let cell = cells[ly as usize * width as usize + lx as usize];
@@ -153,6 +156,7 @@ fn derive_shape(
             mass += m;
             com.0 += m * (lx as f32 + 0.5);
             com.1 += m * (ly as f32 + 0.5);
+            restitution += m * registry.get(cell.material).restitution;
         }
     }
     if mass <= 0.0 {
@@ -160,6 +164,7 @@ fn derive_shape(
     }
     com.0 /= mass;
     com.1 /= mass;
+    restitution /= mass;
 
     let mut inertia = 0.0f32;
     let mut perimeter = Vec::new();
@@ -191,6 +196,7 @@ fn derive_shape(
         mass,
         com,
         inertia,
+        restitution,
         perimeter,
     })
 }
@@ -276,6 +282,7 @@ pub fn register_body(
         spin: 0.0,
         inv_mass: 1.0 / shape.mass,
         inv_inertia: 1.0 / shape.inertia,
+        restitution: shape.restitution,
         rest_secs: 0.0,
         raster: Raster::default(),
         frozen: false,
@@ -428,6 +435,7 @@ fn split_body(
             spin: body.spin,
             inv_mass: 1.0 / shape.mass,
             inv_inertia: 1.0 / shape.inertia,
+            restitution: shape.restitution,
             rest_secs: 0.0,
             raster: Raster::default(),
             frozen: false,
@@ -486,6 +494,7 @@ struct Contact {
     nx: f32,
     ny: f32,
     depth: f32,
+    restitution: f32,
     other: Other,
 }
 
@@ -528,6 +537,7 @@ fn find_contacts(
         }
 
         let mut depth = 0.5;
+        let mut surface = 0.0f32;
         let other = match world.get_cell(pos) {
             None => Other::Terrain,
             Some(cell) if cell.is_body() => {
@@ -537,6 +547,7 @@ fn find_contacts(
                 match owner {
                     Some(other_index) => {
                         let other = &bodies[other_index];
+                        surface = other.restitution;
                         Other::Body {
                             index: other_index,
                             inv_mass: other.inv_mass,
@@ -549,7 +560,10 @@ fn find_contacts(
                             resting: other.asleep || other.rest_secs > 0.0,
                         }
                     }
-                    None => Other::Terrain,
+                    None => {
+                        surface = registry.get(cell.material).restitution;
+                        Other::Terrain
+                    }
                 }
             }
             Some(cell)
@@ -558,6 +572,7 @@ fn find_contacts(
                     Phase::Solid | Phase::Powder
                 ) =>
             {
+                surface = registry.get(cell.material).restitution;
                 Other::Terrain
             }
             Some(_) => {
@@ -613,6 +628,7 @@ fn find_contacts(
             nx,
             ny,
             depth,
+            restitution: surface,
             other,
         });
     }
@@ -694,7 +710,7 @@ pub fn step_bodies(
             let travel = ((vx * vx + vy * vy).sqrt() + body.spin.abs() * radius) * TICK_DT;
             ((travel / SUBSTEP_TRAVEL).ceil() as u32).max(1)
         };
-        let damping = CONTACT_DAMPING.powf(1.0 / substeps as f32);
+        let damping = CONTACT_KEEP_PER_SEC.powf(TICK_DT / substeps as f32);
 
         for _ in 0..substeps {
             step_substep(
@@ -864,7 +880,12 @@ fn step_substep(
                     + other_inv_mass
                     + r_cross_n * r_cross_n * body.inv_inertia
                     + r2_cross_n * r2_cross_n * other_inv_inertia;
-                let jn = -(1.0 + RESTITUTION) * vn / k;
+                let bounce = if -vn > BOUNCE_MIN_SPEED {
+                    body.restitution.max(contact.restitution)
+                } else {
+                    0.0
+                };
+                let jn = -(1.0 + bounce) * vn / k;
                 vx += jn * contact.nx * body.inv_mass;
                 vy += jn * contact.ny * body.inv_mass;
                 body.spin += r_cross_n * jn * body.inv_inertia;

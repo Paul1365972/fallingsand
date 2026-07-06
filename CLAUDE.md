@@ -16,7 +16,7 @@ cargo run -p fallingsand_client --features dev
 ## Ideology
 
 - Conservation of mass: cells are never created or destroyed without a physical cause (a reaction, explicit consumption); overlaps and awkward states resolve by displacement, never by deleting whichever cell is inconvenient.
-- Momentum is conserved in every exchange; contacts are inelastic — energy only dissipates, never appears.
+- Momentum is conserved in every exchange; restitution is a material property (0 ≤ e < 1) — a contact returns at most the energy it received, never more.
 - One cell, one owner: double occupancy by terrain, rigid bodies, or entities is an architecture bug, not a tuning problem.
 - Every matter-affecting system handles all matter kinds — grid cells, powders/fluids, rigid bodies, entities — or explicitly flags the gap (a fallen tree must burn).
 - Physics is semi-realistic and phase-based; no artificial caps or clamps that distort it.
