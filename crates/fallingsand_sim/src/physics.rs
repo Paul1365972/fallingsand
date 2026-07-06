@@ -1,20 +1,22 @@
 use crate::obstacles::Obstacles;
 use crate::world::CellWorld;
-use fallingsand_core::{Cell, CellPos, MaterialRegistry, Phase};
+use fallingsand_core::{Cell, CellPos, Fixed, MaterialRegistry, Phase, TICK_DT};
 
 pub const STEP_UP_CELLS: i32 = 3;
 pub const STEP_DOWN_CELLS: i32 = 3;
-const SKIN: f32 = 1e-4;
 const COYOTE_SECS: f32 = 0.1;
 const BUFFER_SECS: f32 = 0.1;
 const VAR_JUMP_TIME: f32 = 0.2;
 const CEILING_VAR_JUMP_GRACE: f32 = 0.15;
 const UPWARD_CORNER_CORRECTION: i32 = 4;
-const SWIM_BEGIN_DAMP: f32 = 0.5;
-const UNDERWATER_PROBE_ABOVE_FEET: f32 = 9.0;
+const SWIM_BEGIN_DAMP: Fixed = Fixed::from_f32(0.5);
+const UNDERWATER_PROBE_ABOVE_FEET: Fixed = Fixed::from_int(9);
 const WADE_UP_CELLS: usize = 4;
 const WADE_SIDE_CELLS: usize = 2;
-const WADE_DAMP: f32 = 0.7;
+const WADE_DAMP: Fixed = Fixed::from_f32(0.7);
+const GROUND_PROBE: Fixed = Fixed::SUBUNIT;
+const CLIMB_COST: Fixed = Fixed::HALF;
+const CLIMB_DRAIN: Fixed = Fixed::HALF;
 const MAX_DISPLACED: usize = 16;
 const SCATTER_RADIUS: i32 = 6;
 
@@ -28,26 +30,28 @@ impl CellSource for CellWorld {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Body {
-    pub x: f32,
-    pub y: f32,
-    pub vx: f32,
-    pub vy: f32,
-    pub half_w: f32,
-    pub half_h: f32,
+    pub x: Fixed,
+    pub y: Fixed,
+    pub vx: Fixed,
+    pub vy: Fixed,
+    pub half_w: Fixed,
+    pub half_h: Fixed,
+    pub climb_debt: Fixed,
     pub on_ground: bool,
 }
 
 impl Body {
-    pub fn new(x: f32, y: f32, half_w: f32, half_h: f32) -> Self {
+    pub fn new(x: Fixed, y: Fixed, half_w: Fixed, half_h: Fixed) -> Self {
         Self {
             x,
             y,
-            vx: 0.0,
-            vy: 0.0,
+            vx: Fixed::ZERO,
+            vy: Fixed::ZERO,
             half_w,
             half_h,
+            climb_debt: Fixed::ZERO,
             on_ground: false,
         }
     }
@@ -59,8 +63,8 @@ pub struct Controller {
     buffer: f32,
     jump_held: bool,
     var_jump_timer: f32,
-    var_jump_speed: f32,
-    max_fall: f32,
+    var_jump_speed: Fixed,
+    max_fall: Fixed,
     ducking: bool,
     in_water: bool,
 }
@@ -88,12 +92,12 @@ pub fn cell_liquid<W: CellSource>(world: &W, registry: &MaterialRegistry, pos: C
     }
 }
 
-fn cell_bounds(cx: f32, cy: f32, half_w: f32, half_h: f32) -> (i32, i32, i32, i32) {
+fn cell_bounds(cx: Fixed, cy: Fixed, half_w: Fixed, half_h: Fixed) -> (i32, i32, i32, i32) {
     (
-        (cx - half_w + SKIN).floor() as i32,
-        (cy - half_h + SKIN).floor() as i32,
-        (cx + half_w - SKIN).floor() as i32,
-        (cy + half_h - SKIN).floor() as i32,
+        (cx - half_w).floor_cell(),
+        (cy - half_h).floor_cell(),
+        (cx + half_w).max_cell(),
+        (cy + half_h).max_cell(),
     )
 }
 
@@ -101,8 +105,8 @@ fn rect_blocked<W: CellSource>(
     world: &W,
     registry: &MaterialRegistry,
     body: &Body,
-    cx: f32,
-    cy: f32,
+    cx: Fixed,
+    cy: Fixed,
 ) -> bool {
     let cur = cell_bounds(body.x, body.y, body.half_w, body.half_h);
     let (x0, y0, x1, y1) = cell_bounds(cx, cy, body.half_w, body.half_h);
@@ -121,60 +125,60 @@ pub fn body_submerged<W: CellSource>(world: &W, registry: &MaterialRegistry, bod
     cell_liquid(
         world,
         registry,
-        CellPos::new(body.x.floor() as i32, body.y.floor() as i32),
+        CellPos::new(body.x.floor_cell(), body.y.floor_cell()),
     )
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlayerParams {
-    pub max_run: f32,
-    pub run_accel: f32,
-    pub run_reduce: f32,
-    pub air_mult: f32,
-    pub duck_friction: f32,
-    pub gravity: f32,
-    pub half_grav_threshold: f32,
-    pub max_fall: f32,
-    pub fast_max_fall: f32,
-    pub fast_max_accel: f32,
-    pub jump_speed: f32,
-    pub jump_h_boost: f32,
-    pub stand_half_h: f32,
-    pub duck_half_h: f32,
-    pub swim_max: f32,
-    pub swim_underwater_max: f32,
-    pub swim_accel: f32,
-    pub swim_reduce: f32,
-    pub swim_max_rise: f32,
+    pub max_run: Fixed,
+    pub run_accel: Fixed,
+    pub run_reduce: Fixed,
+    pub air_mult: Fixed,
+    pub duck_friction: Fixed,
+    pub gravity: Fixed,
+    pub half_grav_threshold: Fixed,
+    pub max_fall: Fixed,
+    pub fast_max_fall: Fixed,
+    pub fast_max_accel: Fixed,
+    pub jump_speed: Fixed,
+    pub jump_h_boost: Fixed,
+    pub stand_half_h: Fixed,
+    pub duck_half_h: Fixed,
+    pub swim_max: Fixed,
+    pub swim_underwater_max: Fixed,
+    pub swim_accel: Fixed,
+    pub swim_reduce: Fixed,
+    pub swim_max_rise: Fixed,
 }
 
 impl Default for PlayerParams {
     fn default() -> Self {
         Self {
-            max_run: 90.0,
-            run_accel: 1000.0,
-            run_reduce: 400.0,
-            air_mult: 0.65,
-            duck_friction: 500.0,
-            gravity: 900.0,
-            half_grav_threshold: 40.0,
-            max_fall: 160.0,
-            fast_max_fall: 240.0,
-            fast_max_accel: 300.0,
-            jump_speed: 105.0,
-            jump_h_boost: 40.0,
-            stand_half_h: 5.5,
-            duck_half_h: 3.0,
-            swim_max: 80.0,
-            swim_underwater_max: 60.0,
-            swim_accel: 600.0,
-            swim_reduce: 400.0,
-            swim_max_rise: 60.0,
+            max_run: Fixed::from_int(90),
+            run_accel: Fixed::from_int(1000),
+            run_reduce: Fixed::from_int(400),
+            air_mult: Fixed::from_f32(0.65),
+            duck_friction: Fixed::from_int(500),
+            gravity: Fixed::from_int(900),
+            half_grav_threshold: Fixed::from_int(40),
+            max_fall: Fixed::from_int(160),
+            fast_max_fall: Fixed::from_int(240),
+            fast_max_accel: Fixed::from_int(300),
+            jump_speed: Fixed::from_int(105),
+            jump_h_boost: Fixed::from_int(40),
+            stand_half_h: Fixed::from_f32(5.5),
+            duck_half_h: Fixed::from_int(3),
+            swim_max: Fixed::from_int(80),
+            swim_underwater_max: Fixed::from_int(60),
+            swim_accel: Fixed::from_int(600),
+            swim_reduce: Fixed::from_int(400),
+            swim_max_rise: Fixed::from_int(60),
         }
     }
 }
 
-fn approach(value: f32, target: f32, delta: f32) -> f32 {
+fn approach(value: Fixed, target: Fixed, delta: Fixed) -> Fixed {
     if value < target {
         (value + delta).min(target)
     } else {
@@ -192,27 +196,26 @@ pub fn step_player<W: CellSource>(
     move_x: i8,
     jump_held: bool,
     down_held: bool,
-    dt: f32,
 ) -> MoveResult {
     let pressed = jump_held && !ctrl.jump_held;
     ctrl.jump_held = jump_held;
     ctrl.buffer = if pressed {
         BUFFER_SECS
     } else {
-        (ctrl.buffer - dt).max(0.0)
+        (ctrl.buffer - TICK_DT).max(0.0)
     };
     ctrl.coyote = if body.on_ground {
         COYOTE_SECS
     } else {
-        (ctrl.coyote - dt).max(0.0)
+        (ctrl.coyote - TICK_DT).max(0.0)
     };
-    ctrl.var_jump_timer = (ctrl.var_jump_timer - dt).max(0.0);
+    ctrl.var_jump_timer = (ctrl.var_jump_timer - TICK_DT).max(0.0);
 
-    let move_x = move_x.clamp(-1, 1) as f32;
+    let move_x = move_x.clamp(-1, 1) as i32;
     let in_water = body_submerged(world, registry, body);
     let entered_water = in_water && !ctrl.in_water;
     ctrl.in_water = in_water;
-    let swimming = in_water && !(ctrl.var_jump_timer > 0.0 && body.vy > 0.0);
+    let swimming = in_water && !(ctrl.var_jump_timer > 0.0 && body.vy > Fixed::ZERO);
     if swimming {
         swim_update(
             world,
@@ -224,19 +227,22 @@ pub fn step_player<W: CellSource>(
             jump_held,
             down_held,
             entered_water,
-            dt,
         );
     } else {
         normal_update(
-            world, registry, params, body, ctrl, move_x, jump_held, down_held, dt,
+            world, registry, params, body, ctrl, move_x, jump_held, down_held,
         );
     }
 
-    let result = move_body(world, registry, body, dt);
+    let result = move_body(world, registry, body);
     if result.hit_ceiling && ctrl.var_jump_timer < CEILING_VAR_JUMP_GRACE {
         ctrl.var_jump_timer = 0.0;
     }
     result
+}
+
+fn same_direction(v: Fixed, dir: i32) -> bool {
+    (dir > 0 && v > Fixed::ZERO) || (dir < 0 && v < Fixed::ZERO)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -246,10 +252,9 @@ fn normal_update<W: CellSource>(
     params: &PlayerParams,
     body: &mut Body,
     ctrl: &mut Controller,
-    move_x: f32,
+    move_x: i32,
     jump_held: bool,
     down_held: bool,
-    dt: f32,
 ) {
     if !ctrl.ducking && down_held {
         duck(params, body, ctrl);
@@ -258,16 +263,20 @@ fn normal_update<W: CellSource>(
     }
 
     if body.on_ground && ctrl.ducking {
-        body.vx = approach(body.vx, 0.0, params.duck_friction * dt);
+        body.vx = approach(body.vx, Fixed::ZERO, params.duck_friction.per_tick());
     } else {
-        let mult = if body.on_ground { 1.0 } else { params.air_mult };
-        let target = move_x * params.max_run;
-        let rate = if move_x != 0.0 && body.vx * move_x > 0.0 && body.vx.abs() > params.max_run {
+        let mult = if body.on_ground {
+            Fixed::ONE
+        } else {
+            params.air_mult
+        };
+        let target = params.max_run.mul_int(move_x);
+        let rate = if same_direction(body.vx, move_x) && body.vx.abs() > params.max_run {
             params.run_reduce
         } else {
             params.run_accel
         };
-        body.vx = approach(body.vx, target, rate * mult * dt);
+        body.vx = approach(body.vx, target, rate.mul(mult).per_tick());
     }
 
     ctrl.max_fall = ctrl.max_fall.max(params.max_fall);
@@ -277,15 +286,19 @@ fn normal_update<W: CellSource>(
     } else {
         params.max_fall
     };
-    ctrl.max_fall = approach(ctrl.max_fall, fall_target, params.fast_max_accel * dt);
+    ctrl.max_fall = approach(ctrl.max_fall, fall_target, params.fast_max_accel.per_tick());
 
     if !body.on_ground {
         let gmult = if body.vy.abs() <= params.half_grav_threshold && jump_held {
-            0.5
+            Fixed::HALF
         } else {
-            1.0
+            Fixed::ONE
         };
-        body.vy = approach(body.vy, -ctrl.max_fall, params.gravity * gmult * dt);
+        body.vy = approach(
+            body.vy,
+            -ctrl.max_fall,
+            params.gravity.mul(gmult).per_tick(),
+        );
     }
 
     if ctrl.var_jump_timer > 0.0 {
@@ -308,21 +321,20 @@ fn swim_update<W: CellSource>(
     params: &PlayerParams,
     body: &mut Body,
     ctrl: &mut Controller,
-    move_x: f32,
+    move_x: i32,
     jump_held: bool,
     down_held: bool,
     entered_water: bool,
-    dt: f32,
 ) {
-    if entered_water && body.vy < 0.0 {
-        body.vy *= SWIM_BEGIN_DAMP;
+    if entered_water && body.vy < Fixed::ZERO {
+        body.vy = body.vy.mul(SWIM_BEGIN_DAMP);
     }
     if ctrl.ducking && can_unduck(world, registry, params, body) {
         unduck(params, body, ctrl);
     }
     let probe = CellPos::new(
-        body.x.floor() as i32,
-        (body.y - body.half_h + UNDERWATER_PROBE_ABOVE_FEET).floor() as i32,
+        body.x.floor_cell(),
+        (body.y - body.half_h + UNDERWATER_PROBE_ABOVE_FEET).floor_cell(),
     );
     let underwater = cell_liquid(world, registry, probe);
     if !underwater && ctrl.buffer > 0.0 {
@@ -335,32 +347,32 @@ fn swim_update<W: CellSource>(
     } else {
         params.swim_max
     };
-    let rate_x = if move_x != 0.0 && body.vx * move_x > 0.0 && body.vx.abs() > max_x {
+    let rate_x = if same_direction(body.vx, move_x) && body.vx.abs() > max_x {
         params.swim_reduce
     } else {
         params.swim_accel
     };
-    body.vx = approach(body.vx, move_x * max_x, rate_x * dt);
+    body.vx = approach(body.vx, max_x.mul_int(move_x), rate_x.per_tick());
 
-    let move_y = (jump_held as i8 - down_held as i8) as f32;
-    if move_y != 0.0 {
-        let rate_y = if body.vy * move_y > 0.0 && body.vy.abs() > params.swim_max {
+    let move_y = jump_held as i32 - down_held as i32;
+    if move_y != 0 {
+        let rate_y = if same_direction(body.vy, move_y) && body.vy.abs() > params.swim_max {
             params.swim_reduce
         } else {
             params.swim_accel
         };
-        body.vy = approach(body.vy, move_y * params.swim_max, rate_y * dt);
+        body.vy = approach(body.vy, params.swim_max.mul_int(move_y), rate_y.per_tick());
     } else if !underwater {
-        body.vy = approach(body.vy, params.swim_max_rise, params.swim_accel * dt);
+        body.vy = approach(body.vy, params.swim_max_rise, params.swim_accel.per_tick());
     } else {
-        body.vy = approach(body.vy, 0.0, params.swim_accel * dt);
+        body.vy = approach(body.vy, Fixed::ZERO, params.swim_accel.per_tick());
     }
 }
 
-fn jump(params: &PlayerParams, body: &mut Body, ctrl: &mut Controller, move_x: f32) {
+fn jump(params: &PlayerParams, body: &mut Body, ctrl: &mut Controller, move_x: i32) {
     ctrl.buffer = 0.0;
     ctrl.coyote = 0.0;
-    body.vx += params.jump_h_boost * move_x;
+    body.vx += params.jump_h_boost.mul_int(move_x);
     body.vy = params.jump_speed;
     ctrl.var_jump_timer = VAR_JUMP_TIME;
     ctrl.var_jump_speed = body.vy;
@@ -475,8 +487,11 @@ impl Blockage {
             && displaced.len() + self.powder.len() <= MAX_DISPLACED
     }
 
-    fn wade(self, displaced: &mut Vec<CellPos>) -> f32 {
-        let damp = WADE_DAMP.powi(self.powder.len() as i32);
+    fn wade(self, displaced: &mut Vec<CellPos>) -> Fixed {
+        let mut damp = Fixed::ONE;
+        for _ in 0..self.powder.len() {
+            damp = damp.mul(WADE_DAMP);
+        }
         displaced.extend(self.powder);
         damp
     }
@@ -491,8 +506,8 @@ fn passage<W: CellSource>(
     world: &W,
     registry: &MaterialRegistry,
     body: &Body,
-    cx: f32,
-    cy: f32,
+    cx: Fixed,
+    cy: Fixed,
     displaced: &[CellPos],
 ) -> Blockage {
     let cur = cell_bounds(body.x, body.y, body.half_w, body.half_h);
@@ -531,53 +546,39 @@ fn try_step_up<W: CellSource>(
     registry: &MaterialRegistry,
     body: &mut Body,
     blockage: &Blockage,
-    dir: i32,
-    target: &mut f32,
-) -> Option<bool> {
-    let step_top = blockage.step_top()?;
-    let rise_needed = (step_top + 1) as f32 - (body.y - body.half_h);
-    if rise_needed <= 0.0 || rise_needed > STEP_UP_CELLS as f32 {
-        return None;
-    }
-    let near = blockage.near_col(dir)?;
-    let dirf = dir as f32;
-    let flush_x = if dir > 0 {
-        near as f32 - body.half_w
-    } else {
-        (near + 1) as f32 + body.half_w
+) -> bool {
+    let Some(step_top) = blockage.step_top() else {
+        return false;
     };
-    let budget = ((*target - flush_x) * dirf).max(0.0);
-    let rise = rise_needed.min(budget);
-    if rise <= 0.0 {
-        body.x = flush_x;
-        return Some(false);
+    let rise_needed = Fixed::from_cell(step_top + 1) - (body.y - body.half_h);
+    if rise_needed <= Fixed::ZERO || rise_needed > Fixed::from_int(STEP_UP_CELLS) {
+        return false;
     }
-    if rect_blocked(world, registry, body, flush_x, body.y + rise) {
-        return None;
+    if rect_blocked(world, registry, body, body.x, body.y + rise_needed) {
+        return false;
     }
-    body.x = flush_x;
-    body.y += rise;
-    *target = flush_x + dirf * (budget - rise);
-    Some(rise + SKIN >= rise_needed)
+    body.y += rise_needed;
+    body.climb_debt += rise_needed.mul(CLIMB_COST);
+    true
 }
 
 fn corner_correct<W: CellSource>(
     world: &W,
     registry: &MaterialRegistry,
     body: &Body,
-    next_y: f32,
+    next_y: Fixed,
     displaced: &[CellPos],
-) -> Option<f32> {
-    let mut sides: Vec<f32> = Vec::new();
-    if body.vx <= 0.01 {
-        sides.push(-1.0);
+) -> Option<Fixed> {
+    let mut sides: Vec<i32> = Vec::new();
+    if body.vx <= Fixed::ZERO {
+        sides.push(-1);
     }
-    if body.vx >= -0.01 {
-        sides.push(1.0);
+    if body.vx >= Fixed::ZERO {
+        sides.push(1);
     }
     for side in sides {
         for off in 1..=UPWARD_CORNER_CORRECTION {
-            let cand_x = body.x + side * off as f32;
+            let cand_x = body.x + Fixed::from_int(side * off);
             if passage(world, registry, body, cand_x, next_y, displaced).free() {
                 return Some(cand_x);
             }
@@ -590,45 +591,58 @@ pub fn move_body<W: CellSource>(
     world: &W,
     registry: &MaterialRegistry,
     body: &mut Body,
-    dt: f32,
 ) -> MoveResult {
     let mut result = MoveResult::default();
     let was_grounded = body.on_ground;
     body.on_ground = false;
-    let remaining_x = body.vx * dt;
-    let remaining_y = body.vy * dt;
+    let mut remaining_x = body.vx.per_tick();
+    let remaining_y = body.vy.per_tick();
+
+    if remaining_x == Fixed::ZERO {
+        body.climb_debt = Fixed::ZERO;
+    } else {
+        let drain = body.climb_debt.mul(CLIMB_DRAIN).min(remaining_x.abs());
+        body.climb_debt -= drain;
+        remaining_x = if remaining_x > Fixed::ZERO {
+            remaining_x - drain
+        } else {
+            remaining_x + drain
+        };
+    }
 
     let mut climbed = false;
-    if remaining_x.abs() > SKIN {
-        let dir = if remaining_x > 0.0 { 1i32 } else { -1 };
-        let dirf = dir as f32;
+    if remaining_x != Fixed::ZERO {
+        let dir = if remaining_x > Fixed::ZERO { 1i32 } else { -1 };
         let mut target = body.x + remaining_x;
-        let mut col = (body.x + dirf * body.half_w - dirf * SKIN).floor() as i32;
+        let mut col = if dir > 0 {
+            (body.x + body.half_w).max_cell()
+        } else {
+            (body.x - body.half_w).floor_cell()
+        };
         loop {
             let next_col = col + dir;
-            let entry_face = if dir > 0 {
-                next_col as f32 + SKIN
+            let next_x = if dir > 0 {
+                Fixed::from_cell(next_col) + Fixed::SUBUNIT - body.half_w
             } else {
-                (next_col + 1) as f32 - 2.0 * SKIN
+                Fixed::from_cell(next_col + 1) - Fixed::SUBUNIT + body.half_w
             };
-            let next_x = entry_face - dirf * body.half_w;
-            if (next_x - target) * dirf >= 0.0 {
+            let overshoots = if dir > 0 {
+                next_x >= target
+            } else {
+                next_x <= target
+            };
+            if overshoots {
                 let blockage = passage(world, registry, body, target, body.y, &result.displaced);
                 if blockage.free() {
                     body.x = target;
                     break;
                 }
-                if let Some(cleared) =
-                    try_step_up(world, registry, body, &blockage, dir, &mut target)
-                {
+                if try_step_up(world, registry, body, &blockage) {
                     climbed = true;
-                    if cleared {
-                        continue;
-                    }
-                    break;
+                    continue;
                 }
-                result.record_blocked(&blockage.solids, body.vx, 0.0);
-                body.vx = 0.0;
+                result.record_blocked(&blockage.solids, body.vx.to_f32(), 0.0);
+                body.vx = Fixed::ZERO;
                 break;
             }
             let blockage = passage(world, registry, body, next_x, body.y, &result.displaced);
@@ -637,31 +651,28 @@ pub fn move_body<W: CellSource>(
                 col = next_col;
                 continue;
             }
-            if let Some(cleared) = try_step_up(world, registry, body, &blockage, dir, &mut target) {
+            if try_step_up(world, registry, body, &blockage) {
                 climbed = true;
-                if cleared {
-                    continue;
-                }
-                break;
+                continue;
             }
             if blockage.wadeable(WADE_SIDE_CELLS, &result.displaced) {
                 let damp = blockage.wade(&mut result.displaced);
                 body.x = next_x;
                 col = next_col;
-                body.vx *= damp;
-                target = body.x + (target - body.x) * damp;
+                body.vx = body.vx.mul(damp);
+                target = body.x + (target - body.x).mul(damp);
                 continue;
             }
-            result.record_blocked(&blockage.solids, body.vx, 0.0);
+            result.record_blocked(&blockage.solids, body.vx.to_f32(), 0.0);
             let snap = blockage.near_col(dir);
             blockage.dig(&mut result.displaced);
             body.x = match snap {
-                Some(near) if dir > 0 => near as f32 - body.half_w,
-                Some(near) => (near + 1) as f32 + body.half_w,
-                None if dir > 0 => next_col as f32 - body.half_w,
-                None => (next_col + 1) as f32 + body.half_w,
+                Some(near) if dir > 0 => Fixed::from_cell(near) - body.half_w,
+                Some(near) => Fixed::from_cell(near + 1) + body.half_w,
+                None if dir > 0 => Fixed::from_cell(next_col) - body.half_w,
+                None => Fixed::from_cell(next_col + 1) + body.half_w,
             };
-            body.vx = 0.0;
+            body.vx = Fixed::ZERO;
             break;
         }
     }
@@ -670,14 +681,16 @@ pub fn move_body<W: CellSource>(
         body.on_ground = true;
     }
 
-    if was_grounded && body.vy <= 0.0 && !rect_blocked(world, registry, body, body.x, body.y - 0.1)
+    if was_grounded
+        && body.vy <= Fixed::ZERO
+        && !rect_blocked(world, registry, body, body.x, body.y - GROUND_PROBE)
     {
         for down in 1..=STEP_DOWN_CELLS {
-            let next_y = body.y - down as f32;
+            let next_y = body.y - Fixed::from_int(down);
             if rect_blocked(world, registry, body, body.x, next_y) {
                 break;
             }
-            if rect_blocked(world, registry, body, body.x, next_y - 0.1) {
+            if rect_blocked(world, registry, body, body.x, next_y - GROUND_PROBE) {
                 body.y = next_y;
                 body.on_ground = true;
                 break;
@@ -685,29 +698,36 @@ pub fn move_body<W: CellSource>(
         }
     }
 
-    if remaining_y.abs() > SKIN {
-        let dir = if remaining_y > 0.0 { 1i32 } else { -1 };
-        let dirf = dir as f32;
+    if remaining_y != Fixed::ZERO {
+        let dir = if remaining_y > Fixed::ZERO { 1i32 } else { -1 };
         let mut target = body.y + remaining_y;
-        let mut row = (body.y + dirf * body.half_h - dirf * SKIN).floor() as i32;
+        let mut row = if dir > 0 {
+            (body.y + body.half_h).max_cell()
+        } else {
+            (body.y - body.half_h).floor_cell()
+        };
         loop {
             let next_row = row + dir;
-            let entry_face = if dir > 0 {
-                next_row as f32 + SKIN
+            let next_y = if dir > 0 {
+                Fixed::from_cell(next_row) + Fixed::SUBUNIT - body.half_h
             } else {
-                (next_row + 1) as f32 - 2.0 * SKIN
+                Fixed::from_cell(next_row + 1) - Fixed::SUBUNIT + body.half_h
             };
-            let next_y = entry_face - dirf * body.half_h;
-            if (next_y - target) * dirf >= 0.0 {
+            let overshoots = if dir > 0 {
+                next_y >= target
+            } else {
+                next_y <= target
+            };
+            if overshoots {
                 let blockage = passage(world, registry, body, body.x, target, &result.displaced);
                 if blockage.free() {
                     body.y = target;
                 } else {
-                    result.record_blocked(&blockage.solids, 0.0, body.vy);
+                    result.record_blocked(&blockage.solids, 0.0, body.vy.to_f32());
                     if dir > 0 {
                         result.hit_ceiling = true;
                     }
-                    body.vy = 0.0;
+                    body.vy = Fixed::ZERO;
                 }
                 break;
             }
@@ -719,8 +739,8 @@ pub fn move_body<W: CellSource>(
                 let damp = blockage.wade(&mut result.displaced);
                 body.y = next_y;
                 row = next_row;
-                body.vy *= damp;
-                target = body.y + (target - body.y) * damp;
+                body.vy = body.vy.mul(damp);
+                target = body.y + (target - body.y).mul(damp);
             } else {
                 if dir > 0 {
                     if let Some(corrected_x) =
@@ -733,25 +753,25 @@ pub fn move_body<W: CellSource>(
                     }
                     result.hit_ceiling = true;
                 }
-                result.record_blocked(&blockage.solids, 0.0, body.vy);
+                result.record_blocked(&blockage.solids, 0.0, body.vy.to_f32());
                 body.y = match blockage.near_row(dir) {
-                    Some(near) if dir > 0 => near as f32 - body.half_h,
-                    Some(near) => (near + 1) as f32 + body.half_h,
-                    None if dir > 0 => next_row as f32 - body.half_h,
-                    None => (next_row + 1) as f32 + body.half_h,
+                    Some(near) if dir > 0 => Fixed::from_cell(near) - body.half_h,
+                    Some(near) => Fixed::from_cell(near + 1) + body.half_h,
+                    None if dir > 0 => Fixed::from_cell(next_row) - body.half_h,
+                    None => Fixed::from_cell(next_row + 1) + body.half_h,
                 };
                 if dir < 0 {
                     body.on_ground = true;
                 }
-                body.vy = 0.0;
+                body.vy = Fixed::ZERO;
                 break;
             }
         }
     }
 
-    if body.vy <= 0.0
+    if body.vy <= Fixed::ZERO
         && !body.on_ground
-        && rect_blocked(world, registry, body, body.x, body.y - 0.1)
+        && rect_blocked(world, registry, body, body.x, body.y - GROUND_PROBE)
     {
         body.on_ground = true;
     }
@@ -765,9 +785,9 @@ pub fn scatter_powder(
     body: &Body,
     cells: &[CellPos],
 ) {
-    let dir = if body.vx > 1.0 {
+    let dir = if body.vx > Fixed::ONE {
         1
-    } else if body.vx < -1.0 {
+    } else if body.vx < -Fixed::ONE {
         -1
     } else {
         0
@@ -795,9 +815,9 @@ pub fn scatter_powder(
                 if obstacles.occupied(target) {
                     continue;
                 }
-                let (tx, ty) = (target.x as f32 + 0.5, target.y as f32 + 0.5);
-                if (tx - body.x).abs() < body.half_w + 0.5
-                    && (ty - body.y).abs() < body.half_h + 0.5
+                let (tx, ty) = (Fixed::cell_center(target.x), Fixed::cell_center(target.y));
+                if (tx - body.x).abs() < body.half_w + Fixed::HALF
+                    && (ty - body.y).abs() < body.half_h + Fixed::HALF
                 {
                     continue;
                 }

@@ -1,4 +1,4 @@
-use fallingsand_core::{CellPos, ChunkPos, DirtyRect, MaterialId};
+use fallingsand_core::{CellPos, ChunkPos, DirtyRect, Fixed, MaterialId};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -56,8 +56,8 @@ impl Default for PlayerInput {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct EntityState {
     pub player: PlayerId,
-    pub x: f32,
-    pub y: f32,
+    pub x: Fixed,
+    pub y: Fixed,
     pub hp: f32,
     pub ducking: bool,
 }
@@ -65,8 +65,8 @@ pub struct EntityState {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PixelBodyState {
     pub id: u32,
-    pub x: f32,
-    pub y: f32,
+    pub x: Fixed,
+    pub y: Fixed,
     pub angle: f32,
 }
 

@@ -1,6 +1,6 @@
 use fallingsand_core::{
-    CHUNK_AREA, CHUNK_SIZE, Cell, ChunkOffset, DirtyRect, MaterialId, REGION_AREA_CHUNKS, Region,
-    RegionPos,
+    CHUNK_AREA, CHUNK_SIZE, Cell, ChunkOffset, DirtyRect, Fixed, MaterialId, REGION_AREA_CHUNKS,
+    Region, RegionPos,
 };
 use fallingsand_protocol::PlayerUuid;
 use redb::{Database, ReadableDatabase, TableDefinition};
@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 pub const REGION_FORMAT_VERSION: u8 = 2;
-pub const WORLD_FORMAT_VERSION: u16 = 2;
+pub const WORLD_FORMAT_VERSION: u16 = 3;
 const CELL_BYTES: usize = 3;
 const RECT_BYTES: usize = 4;
 const REGION_CELL_BYTES: usize = REGION_AREA_CHUNKS * CHUNK_AREA * CELL_BYTES;
@@ -27,8 +27,8 @@ pub struct WorldMeta {
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PlayerRecord {
-    pub x: f32,
-    pub y: f32,
+    pub x: Fixed,
+    pub y: Fixed,
     pub hp: f32,
 }
 

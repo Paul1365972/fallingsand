@@ -70,7 +70,7 @@ pub fn compute_tickets(mut tickets: ResMut<ChunkTickets>, query: Query<&PhysicsB
     active.clear();
     border.clear();
     for body in query.iter() {
-        let center = CellPos::new(body.0.x as i32, body.0.y as i32).chunk();
+        let center = CellPos::new(body.0.x.floor_cell(), body.0.y.floor_cell()).chunk();
         for dy in -(INTEREST_RADIUS_Y + BORDER_MARGIN)..=(INTEREST_RADIUS_Y + BORDER_MARGIN) {
             for dx in -(INTEREST_RADIUS_X + BORDER_MARGIN)..=(INTEREST_RADIUS_X + BORDER_MARGIN) {
                 let pos = center.translated(dx, dy);
@@ -118,15 +118,13 @@ fn extract_region(sim: &mut CellWorld, pos: RegionPos) -> Region {
 }
 
 fn body_overlaps_region(body: &PixelBody, pos: RegionPos) -> bool {
-    let radius = (body.width as f32).hypot(body.height as f32) + 1.0;
+    let radius = ((body.width as f32).hypot(body.height as f32) + 1.0).ceil() as i32;
     let base = pos.base_chunk().base_cell();
-    let (min_x, min_y) = (base.x as f32, base.y as f32);
-    let max_x = min_x + REGION_SIZE_CELLS as f32;
-    let max_y = min_y + REGION_SIZE_CELLS as f32;
-    body.x + radius > min_x
-        && body.x - radius < max_x
-        && body.y + radius > min_y
-        && body.y - radius < max_y
+    let (cx, cy) = (body.x.floor_cell(), body.y.floor_cell());
+    cx + radius > base.x
+        && cx - radius < base.x + REGION_SIZE_CELLS as i32
+        && cy + radius > base.y
+        && cy - radius < base.y + REGION_SIZE_CELLS as i32
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -311,17 +309,11 @@ pub fn save_everything(world: &mut bevy_ecs::world::World, final_save: bool) {
                     if !try_stamp(&mut sim.0, &registry, &[], body) {
                         stamp_body(&mut sim.0, &registry, body);
                     }
-                    let radius = (body.width as f32).hypot(body.height as f32) + 1.0;
-                    let min = CellPos::new(
-                        (body.x - radius).floor() as i32,
-                        (body.y - radius).floor() as i32,
-                    )
-                    .region();
-                    let max = CellPos::new(
-                        (body.x + radius).ceil() as i32,
-                        (body.y + radius).ceil() as i32,
-                    )
-                    .region();
+                    let radius =
+                        ((body.width as f32).hypot(body.height as f32) + 1.0).ceil() as i32;
+                    let (cx, cy) = (body.x.floor_cell(), body.y.floor_cell());
+                    let min = CellPos::new(cx - radius, cy - radius).region();
+                    let max = CellPos::new(cx + radius + 1, cy + radius + 1).region();
                     for region_y in min.y..=max.y {
                         for region_x in min.x..=max.x {
                             touched.insert(RegionPos::new(region_x, region_y));

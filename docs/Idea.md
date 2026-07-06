@@ -81,6 +81,7 @@ CI enforces that `fallingsand_client` builds for `wasm32-unknown-unknown`.
 "Cell" always means this atomic unit — the parallel-scheduling work item (a 2×2-chunk block plus its halo) is not a named concept.
 
 Coordinates: global positions `CellPos`, `ChunkPos`, `RegionPos` (i32 per axis) and local offsets `CellOffset` (within chunk), `ChunkOffset` (within region); conversions are bit shifts and masks.
+Continuous world-space quantities (entity/pixel-body positions, velocities, half-extents) are `Fixed` — Q24.8 fixed-point (i32, 8 fractional bits, 1/256 cell) — exact everywhere in the infinite world, on the wire, and in saves; movement tuning stays seconds-based in cells/s, and the client converts to f32 only for rendering.
 Storage keys use z-order (Morton) encoding of `RegionPos` for locality.
 
 ### Cell representation

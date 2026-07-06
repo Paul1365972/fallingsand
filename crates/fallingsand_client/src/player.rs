@@ -112,7 +112,7 @@ fn apply_entity_states(
         };
         seen = Some(entities.iter().map(|state| state.player).collect());
         for state in entities {
-            let target = Vec2::new(state.x, state.y);
+            let target = Vec2::new(state.x.to_f32(), state.y.to_f32());
             let size = if state.ducking {
                 PLAYER_DUCK_SIZE
             } else {

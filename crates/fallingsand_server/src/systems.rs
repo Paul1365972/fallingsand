@@ -5,7 +5,7 @@ use crate::{
     SpawnPoint, TickStats,
 };
 use bevy_ecs::prelude::*;
-use fallingsand_core::{CellOffset, CellPos, MaterialId, Phase, TICK_DT};
+use fallingsand_core::{CellOffset, CellPos, Fixed, MaterialId, Phase};
 use fallingsand_protocol::{
     ChunkDebugRects, ClientMessage, EntityState, PROTOCOL_VERSION, PlayerId, ServerMessage,
     cells_to_wire, decode_message, encode_message,
@@ -15,9 +15,9 @@ use fallingsand_sim::physics::{Body, Controller, PlayerParams, scatter_powder, s
 use rustc_hash::FxHashSet;
 use std::time::Instant;
 
-pub const PLAYER_HALF_W: f32 = 1.9;
-pub const PLAYER_HALF_H: f32 = 5.5;
-pub const PLAYER_MASS: f32 = 4.0 * PLAYER_HALF_W * PLAYER_HALF_H;
+pub const PLAYER_HALF_W: Fixed = Fixed::from_f32(1.9);
+pub const PLAYER_HALF_H: Fixed = Fixed::from_f32(5.5);
+pub const PLAYER_MASS: f32 = 4.0 * PLAYER_HALF_W.to_f32() * PLAYER_HALF_H.to_f32();
 pub const REACH: f32 = 80.0;
 pub const BRUSH_RADIUS: i32 = 3;
 pub use crate::MAX_HP;
@@ -116,8 +116,10 @@ pub fn drain_network(
                             existing.id = player;
                             existing.name = name.clone();
                             existing.input = Default::default();
-                            takeover =
-                                Some((entity, CellPos::new(body.0.x as i32, body.0.y as i32)));
+                            takeover = Some((
+                                entity,
+                                CellPos::new(body.0.x.floor_cell(), body.0.y.floor_cell()),
+                            ));
                         } else {
                             commands.entity(entity).despawn();
                         }
@@ -130,7 +132,9 @@ pub fn drain_network(
                                 .as_ref()
                                 .and_then(|store| store.load_player(uuid).ok().flatten());
                             let spawn = match &restored {
-                                Some(record) => CellPos::new(record.x as i32, record.y as i32),
+                                Some(record) => {
+                                    CellPos::new(record.x.floor_cell(), record.y.floor_cell())
+                                }
                                 None => spawn_point.0,
                             };
                             let entity = commands
@@ -142,8 +146,14 @@ pub fn drain_network(
                                         input: Default::default(),
                                     },
                                     PhysicsBody(Body::new(
-                                        restored.as_ref().map(|r| r.x).unwrap_or(spawn.x as f32),
-                                        restored.as_ref().map(|r| r.y).unwrap_or(spawn.y as f32),
+                                        restored
+                                            .as_ref()
+                                            .map(|r| r.x)
+                                            .unwrap_or(Fixed::from_cell(spawn.x)),
+                                        restored
+                                            .as_ref()
+                                            .map(|r| r.y)
+                                            .unwrap_or(Fixed::from_cell(spawn.y)),
                                         PLAYER_HALF_W,
                                         PLAYER_HALF_H,
                                     )),
@@ -316,8 +326,8 @@ pub fn apply_player_inputs(
         if !input.primary && !input.secondary {
             continue;
         }
-        let dx = input.aim.x as f32 - body.0.x;
-        let dy = input.aim.y as f32 - body.0.y;
+        let dx = (Fixed::from_cell(input.aim.x) - body.0.x).to_f32();
+        let dy = (Fixed::from_cell(input.aim.y) - body.0.y).to_f32();
         if dx * dx + dy * dy > REACH * REACH {
             continue;
         }
@@ -361,9 +371,10 @@ pub fn apply_player_inputs(
 }
 
 fn cell_overlaps_body(pos: CellPos, body: &Body) -> bool {
-    let cx = pos.x as f32 + 0.5;
-    let cy = pos.y as f32 + 0.5;
-    (cx - body.x).abs() < body.half_w + 0.5 && (cy - body.y).abs() < body.half_h + 0.5
+    let cx = Fixed::cell_center(pos.x);
+    let cy = Fixed::cell_center(pos.y);
+    (cx - body.x).abs() < body.half_w + Fixed::HALF
+        && (cy - body.y).abs() < body.half_h + Fixed::HALF
 }
 
 pub fn build_obstacles(
@@ -416,8 +427,8 @@ pub fn step_physics(
     let params = PlayerParams::default();
     for (entity, player, mut body, mut control, mut health) in &mut query {
         if let Some((jx, jy)) = impulses.0.remove(&entity) {
-            body.0.vx += jx / PLAYER_MASS;
-            body.0.vy += jy / PLAYER_MASS;
+            body.0.vx = body.0.vx.add_f32(jx / PLAYER_MASS);
+            body.0.vy = body.0.vy.add_f32(jy / PLAYER_MASS);
         }
         let result = {
             let source = obstacles.0.overlay(&sim.0);
@@ -430,7 +441,6 @@ pub fn step_physics(
                 player.input.move_x,
                 player.input.jump,
                 player.input.down,
-                TICK_DT,
             )
         };
         if !result.displaced.is_empty() {
@@ -451,18 +461,18 @@ pub fn step_physics(
             };
             let jx = PLAYER_MASS * blocked.dvx;
             let jy = PLAYER_MASS * blocked.dvy;
-            let rx = blocked.pos.x as f32 + 0.5 - pixel_body.x;
-            let ry = blocked.pos.y as f32 + 0.5 - pixel_body.y;
-            pixel_body.vx += jx * pixel_body.inv_mass;
-            pixel_body.vy += jy * pixel_body.inv_mass;
+            let rx = (Fixed::cell_center(blocked.pos.x) - pixel_body.x).to_f32();
+            let ry = (Fixed::cell_center(blocked.pos.y) - pixel_body.y).to_f32();
+            pixel_body.vx = pixel_body.vx.add_f32(jx * pixel_body.inv_mass);
+            pixel_body.vy = pixel_body.vy.add_f32(jy * pixel_body.inv_mass);
             pixel_body.spin += (rx * jy - ry * jx) * pixel_body.inv_inertia;
             pixel_body.rest_secs = 0.0;
         }
         if health.hp <= 0.0 {
             health.hp = MAX_HP;
             body.0 = Body::new(
-                spawn_point.0.x as f32,
-                spawn_point.0.y as f32,
+                Fixed::from_cell(spawn_point.0.x),
+                Fixed::from_cell(spawn_point.0.y),
                 PLAYER_HALF_W,
                 PLAYER_HALF_H,
             );
@@ -505,7 +515,7 @@ pub fn replicate(
             continue;
         };
 
-        let center = CellPos::new(body.0.x as i32, body.0.y as i32).chunk();
+        let center = CellPos::new(body.0.x.floor_cell(), body.0.y.floor_cell()).chunk();
         let mut interest = FxHashSet::default();
         for dy in -INTEREST_RADIUS_Y..=INTEREST_RADIUS_Y {
             for dx in -INTEREST_RADIUS_X..=INTEREST_RADIUS_X {

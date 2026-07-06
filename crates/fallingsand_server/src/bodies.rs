@@ -2,7 +2,7 @@ use crate::session::{SessionState, Sessions};
 use crate::systems::{PLAYER_MASS, PhysicsBody};
 use crate::{PlayerImpulses, Registry, SimObstacles, SimWorld, TickStats};
 use bevy_ecs::prelude::*;
-use fallingsand_core::{CellPos, TICK_DT};
+use fallingsand_core::{CellPos, Fixed, TICK_DT};
 use fallingsand_protocol::{PixelBodyState, ServerMessage, encode_message};
 use fallingsand_sim::bodies::{
     EntityDynamics, PixelBody, detect_island, extract_body, react_body, refresh_body,
@@ -11,7 +11,7 @@ use fallingsand_sim::bodies::{
 use fallingsand_sim::{EntityBox, Obstacles};
 use rustc_hash::FxHashSet;
 
-pub const BODY_GRAVITY: f32 = -400.0;
+pub const BODY_GRAVITY: Fixed = Fixed::from_int(-400);
 
 #[derive(Resource, Default)]
 pub struct PixelBodies {
@@ -67,8 +67,8 @@ pub fn step_bodies(
                 half_w: body.0.half_w,
                 half_h: body.0.half_h,
             },
-            vx: body.0.vx,
-            vy: body.0.vy,
+            vx: body.0.vx.to_f32(),
+            vy: body.0.vy.to_f32(),
             inv_mass: 1.0 / PLAYER_MASS,
         });
     }
@@ -86,7 +86,6 @@ pub fn step_bodies(
         &mut bodies.bodies,
         &entities,
         BODY_GRAVITY,
-        TICK_DT,
     );
     for (player, (jx, jy)) in players.iter().zip(step.entity_impulses) {
         if jx != 0.0 || jy != 0.0 {
@@ -120,9 +119,9 @@ fn transfer_standing_weight(
     dynamics: &EntityDynamics,
 ) {
     let bbox = dynamics.bbox;
-    let row = (bbox.y - bbox.half_h + 1e-4).floor() as i32 - 1;
-    let x0 = (bbox.x - bbox.half_w + 1e-4).floor() as i32;
-    let x1 = (bbox.x + bbox.half_w - 1e-4).floor() as i32;
+    let row = (bbox.y - bbox.half_h).floor_cell() - 1;
+    let x0 = (bbox.x - bbox.half_w).floor_cell();
+    let x1 = (bbox.x + bbox.half_w).max_cell();
     let mut supports: Vec<(u32, CellPos)> = Vec::new();
     for x in x0..=x1 {
         let pos = CellPos::new(x, row);
@@ -133,13 +132,13 @@ fn transfer_standing_weight(
     if supports.is_empty() {
         return;
     }
-    let share = PLAYER_MASS * BODY_GRAVITY * TICK_DT / supports.len() as f32;
+    let share = PLAYER_MASS * BODY_GRAVITY.to_f32() * TICK_DT / supports.len() as f32;
     for (id, pos) in supports {
         let Some(body) = bodies.body_mut(id) else {
             continue;
         };
-        let rx = pos.x as f32 + 0.5 - body.x;
-        body.vy += share * body.inv_mass;
+        let rx = (Fixed::cell_center(pos.x) - body.x).to_f32();
+        body.vy = body.vy.add_f32(share * body.inv_mass);
         body.spin += rx * share * body.inv_inertia;
         body.rest_secs = 0.0;
     }

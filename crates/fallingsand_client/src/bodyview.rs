@@ -122,7 +122,7 @@ fn apply_body_messages(
                     let Ok((visual, interpolated)) = query.get_mut(entity) else {
                         continue;
                     };
-                    let position = Vec2::new(state.x, state.y);
+                    let position = Vec2::new(state.x.to_f32(), state.y.to_f32());
                     match interpolated {
                         Some(mut interpolated) => {
                             interpolated.record(position, state.angle, false);

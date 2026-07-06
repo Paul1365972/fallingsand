@@ -1,6 +1,6 @@
 use crate::obstacles::{EntityBox, Obstacles};
 use crate::world::CellWorld;
-use fallingsand_core::{Cell, CellPos, MaterialId, MaterialRegistry, Phase};
+use fallingsand_core::{Cell, CellPos, Fixed, MaterialId, MaterialRegistry, Phase, TICK_DT};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
@@ -39,10 +39,10 @@ pub struct PixelBody {
     pub cells: Vec<Cell>,
     pub perimeter: Vec<(u8, u8)>,
     pub com_local: (f32, f32),
-    pub x: f32,
-    pub y: f32,
-    pub vx: f32,
-    pub vy: f32,
+    pub x: Fixed,
+    pub y: Fixed,
+    pub vx: Fixed,
+    pub vy: Fixed,
     pub angle: f32,
     pub spin: f32,
     pub inv_mass: f32,
@@ -55,10 +55,18 @@ impl PixelBody {
         self.cells[y as usize * self.width as usize + x as usize]
     }
 
-    pub fn local_to_world(&self, lx: f32, ly: f32) -> (f32, f32) {
+    pub fn local_offset(&self, lx: f32, ly: f32) -> (f32, f32) {
         let (dx, dy) = (lx - self.com_local.0, ly - self.com_local.1);
         let (sin, cos) = self.angle.sin_cos();
-        (self.x + dx * cos - dy * sin, self.y + dx * sin + dy * cos)
+        (dx * cos - dy * sin, dx * sin + dy * cos)
+    }
+
+    pub fn world_cell(&self, lx: f32, ly: f32) -> CellPos {
+        let (ox, oy) = self.local_offset(lx, ly);
+        CellPos::new(
+            self.x.add_f32(ox).floor_cell(),
+            self.y.add_f32(oy).floor_cell(),
+        )
     }
 }
 
@@ -209,10 +217,10 @@ pub fn extract_body(
         cells,
         perimeter: shape.perimeter,
         com_local: shape.com,
-        x: min_x as f32 + shape.com.0,
-        y: min_y as f32 + shape.com.1,
-        vx: 0.0,
-        vy: 0.0,
+        x: Fixed::from_cell(min_x).add_f32(shape.com.0),
+        y: Fixed::from_cell(min_y).add_f32(shape.com.1),
+        vx: Fixed::ZERO,
+        vy: Fixed::ZERO,
         angle: 0.0,
         spin: 0.0,
         inv_mass: 1.0 / shape.mass,
@@ -286,8 +294,7 @@ pub fn refresh_body(
             continue;
         };
         let old_local = (min_x as f32 + shape.com.0, min_y as f32 + shape.com.1);
-        let (wx, wy) = body.local_to_world(old_local.0, old_local.1);
-        let (rx, ry) = (wx - body.x, wy - body.y);
+        let (rx, ry) = body.local_offset(old_local.0, old_local.1);
         parts.push(PixelBody {
             id: if part == 1 { body.id } else { next_id() },
             width: part_w,
@@ -295,10 +302,10 @@ pub fn refresh_body(
             cells,
             perimeter: shape.perimeter,
             com_local: shape.com,
-            x: wx,
-            y: wy,
-            vx: body.vx - body.spin * ry,
-            vy: body.vy + body.spin * rx,
+            x: body.x.add_f32(rx),
+            y: body.y.add_f32(ry),
+            vx: body.vx.add_f32(-body.spin * ry),
+            vy: body.vy.add_f32(body.spin * rx),
             angle: body.angle,
             spin: body.spin,
             inv_mass: 1.0 / shape.mass,
@@ -363,8 +370,9 @@ fn find_contacts(
     let body = &bodies[index];
     let mut contacts: Vec<Contact> = Vec::new();
     for &(lx, ly) in &body.perimeter {
-        let (wx, wy) = body.local_to_world(lx as f32 + 0.5, ly as f32 + 0.5);
-        let pos = CellPos::new(wx.floor() as i32, wy.floor() as i32);
+        let (ox, oy) = body.local_offset(lx as f32 + 0.5, ly as f32 + 0.5);
+        let (wx, wy) = (body.x.add_f32(ox), body.y.add_f32(oy));
+        let pos = CellPos::new(wx.floor_cell(), wy.floor_cell());
 
         let mut depth = 0.5;
         let other = if blocks_body(world, registry, pos) {
@@ -374,8 +382,8 @@ fn find_contacts(
             .position(|entity| entity.bbox.contains_cell(pos))
         {
             let entity = &entities[entity_index];
-            let depth_x = entity.bbox.half_w + 0.5 - (wx - entity.bbox.x).abs();
-            let depth_y = entity.bbox.half_h + 0.5 - (wy - entity.bbox.y).abs();
+            let depth_x = entity.bbox.half_w.to_f32() + 0.5 - (wx - entity.bbox.x).to_f32().abs();
+            let depth_y = entity.bbox.half_h.to_f32() + 0.5 - (wy - entity.bbox.y).to_f32().abs();
             depth = depth_x.min(depth_y).clamp(0.5, 4.0);
             Other::Entity {
                 index: entity_index,
@@ -394,11 +402,11 @@ fn find_contacts(
                 index: other_index,
                 inv_mass: other.inv_mass,
                 inv_inertia: other.inv_inertia,
-                vx: other.vx,
-                vy: other.vy,
+                vx: other.vx.to_f32(),
+                vy: other.vy.to_f32(),
                 spin: other.spin,
-                rx: wx - other.x,
-                ry: wy - other.y,
+                rx: (wx - other.x).to_f32(),
+                ry: (wy - other.y).to_f32(),
             }
         } else {
             continue;
@@ -431,8 +439,8 @@ fn find_contacts(
             (0.0, 1.0)
         };
         contacts.push(Contact {
-            rx: wx - body.x,
-            ry: wy - body.y,
+            rx: ox,
+            ry: oy,
             nx,
             ny,
             depth,
@@ -453,8 +461,7 @@ pub fn step_bodies(
     obstacles: &Obstacles,
     bodies: &mut [PixelBody],
     entities: &[EntityDynamics],
-    gravity: f32,
-    dt: f32,
+    gravity: Fixed,
 ) -> BodiesStep {
     let mut result = BodiesStep {
         settled: Vec::new(),
@@ -480,8 +487,7 @@ pub fn step_bodies(
                         continue;
                     }
                     cell_count += 1.0;
-                    let (wx, wy) = body.local_to_world(lx as f32 + 0.5, ly as f32 + 0.5);
-                    let pos = CellPos::new(wx.floor() as i32, wy.floor() as i32);
+                    let pos = body.world_cell(lx as f32 + 0.5, ly as f32 + 0.5);
                     if let Some(world_cell) = world.get_cell(pos) {
                         let material = registry.get(world_cell.material);
                         if material.phase == Phase::Liquid {
@@ -492,21 +498,23 @@ pub fn step_bodies(
                 }
             }
             if buoyant > 0.0 {
-                body.vy -= gravity * buoyant * body.inv_mass * dt;
+                body.vy = body
+                    .vy
+                    .add_f32(-gravity.to_f32() * buoyant * body.inv_mass * TICK_DT);
                 let submersion = wet / cell_count.max(1.0);
-                let drag = (FLUID_DRAG * submersion * dt).min(0.9);
-                body.vx *= 1.0 - drag;
-                body.vy *= 1.0 - drag;
+                let drag = (FLUID_DRAG * submersion * TICK_DT).min(0.9);
+                let keep = Fixed::from_f32(1.0 - drag);
+                body.vx = body.vx.mul(keep);
+                body.vy = body.vy.mul(keep);
                 body.spin *= 1.0 - drag;
             }
-            body.vy += gravity * dt;
+            body.vy += gravity.per_tick();
 
             let radius = 0.5 * (body.width as f32).hypot(body.height as f32);
-            let travel =
-                ((body.vx * body.vx + body.vy * body.vy).sqrt() + body.spin.abs() * radius) * dt;
-            ((travel / SUBSTEP_TRAVEL).ceil() as usize).max(1)
+            let (vx, vy) = (body.vx.to_f32(), body.vy.to_f32());
+            let travel = ((vx * vx + vy * vy).sqrt() + body.spin.abs() * radius) * TICK_DT;
+            ((travel / SUBSTEP_TRAVEL).ceil() as u32).max(1)
         };
-        let sub_dt = dt / substeps as f32;
         let damping = CONTACT_DAMPING.powf(1.0 / substeps as f32);
 
         for _ in 0..substeps {
@@ -519,7 +527,7 @@ pub fn step_bodies(
                 index,
                 &id_to_index,
                 damping,
-                sub_dt,
+                substeps,
                 &mut result.entity_impulses,
             );
         }
@@ -540,149 +548,150 @@ fn step_substep(
     index: usize,
     id_to_index: &FxHashMap<u32, usize>,
     damping: f32,
-    dt: f32,
+    substeps: u32,
     entity_impulses: &mut [(f32, f32)],
 ) {
+    let sub_dt = TICK_DT / substeps as f32;
+    let (prev_x, prev_y, prev_angle) = {
+        let body = &mut bodies[index];
+        let prev = (body.x, body.y, body.angle);
+        body.x += body.vx.per_substep(substeps);
+        body.y += body.vy.per_substep(substeps);
+        body.angle += body.spin * sub_dt;
+        prev
+    };
+
+    let contacts = find_contacts(
+        world,
+        registry,
+        obstacles,
+        entities,
+        bodies,
+        index,
+        id_to_index,
+    );
+    let touching = !contacts.is_empty();
+    let terrain_only = contacts
+        .iter()
+        .all(|contact| matches!(contact.other, Other::Terrain));
+
+    let mut body_impulses: Vec<(usize, f32, f32, f32)> = Vec::new();
     {
-        let (prev_x, prev_y, prev_angle) = {
-            let body = &mut bodies[index];
-            let prev = (body.x, body.y, body.angle);
-            body.x += body.vx * dt;
-            body.y += body.vy * dt;
-            body.angle += body.spin * dt;
-            prev
-        };
+        let body = &mut bodies[index];
+        let (mut vx, mut vy) = (body.vx.to_f32(), body.vy.to_f32());
+        for _ in 0..CONTACT_ITERATIONS {
+            for contact in &contacts {
+                let (other_inv_mass, other_inv_inertia, other_vx, other_vy, r2) =
+                    match contact.other {
+                        Other::Terrain => (0.0, 0.0, 0.0, 0.0, (0.0, 0.0)),
+                        Other::Entity {
+                            inv_mass, vx, vy, ..
+                        } => (inv_mass, 0.0, vx, vy, (0.0, 0.0)),
+                        Other::Body {
+                            inv_mass,
+                            inv_inertia,
+                            vx,
+                            vy,
+                            spin,
+                            rx,
+                            ry,
+                            ..
+                        } => (
+                            inv_mass,
+                            inv_inertia,
+                            vx - spin * ry,
+                            vy + spin * rx,
+                            (rx, ry),
+                        ),
+                    };
 
-        let contacts = find_contacts(
-            world,
-            registry,
-            obstacles,
-            entities,
-            bodies,
-            index,
-            id_to_index,
-        );
-        let touching = !contacts.is_empty();
-        let terrain_only = contacts
-            .iter()
-            .all(|contact| matches!(contact.other, Other::Terrain));
-
-        let mut body_impulses: Vec<(usize, f32, f32, f32)> = Vec::new();
-        {
-            let body = &mut bodies[index];
-            for _ in 0..CONTACT_ITERATIONS {
-                for contact in &contacts {
-                    let (other_inv_mass, other_inv_inertia, other_vx, other_vy, r2) =
-                        match contact.other {
-                            Other::Terrain => (0.0, 0.0, 0.0, 0.0, (0.0, 0.0)),
-                            Other::Entity {
-                                inv_mass, vx, vy, ..
-                            } => (inv_mass, 0.0, vx, vy, (0.0, 0.0)),
-                            Other::Body {
-                                inv_mass,
-                                inv_inertia,
-                                vx,
-                                vy,
-                                spin,
-                                rx,
-                                ry,
-                                ..
-                            } => (
-                                inv_mass,
-                                inv_inertia,
-                                vx - spin * ry,
-                                vy + spin * rx,
-                                (rx, ry),
-                            ),
-                        };
-
-                    let rel_vx = body.vx - body.spin * contact.ry - other_vx;
-                    let rel_vy = body.vy + body.spin * contact.rx - other_vy;
-                    let vn = rel_vx * contact.nx + rel_vy * contact.ny;
-                    if vn >= 0.0 {
-                        continue;
-                    }
-                    let r_cross_n = contact.rx * contact.ny - contact.ry * contact.nx;
-                    let r2_cross_n = r2.0 * contact.ny - r2.1 * contact.nx;
-                    let k = body.inv_mass
-                        + other_inv_mass
-                        + r_cross_n * r_cross_n * body.inv_inertia
-                        + r2_cross_n * r2_cross_n * other_inv_inertia;
-                    let jn = -(1.0 + RESTITUTION) * vn / k;
-                    body.vx += jn * contact.nx * body.inv_mass;
-                    body.vy += jn * contact.ny * body.inv_mass;
-                    body.spin += r_cross_n * jn * body.inv_inertia;
-                    apply_to_other(
-                        contact,
-                        -jn * contact.nx,
-                        -jn * contact.ny,
-                        entity_impulses,
-                        &mut body_impulses,
-                    );
-
-                    let tx = -contact.ny;
-                    let ty = contact.nx;
-                    let rel_vx = body.vx - body.spin * contact.ry - other_vx;
-                    let rel_vy = body.vy + body.spin * contact.rx - other_vy;
-                    let vt = rel_vx * tx + rel_vy * ty;
-                    let r_cross_t = contact.rx * ty - contact.ry * tx;
-                    let r2_cross_t = r2.0 * ty - r2.1 * tx;
-                    let kt = body.inv_mass
-                        + other_inv_mass
-                        + r_cross_t * r_cross_t * body.inv_inertia
-                        + r2_cross_t * r2_cross_t * other_inv_inertia;
-                    let jt = (-vt / kt).clamp(-FRICTION * jn.abs(), FRICTION * jn.abs());
-                    body.vx += jt * tx * body.inv_mass;
-                    body.vy += jt * ty * body.inv_mass;
-                    body.spin += r_cross_t * jt * body.inv_inertia;
-                    apply_to_other(
-                        contact,
-                        -jt * tx,
-                        -jt * ty,
-                        entity_impulses,
-                        &mut body_impulses,
-                    );
+                let rel_vx = vx - body.spin * contact.ry - other_vx;
+                let rel_vy = vy + body.spin * contact.rx - other_vy;
+                let vn = rel_vx * contact.nx + rel_vy * contact.ny;
+                if vn >= 0.0 {
+                    continue;
                 }
-            }
+                let r_cross_n = contact.rx * contact.ny - contact.ry * contact.nx;
+                let r2_cross_n = r2.0 * contact.ny - r2.1 * contact.nx;
+                let k = body.inv_mass
+                    + other_inv_mass
+                    + r_cross_n * r_cross_n * body.inv_inertia
+                    + r2_cross_n * r2_cross_n * other_inv_inertia;
+                let jn = -(1.0 + RESTITUTION) * vn / k;
+                vx += jn * contact.nx * body.inv_mass;
+                vy += jn * contact.ny * body.inv_mass;
+                body.spin += r_cross_n * jn * body.inv_inertia;
+                apply_to_other(
+                    contact,
+                    -jn * contact.nx,
+                    -jn * contact.ny,
+                    entity_impulses,
+                    &mut body_impulses,
+                );
 
-            if touching {
-                body.vx *= damping;
-                body.vy *= damping;
-                body.spin *= damping;
-            }
-
-            let slow = body.vx * body.vx + body.vy * body.vy < SETTLE_SPEED_SQ
-                && body.spin.abs() < SETTLE_SPIN;
-            if touching && slow && terrain_only {
-                body.x = prev_x;
-                body.y = prev_y;
-                body.angle = prev_angle;
-                body.vx = 0.0;
-                body.vy = 0.0;
-                body.spin = 0.0;
-                body.rest_secs += dt;
-            } else {
-                let deepest = contacts.iter().max_by(|a, b| {
-                    a.depth
-                        .partial_cmp(&b.depth)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                });
-                if let Some(deepest) = deepest {
-                    let correction = (deepest.depth * PENETRATION_CORRECTION).min(1.0);
-                    body.x += deepest.nx * correction;
-                    body.y += deepest.ny * correction;
-                }
-                body.rest_secs = 0.0;
+                let tx = -contact.ny;
+                let ty = contact.nx;
+                let rel_vx = vx - body.spin * contact.ry - other_vx;
+                let rel_vy = vy + body.spin * contact.rx - other_vy;
+                let vt = rel_vx * tx + rel_vy * ty;
+                let r_cross_t = contact.rx * ty - contact.ry * tx;
+                let r2_cross_t = r2.0 * ty - r2.1 * tx;
+                let kt = body.inv_mass
+                    + other_inv_mass
+                    + r_cross_t * r_cross_t * body.inv_inertia
+                    + r2_cross_t * r2_cross_t * other_inv_inertia;
+                let jt = (-vt / kt).clamp(-FRICTION * jn.abs(), FRICTION * jn.abs());
+                vx += jt * tx * body.inv_mass;
+                vy += jt * ty * body.inv_mass;
+                body.spin += r_cross_t * jt * body.inv_inertia;
+                apply_to_other(
+                    contact,
+                    -jt * tx,
+                    -jt * ty,
+                    entity_impulses,
+                    &mut body_impulses,
+                );
             }
         }
 
-        for (other_index, jx, jy, r_cross_j) in body_impulses {
-            let other = &mut bodies[other_index];
-            other.vx += jx * other.inv_mass;
-            other.vy += jy * other.inv_mass;
-            other.spin += r_cross_j * other.inv_inertia;
-            other.rest_secs = 0.0;
+        if touching {
+            vx *= damping;
+            vy *= damping;
+            body.spin *= damping;
         }
+
+        let slow = vx * vx + vy * vy < SETTLE_SPEED_SQ && body.spin.abs() < SETTLE_SPIN;
+        if touching && slow && terrain_only {
+            body.x = prev_x;
+            body.y = prev_y;
+            body.angle = prev_angle;
+            body.vx = Fixed::ZERO;
+            body.vy = Fixed::ZERO;
+            body.spin = 0.0;
+            body.rest_secs += sub_dt;
+        } else {
+            let deepest = contacts.iter().max_by(|a, b| {
+                a.depth
+                    .partial_cmp(&b.depth)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            if let Some(deepest) = deepest {
+                let correction = (deepest.depth * PENETRATION_CORRECTION).min(1.0);
+                body.x = body.x.add_f32(deepest.nx * correction);
+                body.y = body.y.add_f32(deepest.ny * correction);
+            }
+            body.vx = Fixed::from_f32(vx);
+            body.vy = Fixed::from_f32(vy);
+            body.rest_secs = 0.0;
+        }
+    }
+
+    for (other_index, jx, jy, r_cross_j) in body_impulses {
+        let other = &mut bodies[other_index];
+        other.vx = other.vx.add_f32(jx * other.inv_mass);
+        other.vy = other.vy.add_f32(jy * other.inv_mass);
+        other.spin += r_cross_j * other.inv_inertia;
+        other.rest_secs = 0.0;
     }
 }
 
@@ -721,8 +730,7 @@ pub fn try_stamp(
             if cell.is_air() {
                 continue;
             }
-            let (wx, wy) = body.local_to_world(lx as f32 + 0.5, ly as f32 + 0.5);
-            let base = CellPos::new(wx.floor() as i32, wy.floor() as i32);
+            let base = body.world_cell(lx as f32 + 0.5, ly as f32 + 0.5);
             let target = [(0, 0), (0, 1), (1, 0), (-1, 0), (0, 2), (0, -1)]
                 .iter()
                 .map(|&(dx, dy)| base.translated(dx, dy))
@@ -777,8 +785,7 @@ pub fn react_body(
         if cell.is_air() || !registry.is_reactive(cell.material) {
             continue;
         }
-        let (wx, wy) = body.local_to_world(lx as f32 + 0.5, ly as f32 + 0.5);
-        let pos = CellPos::new(wx.floor() as i32, wy.floor() as i32);
+        let pos = body.world_cell(lx as f32 + 0.5, ly as f32 + 0.5);
         for (dx, dy) in NEIGHBORS {
             let neighbor_pos = pos.translated(dx, dy);
             let Some(neighbor) = world.get_cell(neighbor_pos) else {
@@ -854,8 +861,7 @@ pub fn stamp_body(world: &mut CellWorld, registry: &MaterialRegistry, body: &Pix
             if cell.is_air() {
                 continue;
             }
-            let (wx, wy) = body.local_to_world(lx as f32 + 0.5, ly as f32 + 0.5);
-            let base = CellPos::new(wx.floor() as i32, wy.floor() as i32);
+            let base = body.world_cell(lx as f32 + 0.5, ly as f32 + 0.5);
             let target = [(0, 0), (0, 1), (1, 0), (-1, 0), (0, 2), (0, -1)]
                 .iter()
                 .map(|&(dx, dy)| base.translated(dx, dy))

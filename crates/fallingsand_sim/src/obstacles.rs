@@ -1,22 +1,20 @@
 use crate::bodies::PixelBody;
 use crate::physics::CellSource;
 use crate::world::CellWorld;
-use fallingsand_core::{Cell, CellPos, MaterialRegistry, Phase};
+use fallingsand_core::{Cell, CellPos, Fixed, MaterialRegistry, Phase};
 use rustc_hash::{FxHashMap, FxHashSet};
 
-const SKIN: f32 = 1e-4;
-
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EntityBox {
-    pub x: f32,
-    pub y: f32,
-    pub half_w: f32,
-    pub half_h: f32,
+    pub x: Fixed,
+    pub y: Fixed,
+    pub half_w: Fixed,
+    pub half_h: Fixed,
 }
 
 impl EntityBox {
     pub fn contains_cell(&self, pos: CellPos) -> bool {
-        let (cx, cy) = (pos.x as f32 + 0.5, pos.y as f32 + 0.5);
+        let (cx, cy) = (Fixed::cell_center(pos.x), Fixed::cell_center(pos.y));
         (cx - self.x).abs() <= self.half_w && (cy - self.y).abs() <= self.half_h
     }
 }
@@ -57,10 +55,10 @@ impl Obstacles {
     ) {
         let mut entity_cells = FxHashSet::default();
         for entity in entities {
-            let x0 = (entity.x - entity.half_w + SKIN).floor() as i32;
-            let x1 = (entity.x + entity.half_w - SKIN).floor() as i32;
-            let y0 = (entity.y - entity.half_h + SKIN).floor() as i32;
-            let y1 = (entity.y + entity.half_h - SKIN).floor() as i32;
+            let x0 = (entity.x - entity.half_w).floor_cell();
+            let x1 = (entity.x + entity.half_w).max_cell();
+            let y0 = (entity.y - entity.half_h).floor_cell();
+            let y1 = (entity.y + entity.half_h).max_cell();
             for y in y0..=y1 {
                 for x in x0..=x1 {
                     entity_cells.insert(CellPos::new(x, y));
@@ -76,9 +74,8 @@ impl Obstacles {
                     if cell.is_air() {
                         continue;
                     }
-                    let (wx, wy) = body.local_to_world(lx as f32 + 0.5, ly as f32 + 0.5);
                     body_cells.insert(
-                        CellPos::new(wx.floor() as i32, wy.floor() as i32),
+                        body.world_cell(lx as f32 + 0.5, ly as f32 + 0.5),
                         (body.id, cell),
                     );
                 }
