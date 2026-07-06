@@ -11,6 +11,7 @@ const CEILING_VAR_JUMP_GRACE: f32 = 0.15;
 const UPWARD_CORNER_CORRECTION: i32 = 4;
 const SWIM_BEGIN_DAMP: Fixed = Fixed::from_f32(0.5);
 const UNDERWATER_PROBE_ABOVE_FEET: Fixed = Fixed::from_int(9);
+const BANK_PROBE_CELLS: i32 = 3;
 const WADE_UP_CELLS: usize = 4;
 const WADE_SIDE_CELLS: usize = 2;
 const WADE_DAMP: Fixed = Fixed::from_f32(0.7);
@@ -157,7 +158,10 @@ pub struct PlayerParams {
     pub swim_underwater_max: Fixed,
     pub swim_accel: Fixed,
     pub swim_reduce: Fixed,
-    pub swim_max_rise: Fixed,
+    pub swim_sink: Fixed,
+    pub swim_tread: Fixed,
+    pub swim_hop: Fixed,
+    pub wade_run_mult: Fixed,
     pub fly_max: Fixed,
     pub fly_accel: Fixed,
 }
@@ -183,7 +187,10 @@ impl Default for PlayerParams {
             swim_underwater_max: Fixed::from_int(60),
             swim_accel: Fixed::from_int(600),
             swim_reduce: Fixed::from_int(400),
-            swim_max_rise: Fixed::from_int(60),
+            swim_sink: Fixed::from_int(12),
+            swim_tread: Fixed::from_int(25),
+            swim_hop: Fixed::from_int(55),
+            wade_run_mult: Fixed::from_f32(0.6),
             fly_max: Fixed::from_int(160),
             fly_accel: Fixed::from_int(1200),
         }
@@ -317,8 +324,17 @@ fn normal_update<W: CellSource>(
         } else {
             params.air_mult
         };
-        let target = params.max_run.mul_int(move_x);
-        let rate = if same_direction(body.vx, move_x) && body.vx.abs() > params.max_run {
+        let feet = CellPos::new(
+            body.x.floor_cell(),
+            (body.y - body.half_h + Fixed::HALF).floor_cell(),
+        );
+        let max_run = if body.on_ground && cell_liquid(world, registry, feet) {
+            params.max_run.mul(params.wade_run_mult)
+        } else {
+            params.max_run
+        };
+        let target = max_run.mul_int(move_x);
+        let rate = if same_direction(body.vx, move_x) && body.vx.abs() > max_run {
             params.run_reduce
         } else {
             params.run_accel
@@ -384,9 +400,13 @@ fn swim_update<W: CellSource>(
         (body.y - body.half_h + UNDERWATER_PROBE_ABOVE_FEET).floor_cell(),
     );
     let underwater = cell_liquid(world, registry, probe);
-    if !underwater && ctrl.buffer > 0.0 {
-        jump(params, body, ctrl, move_x);
-        return;
+    if !underwater && ctrl.buffer > 0.0 && body.vy >= -params.swim_sink {
+        if bank_ahead(world, registry, body, move_x) {
+            jump(params, body, ctrl, move_x);
+            return;
+        }
+        ctrl.buffer = 0.0;
+        body.vy = body.vy.max(params.swim_hop);
     }
 
     let max_x = if underwater {
@@ -402,18 +422,49 @@ fn swim_update<W: CellSource>(
     body.vx = approach(body.vx, max_x.mul_int(move_x), rate_x.per_tick());
 
     let move_y = jump_held as i32 - down_held as i32;
-    if move_y != 0 {
-        let rate_y = if same_direction(body.vy, move_y) && body.vy.abs() > params.swim_max {
-            params.swim_reduce
+    let target_y = if move_y > 0 {
+        if underwater {
+            params.swim_max
         } else {
-            params.swim_accel
-        };
-        body.vy = approach(body.vy, params.swim_max.mul_int(move_y), rate_y.per_tick());
-    } else if !underwater {
-        body.vy = approach(body.vy, params.swim_max_rise, params.swim_accel.per_tick());
+            params.swim_tread
+        }
+    } else if move_y < 0 {
+        -params.swim_max
     } else {
-        body.vy = approach(body.vy, Fixed::ZERO, params.swim_accel.per_tick());
+        -params.swim_sink
+    };
+    let dir_y = if target_y > Fixed::ZERO { 1 } else { -1 };
+    let rate_y = if same_direction(body.vy, dir_y) && body.vy.abs() > target_y.abs() {
+        params.swim_reduce
+    } else {
+        params.swim_accel
+    };
+    body.vy = approach(body.vy, target_y, rate_y.per_tick());
+}
+
+fn bank_ahead<W: CellSource>(
+    world: &W,
+    registry: &MaterialRegistry,
+    body: &Body,
+    move_x: i32,
+) -> bool {
+    let (x0, y0, x1, y1) = cell_bounds(body.x, body.y, body.half_w, body.half_h);
+    let dirs: &[i32] = match move_x {
+        1 => &[1],
+        -1 => &[-1],
+        _ => &[-1, 1],
+    };
+    for &dir in dirs {
+        let edge = if dir > 0 { x1 } else { x0 };
+        for off in 1..=BANK_PROBE_CELLS {
+            for y in y0..=y1 {
+                if cell_blocks(world, registry, CellPos::new(edge + dir * off, y)) {
+                    return true;
+                }
+            }
+        }
     }
+    false
 }
 
 fn jump(params: &PlayerParams, body: &mut Body, ctrl: &mut Controller, move_x: i32) {
