@@ -124,7 +124,7 @@ Instead:
   Same-phase windows share no chunks, so workers hold disjoint mutable chunk access in parallel (rayon) — race-free by construction, no locking.
 - **Speed of light = 64**: no update may reach farther than 64 cells from its origin, or it could escape the window; the kernel API enforces this.
 - **Deferred world edits**: anything that reaches farther — explosions, structure placement — goes into a world-edit queue applied between phases instead of writing in-pass.
-- **Alternating raster order** per row + tick-seeded FxHash for left/right tie-breaking: cheap, stateless, reproducible randomness.
+- **Alternating raster order** per row + a tick-seeded splitmix64 finalizer (`fallingsand_rng`) for left/right tie-breaking: cheap, stateless, reproducible, bias-free randomness.
 - **Bottom-up scan** for gravity-dominated updates; per-material update rules dispatch on phase.
 - **Movement rules** (each grounded in a physical cause):
   - **Corner sealing**: a diagonal move needs an open orthogonal path cell (below or beside; above or beside for gases) — two diagonally touching solids seal the gap, nothing passes a zero-width crack. Applies to powders, liquids, and gases.

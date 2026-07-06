@@ -1,0 +1,6 @@
+[package]
+name = "fallingsand_rng"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

@@ -1,7 +1,7 @@
 use crate::edits::WorldEdit;
 use fallingsand_core::{Cell, CellPos, Chunk, ChunkPos, MaterialId};
+use fallingsand_rng::Hash;
 use rustc_hash::FxHashMap;
-use std::hash::{Hash, Hasher};
 
 #[derive(Default)]
 pub struct CellWorld {
@@ -78,9 +78,7 @@ impl CellWorld {
     }
 
     pub fn place_material(&mut self, pos: CellPos, material: MaterialId) {
-        let mut hasher = rustc_hash::FxHasher::default();
-        (pos.x, pos.y).hash(&mut hasher);
-        let shade = (hasher.finish() & 0xF) as u8;
+        let shade = Hash::new().pos(pos.x, pos.y).bits(4) as u8;
         self.set_cell(pos, Cell::new(material, shade));
     }
 

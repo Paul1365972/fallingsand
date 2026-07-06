@@ -1,22 +1,19 @@
+use fallingsand_rng::Hash;
 use fastnoise_lite::FastNoiseLite;
-use std::hash::{Hash, Hasher};
 
 pub fn sub_seed(seed: u64, purpose: &str) -> i32 {
-    let mut hasher = rustc_hash::FxHasher::default();
-    (seed, purpose).hash(&mut hasher);
-    hasher.finish() as i32
+    Hash::seed(seed).bytes(purpose.as_bytes()).get() as i32
 }
 
 pub fn hash2(seed: u64, purpose: &str, x: i32, y: i32) -> u64 {
-    let mut hasher = rustc_hash::FxHasher::default();
-    (seed, purpose, x, y).hash(&mut hasher);
-    hasher.finish()
+    Hash::seed(seed).bytes(purpose.as_bytes()).pos(x, y).get()
 }
 
 pub fn hash1(seed: u64, purpose: &str, x: i32) -> u64 {
-    let mut hasher = rustc_hash::FxHasher::default();
-    (seed, purpose, x).hash(&mut hasher);
-    hasher.finish()
+    Hash::seed(seed)
+        .bytes(purpose.as_bytes())
+        .add(x as u32 as u64)
+        .get()
 }
 
 pub struct Xorshift(u64);

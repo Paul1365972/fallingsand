@@ -1,7 +1,7 @@
 use crate::obstacles::Obstacles;
 use crate::window::SimWindow;
 use fallingsand_core::{Cell, CellPos, MaterialId, MaterialRegistry, Phase};
-use std::hash::{Hash, Hasher};
+use fallingsand_rng::Hash;
 
 const NEIGHBORS: [(i32, i32); 4] = [(0, -1), (-1, 0), (1, 0), (0, 1)];
 const SALT_REACT: u32 = 1;
@@ -142,18 +142,14 @@ fn set_product(
 }
 
 fn hash_shade(pos: CellPos, tick: u64) -> u8 {
-    let mut hasher = rustc_hash::FxHasher::default();
-    (pos.x, pos.y, tick).hash(&mut hasher);
-    (hasher.finish() & 0xF) as u8
+    Hash::seed(tick).pos(pos.x, pos.y).bits(4) as u8
 }
 
 fn roll(pos: CellPos, tick: u64, salt: u32, chance: f32) -> bool {
-    if chance <= 0.0 {
-        return false;
-    }
-    let mut hasher = rustc_hash::FxHasher::default();
-    (pos.x, pos.y, tick, salt).hash(&mut hasher);
-    ((hasher.finish() as u32) as f32) < chance * u32::MAX as f32
+    Hash::seed(tick)
+        .add(salt as u64)
+        .pos(pos.x, pos.y)
+        .chance(chance)
 }
 
 fn fluid_displaceable(
@@ -274,9 +270,7 @@ fn stamp_flow_dir(window: &mut SimWindow, pos: CellPos, state: u8) {
 }
 
 fn coin_flip(pos: CellPos, tick: u64) -> bool {
-    let mut hasher = rustc_hash::FxHasher::default();
-    (pos.x, pos.y, tick).hash(&mut hasher);
-    hasher.finish() & 1 == 1
+    Hash::seed(tick).pos(pos.x, pos.y).bit()
 }
 
 fn side_order(pos: CellPos, tick: u64) -> [i32; 2] {

@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/fallingsand_core",
+    "crates/fallingsand_rng",
     "crates/fallingsand_sim",
     "crates/fallingsand_protocol",
     "crates/fallingsand_net",
@@ -16,6 +17,7 @@ edition = "2024"
 
 [workspace.dependencies]
 fallingsand_core = { path = "crates/fallingsand_core" }
+fallingsand_rng = { path = "crates/fallingsand_rng" }
 fallingsand_sim = { path = "crates/fallingsand_sim", default-features = false }
 fallingsand_protocol = { path = "crates/fallingsand_protocol" }
 fallingsand_net = { path = "crates/fallingsand_net" }

@@ -16,8 +16,8 @@ use fallingsand_core::{
     Cell, CellOffset, ChunkOffset, DirtyRect, MaterialId, MaterialRegistry, REGION_SIZE_CELLS,
     REGION_SIZE_CHUNKS, Region, RegionPos,
 };
+use fallingsand_rng::Hash;
 use noise::{Cached, hash1, hash2};
-use std::hash::{Hash, Hasher};
 use terrain::Terrain;
 use water::Waters;
 
@@ -461,7 +461,5 @@ fn region_set(region: &mut Region, base_x: i32, base_y: i32, x: i32, y: i32, cel
 }
 
 fn shaded(material: MaterialId, x: i32, y: i32) -> Cell {
-    let mut hasher = rustc_hash::FxHasher::default();
-    (x, y).hash(&mut hasher);
-    Cell::new(material, (hasher.finish() & 0xF) as u8)
+    Cell::new(material, Hash::new().pos(x, y).bits(4) as u8)
 }
