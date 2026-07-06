@@ -8,8 +8,9 @@ use std::collections::VecDeque;
 
 pub const MAX_ISLAND_EXTENT: i32 = 48;
 pub const MAX_ISLAND_CELLS: usize = 2048;
-pub const SETTLE_SECS: f32 = 0.33;
+pub const SLEEP_SECS: f32 = 0.33;
 pub const ANGLE_STEPS: u32 = 1024;
+const WAKE_SPEED: f32 = 0.5;
 const SETTLE_SPEED_SQ: f32 = 100.0;
 const SETTLE_SPIN: f32 = 1.5;
 const SUPPORT_NORMAL_Y: f32 = 0.25;
@@ -75,6 +76,17 @@ pub struct PixelBody {
     pub rest_secs: f32,
     pub raster: Raster,
     pub frozen: bool,
+    pub asleep: bool,
+}
+
+pub fn wake_covering(bodies: &mut [PixelBody], pos: CellPos) {
+    for body in bodies.iter_mut() {
+        if body.raster.covers(pos) {
+            body.asleep = false;
+            body.rest_secs = 0.0;
+            return;
+        }
+    }
 }
 
 impl PixelBody {
@@ -267,6 +279,7 @@ pub fn register_body(
         rest_secs: 0.0,
         raster: Raster::default(),
         frozen: false,
+        asleep: false,
     };
     body.raster = rasterize_at(&body, body.x, body.y, body.angle);
     debug_assert_eq!(body.raster.cells.len(), island.len());
@@ -418,6 +431,7 @@ fn split_body(
             rest_secs: 0.0,
             raster: Raster::default(),
             frozen: false,
+            asleep: false,
         });
     }
 
@@ -456,7 +470,14 @@ enum Other {
         spin: f32,
         rx: f32,
         ry: f32,
+        resting: bool,
     },
+}
+
+impl Other {
+    const fn is_static(&self) -> bool {
+        matches!(self, Other::Terrain | Other::Body { resting: true, .. })
+    }
 }
 
 struct Contact {
@@ -525,6 +546,7 @@ fn find_contacts(
                             spin: other.spin,
                             rx: (wx - other.x).to_f32(),
                             ry: (wy - other.y).to_f32(),
+                            resting: other.asleep || other.rest_secs > 0.0,
                         }
                     }
                     None => Other::Terrain,
@@ -597,11 +619,6 @@ fn find_contacts(
     contacts
 }
 
-pub struct BodiesStep {
-    pub settled: Vec<usize>,
-    pub entity_impulses: Vec<(f32, f32)>,
-}
-
 fn span_simulated(
     world: &CellWorld,
     simulated: &dyn Fn(ChunkPos) -> bool,
@@ -629,11 +646,8 @@ pub fn step_bodies(
     entities: &[EntityDynamics],
     gravity: Fixed,
     simulated: &dyn Fn(ChunkPos) -> bool,
-) -> BodiesStep {
-    let mut result = BodiesStep {
-        settled: Vec::new(),
-        entity_impulses: vec![(0.0, 0.0); entities.len()],
-    };
+) -> Vec<(f32, f32)> {
+    let mut entity_impulses = vec![(0.0, 0.0); entities.len()];
     let entity_boxes: Vec<EntityBox> = entities.iter().map(|entity| entity.bbox).collect();
 
     let mut order: Vec<usize> = (0..bodies.len()).collect();
@@ -648,8 +662,22 @@ pub fn step_bodies(
     for &index in &order {
         let frozen = !span_simulated(world, simulated, &bodies[index]);
         bodies[index].frozen = frozen;
-        if frozen {
+        if frozen || bodies[index].asleep {
             continue;
+        }
+        {
+            let body = &mut bodies[index];
+            if body.rest_secs > 0.0
+                && body.vx == Fixed::ZERO
+                && body.vy == Fixed::ZERO
+                && body.spin == 0.0
+            {
+                body.rest_secs += TICK_DT;
+                if body.rest_secs >= SLEEP_SECS {
+                    body.asleep = true;
+                }
+                continue;
+            }
         }
 
         let (start_x, start_y, start_angle) = {
@@ -677,10 +705,10 @@ pub fn step_bodies(
                 index,
                 damping,
                 substeps,
-                &mut result.entity_impulses,
+                &mut entity_impulses,
             );
         }
-        restamp(
+        let vacated = restamp(
             world,
             registry,
             &entity_boxes,
@@ -689,11 +717,19 @@ pub fn step_bodies(
             start_y,
             start_angle,
         );
-        if bodies[index].rest_secs >= SETTLE_SECS {
-            result.settled.push(index);
+        for pos in vacated {
+            for (dx, dy) in NEIGHBORS {
+                let neighbor = pos.translated(dx, dy);
+                if bodies[index].raster.covers(neighbor) {
+                    continue;
+                }
+                if world.get_cell(neighbor).is_some_and(|cell| cell.is_body()) {
+                    wake_covering(bodies, neighbor);
+                }
+            }
         }
     }
-    result
+    entity_impulses
 }
 
 fn apply_buoyancy(
@@ -781,12 +817,10 @@ fn step_substep(
 
     let contacts = find_contacts(world, registry, entities, bodies, index);
     let touching = !contacts.is_empty();
-    let terrain_only = contacts
-        .iter()
-        .all(|contact| matches!(contact.other, Other::Terrain));
+    let static_only = contacts.iter().all(|contact| contact.other.is_static());
     let supported = contacts
         .iter()
-        .any(|contact| matches!(contact.other, Other::Terrain) && contact.ny > SUPPORT_NORMAL_Y);
+        .any(|contact| contact.other.is_static() && contact.ny > SUPPORT_NORMAL_Y);
 
     let mut body_impulses: Vec<(usize, f32, f32, f32)> = Vec::new();
     {
@@ -874,7 +908,7 @@ fn step_substep(
         }
 
         let slow = vx * vx + vy * vy < SETTLE_SPEED_SQ && body.spin.abs() < SETTLE_SPIN;
-        if touching && slow && terrain_only && supported {
+        if touching && slow && static_only && supported {
             body.x = prev_x;
             body.y = prev_y;
             body.angle = prev_angle;
@@ -901,10 +935,16 @@ fn step_substep(
 
     for (other_index, jx, jy, r_cross_j) in body_impulses {
         let other = &mut bodies[other_index];
-        other.vx = other.vx.add_f32(jx * other.inv_mass);
-        other.vy = other.vy.add_f32(jy * other.inv_mass);
-        other.spin += r_cross_j * other.inv_inertia;
-        other.rest_secs = 0.0;
+        let dvx = jx * other.inv_mass;
+        let dvy = jy * other.inv_mass;
+        let dspin = r_cross_j * other.inv_inertia;
+        other.vx = other.vx.add_f32(dvx);
+        other.vy = other.vy.add_f32(dvy);
+        other.spin += dspin;
+        if dvx.abs() + dvy.abs() > WAKE_SPEED || dspin.abs() > WAKE_SPEED {
+            other.rest_secs = 0.0;
+            other.asleep = false;
+        }
     }
 }
 
@@ -935,7 +975,7 @@ fn restamp(
     start_x: Fixed,
     start_y: Fixed,
     start_angle: f32,
-) {
+) -> Vec<CellPos> {
     let full = (body.x, body.y, body.angle);
     let candidates = [
         full,
@@ -949,11 +989,11 @@ fn restamp(
         let raster = rasterize_at(body, x, y, angle);
         let committed = if raster.cells == body.raster.cells {
             body.raster = raster;
-            true
+            Some(Vec::new())
         } else {
             plan_and_commit(world, registry, entities, body, raster)
         };
-        if committed {
+        if let Some(vacated) = committed {
             body.x = x;
             body.y = y;
             body.angle = angle;
@@ -965,7 +1005,7 @@ fn restamp(
                 }
                 _ => {}
             }
-            return;
+            return vacated;
         }
     }
 
@@ -975,6 +1015,7 @@ fn restamp(
     body.vx = body.vx.mul(Fixed::from_f32(BLOCKED_DAMPING));
     body.vy = body.vy.mul(Fixed::from_f32(BLOCKED_DAMPING));
     body.spin *= BLOCKED_DAMPING;
+    Vec::new()
 }
 
 fn plan_and_commit(
@@ -983,25 +1024,23 @@ fn plan_and_commit(
     entities: &[EntityBox],
     body: &mut PixelBody,
     new: Raster,
-) -> bool {
+) -> Option<Vec<CellPos>> {
     let mut displaced: Vec<(CellPos, Cell)> = Vec::new();
     for &(pos, _) in &new.cells {
         if body.raster.covers(pos) {
             continue;
         }
-        let Some(cell) = world.get_cell(pos) else {
-            return false;
-        };
+        let cell = world.get_cell(pos)?;
         if cell.is_body() {
-            return false;
+            return None;
         }
         match registry.get(cell.material).phase {
-            Phase::Solid | Phase::Powder => return false,
+            Phase::Solid | Phase::Powder => return None,
             Phase::Empty => {}
             Phase::Liquid | Phase::Gas | Phase::Fire => displaced.push((pos, cell)),
         }
         if entities.iter().any(|entity| entity.contains_cell(pos)) {
-            return false;
+            return None;
         }
     }
 
@@ -1029,10 +1068,7 @@ fn plan_and_commit(
         writes.push((target, Cell::AIR));
     }
     for (from, cell) in spill {
-        let Some(spot) = relocation_spot(world, registry, entities, &claimed, &new.set, from)
-        else {
-            return false;
-        };
+        let spot = relocation_spot(world, registry, entities, &claimed, &new.set, from)?;
         claimed.insert(spot);
         writes.push((spot, cell));
     }
@@ -1046,16 +1082,10 @@ fn plan_and_commit(
         world.set_cell_raw(pos, cell);
     }
     body.raster = new;
-    true
+    Some(vacated)
 }
 
-pub fn settle_body(
-    world: &mut CellWorld,
-    registry: &MaterialRegistry,
-    entities: &[EntityBox],
-    body: &PixelBody,
-    forced: bool,
-) -> bool {
+pub fn settle_body(world: &mut CellWorld, registry: &MaterialRegistry, body: &PixelBody) {
     let mut winner = vec![false; body.cells.len()];
     for &(_, local) in &body.raster.cells {
         winner[local as usize] = true;
@@ -1078,7 +1108,6 @@ pub fn settle_body(
                 .find(|&pos| {
                     !claimed.contains(&pos)
                         && !body.raster.covers(pos)
-                        && !entities.iter().any(|entity| entity.contains_cell(pos))
                         && world.get_cell(pos).is_some_and(|existing| {
                             !existing.is_body()
                                 && !matches!(
@@ -1088,23 +1117,17 @@ pub fn settle_body(
                         })
                 })
                 .or_else(|| {
-                    relocation_spot(world, registry, entities, &claimed, &body.raster.set, base)
+                    relocation_spot(world, registry, &[], &claimed, &body.raster.set, base)
                 });
             let Some(pos) = target else {
-                if forced {
-                    continue;
-                }
-                return false;
+                continue;
             };
             let existing = world.get_cell(pos).expect("settle target is loaded");
             if !existing.is_air() {
                 let Some(spot) =
-                    relocation_spot(world, registry, entities, &claimed, &body.raster.set, pos)
+                    relocation_spot(world, registry, &[], &claimed, &body.raster.set, pos)
                 else {
-                    if forced {
-                        continue;
-                    }
-                    return false;
+                    continue;
                 };
                 claimed.insert(spot);
                 writes.push((spot, existing));
@@ -1124,7 +1147,6 @@ pub fn settle_body(
     for (pos, cell) in writes {
         world.set_cell_raw(pos, cell);
     }
-    true
 }
 
 fn relocation_spot(

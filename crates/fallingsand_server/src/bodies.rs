@@ -4,8 +4,8 @@ use crate::{PlayerImpulses, Registry, SimWorld, TickStats};
 use bevy_ecs::prelude::*;
 use fallingsand_core::{CellPos, Fixed, TICK_DT};
 use fallingsand_sim::bodies::{
-    EntityDynamics, PixelBody, SETTLE_SECS, apply_damage, detect_island, register_body,
-    settle_body, step_bodies as simulate_bodies,
+    EntityDynamics, PixelBody, apply_damage, detect_island, register_body,
+    step_bodies as simulate_bodies, wake_covering,
 };
 use fallingsand_sim::{CellWorld, EntityBox};
 
@@ -50,6 +50,10 @@ pub fn step_bodies(
     candidates.sort_unstable_by_key(|pos| (pos.y, pos.x));
     candidates.dedup();
     for seed in candidates {
+        if sim.0.get_cell(seed).is_some_and(|cell| cell.is_body()) {
+            wake_covering(&mut bodies.bodies, seed);
+            continue;
+        }
         let Some(island) = detect_island(&sim.0, &registry.0, seed) else {
             continue;
         };
@@ -87,7 +91,7 @@ pub fn step_bodies(
         }
     }
 
-    let step = simulate_bodies(
+    let entity_impulses = simulate_bodies(
         &mut sim.0,
         &registry.0,
         &mut bodies.bodies,
@@ -95,28 +99,11 @@ pub fn step_bodies(
         BODY_GRAVITY,
         &|pos| tickets.simulates(pos),
     );
-    for (player, (jx, jy)) in players.iter().zip(step.entity_impulses) {
+    for (player, (jx, jy)) in players.iter().zip(entity_impulses) {
         if jx != 0.0 || jy != 0.0 {
             let entry = impulses.0.entry(*player).or_insert((0.0, 0.0));
             entry.0 += jx;
             entry.1 += jy;
-        }
-    }
-
-    let entity_boxes: Vec<EntityBox> = entities.iter().map(|entity| entity.bbox).collect();
-    let mut settled = step.settled;
-    settled.sort_unstable_by(|a, b| b.cmp(a));
-    for index in settled {
-        if settle_body(
-            &mut sim.0,
-            &registry.0,
-            &entity_boxes,
-            &bodies.bodies[index],
-            false,
-        ) {
-            bodies.bodies.swap_remove(index);
-        } else {
-            bodies.bodies[index].rest_secs = SETTLE_SECS;
         }
     }
 
@@ -165,8 +152,13 @@ fn transfer_standing_weight(
         let Some(body) = bodies.body_at_mut(pos) else {
             continue;
         };
+        if body.frozen {
+            continue;
+        }
         let rx = (Fixed::cell_center(pos.x) - body.x).to_f32();
         body.vy = body.vy.add_f32(share * body.inv_mass);
         body.spin += rx * share * body.inv_inertia;
+        body.rest_secs = 0.0;
+        body.asleep = false;
     }
 }

@@ -704,6 +704,9 @@ pub fn step_physics(
             let Some(pixel_body) = bodies.body_at_mut(blocked.pos) else {
                 continue;
             };
+            if pixel_body.frozen {
+                continue;
+            }
             let jx = PLAYER_MASS * blocked.dvx;
             let jy = PLAYER_MASS * blocked.dvy;
             let rx = (Fixed::cell_center(blocked.pos.x) - pixel_body.x).to_f32();
@@ -712,6 +715,7 @@ pub fn step_physics(
             pixel_body.vy = pixel_body.vy.add_f32(jy * pixel_body.inv_mass);
             pixel_body.spin += (rx * jy - ry * jx) * pixel_body.inv_inertia;
             pixel_body.rest_secs = 0.0;
+            pixel_body.asleep = false;
         }
         if health.hp <= 0.0 {
             health.hp = MAX_HP;

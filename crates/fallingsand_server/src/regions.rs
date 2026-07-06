@@ -207,7 +207,7 @@ pub fn manage_regions(
                 .any(|&pos| body_overlaps_region(&bodies.bodies[index], pos));
             if unloading {
                 let body = bodies.bodies.swap_remove(index);
-                settle_body(&mut sim.0, &registry.0, &[], &body, true);
+                settle_body(&mut sim.0, &registry.0, &body);
             } else {
                 index += 1;
             }
@@ -342,7 +342,7 @@ pub fn save_everything(world: &mut bevy_ecs::world::World, final_save: bool) {
             {
                 let mut sim = world.resource_mut::<SimWorld>();
                 for body in bodies.bodies.drain(..) {
-                    settle_body(&mut sim.0, &registry, &[], &body, true);
+                    settle_body(&mut sim.0, &registry, &body);
                     let radius =
                         ((body.width as f32).hypot(body.height as f32) + 1.0).ceil() as i32;
                     let (cx, cy) = (body.x.floor_cell(), body.y.floor_cell());

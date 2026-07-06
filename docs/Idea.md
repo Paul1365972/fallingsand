@@ -175,8 +175,11 @@ Everything collides against the cell grid directly, so changing terrain never re
   Buoyancy comes from liquid adjacent to the footprint (an estimated waterline scales a submerged fraction) plus drag — wood floats with draft, stone sinks, no special cases.
 - Pixel bodies react like terrain because they literally are terrain cells: the ordinary CA runs reactions and decay on the footprint (a fallen tree burns).
   Any write that unflags a body cell — reactions, decay, digs, world edits — feeds a damage queue through one central hook in the cell-write path; the bodies pass reconciles it before moving anything: solid products are re-adopted into the body, everything else leaves it, and bodies split by connectivity or despawn when empty.
-- When a pixel body comes to rest on terrain it settles in place: the record is dropped and the flags are cleared where the cells already lie, with hidden overlap mass placed nearby (conserving, never into an entity).
-  Settling never moves visible matter and cannot be blocked by it; a body whose hidden mass cannot be placed stays live and retries.
+- Bodies never settle back into terrain during play: a body at rest falls asleep instead, staying a kickable body forever.
+  Resting is event-driven and free — a resting body does no probing and no writes; sleeping and resting bodies read as static supports so stacks of debris rest and sleep too.
+  Anything that could move it wakes it: player kicks and standing weight, damage, structural undermining, fluid arriving on top, or a neighboring body moving away.
+- Only region unload and final save settle a body in place: the record is dropped and the flags are cleared where the cells already lie, with hidden overlap mass placed nearby (conserving).
+  Settling never moves visible matter and cannot be blocked by it.
 - Rendering and replication: body cells render inside the chunk textures and travel in ordinary chunk deltas like all other matter — no body protocol, no body renderer, no interpolation; motion is cell-snapped at tick rate.
 - The first playable may cap pixel-body count aggressively; the important part is that the world model knows pixel bodies exist from day one.
 
@@ -194,7 +197,7 @@ A `fallingsand_server::Server` is a library value you construct and tick — the
   2. Apply player inputs (movement intents, actions → world edits)
   3. Load/generate/unload regions per chunk-ticket changes
   4. Step cellular automata (4 block phases, rayon), apply deferred world edits
-  5. Step physics (entities, then the serial bodies pass: damage reconciliation → island registration → dynamics + re-stamp → settle-in-place)
+  5. Step physics (entities, then the serial bodies pass: damage reconciliation → island registration → dynamics + re-stamp → sleep management)
   6. Run game logic systems (health, interactions, inventory…)
   7. Snapshot dirty state → replication → send
   8. Periodic: persistence flush (dirty regions → redb), autosave entities
@@ -305,6 +308,6 @@ Each milestone is playable/demoable.
   First playable.
 - **M3 — Persist & generate**: `fallingsand_worldgen` pipeline + redb persistence; create/load/save worlds; region streaming via chunk tickets as the player moves.
 - **M4 — Multiplayer**: WebTransport transport, protocol handshake, delta replication, prediction/interpolation, dedicated server binary, web client joins a native server.
-- **M5 — Break it**: pixel bodies — flood-fill island detection, always-rasterized impulse dynamics (pixel-perfect and overlap-free by construction), settle-in-place, replicated as chunk deltas.
+- **M5 — Break it**: pixel bodies — flood-fill island detection, always-rasterized impulse dynamics (pixel-perfect and overlap-free by construction), sleeping kickable debris, replicated as chunk deltas.
   The Noita moment.
 - **M6 — Feel like a game**: main menu (worlds, server browser, settings), HUD, basic survival loop (health, a few tools/items), polish pass on rendering (palette work, particles for impacts).

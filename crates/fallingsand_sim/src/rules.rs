@@ -361,6 +361,9 @@ fn update_liquid(
     let dispersion = material.dispersion;
     let flow_chance = registry.flow_chance(cell.material);
     let below = pos.translated(0, -1);
+    if window.get(below).is_some_and(|cell| cell.is_body()) {
+        window.note_structural(below);
+    }
     if fluid_displaceable(window, registry, density, below) {
         if free_path(window, registry, below) {
             let steps = fall_count(registry, cell.material, pos, tick);
