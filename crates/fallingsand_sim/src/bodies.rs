@@ -1,4 +1,5 @@
 use crate::obstacles::EntityBox;
+use crate::physics::{FLUID_DRAG_LINEAR, FLUID_DRAG_QUAD, MAX_FLUID_DRAG};
 use crate::world::CellWorld;
 use fallingsand_core::{
     Cell, CellPos, ChunkPos, Fixed, MaterialId, MaterialRegistry, Phase, TICK_DT,
@@ -21,7 +22,6 @@ const FRICTION: f32 = 0.4;
 const CONTACT_ITERATIONS: usize = 4;
 const PENETRATION_CORRECTION: f32 = 0.5;
 const SUBSTEP_TRAVEL: f32 = 0.5;
-const FLUID_DRAG: f32 = 2.5;
 const REFERENCE_DENSITY: f32 = 1000.0;
 const RELOCATE_RADIUS: i32 = 8;
 const NEIGHBORS: [(i32, i32); 4] = [(0, -1), (-1, 0), (1, 0), (0, 1)];
@@ -803,7 +803,9 @@ fn apply_buoyancy(
         .vy
         .add_f32(-gravity.to_f32() * buoyant * body.inv_mass * TICK_DT);
     let submersion = submerged as f32 / count.max(1) as f32;
-    let drag = (FLUID_DRAG * submersion * TICK_DT).min(0.9);
+    let speed = body.vx.to_f32().hypot(body.vy.to_f32());
+    let drag =
+        ((FLUID_DRAG_LINEAR + FLUID_DRAG_QUAD * speed) * submersion * TICK_DT).min(MAX_FLUID_DRAG);
     let keep = Fixed::from_f32(1.0 - drag);
     body.vx = body.vx.mul(keep);
     body.vy = body.vy.mul(keep);

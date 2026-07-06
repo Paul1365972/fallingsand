@@ -172,7 +172,7 @@ pub fn body_submersion<W: CellSource>(
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PlayerParams {
     pub max_run: Fixed,
     pub run_accel: Fixed,
@@ -316,8 +316,14 @@ fn normal_update<W: CellSource>(
     move_x: i32,
     jump_held: bool,
     down_held: bool,
+    submersion: Submersion,
 ) {
-    if !ctrl.ducking && down_held {
+    let swimming = !body.on_ground && submersion.fraction >= SWIM_CONTROL_MIN_SUBMERSION;
+    if swimming {
+        if ctrl.ducking && can_unduck(world, registry, params, body) {
+            unduck(params, body, ctrl);
+        }
+    } else if !ctrl.ducking && down_held {
         duck(params, body, ctrl);
     } else if ctrl.ducking && !down_held && can_unduck(world, registry, params, body) {
         unduck(params, body, ctrl);
@@ -331,12 +337,10 @@ fn normal_update<W: CellSource>(
         } else {
             params.air_mult
         };
-        let feet = CellPos::new(
-            body.x.floor_cell(),
-            (body.y - body.half_h + Fixed::HALF).floor_cell(),
-        );
-        let max_run = if body.on_ground && cell_liquid(world, registry, feet) {
-            params.max_run.mul(params.wade_run_mult)
+        let wade = Fixed::ONE
+            - (Fixed::ONE - params.wade_run_mult).mul(Fixed::from_f32(submersion.fraction));
+        let max_run = if body.on_ground {
+            params.max_run.mul(wade)
         } else {
             params.max_run
         };
@@ -358,17 +362,37 @@ fn normal_update<W: CellSource>(
     };
     ctrl.max_fall = approach(ctrl.max_fall, fall_target, params.fast_max_accel.per_tick());
 
+    let buoyancy = submersion.fraction * submersion.liquid_density / params.density;
     if !body.on_ground {
-        let gmult = if body.vy.abs() <= params.half_grav_threshold && jump_held {
-            Fixed::HALF
+        let assist = if body.vy.abs() <= params.half_grav_threshold && jump_held {
+            0.5
         } else {
-            Fixed::ONE
+            1.0
         };
-        body.vy = approach(
-            body.vy,
-            -ctrl.max_fall,
-            params.gravity.mul(gmult).per_tick(),
-        );
+        let assist = assist + (1.0 - assist) * submersion.fraction;
+        let net = params.gravity.mul(Fixed::from_f32(assist - buoyancy));
+        if net >= Fixed::ZERO {
+            body.vy = approach(body.vy, -ctrl.max_fall, net.per_tick());
+        } else {
+            body.vy -= net.per_tick();
+        }
+        let move_y = jump_held as i32 - down_held as i32;
+        if move_y != 0 && submersion.fraction > 0.0 {
+            let thrust = params
+                .swim_thrust
+                .mul(Fixed::from_f32(submersion.fraction))
+                .mul_int(move_y);
+            body.vy += thrust.per_tick();
+        }
+    }
+
+    if submersion.fraction > 0.0 {
+        let speed = body.vx.to_f32().hypot(body.vy.to_f32());
+        let drag = ((FLUID_DRAG_LINEAR + FLUID_DRAG_QUAD * speed) * submersion.fraction * TICK_DT)
+            .min(MAX_FLUID_DRAG);
+        let keep = Fixed::from_f32(1.0 - drag);
+        body.vx = body.vx.mul(keep);
+        body.vy = body.vy.mul(keep);
     }
 
     if ctrl.var_jump_timer > 0.0 {
@@ -379,74 +403,18 @@ fn normal_update<W: CellSource>(
         }
     }
 
-    if ctrl.buffer > 0.0 && ctrl.coyote > 0.0 {
-        jump(params, body, ctrl, move_x);
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn swim_update<W: CellSource>(
-    world: &W,
-    registry: &MaterialRegistry,
-    params: &PlayerParams,
-    body: &mut Body,
-    ctrl: &mut Controller,
-    move_x: i32,
-    jump_held: bool,
-    down_held: bool,
-    entered_water: bool,
-) {
-    if entered_water && body.vy < Fixed::ZERO {
-        body.vy = body.vy.mul(SWIM_BEGIN_DAMP);
-    }
-    if ctrl.ducking && can_unduck(world, registry, params, body) {
-        unduck(params, body, ctrl);
-    }
-    let probe = CellPos::new(
-        body.x.floor_cell(),
-        (body.y - body.half_h + UNDERWATER_PROBE_ABOVE_FEET).floor_cell(),
-    );
-    let underwater = cell_liquid(world, registry, probe);
-    if !underwater && ctrl.buffer > 0.0 && body.vy >= -params.swim_sink {
-        if bank_ahead(world, registry, body, move_x) {
-            jump(params, body, ctrl, move_x);
-            return;
+    if ctrl.buffer > 0.0 {
+        if ctrl.coyote > 0.0 {
+            let weight = (1.0 - buoyancy).clamp(0.0, 1.0);
+            jump(params, body, ctrl, move_x, Fixed::from_f32(weight.sqrt()));
+        } else if submersion.fraction >= BANK_VAULT_MIN_SUBMERSION
+            && submersion.fraction <= BANK_VAULT_MAX_SUBMERSION
+            && body.vy >= -BANK_VAULT_MAX_SINK
+            && bank_ahead(world, registry, body, move_x)
+        {
+            jump(params, body, ctrl, move_x, Fixed::ONE);
         }
-        ctrl.buffer = 0.0;
-        body.vy = body.vy.max(params.swim_hop);
     }
-
-    let max_x = if underwater {
-        params.swim_underwater_max
-    } else {
-        params.swim_max
-    };
-    let rate_x = if same_direction(body.vx, move_x) && body.vx.abs() > max_x {
-        params.swim_reduce
-    } else {
-        params.swim_accel
-    };
-    body.vx = approach(body.vx, max_x.mul_int(move_x), rate_x.per_tick());
-
-    let move_y = jump_held as i32 - down_held as i32;
-    let target_y = if move_y > 0 {
-        if underwater {
-            params.swim_max
-        } else {
-            params.swim_tread
-        }
-    } else if move_y < 0 {
-        -params.swim_max
-    } else {
-        -params.swim_sink
-    };
-    let dir_y = if target_y > Fixed::ZERO { 1 } else { -1 };
-    let rate_y = if same_direction(body.vy, dir_y) && body.vy.abs() > target_y.abs() {
-        params.swim_reduce
-    } else {
-        params.swim_accel
-    };
-    body.vy = approach(body.vy, target_y, rate_y.per_tick());
 }
 
 fn bank_ahead<W: CellSource>(
@@ -474,11 +442,11 @@ fn bank_ahead<W: CellSource>(
     false
 }
 
-fn jump(params: &PlayerParams, body: &mut Body, ctrl: &mut Controller, move_x: i32) {
+fn jump(params: &PlayerParams, body: &mut Body, ctrl: &mut Controller, move_x: i32, scale: Fixed) {
     ctrl.buffer = 0.0;
     ctrl.coyote = 0.0;
-    body.vx += params.jump_h_boost.mul_int(move_x);
-    body.vy = params.jump_speed;
+    body.vx += params.jump_h_boost.mul(scale).mul_int(move_x);
+    body.vy = params.jump_speed.mul(scale);
     ctrl.var_jump_timer = VAR_JUMP_TIME;
     ctrl.var_jump_speed = body.vy;
 }
@@ -696,6 +664,7 @@ pub fn move_body<W: CellSource>(
     world: &W,
     registry: &MaterialRegistry,
     body: &mut Body,
+    submersion: f32,
 ) -> MoveResult {
     let mut result = MoveResult::default();
     let was_grounded = body.on_ground;
@@ -788,6 +757,7 @@ pub fn move_body<W: CellSource>(
 
     if was_grounded
         && body.vy <= Fixed::ZERO
+        && submersion < SNAP_DOWN_MAX_SUBMERSION
         && !rect_blocked(world, registry, body, body.x, body.y - GROUND_PROBE)
     {
         for down in 1..=STEP_DOWN_CELLS {
