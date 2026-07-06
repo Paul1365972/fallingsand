@@ -424,16 +424,6 @@ impl WorldGenerator {
             &water_top,
             &clip,
         ));
-        into_air.extend(features::cacti_for_rect(
-            self.seed,
-            &self.def,
-            &self.palette,
-            &self.terrain,
-            &solid,
-            &surface_of,
-            &water_top,
-            &clip,
-        ));
         for cell in into_air {
             if region_get(&region, base.x, base.y, cell.x, cell.y).material == MaterialId::AIR {
                 region_set(

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 pub const REGION_FORMAT_VERSION: u8 = 2;
-pub const WORLD_FORMAT_VERSION: u16 = 4;
+pub const WORLD_FORMAT_VERSION: u16 = 5;
 const CELL_BYTES: usize = 3;
 const RECT_BYTES: usize = 4;
 const REGION_CELL_BYTES: usize = REGION_AREA_CHUNKS * CHUNK_AREA * CELL_BYTES;
@@ -123,10 +123,7 @@ impl WorldStore {
             match read.open_table(META) {
                 Ok(table) => {
                     if let Some(guard) = table.get("world")? {
-                        let meta: WorldMeta = postcard::from_bytes(guard.value())?;
-                        if meta.format_version != WORLD_FORMAT_VERSION {
-                            return Err(StoreError::UnsupportedWorld(meta.format_version));
-                        }
+                        parse_meta(guard.value())?;
                     }
                 }
                 Err(redb::TableError::TableDoesNotExist(_)) => {}
@@ -149,11 +146,7 @@ impl WorldStore {
         let Some(guard) = table.get("world")? else {
             return Ok(None);
         };
-        let meta: WorldMeta = postcard::from_bytes(guard.value())?;
-        if meta.format_version != WORLD_FORMAT_VERSION {
-            return Err(StoreError::UnsupportedWorld(meta.format_version));
-        }
-        Ok(Some(meta))
+        parse_meta(guard.value()).map(Some)
     }
 
     pub fn save_meta(&self, meta: &WorldMeta) -> Result<(), StoreError> {
@@ -215,6 +208,14 @@ impl WorldStore {
         write.commit()?;
         Ok(())
     }
+}
+
+fn parse_meta(bytes: &[u8]) -> Result<WorldMeta, StoreError> {
+    let (version, _) = postcard::take_from_bytes::<u16>(bytes)?;
+    if version != WORLD_FORMAT_VERSION {
+        return Err(StoreError::UnsupportedWorld(version));
+    }
+    Ok(postcard::from_bytes(bytes)?)
 }
 
 pub fn encode_region(region: &Region) -> Vec<u8> {

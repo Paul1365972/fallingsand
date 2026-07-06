@@ -1,3 +1,4 @@
+use crate::camera::{CameraControl, VIRTUAL_HEIGHT, VIRTUAL_WIDTH};
 use crate::net::{NetSet, ServerMsg, Session};
 use crate::player::{PlayerVisual, PlayerVisuals};
 use crate::worldview::WorldView;
@@ -104,6 +105,16 @@ struct SkyAssets {
     moon_phases: Vec<Handle<Image>>,
 }
 
+#[derive(Resource, Default)]
+struct EmissiveLights(Vec<Vec4>);
+
+fn view_size(window: &Window, zoom: f32) -> Vec2 {
+    let width = window.width().max(1.0);
+    let height = window.height().max(1.0);
+    let per_pixel = (VIRTUAL_WIDTH / width).max(VIRTUAL_HEIGHT / height) * zoom;
+    Vec2::new(width, height) * per_pixel
+}
+
 #[derive(Component)]
 struct DarknessQuad;
 
@@ -118,6 +129,7 @@ impl Plugin for SkyPlugin {
         bevy::asset::embedded_asset!(app, "shaders/darkness.wgsl");
         app.add_plugins(Material2dPlugin::<DarknessMaterial>::default())
             .init_resource::<WorldTime>()
+            .init_resource::<EmissiveLights>()
             .add_systems(PostStartup, setup_sky)
             .add_systems(
                 PreUpdate,
@@ -132,10 +144,13 @@ impl Plugin for SkyPlugin {
                 (
                     update_sky_tint,
                     update_orbits,
-                    gather_lights,
+                    scan_emissive,
+                    apply_lighting,
                     fit_darkness_quad,
                 )
+                    .chain()
                     .after(advance_time)
+                    .after(crate::interpolation::interpolate)
                     .run_if(in_state(GameState::Playing)),
             )
             .add_systems(OnExit(AppState::InGame), reset_sky);
@@ -349,7 +364,8 @@ fn night_darkness(time: &WorldTime) -> f32 {
 fn update_orbits(
     time: Res<WorldTime>,
     assets: Res<SkyAssets>,
-    camera: Single<&Projection, With<Camera2d>>,
+    window: Single<&Window>,
+    control: Res<CameraControl>,
     mut sun: Query<(&mut Transform, &mut Visibility), (With<SunVisual>, Without<MoonVisual>)>,
     mut moon: Query<
         (&mut Transform, &mut Visibility, &mut Sprite),
@@ -359,10 +375,7 @@ fn update_orbits(
     if !time.synced {
         return;
     }
-    let Projection::Orthographic(ortho) = &**camera else {
-        return;
-    };
-    let radius = ortho.area.height().max(100.0) * ORBIT_RADIUS_FRAC;
+    let radius = view_size(&window, control.zoom).y.max(100.0) * ORBIT_RADIUS_FRAC;
     let angle = (time.t - 0.25) * std::f32::consts::TAU;
     let sun_pos = Vec2::new(angle.cos() * radius * 1.4, angle.sin() * radius);
     if let Ok((mut transform, mut visibility)) = sun.single_mut() {
@@ -390,15 +403,14 @@ fn update_orbits(
 
 fn fit_darkness_quad(
     time: Res<WorldTime>,
-    camera: Single<&Projection, With<Camera2d>>,
+    window: Single<&Window>,
+    control: Res<CameraControl>,
     mut quad: Query<(&mut Transform, &mut Visibility), With<DarknessQuad>>,
 ) {
-    let Projection::Orthographic(ortho) = &**camera else {
-        return;
-    };
+    let size = view_size(&window, control.zoom) * 1.1;
     let dark = time.synced && night_darkness(&time) > 0.001;
     for (mut transform, mut visibility) in &mut quad {
-        transform.scale = Vec3::new(ortho.area.width() * 1.1, ortho.area.height() * 1.1, 1.0);
+        transform.scale = Vec3::new(size.x, size.y, 1.0);
         *visibility = if dark {
             Visibility::Inherited
         } else {
@@ -409,17 +421,15 @@ fn fit_darkness_quad(
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
-fn gather_lights(
+fn scan_emissive(
     time: Res<WorldTime>,
     real: Res<Time>,
-    assets: Res<SkyAssets>,
-    mut materials: ResMut<Assets<DarknessMaterial>>,
     registry: Res<ClientRegistry>,
     view: Res<WorldView>,
-    session: Option<Res<Session>>,
-    visuals: Res<PlayerVisuals>,
-    players: Query<(&Transform, &PlayerVisual)>,
-    camera: Single<(&Transform, &Projection), (With<Camera2d>, Without<PlayerVisual>)>,
+    window: Single<&Window>,
+    control: Res<CameraControl>,
+    camera: Single<&Transform, With<Camera2d>>,
+    mut emissive_lights: ResMut<EmissiveLights>,
     mut cooldown: Local<f32>,
 ) {
     *cooldown -= real.delta_secs();
@@ -427,6 +437,62 @@ fn gather_lights(
         return;
     }
     *cooldown = LIGHT_SCAN_INTERVAL;
+    if !time.synced || night_darkness(&time) <= 0.001 {
+        if !emissive_lights.0.is_empty() {
+            emissive_lights.0.clear();
+        }
+        return;
+    }
+
+    let mut lights: Vec<Vec4> = Vec::new();
+    let center = camera.translation.truncate();
+    let half = view_size(&window, control.zoom) / 2.0 + 32.0;
+    let emissive = registry.0.tag_mask("emissive");
+    let min_x =
+        ((center.x - half.x) as i32).div_euclid(EMISSIVE_SCAN_STRIDE) * EMISSIVE_SCAN_STRIDE;
+    let min_y =
+        ((center.y - half.y) as i32).div_euclid(EMISSIVE_SCAN_STRIDE) * EMISSIVE_SCAN_STRIDE;
+    let mut y = min_y;
+    while y as f32 <= center.y + half.y {
+        let mut x = min_x;
+        while x as f32 <= center.x + half.x {
+            let pos = CellPos::new(x, y);
+            if let Some(cell) = view.get_cell(pos)
+                && registry.0.has_tag(cell.material, emissive)
+            {
+                let point = Vec2::new(x as f32, y as f32);
+                let mut merged = false;
+                for light in lights.iter_mut() {
+                    let existing = Vec2::new(light.x, light.y);
+                    if existing.distance(point) < EMISSIVE_MERGE_DIST + light.z * 0.5 {
+                        let mid = (existing + point) / 2.0;
+                        let radius =
+                            (light.z + existing.distance(point) * 0.5).min(EMISSIVE_MAX_RADIUS);
+                        *light = Vec4::new(mid.x, mid.y, radius, light.w);
+                        merged = true;
+                        break;
+                    }
+                }
+                if !merged && lights.len() < MAX_LIGHTS - 1 {
+                    lights.push(Vec4::new(point.x, point.y, EMISSIVE_LIGHT_RADIUS, 0.9));
+                }
+            }
+            x += EMISSIVE_SCAN_STRIDE;
+        }
+        y += EMISSIVE_SCAN_STRIDE;
+    }
+    emissive_lights.0 = lights;
+}
+
+fn apply_lighting(
+    time: Res<WorldTime>,
+    assets: Res<SkyAssets>,
+    mut materials: ResMut<Assets<DarknessMaterial>>,
+    emissive_lights: Res<EmissiveLights>,
+    session: Option<Res<Session>>,
+    visuals: Res<PlayerVisuals>,
+    players: Query<(&Transform, &PlayerVisual)>,
+) {
     let Some(mut material) = materials.get_mut(&assets.darkness) else {
         return;
     };
@@ -464,45 +530,11 @@ fn gather_lights(
             ));
         }
     }
-
-    let (camera_transform, projection) = *camera;
-    if let Projection::Orthographic(ortho) = projection {
-        let center = camera_transform.translation.truncate();
-        let half = Vec2::new(ortho.area.width(), ortho.area.height()) / 2.0 + 32.0;
-        let emissive = registry.0.tag_mask("emissive");
-        let min_x =
-            ((center.x - half.x) as i32).div_euclid(EMISSIVE_SCAN_STRIDE) * EMISSIVE_SCAN_STRIDE;
-        let min_y =
-            ((center.y - half.y) as i32).div_euclid(EMISSIVE_SCAN_STRIDE) * EMISSIVE_SCAN_STRIDE;
-        let mut y = min_y;
-        while y as f32 <= center.y + half.y {
-            let mut x = min_x;
-            while x as f32 <= center.x + half.x {
-                let pos = CellPos::new(x, y);
-                if let Some(cell) = view.get_cell(pos)
-                    && registry.0.has_tag(cell.material, emissive)
-                {
-                    let point = Vec2::new(x as f32, y as f32);
-                    let mut merged = false;
-                    for light in lights.iter_mut().skip(1) {
-                        let existing = Vec2::new(light.x, light.y);
-                        if existing.distance(point) < EMISSIVE_MERGE_DIST + light.z * 0.5 {
-                            let mid = (existing + point) / 2.0;
-                            let radius =
-                                (light.z + existing.distance(point) * 0.5).min(EMISSIVE_MAX_RADIUS);
-                            *light = Vec4::new(mid.x, mid.y, radius, light.w);
-                            merged = true;
-                            break;
-                        }
-                    }
-                    if !merged && lights.len() < MAX_LIGHTS {
-                        lights.push(Vec4::new(point.x, point.y, EMISSIVE_LIGHT_RADIUS, 0.9));
-                    }
-                }
-                x += EMISSIVE_SCAN_STRIDE;
-            }
-            y += EMISSIVE_SCAN_STRIDE;
+    for light in &emissive_lights.0 {
+        if lights.len() >= MAX_LIGHTS {
+            break;
         }
+        lights.push(*light);
     }
 
     material.params.light_count = lights.len().min(MAX_LIGHTS) as u32;
@@ -516,11 +548,13 @@ fn gather_lights(
 fn reset_sky(
     mut time: ResMut<WorldTime>,
     mut clear: ResMut<ClearColor>,
+    mut emissive_lights: ResMut<EmissiveLights>,
     assets: Option<Res<SkyAssets>>,
     mut materials: ResMut<Assets<DarknessMaterial>>,
 ) {
     *time = WorldTime::default();
     clear.0 = Color::srgb(0.08, 0.09, 0.13);
+    emissive_lights.0.clear();
     if let Some(assets) = assets
         && let Some(mut material) = materials.get_mut(&assets.darkness)
     {

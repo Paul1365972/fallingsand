@@ -142,58 +142,6 @@ pub fn trees_for_rect(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn cacti_for_rect(
-    seed: u64,
-    def: &WorldDef,
-    palette: &Palette,
-    terrain: &Terrain,
-    solid: &dyn Fn(i32, i32) -> bool,
-    surface_of: &dyn Fn(i32) -> i32,
-    water_top: &dyn Fn(i32) -> i32,
-    clip: &Clip,
-) -> Vec<FeatureCell> {
-    let biome_count = def.biomes.len();
-    let candidate = |x: i32| -> Option<u64> {
-        let biome = &def.biomes[terrain.biome_at(biome_count, x)];
-        if biome.cactus_chance <= 0.0 {
-            return None;
-        }
-        let hash = hash1(seed, "cactus", x);
-        (((hash & 0xFFFF) as f32) < biome.cactus_chance * 65536.0).then_some(hash)
-    };
-    let mut cells = Vec::new();
-    for x in (clip.min_x - 4)..=(clip.max_x + 4) {
-        let Some(key) = candidate(x) else {
-            continue;
-        };
-        let mut winner = true;
-        for dx in 1..=4 {
-            let beats_left = candidate(x - dx).is_none_or(|other| other < key);
-            let beats_right = candidate(x + dx).is_none_or(|other| other <= key);
-            if !beats_left || !beats_right {
-                winner = false;
-                break;
-            }
-        }
-        if !winner {
-            continue;
-        }
-        let Some(ground) = ground_of(solid, surface_of(x), x) else {
-            continue;
-        };
-        if ground <= water_top(x) {
-            continue;
-        }
-        let mut rng = Xorshift::new(key);
-        let height = rng.range(4, 11);
-        for dy in 1..=height {
-            clip.push(&mut cells, x, ground + dy, palette.cactus);
-        }
-    }
-    cells
-}
-
-#[allow(clippy::too_many_arguments)]
 pub fn decorations_for_rect(
     seed: u64,
     def: &WorldDef,

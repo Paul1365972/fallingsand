@@ -392,21 +392,6 @@
             tags: ["dissolvable"],
         ),
         (
-            name: "cactus",
-            phase: Solid,
-            density: 600.0,
-            colors: [
-                (62, 130, 60, 255),
-                (54, 118, 52, 255),
-                (72, 142, 70, 255),
-                (48, 108, 46, 255),
-            ],
-            rigid_capable: true,
-            hardness: 0.15,
-            contact_damage: 4.0,
-            tags: ["burnable", "dissolvable"],
-        ),
-        (
             name: "mushroom_stem",
             phase: Solid,
             density: 400.0,
