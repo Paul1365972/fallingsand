@@ -265,7 +265,7 @@ fn track_rects(
 fn draw_borders(
     borders: Res<BordersVisible>,
     flashes: Res<RectFlashes>,
-    camera: Single<(&Camera, &GlobalTransform)>,
+    camera: Single<(&Camera, &GlobalTransform), With<crate::camera::SkyCamera>>,
     time: Res<Time>,
     mut gizmos: Gizmos,
 ) {

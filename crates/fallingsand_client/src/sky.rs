@@ -1,4 +1,6 @@
-use crate::camera::{CameraControl, VIRTUAL_HEIGHT, VIRTUAL_WIDTH};
+use crate::camera::{
+    CameraControl, SkyCamera, VIRTUAL_HEIGHT, VIRTUAL_WIDTH, WorldCamera, WorldTarget,
+};
 use crate::net::{NetSet, ServerMsg, Session};
 use crate::player::{PlayerVisual, PlayerVisuals};
 use crate::worldview::WorldView;
@@ -65,13 +67,13 @@ impl Sky {
 }
 
 #[derive(ShaderType, Debug, Clone)]
-pub struct DarknessParams {
+pub struct LightingParams {
     pub lights: [Vec4; MAX_LIGHTS],
     pub darkness: f32,
     pub light_count: u32,
 }
 
-impl Default for DarknessParams {
+impl Default for LightingParams {
     fn default() -> Self {
         Self {
             lights: [Vec4::ZERO; MAX_LIGHTS],
@@ -81,15 +83,18 @@ impl Default for DarknessParams {
     }
 }
 
-#[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
-pub struct DarknessMaterial {
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
+pub struct LightingMaterial {
     #[uniform(0)]
-    pub params: DarknessParams,
+    pub params: LightingParams,
+    #[texture(1)]
+    #[sampler(2)]
+    pub world: Handle<Image>,
 }
 
-impl Material2d for DarknessMaterial {
+impl Material2d for LightingMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/darkness.wgsl".into()
+        "shaders/lighting.wgsl".into()
     }
 
     fn alpha_mode(&self) -> AlphaMode2d {
@@ -204,7 +209,7 @@ impl Material2d for HorizonMaterial {
 
 #[derive(Resource)]
 struct SkyAssets {
-    darkness: Handle<DarknessMaterial>,
+    lighting: Handle<LightingMaterial>,
     sun: Handle<SunMaterial>,
     moon: Handle<MoonMaterial>,
     starfield: Handle<StarfieldMaterial>,
@@ -222,7 +227,7 @@ fn view_size(window: &Window, zoom: f32) -> Vec2 {
 }
 
 #[derive(Component)]
-struct DarknessQuad;
+struct LitWorldQuad;
 
 #[derive(Component)]
 struct StarfieldQuad;
@@ -238,7 +243,7 @@ struct MoonVisual;
 
 impl Plugin for SkyPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(Material2dPlugin::<DarknessMaterial>::default())
+        app.add_plugins(Material2dPlugin::<LightingMaterial>::default())
             .add_plugins(Material2dPlugin::<SunMaterial>::default())
             .add_plugins(Material2dPlugin::<MoonMaterial>::default())
             .add_plugins(Material2dPlugin::<StarfieldMaterial>::default())
@@ -272,17 +277,19 @@ impl Plugin for SkyPlugin {
 fn setup_sky(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut darkness_mats: ResMut<Assets<DarknessMaterial>>,
+    mut lighting_mats: ResMut<Assets<LightingMaterial>>,
     mut sun_mats: ResMut<Assets<SunMaterial>>,
     mut moon_mats: ResMut<Assets<MoonMaterial>>,
     mut star_mats: ResMut<Assets<StarfieldMaterial>>,
     mut horizon_mats: ResMut<Assets<HorizonMaterial>>,
     asset_server: Res<AssetServer>,
-    camera: Single<Entity, With<Camera2d>>,
+    world_target: Res<WorldTarget>,
+    camera: Single<Entity, With<SkyCamera>>,
 ) {
     let quad = meshes.add(Rectangle::default());
-    let darkness = darkness_mats.add(DarknessMaterial {
-        params: DarknessParams::default(),
+    let lighting = lighting_mats.add(LightingMaterial {
+        params: LightingParams::default(),
+        world: world_target.0.clone(),
     });
     let sun = sun_mats.add(SunMaterial {
         params: SunParams::default(),
@@ -337,15 +344,15 @@ fn setup_sky(
             Transform::from_xyz(0.0, -1000.0, -49.0),
         ));
         parent.spawn((
-            DarknessQuad,
+            LitWorldQuad,
             Mesh2d(quad),
-            MeshMaterial2d(darkness.clone()),
-            Transform::from_xyz(0.0, 0.0, 90.0),
+            MeshMaterial2d(lighting.clone()),
+            Transform::from_xyz(0.0, 0.0, 0.0),
             Visibility::Hidden,
         ));
     });
     commands.insert_resource(SkyAssets {
-        darkness,
+        lighting,
         sun,
         moon,
         starfield,
@@ -458,10 +465,10 @@ fn fit_fullscreen_quads(
     assets: Res<SkyAssets>,
     mut star_mats: ResMut<Assets<StarfieldMaterial>>,
     mut horizon_mats: ResMut<Assets<HorizonMaterial>>,
-    mut dark_q: Query<
+    mut world_q: Query<
         (&mut Transform, &mut Visibility),
         (
-            With<DarknessQuad>,
+            With<LitWorldQuad>,
             Without<StarfieldQuad>,
             Without<HorizonQuad>,
         ),
@@ -470,7 +477,7 @@ fn fit_fullscreen_quads(
         (&mut Transform, &mut Visibility),
         (
             With<StarfieldQuad>,
-            Without<DarknessQuad>,
+            Without<LitWorldQuad>,
             Without<HorizonQuad>,
         ),
     >,
@@ -478,7 +485,7 @@ fn fit_fullscreen_quads(
         (&mut Transform, &mut Visibility),
         (
             With<HorizonQuad>,
-            Without<DarknessQuad>,
+            Without<LitWorldQuad>,
             Without<StarfieldQuad>,
         ),
     >,
@@ -486,10 +493,9 @@ fn fit_fullscreen_quads(
     let view = view_size(&window, control.zoom);
     let size = view * 1.1;
     let horizon_uv = 0.5 + HORIZON_FRAC * ORBIT_RADIUS / view.y;
-    let darkness_on = sky.synced && sky.darkness() > 0.001;
-    for (mut transform, mut visibility) in &mut dark_q {
-        transform.scale = Vec3::new(size.x, size.y, 1.0);
-        *visibility = if darkness_on {
+    for (mut transform, mut visibility) in &mut world_q {
+        transform.scale = Vec3::new(view.x, view.y, 1.0);
+        *visibility = if sky.synced {
             Visibility::Inherited
         } else {
             Visibility::Hidden
@@ -541,7 +547,7 @@ fn scan_emissive(
     view: Res<WorldView>,
     window: Single<&Window>,
     control: Res<CameraControl>,
-    camera: Single<&Transform, With<Camera2d>>,
+    camera: Single<&Transform, With<WorldCamera>>,
     mut emissive_lights: ResMut<EmissiveLights>,
     mut cooldown: Local<f32>,
 ) {
@@ -600,13 +606,13 @@ fn scan_emissive(
 fn apply_lighting(
     sky: Res<Sky>,
     assets: Res<SkyAssets>,
-    mut materials: ResMut<Assets<DarknessMaterial>>,
+    mut materials: ResMut<Assets<LightingMaterial>>,
     emissive_lights: Res<EmissiveLights>,
     session: Option<Res<Session>>,
     visuals: Res<PlayerVisuals>,
     players: Query<(&Transform, &PlayerVisual)>,
 ) {
-    let Some(mut material) = materials.get_mut(&assets.darkness) else {
+    let Some(mut material) = materials.get_mut(&assets.lighting) else {
         return;
     };
     let darkness = if sky.synced { sky.darkness() } else { 0.0 };
@@ -661,7 +667,7 @@ fn reset_sky(
     mut clear: ResMut<ClearColor>,
     mut emissive_lights: ResMut<EmissiveLights>,
     assets: Option<Res<SkyAssets>>,
-    mut darkness_mats: ResMut<Assets<DarknessMaterial>>,
+    mut lighting_mats: ResMut<Assets<LightingMaterial>>,
     mut sun_mats: ResMut<Assets<SunMaterial>>,
     mut moon_mats: ResMut<Assets<MoonMaterial>>,
     mut star_mats: ResMut<Assets<StarfieldMaterial>>,
@@ -672,8 +678,8 @@ fn reset_sky(
     clear.0 = Color::srgb(0.08, 0.09, 0.13);
     emissive_lights.0.clear();
     if let Some(assets) = assets {
-        if let Some(mut material) = darkness_mats.get_mut(&assets.darkness) {
-            material.params = DarknessParams::default();
+        if let Some(mut material) = lighting_mats.get_mut(&assets.lighting) {
+            material.params = LightingParams::default();
         }
         if let Some(mut material) = sun_mats.get_mut(&assets.sun) {
             material.params = SunParams::default();

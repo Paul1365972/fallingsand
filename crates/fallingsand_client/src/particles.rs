@@ -1,6 +1,8 @@
+use crate::camera::WORLD_LAYER;
 use crate::player::{InputState, LocalMode, PlayerVisual, PlayerVisuals};
 use crate::worldview::WorldView;
 use crate::{AppState, ClientRegistry, GameState};
+use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 use fallingsand_core::{BRUSH_RADIUS, Phase, REACH, SURVIVAL_REACH};
 use fallingsand_protocol::GameMode;
@@ -104,6 +106,7 @@ fn spawn_dig_spray(
             },
             Sprite::from_color(color, Vec2::ONE),
             Transform::from_xyz(pos.x as f32 + 0.5, pos.y as f32 + 0.5, 15.0),
+            RenderLayers::layer(WORLD_LAYER),
         ));
         spawned += 1;
     }
@@ -147,6 +150,7 @@ fn spawn_flames(
                 Transform::from_translation(
                     (transform.translation.truncate() + offset).extend(15.0),
                 ),
+                RenderLayers::layer(WORLD_LAYER),
             ));
         }
     }

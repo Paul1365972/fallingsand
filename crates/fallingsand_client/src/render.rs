@@ -1,6 +1,8 @@
 use crate::ClientRegistry;
+use crate::camera::WORLD_LAYER;
 use crate::worldview::WorldView;
 use bevy::asset::RenderAssetUsages;
+use bevy::camera::visibility::RenderLayers;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssets;
@@ -255,6 +257,7 @@ fn sync_chunks(
                         0.0,
                     )
                     .with_scale(Vec3::new(size, size, 1.0)),
+                    RenderLayers::layer(WORLD_LAYER),
                 ))
                 .id();
             visuals.entities.insert(pos, (entity, image));

@@ -1,6 +1,8 @@
+use crate::camera::WORLD_LAYER;
 use crate::interpolation::Interpolated;
 use crate::net::{NetSet, ServerMsg, Session, SessionEnded};
 use crate::{AppState, ClientRegistry, PauseState};
+use bevy::camera::visibility::RenderLayers;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use fallingsand_core::{CellPos, MaterialId, Phase, TICK_RATE};
@@ -240,6 +242,7 @@ fn apply_entity_states(
                         Interpolated::snapped(target, 0.0),
                         Sprite::from_color(color, size),
                         Transform::from_xyz(target.x, target.y, 10.0),
+                        RenderLayers::layer(WORLD_LAYER),
                     ))
                     .id();
                 if !is_local {
@@ -348,7 +351,7 @@ fn send_input(
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
     window: Single<&Window>,
-    camera: Single<(&Camera, &GlobalTransform)>,
+    camera: Single<(&Camera, &GlobalTransform), With<crate::camera::SkyCamera>>,
     hotbar: Res<Hotbar>,
     chat_open: Res<crate::chat::ChatOpen>,
     fly: Res<FlyToggle>,
