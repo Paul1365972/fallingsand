@@ -10,15 +10,16 @@ The CA (`fallingsand_sim`) collides against the cell grid directly, so terrain c
 
 ## Movement rules
 
-Each has a physical cause, and each is written so a settled cell writes nothing (and sleeps).
+Every cell carries a velocity (`vx`/`vy`, Q8.8 cells/tick). Movement is that velocity integrated locally each tick — no phase-specific heuristics, no sweeps. Each step is written so a settled cell writes nothing (and sleeps). Per moving cell, in order:
 
-- **Corner sealing**: a diagonal move needs an open orthogonal path — two diagonally touching solids seal the gap.
-- **Drop-seeking flow**: liquids move sideways only toward a lower spot (gases mirrored); `dispersion` caps travel per event, momentum carries the rest. Flat surface → no gradient → pools go quiet.
-- **Fall speed / viscosity**: free fall runs at full `fall_speed` (gravity is material-independent); sideways/diagonal/percolation moves gate on `flow_rate`. Lava oozes, water pours.
-- **Momentum flag** (direction + spent bits): only descending clears spent, so motion always terminates.
-- **Surface creep**: a directed liquid cell over liquid glides downhill until it rests — this levels pools regardless of width. Droplets on solids bead (surface tension); viscous fluids keep ±1 texture.
-- **Pressure wake**: a vacated cell or opened passage marks a keep-alive strip so nearby sleepers re-evaluate; strips die when motion stops. Leveling is exact only within the 64-cell window — farther apart, a bead and a dimple persist as ±1 texture.
-- **Condensation**: steam decays back to water so gas pockets resolve; no mass created or destroyed.
+- **Accelerate**: gravity (global `GRAVITY`; powders/liquids fall, gases/fire rise), reduced by buoyancy from the fluid being displaced (a dense grain sinks slowly through water, snow floats), then `drag` — amplified in a dense medium, so things settle slowly underwater instead of dropping straight through. Crucially the *driving* force can go to zero (a same-density parcel is neutrally buoyant) without stalling flow: leveling is driven by **redirect** below, not by velocity. A lighter liquid trapped under a denser one floats up by a direct swap.
+- **Contact friction**: while resting on a blocked face, horizontal velocity bleeds by `friction`. Low-friction water keeps its momentum and shoots off a ledge; high-friction sand loses it and dribbles 1–2 cells.
+- **Cohesion**: velocity is pulled toward the mean of like-phase neighbours (`cohesion`, read-only) — a fast stream drags its neighbours into a coherent jet; powders barely couple.
+- **Traverse**: step cell-by-cell along the velocity (fractional speed resolved by a tick-seeded chance, capped at 8 cells/tick). Steps are cardinal, so a diagonal needs an open orthogonal cell — corners seal for free.
+- **Collide & redirect**: a blocked face reflects that velocity component by `restitution` (near-inelastic, so things settle). A cell that can't advance but can descend diagonally does so, converting blocked fall to sideways velocity scaled by `(1 − friction)` — ledges and jets for liquids, the angle-of-repose slide for powders (gated per-grain by `friction` with RNG jitter, so piles are irregular and each powder stacks differently). A liquid that can't descend also spreads one cell across a level surface — no velocity gain, so it injects no energy — which is what collapses a liquid to a flat top instead of a powder-like pile.
+- **Settle**: velocity into a blocked face is killed and sub-threshold velocity snaps to zero, so a supported cell nets no change and its chunk sleeps.
+
+Leveling, spreading, and pressure all propagate as local waves over successive ticks — a dirty cell wakes its immediate neighbours via the change-rect spill, never a scan. **Condensation** still closes the loop: steam decays back to water so gas pockets resolve, no mass created or destroyed.
 
 ## Sleeping
 

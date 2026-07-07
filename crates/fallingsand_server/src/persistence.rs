@@ -8,9 +8,9 @@ use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-pub const REGION_FORMAT_VERSION: u8 = 2;
-pub const WORLD_FORMAT_VERSION: u16 = 5;
-const CELL_BYTES: usize = 3;
+pub const REGION_FORMAT_VERSION: u8 = 3;
+pub const WORLD_FORMAT_VERSION: u16 = 6;
+const CELL_BYTES: usize = 7;
 const RECT_BYTES: usize = 4;
 const REGION_CELL_BYTES: usize = REGION_AREA_CHUNKS * CHUNK_AREA * CELL_BYTES;
 const REGION_RAW_BYTES: usize = REGION_CELL_BYTES + REGION_AREA_CHUNKS * RECT_BYTES;
@@ -223,6 +223,8 @@ pub fn encode_region(region: &Region) -> Vec<u8> {
     for chunk in region.chunks() {
         for cell in chunk.cells() {
             raw.extend_from_slice(&cell.material.0.to_le_bytes());
+            raw.extend_from_slice(&cell.vx.to_le_bytes());
+            raw.extend_from_slice(&cell.vy.to_le_bytes());
             raw.push(cell.shade_flags);
         }
     }
@@ -273,7 +275,9 @@ pub fn decode_region(blob: &[u8]) -> Result<Region, StoreError> {
             let raw_cell = cursor.next().expect("length checked");
             *cell = Cell {
                 material: MaterialId(u16::from_le_bytes([raw_cell[0], raw_cell[1]])),
-                shade_flags: raw_cell[2],
+                vx: i16::from_le_bytes([raw_cell[2], raw_cell[3]]),
+                vy: i16::from_le_bytes([raw_cell[4], raw_cell[5]]),
+                shade_flags: raw_cell[6],
                 updated: 0,
             };
         }

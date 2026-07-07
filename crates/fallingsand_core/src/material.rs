@@ -27,11 +27,13 @@ pub struct Material {
     #[serde(default)]
     pub rigid_capable: bool,
     #[serde(default)]
-    pub dispersion: u8,
+    pub drag: f32,
+    #[serde(default)]
+    pub friction: f32,
+    #[serde(default)]
+    pub cohesion: f32,
     #[serde(default)]
     pub flow_rate: f32,
-    #[serde(default)]
-    pub fall_speed: f32,
     #[serde(default)]
     pub hardness: f32,
     #[serde(default)]
@@ -80,6 +82,15 @@ pub struct Reaction {
     pub chance: f32,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct Dynamics {
+    pub drag_keep: f32,
+    pub friction: f32,
+    pub cohesion: f32,
+    pub restitution: f32,
+    pub flow_chance: f32,
+}
+
 #[derive(Debug, Clone)]
 pub struct MaterialRegistry {
     materials: Vec<Material>,
@@ -91,8 +102,7 @@ pub struct MaterialRegistry {
     reactions: Vec<Option<Reaction>>,
     decays: Vec<Option<(f32, MaterialId)>>,
     reactive: Vec<bool>,
-    flow_chances: Vec<f32>,
-    falls: Vec<(u8, f32)>,
+    dynamics: Vec<Dynamics>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -297,26 +307,18 @@ impl MaterialRegistry {
             })
             .collect();
 
-        let flow_chances: Vec<f32> = materials
+        let dynamics: Vec<Dynamics> = materials
             .iter()
-            .map(|material| {
-                if material.flow_rate > 0.0 {
+            .map(|material| Dynamics {
+                drag_keep: (1.0 - material.drag * crate::TICK_DT).clamp(0.0, 1.0),
+                friction: material.friction.clamp(0.0, 1.0),
+                cohesion: (material.cohesion * crate::TICK_DT).clamp(0.0, 1.0),
+                restitution: material.restitution.clamp(0.0, 1.0),
+                flow_chance: if material.flow_rate > 0.0 {
                     per_tick_chance(material.flow_rate)
                 } else {
                     1.0
-                }
-            })
-            .collect();
-
-        let falls: Vec<(u8, f32)> = materials
-            .iter()
-            .map(|material| {
-                if material.fall_speed <= 0.0 {
-                    return (1, 0.0);
-                }
-                let cells = (material.fall_speed * crate::TICK_DT).clamp(0.0, 16.0);
-                let base = cells.floor();
-                (base as u8, cells - base)
+                },
             })
             .collect();
 
@@ -335,8 +337,7 @@ impl MaterialRegistry {
             reactions,
             decays,
             reactive,
-            flow_chances,
-            falls,
+            dynamics,
         })
     }
 
@@ -389,13 +390,8 @@ impl MaterialRegistry {
     }
 
     #[inline]
-    pub fn flow_chance(&self, id: MaterialId) -> f32 {
-        self.flow_chances[id.0 as usize]
-    }
-
-    #[inline]
-    pub fn fall_steps(&self, id: MaterialId) -> (u8, f32) {
-        self.falls[id.0 as usize]
+    pub fn dynamics(&self, id: MaterialId) -> Dynamics {
+        self.dynamics[id.0 as usize]
     }
 
     #[inline]

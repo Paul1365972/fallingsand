@@ -67,6 +67,8 @@ pub fn cells_from_wire(bytes: &[u8]) -> Result<Vec<Cell>, WireError> {
         .chunks_exact(CELL_WIRE_BYTES)
         .map(|raw| Cell {
             material: MaterialId(u16::from_le_bytes([raw[0], raw[1]])),
+            vx: 0,
+            vy: 0,
             shade_flags: raw[2],
             updated: 0,
         })
