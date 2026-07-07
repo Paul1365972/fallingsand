@@ -34,7 +34,6 @@ const MOON_DISC_FRAC: f32 = 0.90;
 const SUN_SIZE: f32 = 48.0;
 const MOON_SIZE: f32 = 28.0;
 const STAR_TEX_SIZE: f32 = 512.0;
-const STAR_PIXEL: f32 = 4.5;
 
 fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
@@ -519,7 +518,7 @@ fn fit_fullscreen_quads(
         };
     }
     if let Some(mut material) = star_mats.get_mut(&assets.starfield) {
-        material.params.tiling = (window.width() * 1.1 / (STAR_TEX_SIZE * STAR_PIXEL)).max(0.05);
+        material.params.tiling = (view_size(&window, 1.0).x * 1.1 / STAR_TEX_SIZE).max(0.05);
         material.params.aspect = (window.width() / window.height().max(1.0)).max(0.1);
         material.params.star_alpha = sky.star_alpha;
         material.params.horizon = horizon_uv;
