@@ -353,7 +353,7 @@ fn update_overlay(
     let mut left_lines: Vec<String> = Vec::new();
     let mut right_lines: Vec<String> = vec![
         format!("fallingsand v{}", env!("CARGO_PKG_VERSION")),
-        format!("{fps:.0} fps  {frame_ms:.1} ms ({frame_min:.1}/{frame_max:.1})"),
+        format!("{fps:>3.0} fps {frame_ms:>5.1} ms ({frame_min:>5.1}/{frame_max:>5.1})"),
     ];
 
     match game_state {
@@ -382,11 +382,11 @@ fn update_overlay(
             let region = aim.region();
             left_lines.push(format!("cursor {},{}", aim.x, aim.y));
             left_lines.push(format!(
-                "chunk {},{}  +{},{}",
+                "chunk {},{} +{:>2},{:>2}",
                 chunk.x, chunk.y, off.x, off.y
             ));
             left_lines.push(format!(
-                "region {},{}  phase {}",
+                "region {},{} phase {}",
                 region.x,
                 region.y,
                 block_phase(chunk)
@@ -399,7 +399,7 @@ fn update_overlay(
             let minute_of_day = world_time.calendar.minute_of_day();
             left_lines.push(String::new());
             left_lines.push(format!(
-                "day {}  {:02}:{:02}  {}",
+                "day {} {:02}:{:02} {}",
                 world_time.calendar.day(),
                 minute_of_day / 60,
                 minute_of_day % 60,
@@ -407,15 +407,15 @@ fn update_overlay(
             ));
 
             if player.present {
-                let burning = if player.burning { "  burning" } else { "" };
+                let burning = if player.burning { " burning" } else { "" };
                 let fly = if fly.0 { ", fly" } else { "" };
                 left_lines.push(String::new());
                 left_lines.push(format!(
-                    "hp {:.0}/{:.0}  air {:.1}s{}",
+                    "hp {:>3.0}/{:.0} air {:>4.1}s{}",
                     player.hp, MAX_HP, player.air, burning
                 ));
                 left_lines.push(format!(
-                    "pos {:.1},{:.1}  {}{}",
+                    "pos {:.1},{:.1} {}{}",
                     player.pos.x,
                     player.pos.y,
                     player.mode.label(),
@@ -427,7 +427,7 @@ fn update_overlay(
             let cursor = match view.get_cell(aim) {
                 Some(cell) => match registry.0.try_get(cell.material) {
                     Some(material) => format!(
-                        "cursor: {} [{}] \u{03c1}{:.2}",
+                        "cursor: {} [{}] d{:.2}",
                         material.name,
                         phase_label(material.phase),
                         material.density
@@ -448,18 +448,18 @@ fn update_overlay(
                 let sim_ms = server.sim_micros as f32 / 1000.0;
                 let peak_ms = server.peak_sim_micros as f32 / 1000.0;
                 right_lines.push(format!(
-                    "sim {sim_ms:.2} ms ({:.0}%)  peak {peak_ms:.2}",
+                    "sim {sim_ms:>6.2} ms ({:>3.0}%) peak {peak_ms:>6.2}",
                     sim_ms / BUDGET_MS * 100.0
                 ));
                 right_lines.push(format!(
-                    "tick #{}  {:.0} tps  +{} ms",
+                    "tick #{} {:>3.0} tps +{:>2} ms",
                     server.tick, server.tps, server.slew_ms
                 ));
             }
 
             if embedded {
                 right_lines.push(format!(
-                    "chunks L/A/B/W {}/{}/{}/{}  \u{b7}  {} client",
+                    "chunks L/A/B/W {:>4}/{:>4}/{:>4}/{:>4} | {:>4} client",
                     server.loaded_chunks,
                     server.active_chunks,
                     server.border_chunks,
@@ -467,14 +467,14 @@ fn update_overlay(
                     view.chunks.len()
                 ));
                 right_lines.push(format!(
-                    "active cells ~{}  \u{b7}  regions {}/{} dirty",
+                    "active cells ~{} | regions {:>3}/{:>3} dirty",
                     human_count(server.awake_cells),
                     server.loaded_regions,
                     server.dirty_regions
                 ));
             } else {
                 right_lines.push(format!(
-                    "tick #{}  \u{b7}  {} chunks",
+                    "tick #{} | {:>4} chunks",
                     view.server_tick,
                     view.chunks.len()
                 ));
@@ -487,13 +487,13 @@ fn update_overlay(
             );
             if embedded {
                 net.push_str(&format!(
-                    "  \u{b7}  tx {}/tick",
+                    " | tx {}/tick",
                     human_bytes(server.replicated_bytes)
                 ));
             }
             right_lines.push(net);
             right_lines.push(format!(
-                "uploads {} ({})  \u{b7}  zoom {:.2}x",
+                "uploads {} ({}) | zoom {:>5.2}x",
                 visuals.uploads,
                 human_bytes(visuals.upload_bytes as u64),
                 camera.zoom
@@ -505,13 +505,13 @@ fn update_overlay(
                     * CHUNK_AREA as u64
                     * std::mem::size_of::<Cell>() as u64;
                 right_lines.push(format!(
-                    "players {}  \u{b7}  bodies {}  \u{b7}  particles {}",
+                    "players {:>2} | bodies {:>3} | particles {:>4}",
                     server.players, server.pixel_bodies, particle_count
                 ));
                 right_lines.push(format!("mem ~{}", human_bytes(mem)));
             } else {
                 right_lines.push(format!(
-                    "players {}  \u{b7}  particles {}",
+                    "players {:>2} | particles {:>4}",
                     names.0.len(),
                     particle_count
                 ));
@@ -567,21 +567,25 @@ fn phase_label(phase: Phase) -> &'static str {
 }
 
 fn human_count(n: u64) -> String {
-    if n >= 1_000_000 {
+    let s = if n >= 1_000_000 {
         format!("{:.1}M", n as f64 / 1_000_000.0)
     } else if n >= 1_000 {
         format!("{:.1}k", n as f64 / 1_000.0)
     } else {
         n.to_string()
-    }
+    };
+    format!("{s:<6}")
 }
 
 fn human_bytes(bytes: u64) -> String {
-    if bytes >= 1_048_576 {
-        format!("{:.1} MiB", bytes as f64 / 1_048_576.0)
-    } else if bytes >= 1024 {
-        format!("{:.1} KiB", bytes as f64 / 1024.0)
+    let (value, unit) = if bytes >= 1u64 << 30 {
+        (bytes as f64 / (1u64 << 30) as f64, "GiB")
+    } else if bytes >= 1u64 << 20 {
+        (bytes as f64 / (1u64 << 20) as f64, "MiB")
+    } else if bytes >= 1u64 << 10 {
+        (bytes as f64 / (1u64 << 10) as f64, "KiB")
     } else {
-        format!("{bytes} B")
-    }
+        (bytes as f64, "B")
+    };
+    format!("{value:>6.1} {unit:>3}")
 }
