@@ -13,6 +13,7 @@ use bevy::render::view::window::screenshot::{Screenshot, save_to_disk};
 use fallingsand_core::{
     CHUNK_AREA, CHUNK_SIZE, Cell, ChunkPos, DirtyRect, Phase, REGION_SIZE_CELLS,
 };
+use std::collections::VecDeque;
 
 pub struct DebugOverlayPlugin;
 
@@ -46,6 +47,57 @@ struct RectFlashes(Vec<RectFlash>);
 
 const FLASH_SECS: f32 = 0.4;
 
+const STAT_WINDOW: f32 = 1.0;
+
+#[derive(Default)]
+struct StatWindow {
+    samples: VecDeque<(f32, f32)>,
+}
+
+impl StatWindow {
+    fn push(&mut self, now: f32, value: f32) {
+        self.samples.push_back((now, value));
+        while let Some(&(t, _)) = self.samples.front() {
+            if now - t > STAT_WINDOW {
+                self.samples.pop_front();
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn avg(&mut self, now: f32, value: f32) -> f32 {
+        self.push(now, value);
+        let n = self.samples.len();
+        if n == 0 {
+            value
+        } else {
+            self.samples.iter().map(|&(_, v)| v).sum::<f32>() / n as f32
+        }
+    }
+
+    fn rate(&mut self, now: f32, value: f32) -> f32 {
+        self.push(now, value);
+        self.samples.iter().map(|&(_, v)| v).sum::<f32>() / STAT_WINDOW
+    }
+}
+
+#[derive(Resource, Default)]
+struct StatWindows {
+    uploads: StatWindow,
+    upload_bytes: StatWindow,
+    rx_per_sec: StatWindow,
+    sim_ms: StatWindow,
+    tx_bytes: StatWindow,
+    slew_ms: StatWindow,
+    tps: StatWindow,
+    awake_cells: StatWindow,
+    active_chunks: StatWindow,
+    border_chunks: StatWindow,
+    awake_chunks: StatWindow,
+    particles: StatWindow,
+}
+
 impl Plugin for DebugOverlayPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(FrameTimeDiagnosticsPlugin::default())
@@ -53,6 +105,7 @@ impl Plugin for DebugOverlayPlugin {
             .init_resource::<BordersVisible>()
             .init_resource::<F3ComboUsed>()
             .init_resource::<RectFlashes>()
+            .init_resource::<StatWindows>()
             .add_systems(Startup, setup_overlay)
             .add_systems(Update, (toggle_overlay, update_overlay, screenshot))
             .add_systems(
@@ -299,6 +352,8 @@ struct Overlay<'w, 's> {
 fn update_overlay(
     visible: Res<DebugVisible>,
     game_state: Option<Res<State<crate::GameState>>>,
+    time: Res<Time>,
+    mut windows: ResMut<StatWindows>,
     ctx: Overlay,
     mut left: Single<&mut Text, (With<DebugTextLeft>, Without<DebugTextRight>)>,
     mut right: Single<&mut Text, (With<DebugTextRight>, Without<DebugTextLeft>)>,
@@ -312,6 +367,8 @@ fn update_overlay(
         }
         return;
     }
+
+    let now = time.elapsed_secs();
 
     let diagnostics = &ctx.diagnostics;
     let supervisor = &ctx.supervisor;
@@ -445,30 +502,32 @@ fn update_overlay(
             left_lines.push(format!("selected: {selected}"));
 
             if embedded {
-                let sim_ms = server.sim_micros as f32 / 1000.0;
+                let sim_ms = windows.sim_ms.avg(now, server.sim_micros as f32 / 1000.0);
                 let peak_ms = server.peak_sim_micros as f32 / 1000.0;
                 right_lines.push(format!(
                     "sim {sim_ms:>6.2} ms ({:>3.0}%) peak {peak_ms:>6.2}",
                     sim_ms / BUDGET_MS * 100.0
                 ));
                 right_lines.push(format!(
-                    "tick #{} {:>3.0} tps +{:>2} ms",
-                    server.tick, server.tps, server.slew_ms
+                    "tick #{} {:>3.0} tps +{:>2.0} ms",
+                    server.tick,
+                    windows.tps.avg(now, server.tps),
+                    windows.slew_ms.avg(now, server.slew_ms as f32)
                 ));
             }
 
             if embedded {
                 right_lines.push(format!(
-                    "chunks L/A/B/W {:>4}/{:>4}/{:>4}/{:>4} | {:>4} client",
+                    "chunks L/A/B/W {:>4}/{:>4.0}/{:>4.0}/{:>4.0} | {:>4} client",
                     server.loaded_chunks,
-                    server.active_chunks,
-                    server.border_chunks,
-                    server.awake_chunks,
+                    windows.active_chunks.avg(now, server.active_chunks as f32),
+                    windows.border_chunks.avg(now, server.border_chunks as f32),
+                    windows.awake_chunks.avg(now, server.awake_chunks as f32),
                     view.chunks.len()
                 ));
                 right_lines.push(format!(
                     "active cells ~{} | regions {:>3}/{:>3} dirty",
-                    human_count(server.awake_cells),
+                    human_count(windows.awake_cells.avg(now, server.awake_cells as f32) as u64),
                     server.loaded_regions,
                     server.dirty_regions
                 ));
@@ -482,20 +541,20 @@ fn update_overlay(
 
             let mut net = format!(
                 "net rx {}/s ({})",
-                human_bytes(rx_per_sec),
+                human_bytes(windows.rx_per_sec.avg(now, rx_per_sec as f32) as u64),
                 human_bytes(rx_bytes)
             );
             if embedded {
                 net.push_str(&format!(
                     " | tx {}/tick",
-                    human_bytes(server.replicated_bytes)
+                    human_bytes(windows.tx_bytes.avg(now, server.replicated_bytes as f32) as u64)
                 ));
             }
             right_lines.push(net);
             right_lines.push(format!(
-                "uploads {} ({}) | zoom {:>5.2}x",
-                visuals.uploads,
-                human_bytes(visuals.upload_bytes as u64),
+                "uploads {:>4.0}/s ({}/s) | zoom {:>5.2}x",
+                windows.uploads.rate(now, visuals.uploads as f32),
+                human_bytes(windows.upload_bytes.rate(now, visuals.upload_bytes as f32) as u64),
                 camera.zoom
             ));
 
@@ -505,15 +564,17 @@ fn update_overlay(
                     * CHUNK_AREA as u64
                     * std::mem::size_of::<Cell>() as u64;
                 right_lines.push(format!(
-                    "players {:>2} | bodies {:>3} | particles {:>4}",
-                    server.players, server.pixel_bodies, particle_count
+                    "players {:>2} | bodies {:>3} | particles {:>4.0}",
+                    server.players,
+                    server.pixel_bodies,
+                    windows.particles.avg(now, particle_count as f32)
                 ));
                 right_lines.push(format!("mem ~{}", human_bytes(mem)));
             } else {
                 right_lines.push(format!(
-                    "players {:>2} | particles {:>4}",
+                    "players {:>2} | particles {:>4.0}",
                     names.0.len(),
-                    particle_count
+                    windows.particles.avg(now, particle_count as f32)
                 ));
             }
         }

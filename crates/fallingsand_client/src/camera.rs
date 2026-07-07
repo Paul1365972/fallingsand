@@ -9,17 +9,20 @@ pub struct CameraPlugin;
 
 pub const VIRTUAL_WIDTH: f32 = 424.0;
 pub const VIRTUAL_HEIGHT: f32 = 242.0;
-const MIN_ZOOM: f32 = 0.5;
-const MAX_ZOOM: f32 = 2.0;
+const ZOOM_STEPS: i32 = 4;
 
 #[derive(Resource)]
 pub struct CameraControl {
     pub zoom: f32,
+    scroll: f32,
 }
 
 impl Default for CameraControl {
     fn default() -> Self {
-        Self { zoom: 1.0 }
+        Self {
+            zoom: 1.0,
+            scroll: 0.0,
+        }
     }
 }
 
@@ -70,15 +73,17 @@ fn zoom_input(
     mut control: ResMut<CameraControl>,
     mut projection: Single<&mut Projection, With<Camera2d>>,
 ) {
-    let mut scroll = 0.0f32;
-    for event in wheel.read() {
-        scroll += match event.unit {
+    let scroll: f32 = wheel
+        .read()
+        .map(|event| match event.unit {
             MouseScrollUnit::Line => event.y,
             MouseScrollUnit::Pixel => event.y / 60.0,
-        };
-    }
+        })
+        .sum();
     if scroll != 0.0 {
-        control.zoom = (control.zoom * 0.9f32.powf(scroll)).clamp(MIN_ZOOM, MAX_ZOOM);
+        let range = ZOOM_STEPS as f32;
+        control.scroll = (control.scroll - scroll).clamp(-range, range);
+        control.zoom = 2f32.powf(control.scroll.round() / range);
     }
     if let Projection::Orthographic(ortho) = &mut **projection {
         ortho.scale = control.zoom;

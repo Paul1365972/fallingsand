@@ -20,8 +20,15 @@ impl Default for Settings {
 impl Plugin for SettingsPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(load());
+        app.add_systems(Update, fullscreen_hotkey);
         #[cfg(not(target_family = "wasm"))]
         app.add_systems(Update, apply.run_if(resource_changed::<Settings>));
+    }
+}
+
+fn fullscreen_hotkey(keys: Res<ButtonInput<KeyCode>>, mut settings: ResMut<Settings>) {
+    if keys.just_pressed(KeyCode::F11) {
+        settings.fullscreen = !settings.fullscreen;
     }
 }
 
