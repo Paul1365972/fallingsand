@@ -7,7 +7,7 @@ pub mod session;
 pub mod systems;
 
 use bevy_ecs::prelude::*;
-use fallingsand_core::{CellPos, MaterialRegistry};
+use fallingsand_core::{Calendar, CellPos, DAY_UNITS, MaterialRegistry};
 use fallingsand_net::Listener;
 use fallingsand_sim::CellWorld;
 use fallingsand_worldgen::WorldGenerator;
@@ -24,7 +24,7 @@ pub const TICK_DURATION: Duration = Duration::from_nanos(1_000_000_000 / TICK_RA
 pub const INTEREST_RADIUS_X: i32 = 6;
 pub const INTEREST_RADIUS_Y: i32 = 4;
 pub const MAX_HP: f32 = 100.0;
-pub use fallingsand_core::{DAY_SECS, MAX_AIR_SECS};
+pub use fallingsand_core::MAX_AIR_SECS;
 
 #[derive(Resource)]
 pub struct SimWorld(pub CellWorld);
@@ -45,16 +45,7 @@ pub struct NetListener(pub Box<dyn Listener>);
 pub struct SpawnPoint(pub CellPos);
 
 #[derive(Resource, Default, Clone, Copy)]
-pub struct WorldClock {
-    pub t: f32,
-    pub day: u32,
-}
-
-impl WorldClock {
-    pub fn moon_phase(&self) -> u32 {
-        self.day % fallingsand_core::MOON_PHASES
-    }
-}
+pub struct WorldClock(pub Calendar);
 
 #[derive(Resource, Clone)]
 pub struct WorldInfo {
@@ -161,8 +152,8 @@ impl Server {
                     format_version: persistence::WORLD_FORMAT_VERSION,
                     seed: config.world.seed,
                     name: config.world.name.clone(),
-                    clock: 0.5,
-                    day: 0,
+                    age: DAY_UNITS / 2,
+                    tick: 0,
                 };
                 if let Some(store) = &store {
                     store.save_meta(&meta)?;
@@ -177,8 +168,10 @@ impl Server {
         let spawn_x = 0;
         let spawn = CellPos::new(spawn_x, generator.surface_height(spawn_x) + 12);
 
+        let mut cell_world = CellWorld::new();
+        cell_world.set_tick(meta.tick);
         let mut world = World::new();
-        world.insert_resource(SimWorld(CellWorld::new()));
+        world.insert_resource(SimWorld(cell_world));
         world.insert_resource(Registry(config.registry));
         world.insert_resource(NetListener(config.listener));
         world.insert_resource(Sessions::default());
@@ -193,10 +186,7 @@ impl Server {
         world.insert_resource(PlayerImpulses::default());
         world.insert_resource(commands::PendingCommands::default());
         world.insert_resource(hazards::CrushEvents::default());
-        world.insert_resource(WorldClock {
-            t: meta.clock.rem_euclid(1.0),
-            day: meta.day,
-        });
+        world.insert_resource(WorldClock(Calendar::new(meta.age)));
         world.insert_resource(WorldInfo {
             seed,
             name: meta.name.clone(),

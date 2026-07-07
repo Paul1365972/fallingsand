@@ -396,12 +396,11 @@ fn update_overlay(
                 left_lines.push(format!("facing {facing}"));
             }
 
-            let t = world_time.t.rem_euclid(1.0);
-            let minute_of_day = (t * 24.0 * 60.0) as u32;
+            let minute_of_day = world_time.calendar.minute_of_day();
             left_lines.push(String::new());
             left_lines.push(format!(
                 "day {}  {:02}:{:02}  {}",
-                world_time.day,
+                world_time.calendar.day(),
                 minute_of_day / 60,
                 minute_of_day % 60,
                 moon_name(world_time.moon_phase())

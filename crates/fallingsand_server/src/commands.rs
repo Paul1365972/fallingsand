@@ -1,6 +1,7 @@
 use crate::session::{SessionState, Sessions};
 use crate::systems::Mode;
 use bevy_ecs::prelude::*;
+use fallingsand_core::DAY_UNITS;
 use fallingsand_protocol::{GameMode, ServerMessage, encode_message};
 
 pub struct PendingCommand {
@@ -46,28 +47,31 @@ const GAMEMODE: CommandSpec = CommandSpec {
 const TIME: CommandSpec = CommandSpec {
     name: "time",
     aliases: &[],
-    usage: "/time <day|night|noon|midnight|+days>",
+    usage: "/time <day|night|noon|midnight|DAY>",
     run: |world, _entity, args| {
         let [arg] = args else {
             return Err(format!("usage: {}", TIME.usage));
         };
         let mut clock = world.resource_mut::<crate::WorldClock>();
+        let day = clock.0.day();
         match *arg {
-            "day" | "noon" => clock.t = 0.5,
-            "night" | "midnight" => {
-                clock.t = 0.0;
-                clock.day += 1;
-            }
+            "day" | "noon" => clock.0.age = day * DAY_UNITS + DAY_UNITS / 2,
+            "night" | "midnight" => clock.0.age = day.saturating_add(1).saturating_mul(DAY_UNITS),
             arg => {
-                let days: u32 = arg
-                    .strip_prefix('+')
-                    .and_then(|days| days.parse().ok())
+                let target: f64 = arg
+                    .parse()
+                    .ok()
+                    .filter(|day: &f64| day.is_finite() && *day >= 0.0)
                     .ok_or_else(|| format!("usage: {}", TIME.usage))?;
-                clock.day = clock.day.saturating_add(days);
+                clock.0.age = (target * DAY_UNITS as f64) as u64;
             }
         }
-        let (t, day) = (clock.t, clock.day);
-        Ok(Some(format!("time set to {t:.2} of day {day}")))
+        let (day, minute) = (clock.0.day(), clock.0.minute_of_day());
+        Ok(Some(format!(
+            "time set to {:02}:{:02} of day {day}",
+            minute / 60,
+            minute % 60
+        )))
     },
 };
 

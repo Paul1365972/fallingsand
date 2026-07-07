@@ -871,11 +871,7 @@ pub fn replicate(
 }
 
 pub fn advance_clock(mut clock: ResMut<crate::WorldClock>) {
-    clock.t += TICK_DT / crate::DAY_SECS;
-    while clock.t >= 1.0 {
-        clock.t -= 1.0;
-        clock.day += 1;
-    }
+    clock.0.advance();
 }
 
 pub fn finish_tick(
@@ -885,8 +881,7 @@ pub fn finish_tick(
 ) {
     let message = encode_message(&ServerMessage::TickEnd {
         tick: sim.0.tick(),
-        time_of_day: clock.t,
-        day: clock.day,
+        age: clock.0.age,
     });
     for session in &mut sessions.sessions {
         if matches!(session.state, SessionState::Playing) {

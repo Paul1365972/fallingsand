@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 pub const REGION_FORMAT_VERSION: u8 = 3;
-pub const WORLD_FORMAT_VERSION: u16 = 6;
+pub const WORLD_FORMAT_VERSION: u16 = 7;
 const CELL_BYTES: usize = 7;
 const RECT_BYTES: usize = 4;
 const REGION_CELL_BYTES: usize = REGION_AREA_CHUNKS * CHUNK_AREA * CELL_BYTES;
@@ -24,8 +24,8 @@ pub struct WorldMeta {
     pub format_version: u16,
     pub seed: u64,
     pub name: String,
-    pub clock: f32,
-    pub day: u32,
+    pub age: u64,
+    pub tick: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

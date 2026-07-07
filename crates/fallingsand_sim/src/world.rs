@@ -21,6 +21,10 @@ impl CellWorld {
         self.tick
     }
 
+    pub fn set_tick(&mut self, tick: u64) {
+        self.tick = tick;
+    }
+
     pub(crate) fn advance_tick(&mut self) {
         self.tick += 1;
     }

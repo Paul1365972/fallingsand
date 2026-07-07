@@ -320,18 +320,18 @@ pub fn autosave(
     if let Err(err) = store.save_players(&players) {
         tracing::error!("player autosave failed: {err}");
     }
-    if let Err(err) = store.save_meta(&world_meta(&info, &clock)) {
+    if let Err(err) = store.save_meta(&world_meta(&info, &clock, tick)) {
         tracing::error!("meta autosave failed: {err}");
     }
 }
 
-pub fn world_meta(info: &WorldInfo, clock: &WorldClock) -> WorldMeta {
+pub fn world_meta(info: &WorldInfo, clock: &WorldClock, tick: u64) -> WorldMeta {
     WorldMeta {
         format_version: crate::persistence::WORLD_FORMAT_VERSION,
         seed: info.seed,
         name: info.name.clone(),
-        clock: clock.t,
-        day: clock.day,
+        age: clock.0.age,
+        tick,
     }
 }
 
@@ -427,6 +427,7 @@ pub fn save_everything(world: &mut bevy_ecs::world::World, final_save: bool) {
     let meta = world_meta(
         world.resource::<WorldInfo>(),
         world.resource::<WorldClock>(),
+        world.resource::<SimWorld>().0.tick(),
     );
     if let Err(err) = store.save_meta(&meta) {
         tracing::error!("final meta save failed: {err}");

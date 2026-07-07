@@ -165,7 +165,6 @@ pub enum ServerMessage {
     },
     TickEnd {
         tick: u64,
-        time_of_day: f32,
-        day: u32,
+        age: u64,
     },
 }

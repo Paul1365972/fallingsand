@@ -10,7 +10,7 @@ use bevy::render::render_resource::{
 };
 use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dPlugin};
-use fallingsand_core::{CellPos, DAY_SECS, MOON_PHASES};
+use fallingsand_core::{Calendar, CellPos, MOON_PHASES};
 use fallingsand_protocol::ServerMessage;
 
 pub struct SkyPlugin;
@@ -50,14 +50,17 @@ const DARKNESS_KEYFRAMES: &[(f32, f32)] = &[
 
 #[derive(Resource, Default, Clone, Copy)]
 pub struct WorldTime {
-    pub t: f32,
-    pub day: u32,
+    pub calendar: Calendar,
     pub synced: bool,
 }
 
 impl WorldTime {
+    pub fn day_fraction(&self) -> f32 {
+        self.calendar.day_fraction()
+    }
+
     pub fn moon_phase(&self) -> u32 {
-        self.day % MOON_PHASES
+        self.calendar.moon_phase()
     }
 
     pub fn moon_fullness(&self) -> f32 {
@@ -137,10 +140,6 @@ impl Plugin for SkyPlugin {
             )
             .add_systems(
                 Update,
-                advance_time.run_if(in_state(crate::PauseState::Running)),
-            )
-            .add_systems(
-                Update,
                 (
                     update_sky_tint,
                     update_orbits,
@@ -149,7 +148,6 @@ impl Plugin for SkyPlugin {
                     fit_darkness_quad,
                 )
                     .chain()
-                    .after(advance_time)
                     .after(crate::interpolation::interpolate)
                     .run_if(in_state(GameState::Playing)),
             )
@@ -294,25 +292,10 @@ fn setup_sky(
 
 fn sync_time(mut time: ResMut<WorldTime>, mut messages: MessageReader<ServerMsg>) {
     for ServerMsg(message) in messages.read() {
-        if let ServerMessage::TickEnd {
-            time_of_day, day, ..
-        } = message
-        {
-            time.t = *time_of_day;
-            time.day = *day;
+        if let ServerMessage::TickEnd { age, .. } = message {
+            time.calendar.age = *age;
             time.synced = true;
         }
-    }
-}
-
-fn advance_time(mut time: ResMut<WorldTime>, real: Res<Time>) {
-    if !time.synced {
-        return;
-    }
-    time.t += real.delta_secs() / DAY_SECS;
-    while time.t >= 1.0 {
-        time.t -= 1.0;
-        time.day += 1;
     }
 }
 
@@ -350,12 +333,12 @@ fn update_sky_tint(time: Res<WorldTime>, mut clear: ResMut<ClearColor>) {
     if !time.synced {
         return;
     }
-    let rgb = sample_keyframes(SKY_KEYFRAMES, time.t);
+    let rgb = sample_keyframes(SKY_KEYFRAMES, time.day_fraction());
     clear.0 = Color::srgb(rgb[0], rgb[1], rgb[2]);
 }
 
 fn night_darkness(time: &WorldTime) -> f32 {
-    let base = sample_scalar(DARKNESS_KEYFRAMES, time.t);
+    let base = sample_scalar(DARKNESS_KEYFRAMES, time.day_fraction());
     let phase_mult = 1.0 - (1.0 - FULL_MOON_DARKNESS_MULT) * time.moon_fullness();
     base * MAX_DARKNESS * phase_mult
 }
@@ -376,7 +359,7 @@ fn update_orbits(
         return;
     }
     let radius = view_size(&window, control.zoom).y.max(100.0) * ORBIT_RADIUS_FRAC;
-    let angle = (time.t - 0.25) * std::f32::consts::TAU;
+    let angle = (time.day_fraction() - 0.25) * std::f32::consts::TAU;
     let sun_pos = Vec2::new(angle.cos() * radius * 1.4, angle.sin() * radius);
     if let Ok((mut transform, mut visibility)) = sun.single_mut() {
         transform.translation = sun_pos.extend(-50.0);
