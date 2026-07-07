@@ -54,6 +54,12 @@ pub struct Material {
     pub emits: Option<String>,
     #[serde(default)]
     pub emit_rate: f32,
+    #[serde(default)]
+    pub smoulder: f32,
+    #[serde(default)]
+    pub residue_into: Option<String>,
+    #[serde(default)]
+    pub residue_chance: f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -108,8 +114,10 @@ pub struct MaterialRegistry {
     sustain_bits: Vec<u32>,
     reactions: Vec<Option<Reaction>>,
     decays: Vec<Option<(f32, MaterialId)>>,
+    residues: Vec<Option<(f32, MaterialId)>>,
     emits: Vec<Option<(f32, MaterialId)>>,
     ember: Vec<bool>,
+    smoulder: Vec<f32>,
     reactive: Vec<bool>,
     dynamics: Vec<Dynamics>,
 }
@@ -227,6 +235,21 @@ impl MaterialRegistry {
             })
             .collect::<Result<_, RegistryError>>()?;
 
+        let residues: Vec<Option<(f32, MaterialId)>> = materials
+            .iter()
+            .map(
+                |material| match (&material.residue_into, material.residue_chance) {
+                    (Some(name), chance) if chance > 0.0 => {
+                        let product = *by_name
+                            .get(name)
+                            .ok_or_else(|| RegistryError::UnknownMaterial(name.clone()))?;
+                        Ok(Some((chance.clamp(0.0, 1.0), product)))
+                    }
+                    _ => Ok(None),
+                },
+            )
+            .collect::<Result<_, RegistryError>>()?;
+
         let emits: Vec<Option<(f32, MaterialId)>> = materials
             .iter()
             .map(|material| match (&material.emits, material.emit_rate) {
@@ -327,6 +350,11 @@ impl MaterialRegistry {
             .map(|index| tag_bits[index] & ember_mask != 0)
             .collect();
 
+        let smoulder: Vec<f32> = materials
+            .iter()
+            .map(|material| material.smoulder.clamp(0.0, 1.0))
+            .collect();
+
         let reactive: Vec<bool> = (0..len)
             .map(|index| {
                 materials[index].phase == Phase::Fire
@@ -371,8 +399,10 @@ impl MaterialRegistry {
             sustain_bits,
             reactions,
             decays,
+            residues,
             emits,
             ember,
+            smoulder,
             reactive,
             dynamics,
         })
@@ -422,6 +452,11 @@ impl MaterialRegistry {
     }
 
     #[inline]
+    pub fn residue(&self, id: MaterialId) -> Option<(f32, MaterialId)> {
+        self.residues[id.0 as usize]
+    }
+
+    #[inline]
     pub fn emits(&self, id: MaterialId) -> Option<(f32, MaterialId)> {
         self.emits[id.0 as usize]
     }
@@ -429,6 +464,11 @@ impl MaterialRegistry {
     #[inline]
     pub fn is_ember(&self, id: MaterialId) -> bool {
         self.ember[id.0 as usize]
+    }
+
+    #[inline]
+    pub fn smoulder(&self, id: MaterialId) -> f32 {
+        self.smoulder[id.0 as usize]
     }
 
     #[inline]

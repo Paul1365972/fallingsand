@@ -64,18 +64,15 @@ fn react(
         };
         if let Some(reaction) = registry.reaction(cell.material, neighbor.material) {
             keep = true;
-            if ignition_starved(window, registry, pos, cell.material, reaction.becomes)
-                || ignition_starved(
+            let factor = ignition_factor(window, registry, pos, cell.material, reaction.becomes)
+                * ignition_factor(
                     window,
                     registry,
                     neighbor_pos,
                     neighbor.material,
                     reaction.other_becomes,
-                )
-            {
-                continue;
-            }
-            if rng.draw().chance(reaction.chance) {
+                );
+            if factor > 0.0 && rng.draw().chance(reaction.chance * factor) {
                 note_structural(window, registry, pos, cell.material);
                 note_structural(window, registry, neighbor_pos, neighbor.material);
                 set_product(window, pos, reaction.becomes, rng, tick_byte);
@@ -111,7 +108,11 @@ fn react(
             return true;
         }
         if rng.draw().chance(chance) {
-            set_product(window, pos, product, rng, tick_byte);
+            let out = match registry.residue(cell.material) {
+                Some((residue_chance, residue)) if rng.draw().chance(residue_chance) => residue,
+                _ => product,
+            };
+            set_product(window, pos, out, rng, tick_byte);
             return true;
         }
         keep = true;
@@ -136,14 +137,18 @@ fn note_structural(
     }
 }
 
-fn ignition_starved(
+fn ignition_factor(
     window: &SimWindow,
     registry: &MaterialRegistry,
     pos: CellPos,
     from: MaterialId,
     to: MaterialId,
-) -> bool {
-    registry.is_ember(to) && !registry.is_ember(from) && !oxygen_exposed(window, registry, pos)
+) -> f32 {
+    if registry.is_ember(to) && !registry.is_ember(from) && !oxygen_exposed(window, registry, pos) {
+        registry.smoulder(to)
+    } else {
+        1.0
+    }
 }
 
 fn oxygen_exposed(window: &SimWindow, registry: &MaterialRegistry, pos: CellPos) -> bool {
