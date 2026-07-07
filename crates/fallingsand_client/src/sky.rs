@@ -3,11 +3,14 @@ use crate::net::{NetSet, ServerMsg, Session};
 use crate::player::{PlayerVisual, PlayerVisuals};
 use crate::worldview::WorldView;
 use crate::{AppState, ClientRegistry, GameState};
+use bevy::image::{
+    ImageAddressMode, ImageFilterMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor,
+};
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderType};
 use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dPlugin};
-use fallingsand_core::celestial::{MOON_DISC, SUN_DISC, UMBRA_RADIUS};
+use fallingsand_core::celestial::{MOON_DISC, UMBRA_RADIUS};
 use fallingsand_core::{Calendar, CelestialState, CellPos};
 use fallingsand_protocol::ServerMessage;
 
@@ -26,8 +29,10 @@ const ORBIT_RADIUS_FRAC: f32 = 0.42;
 const HORIZON_FRAC: f32 = 0.43;
 const HORIZON_UV: f32 = 0.5 + HORIZON_FRAC * ORBIT_RADIUS_FRAC;
 
-const SUN_DISC_FRAC: f32 = 0.35;
 const MOON_DISC_FRAC: f32 = 0.90;
+const SUN_SIZE: f32 = 48.0;
+const MOON_SIZE: f32 = 28.0;
+const STAR_TEX_SIZE: f32 = 512.0;
 
 fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
@@ -50,7 +55,6 @@ impl WorldTime {
 pub struct Sky {
     pub state: CelestialState,
     pub star_alpha: f32,
-    pub sidereal: f32,
     pub synced: bool,
 }
 
@@ -104,6 +108,9 @@ pub struct SunParams {
 pub struct SunMaterial {
     #[uniform(0)]
     pub params: SunParams,
+    #[texture(1)]
+    #[sampler(2)]
+    pub texture: Handle<Image>,
 }
 
 impl Material2d for SunMaterial {
@@ -129,6 +136,9 @@ pub struct MoonParams {
 pub struct MoonMaterial {
     #[uniform(0)]
     pub params: MoonParams,
+    #[texture(1)]
+    #[sampler(2)]
+    pub texture: Handle<Image>,
 }
 
 impl Material2d for MoonMaterial {
@@ -143,17 +153,20 @@ impl Material2d for MoonMaterial {
 
 #[derive(ShaderType, Debug, Clone, Default)]
 pub struct StarfieldParams {
-    pub sidereal: f32,
+    pub tiling: f32,
     pub aspect: f32,
     pub star_alpha: f32,
-    pub time: f32,
     pub horizon: f32,
+    pub time: f32,
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
 pub struct StarfieldMaterial {
     #[uniform(0)]
     pub params: StarfieldParams,
+    #[texture(1)]
+    #[sampler(2)]
+    pub texture: Handle<Image>,
 }
 
 impl Material2d for StarfieldMaterial {
@@ -230,6 +243,9 @@ impl Plugin for SkyPlugin {
         bevy::asset::embedded_asset!(app, "shaders/moon.wgsl");
         bevy::asset::embedded_asset!(app, "shaders/starfield.wgsl");
         bevy::asset::embedded_asset!(app, "shaders/horizon.wgsl");
+        bevy::asset::embedded_asset!(app, "textures/sun.png");
+        bevy::asset::embedded_asset!(app, "textures/moon.png");
+        bevy::asset::embedded_asset!(app, "textures/stars.png");
         app.add_plugins(Material2dPlugin::<DarknessMaterial>::default())
             .add_plugins(Material2dPlugin::<SunMaterial>::default())
             .add_plugins(Material2dPlugin::<MoonMaterial>::default())
@@ -269,15 +285,36 @@ fn setup_sky(
     mut moon_mats: ResMut<Assets<MoonMaterial>>,
     mut star_mats: ResMut<Assets<StarfieldMaterial>>,
     mut horizon_mats: ResMut<Assets<HorizonMaterial>>,
+    asset_server: Res<AssetServer>,
     camera: Single<Entity, With<Camera2d>>,
 ) {
     let quad = meshes.add(Rectangle::default());
     let darkness = darkness_mats.add(DarknessMaterial {
         params: DarknessParams::default(),
     });
-    let sun = sun_mats.add(SunMaterial::default());
-    let moon = moon_mats.add(MoonMaterial::default());
-    let starfield = star_mats.add(StarfieldMaterial::default());
+    let sun = sun_mats.add(SunMaterial {
+        params: SunParams::default(),
+        texture: asset_server.load("embedded://fallingsand/textures/sun.png"),
+    });
+    let moon = moon_mats.add(MoonMaterial {
+        params: MoonParams::default(),
+        texture: asset_server.load("embedded://fallingsand/textures/moon.png"),
+    });
+    let starfield = star_mats.add(StarfieldMaterial {
+        params: StarfieldParams::default(),
+        texture: asset_server
+            .load_builder()
+            .with_settings(|settings: &mut ImageLoaderSettings| {
+                settings.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+                    address_mode_u: ImageAddressMode::Repeat,
+                    address_mode_v: ImageAddressMode::Repeat,
+                    mag_filter: ImageFilterMode::Nearest,
+                    min_filter: ImageFilterMode::Nearest,
+                    ..default()
+                });
+            })
+            .load("embedded://fallingsand/textures/stars.png"),
+    });
     let horizon = horizon_mats.add(HorizonMaterial::default());
 
     commands.entity(*camera).with_children(|parent| {
@@ -359,19 +396,17 @@ fn update_orbits(
     let sun_altitude = celestial.sun_altitude;
     let solar_occlusion = celestial.solar_occlusion;
 
-    let world_to_moon_uv = MOON_DISC_FRAC / (MOON_DISC * radius);
+    let world_to_moon_uv = 2.0 / MOON_SIZE;
     let umbra = (-sun_position - moon_position) * world_to_moon_uv;
     let umbra_radius = UMBRA_RADIUS * MOON_DISC_FRAC / MOON_DISC;
 
     sky.state = celestial;
     sky.star_alpha = 1.0 - smoothstep(0.02, 0.45, celestial.light);
-    sky.sidereal = calendar.day_fraction();
     sky.synced = true;
 
     if let Ok((mut transform, mut visibility)) = sun_q.single_mut() {
-        let size = 2.0 * SUN_DISC * radius / SUN_DISC_FRAC;
         transform.translation = (sun_position + center).extend(-50.0);
-        transform.scale = Vec3::new(size, size, 1.0);
+        transform.scale = Vec3::new(SUN_SIZE, SUN_SIZE, 1.0);
         *visibility = Visibility::Inherited;
     }
     if let Some(mut material) = sun_mats.get_mut(&assets.sun) {
@@ -380,9 +415,8 @@ fn update_orbits(
     }
 
     if let Ok((mut transform, mut visibility)) = moon_q.single_mut() {
-        let size = 2.0 * MOON_DISC * radius / MOON_DISC_FRAC;
         transform.translation = (moon_position + center).extend(-49.0);
-        transform.scale = Vec3::new(size, size, 1.0);
+        transform.scale = Vec3::new(MOON_SIZE, MOON_SIZE, 1.0);
         *visibility = Visibility::Inherited;
     }
     if let Some(mut material) = moon_mats.get_mut(&assets.moon) {
@@ -487,11 +521,11 @@ fn fit_fullscreen_quads(
         };
     }
     if let Some(mut material) = star_mats.get_mut(&assets.starfield) {
-        material.params.sidereal = sky.sidereal;
+        material.params.tiling = (size.x / STAR_TEX_SIZE).max(0.05);
         material.params.aspect = (window.width() / window.height().max(1.0)).max(0.1);
         material.params.star_alpha = sky.star_alpha;
-        material.params.time = real.elapsed_secs();
         material.params.horizon = HORIZON_UV;
+        material.params.time = real.elapsed_secs();
     }
     if let Some(mut material) = horizon_mats.get_mut(&assets.horizon) {
         let day_haze = Vec3::new(0.72, 0.82, 0.96);

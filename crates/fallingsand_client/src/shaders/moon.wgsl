@@ -9,31 +9,14 @@ struct MoonParams {
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: MoonParams;
-
-fn hash2(p: vec2<f32>) -> f32 {
-    return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453);
-}
-
-fn noise(p: vec2<f32>) -> f32 {
-    let i = floor(p);
-    let f = fract(p);
-    let u = f * f * (3.0 - 2.0 * f);
-    let a = hash2(i);
-    let b = hash2(i + vec2<f32>(1.0, 0.0));
-    let c = hash2(i + vec2<f32>(0.0, 1.0));
-    let d = hash2(i + vec2<f32>(1.0, 1.0));
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
-}
+@group(#{MATERIAL_BIND_GROUP}) @binding(1) var tex: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(2) var tex_sampler: sampler;
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
+    let sample = textureSample(tex, tex_sampler, in.uv);
     let p = vec2<f32>(in.uv.x - 0.5, 0.5 - in.uv.y) * 2.0;
-    let r2 = dot(p, p);
-    let disc = 1.0 - smoothstep(0.86, 0.94, sqrt(r2));
-
-    let m = noise(p * 2.3 + vec2<f32>(3.7, 1.2)) * 0.6 + noise(p * 5.1) * 0.4;
-    let maria = smoothstep(0.42, 0.62, m);
-    let surface = mix(vec3<f32>(0.87, 0.89, 0.96), vec3<f32>(0.60, 0.64, 0.80), maria);
+    let surface = sample.rgb;
 
     let s = normalize(params.sun_direction + vec2<f32>(1e-5, 0.0));
     let sp = vec2<f32>(-s.y, s.x);
@@ -56,5 +39,5 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let day_col = mix(vec3<f32>(0.009, 0.010, 0.012), surface * 0.15, lit);
     let col = mix(night_col, day_col, params.sky_color.a) + params.sky_color.rgb;
-    return vec4<f32>(col, disc);
+    return vec4<f32>(col, sample.a);
 }
