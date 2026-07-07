@@ -416,11 +416,9 @@ fn update_overlay(
                     player.hp, MAX_HP, player.air, burning
                 ));
                 left_lines.push(format!(
-                    "pos {:.1},{:.1}  vel {:.0},{:.0}  {}{}",
+                    "pos {:.1},{:.1}  {}{}",
                     player.pos.x,
                     player.pos.y,
-                    player.vel.x,
-                    player.vel.y,
                     player.mode.label(),
                     fly
                 ));

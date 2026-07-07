@@ -71,7 +71,6 @@ pub struct InputState {
 pub struct LocalPlayerState {
     pub present: bool,
     pub pos: Vec2,
-    pub vel: Vec2,
     pub hp: f32,
     pub air: f32,
     pub burning: bool,
@@ -199,15 +198,7 @@ fn apply_entity_states(
                 if mode.0 != state.mode {
                     mode.0 = state.mode;
                 }
-                let pos = Vec2::new(state.x.to_f32(), state.y.to_f32());
-                local_state.vel = if local_state.present
-                    && pos.distance_squared(local_state.pos) < SNAP_DISTANCE * SNAP_DISTANCE
-                {
-                    (pos - local_state.pos) * TICK_RATE as f32
-                } else {
-                    Vec2::ZERO
-                };
-                local_state.pos = pos;
+                local_state.pos = Vec2::new(state.x.to_f32(), state.y.to_f32());
                 local_state.hp = state.hp;
                 local_state.air = state.air;
                 local_state.burning = state.burning;
