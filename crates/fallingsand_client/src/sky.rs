@@ -89,7 +89,7 @@ pub struct DarknessMaterial {
 
 impl Material2d for DarknessMaterial {
     fn fragment_shader() -> ShaderRef {
-        "embedded://fallingsand/shaders/darkness.wgsl".into()
+        "shaders/darkness.wgsl".into()
     }
 
     fn alpha_mode(&self) -> AlphaMode2d {
@@ -115,7 +115,7 @@ pub struct SunMaterial {
 
 impl Material2d for SunMaterial {
     fn fragment_shader() -> ShaderRef {
-        "embedded://fallingsand/shaders/sun.wgsl".into()
+        "shaders/sun.wgsl".into()
     }
 
     fn alpha_mode(&self) -> AlphaMode2d {
@@ -143,7 +143,7 @@ pub struct MoonMaterial {
 
 impl Material2d for MoonMaterial {
     fn fragment_shader() -> ShaderRef {
-        "embedded://fallingsand/shaders/moon.wgsl".into()
+        "shaders/moon.wgsl".into()
     }
 
     fn alpha_mode(&self) -> AlphaMode2d {
@@ -171,7 +171,7 @@ pub struct StarfieldMaterial {
 
 impl Material2d for StarfieldMaterial {
     fn fragment_shader() -> ShaderRef {
-        "embedded://fallingsand/shaders/starfield.wgsl".into()
+        "shaders/starfield.wgsl".into()
     }
 
     fn alpha_mode(&self) -> AlphaMode2d {
@@ -194,7 +194,7 @@ pub struct HorizonMaterial {
 
 impl Material2d for HorizonMaterial {
     fn fragment_shader() -> ShaderRef {
-        "embedded://fallingsand/shaders/horizon.wgsl".into()
+        "shaders/horizon.wgsl".into()
     }
 
     fn alpha_mode(&self) -> AlphaMode2d {
@@ -238,14 +238,6 @@ struct MoonVisual;
 
 impl Plugin for SkyPlugin {
     fn build(&self, app: &mut App) {
-        bevy::asset::embedded_asset!(app, "shaders/darkness.wgsl");
-        bevy::asset::embedded_asset!(app, "shaders/sun.wgsl");
-        bevy::asset::embedded_asset!(app, "shaders/moon.wgsl");
-        bevy::asset::embedded_asset!(app, "shaders/starfield.wgsl");
-        bevy::asset::embedded_asset!(app, "shaders/horizon.wgsl");
-        bevy::asset::embedded_asset!(app, "textures/sun.png");
-        bevy::asset::embedded_asset!(app, "textures/moon.png");
-        bevy::asset::embedded_asset!(app, "textures/stars.png");
         app.add_plugins(Material2dPlugin::<DarknessMaterial>::default())
             .add_plugins(Material2dPlugin::<SunMaterial>::default())
             .add_plugins(Material2dPlugin::<MoonMaterial>::default())
@@ -294,11 +286,11 @@ fn setup_sky(
     });
     let sun = sun_mats.add(SunMaterial {
         params: SunParams::default(),
-        texture: asset_server.load("embedded://fallingsand/textures/sun.png"),
+        texture: asset_server.load("sky/sun.png"),
     });
     let moon = moon_mats.add(MoonMaterial {
         params: MoonParams::default(),
-        texture: asset_server.load("embedded://fallingsand/textures/moon.png"),
+        texture: asset_server.load("sky/moon.png"),
     });
     let starfield = star_mats.add(StarfieldMaterial {
         params: StarfieldParams::default(),
@@ -313,7 +305,7 @@ fn setup_sky(
                     ..default()
                 });
             })
-            .load("embedded://fallingsand/textures/stars.png"),
+            .load("sky/stars.png"),
     });
     let horizon = horizon_mats.add(HorizonMaterial::default());
 

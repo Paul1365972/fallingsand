@@ -30,7 +30,7 @@ pub struct ChunkMaterial {
 
 impl Material2d for ChunkMaterial {
     fn fragment_shader() -> ShaderRef {
-        "embedded://fallingsand/shaders/chunk.wgsl".into()
+        "shaders/chunk.wgsl".into()
     }
 
     fn alpha_mode(&self) -> AlphaMode2d {
@@ -69,7 +69,6 @@ pub struct ChunkQuad;
 
 impl Plugin for ChunkRenderPlugin {
     fn build(&self, app: &mut App) {
-        bevy::asset::embedded_asset!(app, "shaders/chunk.wgsl");
         app.add_plugins(Material2dPlugin::<ChunkMaterial>::default())
             .init_resource::<ChunkVisuals>()
             .init_resource::<ChunkUploadQueue>()
