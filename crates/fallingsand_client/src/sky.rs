@@ -3,21 +3,18 @@ use crate::net::{NetSet, ServerMsg, Session};
 use crate::player::{PlayerVisual, PlayerVisuals};
 use crate::worldview::WorldView;
 use crate::{AppState, ClientRegistry, GameState};
-use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
-use bevy::render::render_resource::{
-    AsBindGroup, Extent3d, ShaderType, TextureDimension, TextureFormat,
-};
+use bevy::render::render_resource::{AsBindGroup, ShaderType};
 use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dPlugin};
-use fallingsand_core::{Calendar, CellPos, MOON_PHASES};
+use fallingsand_core::{Calendar, CellPos};
 use fallingsand_protocol::ServerMessage;
+use std::f32::consts::TAU;
 
 pub struct SkyPlugin;
 
 const MAX_LIGHTS: usize = 32;
 const MAX_DARKNESS: f32 = 0.82;
-const FULL_MOON_DARKNESS_MULT: f32 = 0.7;
 const PLAYER_LIGHT_RADIUS: f32 = 70.0;
 const BURNING_LIGHT_RADIUS: f32 = 40.0;
 const EMISSIVE_LIGHT_RADIUS: f32 = 28.0;
@@ -26,27 +23,24 @@ const EMISSIVE_MAX_RADIUS: f32 = 60.0;
 const EMISSIVE_SCAN_STRIDE: i32 = 8;
 const LIGHT_SCAN_INTERVAL: f32 = 0.1;
 const ORBIT_RADIUS_FRAC: f32 = 0.42;
+const HORIZON_FRAC: f32 = 0.43;
+const HORIZON_UV: f32 = 0.5 + HORIZON_FRAC * ORBIT_RADIUS_FRAC;
 
-const SKY_KEYFRAMES: &[(f32, [f32; 3])] = &[
-    (0.0, [0.015, 0.025, 0.055]),
-    (0.20, [0.03, 0.04, 0.09]),
-    (0.27, [0.50, 0.32, 0.28]),
-    (0.35, [0.33, 0.50, 0.76]),
-    (0.50, [0.40, 0.60, 0.86]),
-    (0.65, [0.33, 0.50, 0.76]),
-    (0.73, [0.55, 0.30, 0.24]),
-    (0.80, [0.03, 0.04, 0.09]),
-    (1.0, [0.015, 0.025, 0.055]),
-];
+const MOON_LIGHT_MAX: f32 = 0.5;
+const SKYGLOW: f32 = 0.03;
 
-const DARKNESS_KEYFRAMES: &[(f32, f32)] = &[
-    (0.0, 1.0),
-    (0.22, 1.0),
-    (0.32, 0.0),
-    (0.68, 0.0),
-    (0.78, 1.0),
-    (1.0, 1.0),
-];
+const INCLINATION_MAX: f32 = 0.576;
+const SUN_DISC: f32 = 0.090;
+const MOON_DISC: f32 = 0.096;
+const UMBRA_R: f32 = 0.153;
+const ECLIPSE_WIN: f32 = 0.05;
+const SUN_DISC_FRAC: f32 = 0.35;
+const MOON_DISC_FRAC: f32 = 0.90;
+
+fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
+    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
 
 #[derive(Resource, Default, Clone, Copy)]
 pub struct WorldTime {
@@ -55,17 +49,25 @@ pub struct WorldTime {
 }
 
 impl WorldTime {
-    pub fn day_fraction(&self) -> f32 {
-        self.calendar.day_fraction()
-    }
-
     pub fn moon_phase(&self) -> u32 {
         self.calendar.moon_phase()
     }
+}
 
-    pub fn moon_fullness(&self) -> f32 {
-        let phase = self.moon_phase() as f32;
-        1.0 - (phase - MOON_PHASES as f32 / 2.0).abs() / (MOON_PHASES as f32 / 2.0)
+#[derive(Resource, Default, Clone, Copy)]
+pub struct CelestialState {
+    pub sun_alt: f32,
+    pub solar_occ: f32,
+    pub lunar_shadow: f32,
+    pub light: f32,
+    pub star_alpha: f32,
+    pub sidereal: f32,
+    pub synced: bool,
+}
+
+impl CelestialState {
+    pub fn darkness(&self) -> f32 {
+        (1.0 - self.light) * MAX_DARKNESS
     }
 }
 
@@ -102,10 +104,111 @@ impl Material2d for DarknessMaterial {
     }
 }
 
+#[derive(ShaderType, Debug, Clone, Default)]
+pub struct SunParams {
+    pub redness: f32,
+    pub occlusion: f32,
+    pub time: f32,
+    pub _pad: f32,
+}
+
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
+pub struct SunMaterial {
+    #[uniform(0)]
+    pub params: SunParams,
+}
+
+impl Material2d for SunMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "embedded://fallingsand/shaders/sun.wgsl".into()
+    }
+
+    fn alpha_mode(&self) -> AlphaMode2d {
+        AlphaMode2d::Blend
+    }
+}
+
+#[derive(ShaderType, Debug, Clone, Default)]
+pub struct MoonParams {
+    pub sun_dir: Vec2,
+    pub illumination: f32,
+    pub umbra: Vec2,
+    pub umbra_r: f32,
+    pub time: f32,
+    pub sky_color: Vec4,
+}
+
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
+pub struct MoonMaterial {
+    #[uniform(0)]
+    pub params: MoonParams,
+}
+
+impl Material2d for MoonMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "embedded://fallingsand/shaders/moon.wgsl".into()
+    }
+
+    fn alpha_mode(&self) -> AlphaMode2d {
+        AlphaMode2d::Blend
+    }
+}
+
+#[derive(ShaderType, Debug, Clone, Default)]
+pub struct StarfieldParams {
+    pub sidereal: f32,
+    pub aspect: f32,
+    pub star_alpha: f32,
+    pub time: f32,
+    pub horizon: f32,
+}
+
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
+pub struct StarfieldMaterial {
+    #[uniform(0)]
+    pub params: StarfieldParams,
+}
+
+impl Material2d for StarfieldMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "embedded://fallingsand/shaders/starfield.wgsl".into()
+    }
+
+    fn alpha_mode(&self) -> AlphaMode2d {
+        AlphaMode2d::Blend
+    }
+}
+
+#[derive(ShaderType, Debug, Clone, Default)]
+pub struct HorizonParams {
+    pub color: Vec4,
+    pub horizon: f32,
+    pub intensity: f32,
+}
+
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
+pub struct HorizonMaterial {
+    #[uniform(0)]
+    pub params: HorizonParams,
+}
+
+impl Material2d for HorizonMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "embedded://fallingsand/shaders/horizon.wgsl".into()
+    }
+
+    fn alpha_mode(&self) -> AlphaMode2d {
+        AlphaMode2d::Blend
+    }
+}
+
 #[derive(Resource)]
 struct SkyAssets {
     darkness: Handle<DarknessMaterial>,
-    moon_phases: Vec<Handle<Image>>,
+    sun: Handle<SunMaterial>,
+    moon: Handle<MoonMaterial>,
+    starfield: Handle<StarfieldMaterial>,
+    horizon: Handle<HorizonMaterial>,
 }
 
 #[derive(Resource, Default)]
@@ -122,6 +225,12 @@ fn view_size(window: &Window, zoom: f32) -> Vec2 {
 struct DarknessQuad;
 
 #[derive(Component)]
+struct StarfieldQuad;
+
+#[derive(Component)]
+struct HorizonQuad;
+
+#[derive(Component)]
 struct SunVisual;
 
 #[derive(Component)]
@@ -130,8 +239,17 @@ struct MoonVisual;
 impl Plugin for SkyPlugin {
     fn build(&self, app: &mut App) {
         bevy::asset::embedded_asset!(app, "shaders/darkness.wgsl");
+        bevy::asset::embedded_asset!(app, "shaders/sun.wgsl");
+        bevy::asset::embedded_asset!(app, "shaders/moon.wgsl");
+        bevy::asset::embedded_asset!(app, "shaders/starfield.wgsl");
+        bevy::asset::embedded_asset!(app, "shaders/horizon.wgsl");
         app.add_plugins(Material2dPlugin::<DarknessMaterial>::default())
+            .add_plugins(Material2dPlugin::<SunMaterial>::default())
+            .add_plugins(Material2dPlugin::<MoonMaterial>::default())
+            .add_plugins(Material2dPlugin::<StarfieldMaterial>::default())
+            .add_plugins(Material2dPlugin::<HorizonMaterial>::default())
             .init_resource::<WorldTime>()
+            .init_resource::<CelestialState>()
             .init_resource::<EmissiveLights>()
             .add_systems(PostStartup, setup_sky)
             .add_systems(
@@ -141,11 +259,11 @@ impl Plugin for SkyPlugin {
             .add_systems(
                 Update,
                 (
-                    update_sky_tint,
                     update_orbits,
+                    update_sky_tint,
+                    fit_fullscreen_quads,
                     scan_emissive,
                     apply_lighting,
-                    fit_darkness_quad,
                 )
                     .chain()
                     .after(crate::interpolation::interpolate)
@@ -155,126 +273,52 @@ impl Plugin for SkyPlugin {
     }
 }
 
-fn circle_image(radius: u32, color: [u8; 4]) -> Image {
-    let size = radius * 2 + 2;
-    let mut data = vec![0u8; (size * size * 4) as usize];
-    let center = size as f32 / 2.0;
-    for y in 0..size {
-        for x in 0..size {
-            let dx = x as f32 + 0.5 - center;
-            let dy = y as f32 + 0.5 - center;
-            if dx * dx + dy * dy > radius as f32 * radius as f32 {
-                continue;
-            }
-            let index = ((y * size + x) * 4) as usize;
-            data[index..index + 4].copy_from_slice(&color);
-        }
-    }
-    Image::new(
-        Extent3d {
-            width: size,
-            height: size,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        data,
-        TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::RENDER_WORLD,
-    )
-}
-
-const MOON_LIT: [f32; 3] = [222.0, 228.0, 240.0];
-const MOON_MARIA: [f32; 3] = [178.0, 186.0, 205.0];
-const MOON_DARK: [f32; 3] = [46.0, 52.0, 70.0];
-const MOON_DARK_ALPHA: f32 = 0.22;
-const MOON_MARIA_SPOTS: &[(f32, f32, f32)] = &[
-    (-0.38, -0.22, 0.36),
-    (0.28, 0.12, 0.30),
-    (-0.02, 0.48, 0.22),
-    (0.44, -0.42, 0.18),
-];
-
-fn moon_image(radius: u32, phase: u32, phases: u32) -> Image {
-    let size = radius * 2 + 2;
-    let mut data = vec![0u8; (size * size * 4) as usize];
-    let center = size as f32 / 2.0;
-    let r = radius as f32;
-    let cycle = phase as f32 / phases as f32;
-    let terminator = (cycle * std::f32::consts::TAU).cos();
-    for y in 0..size {
-        for x in 0..size {
-            let dx = x as f32 + 0.5 - center;
-            let dy = y as f32 + 0.5 - center;
-            let dist = (dx * dx + dy * dy).sqrt();
-            let disc = (r - dist + 0.5).clamp(0.0, 1.0);
-            if disc <= 0.0 {
-                continue;
-            }
-            let half_width = (r * r - dy * dy).max(0.0).sqrt().max(1e-3);
-            let edge = terminator * half_width;
-            let lit = if cycle < 0.5 {
-                (dx - edge + 0.5).clamp(0.0, 1.0)
-            } else {
-                (-edge - dx + 0.5).clamp(0.0, 1.0)
-            };
-            let surface = if MOON_MARIA_SPOTS.iter().any(|&(mx, my, mr)| {
-                let sx = dx / r - mx;
-                let sy = dy / r - my;
-                sx * sx + sy * sy < mr * mr
-            }) {
-                MOON_MARIA
-            } else {
-                MOON_LIT
-            };
-            let alpha = disc * (MOON_DARK_ALPHA + (1.0 - MOON_DARK_ALPHA) * lit);
-            let index = ((y * size + x) * 4) as usize;
-            for channel in 0..3 {
-                let value = MOON_DARK[channel] + (surface[channel] - MOON_DARK[channel]) * lit;
-                data[index + channel] = value.round() as u8;
-            }
-            data[index + 3] = (alpha * 255.0).round() as u8;
-        }
-    }
-    Image::new(
-        Extent3d {
-            width: size,
-            height: size,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        data,
-        TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::RENDER_WORLD,
-    )
-}
-
+#[allow(clippy::too_many_arguments)]
 fn setup_sky(
     mut commands: Commands,
-    mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<DarknessMaterial>>,
+    mut darkness_mats: ResMut<Assets<DarknessMaterial>>,
+    mut sun_mats: ResMut<Assets<SunMaterial>>,
+    mut moon_mats: ResMut<Assets<MoonMaterial>>,
+    mut star_mats: ResMut<Assets<StarfieldMaterial>>,
+    mut horizon_mats: ResMut<Assets<HorizonMaterial>>,
     camera: Single<Entity, With<Camera2d>>,
 ) {
-    let sun = images.add(circle_image(9, [255, 232, 150, 255]));
-    let moon_phases: Vec<Handle<Image>> = (0..MOON_PHASES)
-        .map(|phase| images.add(moon_image(7, phase, MOON_PHASES)))
-        .collect();
-
-    let darkness = materials.add(DarknessMaterial {
+    let quad = meshes.add(Rectangle::default());
+    let darkness = darkness_mats.add(DarknessMaterial {
         params: DarknessParams::default(),
     });
-    let quad = meshes.add(Rectangle::default());
+    let sun = sun_mats.add(SunMaterial::default());
+    let moon = moon_mats.add(MoonMaterial::default());
+    let starfield = star_mats.add(StarfieldMaterial::default());
+    let horizon = horizon_mats.add(HorizonMaterial::default());
 
     commands.entity(*camera).with_children(|parent| {
         parent.spawn((
+            StarfieldQuad,
+            Mesh2d(quad.clone()),
+            MeshMaterial2d(starfield.clone()),
+            Transform::from_xyz(0.0, 0.0, -60.0),
+            Visibility::Hidden,
+        ));
+        parent.spawn((
+            HorizonQuad,
+            Mesh2d(quad.clone()),
+            MeshMaterial2d(horizon.clone()),
+            Transform::from_xyz(0.0, 0.0, -45.0),
+            Visibility::Hidden,
+        ));
+        parent.spawn((
             SunVisual,
-            Sprite::from_image(sun),
+            Mesh2d(quad.clone()),
+            MeshMaterial2d(sun.clone()),
             Transform::from_xyz(0.0, -1000.0, -50.0),
         ));
         parent.spawn((
             MoonVisual,
-            Sprite::from_image(moon_phases[0].clone()),
-            Transform::from_xyz(0.0, -1000.0, -50.0),
+            Mesh2d(quad.clone()),
+            MeshMaterial2d(moon.clone()),
+            Transform::from_xyz(0.0, -1000.0, -49.0),
         ));
         parent.spawn((
             DarknessQuad,
@@ -286,7 +330,10 @@ fn setup_sky(
     });
     commands.insert_resource(SkyAssets {
         darkness,
-        moon_phases,
+        sun,
+        moon,
+        starfield,
+        horizon,
     });
 }
 
@@ -299,113 +346,194 @@ fn sync_time(mut time: ResMut<WorldTime>, mut messages: MessageReader<ServerMsg>
     }
 }
 
-fn sample_keyframes(keyframes: &[(f32, [f32; 3])], t: f32) -> [f32; 3] {
-    let mut previous = keyframes[0];
-    for &frame in keyframes {
-        if frame.0 >= t {
-            let span = (frame.0 - previous.0).max(1e-6);
-            let mix = ((t - previous.0) / span).clamp(0.0, 1.0);
-            return [
-                previous.1[0] + (frame.1[0] - previous.1[0]) * mix,
-                previous.1[1] + (frame.1[1] - previous.1[1]) * mix,
-                previous.1[2] + (frame.1[2] - previous.1[2]) * mix,
-            ];
-        }
-        previous = frame;
-    }
-    keyframes[keyframes.len() - 1].1
-}
-
-fn sample_scalar(keyframes: &[(f32, f32)], t: f32) -> f32 {
-    let mut previous = keyframes[0];
-    for &frame in keyframes {
-        if frame.0 >= t {
-            let span = (frame.0 - previous.0).max(1e-6);
-            let mix = ((t - previous.0) / span).clamp(0.0, 1.0);
-            return previous.1 + (frame.1 - previous.1) * mix;
-        }
-        previous = frame;
-    }
-    keyframes[keyframes.len() - 1].1
-}
-
-fn update_sky_tint(time: Res<WorldTime>, mut clear: ResMut<ClearColor>) {
-    if !time.synced {
-        return;
-    }
-    let rgb = sample_keyframes(SKY_KEYFRAMES, time.day_fraction());
-    clear.0 = Color::srgb(rgb[0], rgb[1], rgb[2]);
-}
-
-fn night_darkness(time: &WorldTime) -> f32 {
-    let base = sample_scalar(DARKNESS_KEYFRAMES, time.day_fraction());
-    let phase_mult = 1.0 - (1.0 - FULL_MOON_DARKNESS_MULT) * time.moon_fullness();
-    base * MAX_DARKNESS * phase_mult
-}
-
+#[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
 fn update_orbits(
     time: Res<WorldTime>,
-    assets: Res<SkyAssets>,
+    real: Res<Time>,
     window: Single<&Window>,
     control: Res<CameraControl>,
-    mut sun: Query<(&mut Transform, &mut Visibility), (With<SunVisual>, Without<MoonVisual>)>,
-    mut moon: Query<
-        (&mut Transform, &mut Visibility, &mut Sprite),
-        (With<MoonVisual>, Without<SunVisual>),
-    >,
+    assets: Res<SkyAssets>,
+    mut celestial: ResMut<CelestialState>,
+    mut sun_mats: ResMut<Assets<SunMaterial>>,
+    mut moon_mats: ResMut<Assets<MoonMaterial>>,
+    mut sun_q: Query<(&mut Transform, &mut Visibility), (With<SunVisual>, Without<MoonVisual>)>,
+    mut moon_q: Query<(&mut Transform, &mut Visibility), (With<MoonVisual>, Without<SunVisual>)>,
 ) {
     if !time.synced {
         return;
     }
-    let radius = view_size(&window, control.zoom).y.max(100.0) * ORBIT_RADIUS_FRAC;
-    let angle = (time.day_fraction() - 0.25) * std::f32::consts::TAU;
-    let sun_pos = Vec2::new(angle.cos() * radius * 1.4, angle.sin() * radius);
-    if let Ok((mut transform, mut visibility)) = sun.single_mut() {
-        transform.translation = sun_pos.extend(-50.0);
-        *visibility = if sun_pos.y > -radius * 0.25 {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        };
+    let cal = time.calendar;
+    let r = view_size(&window, control.zoom).y.max(100.0) * ORBIT_RADIUS_FRAC;
+    let center = Vec2::new(0.0, -HORIZON_FRAC * r);
+    let t = real.elapsed_secs();
+
+    let sun_ang = (cal.day_fraction() - 0.25) * TAU;
+    let (sa, ca) = sun_ang.sin_cos();
+    let sun_pos = Vec2::new(ca * r * 1.4, sa * r);
+
+    let moon_ang = sun_ang - cal.elongation();
+    let (sm, cm) = moon_ang.sin_cos();
+    let beta = INCLINATION_MAX * cal.ecliptic_latitude();
+    let radial = Vec2::new(cm, sm);
+    let moon_pos = Vec2::new(cm * r * 1.4, sm * r) + radial * (beta * r);
+
+    let syn = cal.synodic_fraction();
+    let newness = (1.0 - syn.min(1.0 - syn) / ECLIPSE_WIN).clamp(0.0, 1.0);
+    let fullness = (1.0 - (syn - 0.5).abs() / ECLIPSE_WIN).clamp(0.0, 1.0);
+    let sep = (moon_pos - sun_pos).length() / r;
+    let overlap = (1.0 - sep / (SUN_DISC + MOON_DISC)).clamp(0.0, 1.0);
+    let solar_occ = overlap * newness;
+    let shadow_sep = (moon_pos + sun_pos).length() / r;
+    let lunar_shadow = (1.0 - shadow_sep / (UMBRA_R + MOON_DISC)).clamp(0.0, 1.0) * fullness;
+
+    let moon_to_p = MOON_DISC_FRAC / (MOON_DISC * r);
+    let umbra = (-sun_pos - moon_pos) * moon_to_p;
+    let umbra_r = UMBRA_R * MOON_DISC_FRAC / MOON_DISC;
+
+    let day_raw = smoothstep(-0.12, 0.10, sa);
+    let sunlight = day_raw * (1.0 - solar_occ);
+    let moon_up = smoothstep(-0.10, 0.10, (moon_pos.y / r).clamp(-1.0, 1.0));
+    let moonlight = cal.moon_illumination() * moon_up * (1.0 - lunar_shadow) * MOON_LIGHT_MAX;
+    let light = sunlight.max(moonlight + SKYGLOW).clamp(0.0, 1.0);
+    let star_alpha = 1.0 - smoothstep(0.06, 0.25, light);
+    let sun_dir = (sun_pos - moon_pos).normalize_or_zero();
+
+    *celestial = CelestialState {
+        sun_alt: sa,
+        solar_occ,
+        lunar_shadow,
+        light,
+        star_alpha,
+        sidereal: cal.day_fraction(),
+        synced: true,
+    };
+
+    if let Ok((mut tf, mut vis)) = sun_q.single_mut() {
+        let s = 2.0 * SUN_DISC * r / SUN_DISC_FRAC;
+        tf.translation = (sun_pos + center).extend(-50.0);
+        tf.scale = Vec3::new(s, s, 1.0);
+        *vis = Visibility::Inherited;
     }
-    let moon_pos = -sun_pos;
-    if let Ok((mut transform, mut visibility, mut sprite)) = moon.single_mut() {
-        transform.translation = moon_pos.extend(-50.0);
-        *visibility = if moon_pos.y > -radius * 0.25 {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        };
-        let image = assets.moon_phases[time.moon_phase() as usize].clone();
-        if sprite.image != image {
-            sprite.image = image;
-        }
+    if let Some(mut material) = sun_mats.get_mut(&assets.sun) {
+        material.params.redness = 1.0 - smoothstep(0.0, 0.35, sa);
+        material.params.occlusion = solar_occ;
+        material.params.time = t;
+    }
+
+    if let Ok((mut tf, mut vis)) = moon_q.single_mut() {
+        let s = 2.0 * MOON_DISC * r / MOON_DISC_FRAC;
+        tf.translation = (moon_pos + center).extend(-49.0);
+        tf.scale = Vec3::new(s, s, 1.0);
+        *vis = Visibility::Inherited;
+    }
+    if let Some(mut material) = moon_mats.get_mut(&assets.moon) {
+        material.params.sun_dir = sun_dir;
+        material.params.illumination = cal.moon_illumination();
+        material.params.umbra = umbra;
+        material.params.umbra_r = umbra_r;
+        material.params.time = t;
+        material.params.sky_color = sky_color(light, sa, solar_occ).extend(1.0);
     }
 }
 
-fn fit_darkness_quad(
-    time: Res<WorldTime>,
+fn sky_color(light: f32, sun_alt: f32, solar_occ: f32) -> Vec3 {
+    let night = Vec3::new(0.015, 0.025, 0.055);
+    let day = Vec3::new(0.40, 0.60, 0.86);
+    let horizon = Vec3::new(0.85, 0.45, 0.28);
+    let base = night.lerp(day, light);
+    let band = (1.0 - sun_alt.abs()).powi(3);
+    let warm = band * (1.0 - solar_occ) * 0.6;
+    let mut rgb = base.lerp(horizon, warm);
+    if solar_occ > 0.0 {
+        let grey = Vec3::splat((rgb.x + rgb.y + rgb.z) / 3.0);
+        rgb = rgb.lerp(grey, solar_occ * 0.4);
+    }
+    rgb
+}
+
+fn update_sky_tint(cel: Res<CelestialState>, mut clear: ResMut<ClearColor>) {
+    if !cel.synced {
+        return;
+    }
+    let rgb = sky_color(cel.light, cel.sun_alt, cel.solar_occ);
+    clear.0 = Color::srgb(rgb.x, rgb.y, rgb.z);
+}
+
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::type_complexity)]
+fn fit_fullscreen_quads(
+    cel: Res<CelestialState>,
+    real: Res<Time>,
     window: Single<&Window>,
     control: Res<CameraControl>,
-    mut quad: Query<(&mut Transform, &mut Visibility), With<DarknessQuad>>,
+    assets: Res<SkyAssets>,
+    mut star_mats: ResMut<Assets<StarfieldMaterial>>,
+    mut horizon_mats: ResMut<Assets<HorizonMaterial>>,
+    mut dark_q: Query<
+        (&mut Transform, &mut Visibility),
+        (With<DarknessQuad>, Without<StarfieldQuad>, Without<HorizonQuad>),
+    >,
+    mut star_q: Query<
+        (&mut Transform, &mut Visibility),
+        (With<StarfieldQuad>, Without<DarknessQuad>, Without<HorizonQuad>),
+    >,
+    mut horizon_q: Query<
+        (&mut Transform, &mut Visibility),
+        (With<HorizonQuad>, Without<DarknessQuad>, Without<StarfieldQuad>),
+    >,
 ) {
     let size = view_size(&window, control.zoom) * 1.1;
-    let dark = time.synced && night_darkness(&time) > 0.001;
-    for (mut transform, mut visibility) in &mut quad {
-        transform.scale = Vec3::new(size.x, size.y, 1.0);
-        *visibility = if dark {
+    let dark_on = cel.synced && cel.darkness() > 0.001;
+    for (mut tf, mut vis) in &mut dark_q {
+        tf.scale = Vec3::new(size.x, size.y, 1.0);
+        *vis = if dark_on {
             Visibility::Inherited
         } else {
             Visibility::Hidden
         };
+    }
+    let star_on = cel.synced && cel.star_alpha > 0.001;
+    for (mut tf, mut vis) in &mut star_q {
+        tf.scale = Vec3::new(size.x, size.y, 1.0);
+        *vis = if star_on {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+    }
+    for (mut tf, mut vis) in &mut horizon_q {
+        tf.scale = Vec3::new(size.x, size.y, 1.0);
+        *vis = if cel.synced {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+    }
+    if let Some(mut material) = star_mats.get_mut(&assets.starfield) {
+        material.params.sidereal = cel.sidereal;
+        material.params.aspect = (window.width() / window.height().max(1.0)).max(0.1);
+        material.params.star_alpha = cel.star_alpha;
+        material.params.time = real.elapsed_secs();
+        material.params.horizon = HORIZON_UV;
+    }
+    if let Some(mut material) = horizon_mats.get_mut(&assets.horizon) {
+        let day_haze = Vec3::new(0.72, 0.82, 0.96);
+        let night_haze = Vec3::new(0.08, 0.11, 0.20);
+        let warm = Vec3::new(0.98, 0.6, 0.38);
+        let base = night_haze.lerp(day_haze, cel.light);
+        let band = (1.0 - cel.sun_alt.abs()).powi(2);
+        let col = base.lerp(warm, band * (1.0 - cel.solar_occ) * 0.7);
+        material.params.color = col.extend(1.0);
+        material.params.horizon = HORIZON_UV;
+        material.params.intensity = 0.25 + 0.6 * cel.light;
     }
 }
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
 fn scan_emissive(
-    time: Res<WorldTime>,
+    cel: Res<CelestialState>,
     real: Res<Time>,
     registry: Res<ClientRegistry>,
     view: Res<WorldView>,
@@ -420,7 +548,7 @@ fn scan_emissive(
         return;
     }
     *cooldown = LIGHT_SCAN_INTERVAL;
-    if !time.synced || night_darkness(&time) <= 0.001 {
+    if !cel.synced || cel.darkness() <= 0.001 {
         if !emissive_lights.0.is_empty() {
             emissive_lights.0.clear();
         }
@@ -468,7 +596,7 @@ fn scan_emissive(
 }
 
 fn apply_lighting(
-    time: Res<WorldTime>,
+    cel: Res<CelestialState>,
     assets: Res<SkyAssets>,
     mut materials: ResMut<Assets<DarknessMaterial>>,
     emissive_lights: Res<EmissiveLights>,
@@ -479,11 +607,7 @@ fn apply_lighting(
     let Some(mut material) = materials.get_mut(&assets.darkness) else {
         return;
     };
-    let darkness = if time.synced {
-        night_darkness(&time)
-    } else {
-        0.0
-    };
+    let darkness = if cel.synced { cel.darkness() } else { 0.0 };
     material.params.darkness = darkness;
     if darkness <= 0.001 {
         material.params.light_count = 0;
@@ -528,19 +652,38 @@ fn apply_lighting(
     material.params.lights = array;
 }
 
+#[allow(clippy::too_many_arguments)]
 fn reset_sky(
     mut time: ResMut<WorldTime>,
+    mut celestial: ResMut<CelestialState>,
     mut clear: ResMut<ClearColor>,
     mut emissive_lights: ResMut<EmissiveLights>,
     assets: Option<Res<SkyAssets>>,
-    mut materials: ResMut<Assets<DarknessMaterial>>,
+    mut darkness_mats: ResMut<Assets<DarknessMaterial>>,
+    mut sun_mats: ResMut<Assets<SunMaterial>>,
+    mut moon_mats: ResMut<Assets<MoonMaterial>>,
+    mut star_mats: ResMut<Assets<StarfieldMaterial>>,
+    mut horizon_mats: ResMut<Assets<HorizonMaterial>>,
 ) {
     *time = WorldTime::default();
+    *celestial = CelestialState::default();
     clear.0 = Color::srgb(0.08, 0.09, 0.13);
     emissive_lights.0.clear();
-    if let Some(assets) = assets
-        && let Some(mut material) = materials.get_mut(&assets.darkness)
-    {
-        material.params = DarknessParams::default();
+    if let Some(assets) = assets {
+        if let Some(mut material) = darkness_mats.get_mut(&assets.darkness) {
+            material.params = DarknessParams::default();
+        }
+        if let Some(mut material) = sun_mats.get_mut(&assets.sun) {
+            material.params = SunParams::default();
+        }
+        if let Some(mut material) = moon_mats.get_mut(&assets.moon) {
+            material.params = MoonParams::default();
+        }
+        if let Some(mut material) = star_mats.get_mut(&assets.starfield) {
+            material.params = StarfieldParams::default();
+        }
+        if let Some(mut material) = horizon_mats.get_mut(&assets.horizon) {
+            material.params = HorizonParams::default();
+        }
     }
 }

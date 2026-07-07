@@ -4,7 +4,7 @@ use crate::net::{EmbeddedServerStats, ServerMsg, Session, Supervisor};
 use crate::particles::Particle;
 use crate::player::{Hotbar, InputState, LocalPlayerState, PlayerNames};
 use crate::render::ChunkVisuals;
-use crate::sky::WorldTime;
+use crate::sky::{CelestialState, WorldTime};
 use crate::worldview::WorldView;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::ecs::system::SystemParam;
@@ -344,6 +344,7 @@ struct Overlay<'w, 's> {
     registry: Res<'w, ClientRegistry>,
     fly: Res<'w, crate::player::FlyToggle>,
     world_time: Res<'w, WorldTime>,
+    celestial: Res<'w, CelestialState>,
     player: Res<'w, LocalPlayerState>,
     camera: Res<'w, CameraControl>,
     particles: Query<'w, 's, (), With<Particle>>,
@@ -454,13 +455,21 @@ fn update_overlay(
             }
 
             let minute_of_day = world_time.calendar.minute_of_day();
+            let eclipse = if ctx.celestial.solar_occ > 0.5 {
+                " solar eclipse"
+            } else if ctx.celestial.lunar_shadow > 0.5 {
+                " lunar eclipse"
+            } else {
+                ""
+            };
             left_lines.push(String::new());
             left_lines.push(format!(
-                "day {} {:02}:{:02} {}",
+                "day {} {:02}:{:02} {}{}",
                 world_time.calendar.day(),
                 minute_of_day / 60,
                 minute_of_day % 60,
-                moon_name(world_time.moon_phase())
+                moon_name(world_time.moon_phase()),
+                eclipse
             ));
 
             if player.present {
