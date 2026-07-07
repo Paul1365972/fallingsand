@@ -64,12 +64,36 @@ fn react(
         };
         if let Some(reaction) = registry.reaction(cell.material, neighbor.material) {
             keep = true;
+            if ignition_starved(window, registry, pos, cell.material, reaction.becomes)
+                || ignition_starved(
+                    window,
+                    registry,
+                    neighbor_pos,
+                    neighbor.material,
+                    reaction.other_becomes,
+                )
+            {
+                continue;
+            }
             if rng.draw().chance(reaction.chance) {
                 note_structural(window, registry, pos, cell.material);
                 note_structural(window, registry, neighbor_pos, neighbor.material);
                 set_product(window, pos, reaction.becomes, rng, tick_byte);
                 set_product(window, neighbor_pos, reaction.other_becomes, rng, tick_byte);
                 return true;
+            }
+        }
+    }
+    if let Some((chance, product)) = registry.emits(cell.material) {
+        keep = true;
+        if rng.draw().chance(chance) {
+            let (dx, dy) = NEIGHBORS[rng.draw().bits(2) as usize];
+            let target = pos.translated(dx, dy);
+            if window
+                .get(target)
+                .is_some_and(|neighbor| neighbor.material == MaterialId::AIR)
+            {
+                set_product(window, target, product, rng, tick_byte);
             }
         }
     }
@@ -110,6 +134,27 @@ fn note_structural(
     for (dx, dy) in NEIGHBORS {
         window.note_structural(pos.translated(dx, dy));
     }
+}
+
+fn ignition_starved(
+    window: &SimWindow,
+    registry: &MaterialRegistry,
+    pos: CellPos,
+    from: MaterialId,
+    to: MaterialId,
+) -> bool {
+    registry.is_ember(to) && !registry.is_ember(from) && !oxygen_exposed(window, registry, pos)
+}
+
+fn oxygen_exposed(window: &SimWindow, registry: &MaterialRegistry, pos: CellPos) -> bool {
+    NEIGHBORS.iter().any(|&(dx, dy)| {
+        window.get(pos.translated(dx, dy)).is_some_and(|neighbor| {
+            matches!(
+                registry.get(neighbor.material).phase,
+                Phase::Empty | Phase::Gas | Phase::Fire
+            )
+        })
+    })
 }
 
 fn sustained(

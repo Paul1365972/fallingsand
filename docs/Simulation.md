@@ -28,3 +28,7 @@ Each chunk tracks the dirty rect of cells changed last tick. Everything keys off
 A separate **keep-alive rect** marks cells that must re-simulate without having changed (clinging fire, pending decay, reactive pairs). The sim schedules from both; replication reads only the change rect, so keep-alives cost zero bandwidth. This is why a mostly-settled world of ~2000 active chunks stays inside the tick budget.
 
 Cell particles: cells knocked loose fly ballistically as free particles and reinsert into the grid on impact.
+
+## Combustion
+
+Burning is three material-driven stages, all local, no per-cell burn timer — state lives in the material id. **Ignite**: a flame or ember reacts with adjacent fuel at that fuel's own rate (`fire + oil` near-instant, `fire + coal` slow), turning the fuel into its `burning_*` variant. **Burn**: the ember stays in place, spreads through adjacent like fuel (`burning_coal + coal`), glows (`emissive`), burns entities (`hot`), and is consumed by its own `decay` into ash or smoke — a tiny rate is a long life (coal smoulders for ~30s), a huge rate is gone instantly (foliage). Probabilistic decay *is* the burn duration. **Flame**: an ember `emits` short-lived `fire` into an adjacent air cell (the licking flames + smoke plume); fire is `sustained_by` embers so it clings while fuel remains, then decays to smoke. Water quenches embers to ash. Fuels sleep until a hot neighbour wakes them, so an unlit forest costs nothing.

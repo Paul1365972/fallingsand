@@ -48,6 +48,10 @@ pub struct Material {
     pub decay_into: Option<String>,
     #[serde(default)]
     pub sustained_by: Vec<String>,
+    #[serde(default)]
+    pub emits: Option<String>,
+    #[serde(default)]
+    pub emit_rate: f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -101,6 +105,8 @@ pub struct MaterialRegistry {
     sustain_bits: Vec<u32>,
     reactions: Vec<Option<Reaction>>,
     decays: Vec<Option<(f32, MaterialId)>>,
+    emits: Vec<Option<(f32, MaterialId)>>,
+    ember: Vec<bool>,
     reactive: Vec<bool>,
     dynamics: Vec<Dynamics>,
 }
@@ -218,6 +224,19 @@ impl MaterialRegistry {
             })
             .collect::<Result<_, RegistryError>>()?;
 
+        let emits: Vec<Option<(f32, MaterialId)>> = materials
+            .iter()
+            .map(|material| match (&material.emits, material.emit_rate) {
+                (Some(name), rate) if rate > 0.0 => {
+                    let product = *by_name
+                        .get(name)
+                        .ok_or_else(|| RegistryError::UnknownMaterial(name.clone()))?;
+                    Ok(Some((per_tick_chance(rate), product)))
+                }
+                _ => Ok(None),
+            })
+            .collect::<Result<_, RegistryError>>()?;
+
         let len = materials.len();
         let resolve = |operand: &str| -> Result<Operand, RegistryError> {
             if let Some(tag) = operand.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
@@ -297,10 +316,19 @@ impl MaterialRegistry {
             .map(|slot| slot.map(|(reaction, _)| reaction))
             .collect();
 
+        let ember_mask = tag_index
+            .get("ember")
+            .map(|&index| 1u32 << index)
+            .unwrap_or(0);
+        let ember: Vec<bool> = (0..len)
+            .map(|index| tag_bits[index] & ember_mask != 0)
+            .collect();
+
         let reactive: Vec<bool> = (0..len)
             .map(|index| {
                 materials[index].phase == Phase::Fire
                     || decays[index].is_some()
+                    || emits[index].is_some()
                     || reactions[index * len..(index + 1) * len]
                         .iter()
                         .any(|slot| slot.is_some())
@@ -336,6 +364,8 @@ impl MaterialRegistry {
             sustain_bits,
             reactions,
             decays,
+            emits,
+            ember,
             reactive,
             dynamics,
         })
@@ -382,6 +412,16 @@ impl MaterialRegistry {
     #[inline]
     pub fn decay(&self, id: MaterialId) -> Option<(f32, MaterialId)> {
         self.decays[id.0 as usize]
+    }
+
+    #[inline]
+    pub fn emits(&self, id: MaterialId) -> Option<(f32, MaterialId)> {
+        self.emits[id.0 as usize]
+    }
+
+    #[inline]
+    pub fn is_ember(&self, id: MaterialId) -> bool {
+        self.ember[id.0 as usize]
     }
 
     #[inline]
