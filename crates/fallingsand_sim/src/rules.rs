@@ -320,6 +320,11 @@ fn update_dynamic(
     vx = (vx as f32 * keep).round() as i32;
     vy = (vy as f32 * keep).round() as i32;
 
+    if dynamics.turbulence > 0.0 {
+        let r = (rng.draw().bits(16) as i32 - 32768) as f32 / 32768.0;
+        vx += (dynamics.turbulence * r).round() as i32;
+    }
+
     let below = pos.translated(0, -1);
     let supported = !can_enter(
         window,

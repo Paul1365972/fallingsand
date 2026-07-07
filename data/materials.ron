@@ -103,6 +103,7 @@
             ],
             drag: 6.0,
             cohesion: 0.4,
+            turbulence: 300.0,
             decay_rate: 0.05,
             decay_into: Some("water"),
         ),
@@ -149,6 +150,7 @@
                 (232, 88, 8, 255),
             ],
             drag: 6.0,
+            turbulence: 400.0,
             decay_rate: 6.3,
             decay_into: Some("smoke"),
             sustained_by: ["burnable", "ember"],
@@ -166,6 +168,7 @@
             ],
             drag: 7.0,
             cohesion: 0.3,
+            turbulence: 700.0,
             decay_rate: 0.36,
         ),
         (

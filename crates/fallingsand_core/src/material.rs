@@ -33,6 +33,8 @@ pub struct Material {
     #[serde(default)]
     pub cohesion: f32,
     #[serde(default)]
+    pub turbulence: f32,
+    #[serde(default)]
     pub flow_rate: f32,
     #[serde(default)]
     pub hardness: f32,
@@ -92,6 +94,7 @@ pub struct Dynamics {
     pub friction: f32,
     pub cohesion: f32,
     pub restitution: f32,
+    pub turbulence: f32,
     pub flow_chance: f32,
 }
 
@@ -342,6 +345,10 @@ impl MaterialRegistry {
                 friction: material.friction.clamp(0.0, 1.0),
                 cohesion: (material.cohesion * crate::TICK_DT).clamp(0.0, 1.0),
                 restitution: material.restitution.clamp(0.0, 1.0),
+                turbulence: material.turbulence
+                    * crate::TICK_DT
+                    * crate::TICK_DT
+                    * crate::VEL_ONE as f32,
                 flow_chance: if material.flow_rate > 0.0 {
                     per_tick_chance(material.flow_rate)
                 } else {
