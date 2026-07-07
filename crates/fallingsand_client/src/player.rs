@@ -67,6 +67,18 @@ pub struct InputState {
     pub aim: CellPos,
 }
 
+#[derive(Resource, Default, Clone, Copy)]
+pub struct LocalPlayerState {
+    pub present: bool,
+    pub pos: Vec2,
+    pub vel: Vec2,
+    pub hp: f32,
+    pub air: f32,
+    pub burning: bool,
+    pub ducking: bool,
+    pub mode: GameMode,
+}
+
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         let registry = &app.world().resource::<ClientRegistry>().0;
@@ -80,6 +92,7 @@ impl Plugin for PlayerPlugin {
             .init_resource::<PlayerVisuals>()
             .init_resource::<PlayerNames>()
             .init_resource::<InputState>()
+            .init_resource::<LocalPlayerState>()
             .init_resource::<LocalMode>()
             .init_resource::<FlyToggle>()
             .init_resource::<LocalInventory>()
@@ -172,6 +185,7 @@ fn apply_entity_states(
     session: Option<Res<Session>>,
     names: Res<PlayerNames>,
     mut mode: ResMut<LocalMode>,
+    mut local_state: ResMut<LocalPlayerState>,
 ) {
     let local = session.and_then(|session| session.player);
     let mut seen: Option<Vec<PlayerId>> = None;
@@ -181,8 +195,23 @@ fn apply_entity_states(
         };
         seen = Some(entities.iter().map(|state| state.player).collect());
         for state in entities {
-            if local == Some(state.player) && mode.0 != state.mode {
-                mode.0 = state.mode;
+            if local == Some(state.player) {
+                if mode.0 != state.mode {
+                    mode.0 = state.mode;
+                }
+                let pos = Vec2::new(state.x.to_f32(), state.y.to_f32());
+                local_state.vel = if local_state.present {
+                    (pos - local_state.pos) * TICK_RATE as f32
+                } else {
+                    Vec2::ZERO
+                };
+                local_state.pos = pos;
+                local_state.hp = state.hp;
+                local_state.air = state.air;
+                local_state.burning = state.burning;
+                local_state.ducking = state.ducking;
+                local_state.mode = state.mode;
+                local_state.present = true;
             }
             let target = Vec2::new(state.x.to_f32(), state.y.to_f32());
             let size = if state.ducking {
@@ -264,6 +293,7 @@ fn cleanup_players(
     mut mode: ResMut<LocalMode>,
     mut fly: ResMut<FlyToggle>,
     mut inventory: ResMut<LocalInventory>,
+    mut local_state: ResMut<LocalPlayerState>,
 ) {
     for (_, entity) in visuals.0.drain() {
         commands.entity(entity).despawn();
@@ -273,6 +303,7 @@ fn cleanup_players(
     *mode = LocalMode::default();
     fly.0 = false;
     inventory.0.clear();
+    *local_state = LocalPlayerState::default();
 }
 
 fn select_material(

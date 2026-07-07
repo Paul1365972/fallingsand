@@ -1,17 +1,29 @@
 use crate::ClientRegistry;
+use crate::camera::CameraControl;
 use crate::net::{EmbeddedServerStats, ServerMsg, Session, Supervisor};
-use crate::player::{Hotbar, InputState, PlayerNames};
+use crate::particles::Particle;
+use crate::player::{Hotbar, InputState, LocalPlayerState, PlayerNames};
 use crate::render::ChunkVisuals;
+use crate::sky::WorldTime;
 use crate::worldview::WorldView;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::render::view::window::screenshot::{Screenshot, save_to_disk};
-use fallingsand_core::{CHUNK_SIZE, ChunkPos, DirtyRect, REGION_SIZE_CELLS};
+use fallingsand_core::{
+    CHUNK_AREA, CHUNK_SIZE, Cell, ChunkPos, DirtyRect, Phase, REGION_SIZE_CELLS,
+};
 
 pub struct DebugOverlayPlugin;
 
+const MAX_HP: f32 = 100.0;
+const BUDGET_MS: f32 = 1000.0 / 60.0;
+
 #[derive(Component)]
-pub struct DebugText;
+pub struct DebugTextLeft;
+
+#[derive(Component)]
+pub struct DebugTextRight;
 
 #[derive(Resource, Default)]
 pub struct DebugVisible(pub bool);
@@ -64,18 +76,36 @@ fn screenshot(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>) {
 }
 
 fn setup_overlay(mut commands: Commands) {
+    let font = || TextFont {
+        font_size: FontSize::Px(13.0),
+        ..default()
+    };
+    let color = TextColor(Color::srgba(0.9, 0.95, 1.0, 0.95));
+
     commands.spawn((
-        DebugText,
+        DebugTextLeft,
         Text::new(""),
-        TextFont {
-            font_size: FontSize::Px(13.0),
-            ..default()
-        },
-        TextColor(Color::srgba(0.9, 0.95, 1.0, 0.95)),
+        font(),
+        color,
         Node {
             position_type: PositionType::Absolute,
             top: px(5),
             left: px(5),
+            ..default()
+        },
+        GlobalZIndex(100),
+    ));
+
+    commands.spawn((
+        DebugTextRight,
+        Text::new(""),
+        font(),
+        color,
+        TextLayout::justify(Justify::Right),
+        Node {
+            position_type: PositionType::Absolute,
+            top: px(5),
+            right: px(5),
             ..default()
         },
         GlobalZIndex(100),
@@ -247,45 +277,85 @@ fn draw_borders(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[derive(SystemParam)]
+struct Overlay<'w, 's> {
+    diagnostics: Res<'w, DiagnosticsStore>,
+    supervisor: Res<'w, Supervisor>,
+    server: Res<'w, EmbeddedServerStats>,
+    session: Option<Res<'w, Session>>,
+    view: Res<'w, WorldView>,
+    visuals: Res<'w, ChunkVisuals>,
+    names: Res<'w, PlayerNames>,
+    hotbar: Res<'w, Hotbar>,
+    input: Res<'w, InputState>,
+    registry: Res<'w, ClientRegistry>,
+    fly: Res<'w, crate::player::FlyToggle>,
+    world_time: Res<'w, WorldTime>,
+    player: Res<'w, LocalPlayerState>,
+    camera: Res<'w, CameraControl>,
+    particles: Query<'w, 's, (), With<Particle>>,
+}
+
 fn update_overlay(
     visible: Res<DebugVisible>,
-    diagnostics: Res<DiagnosticsStore>,
     game_state: Option<Res<State<crate::GameState>>>,
-    supervisor: Res<Supervisor>,
-    server: Res<EmbeddedServerStats>,
-    session: Option<Res<Session>>,
-    view: Res<WorldView>,
-    visuals: Res<ChunkVisuals>,
-    names: Res<PlayerNames>,
-    hotbar: Res<Hotbar>,
-    input: Res<InputState>,
-    registry: Res<ClientRegistry>,
-    mode: Res<crate::player::LocalMode>,
-    fly: Res<crate::player::FlyToggle>,
-    mut text: Single<&mut Text, With<DebugText>>,
+    ctx: Overlay,
+    mut left: Single<&mut Text, With<DebugTextLeft>>,
+    mut right: Single<&mut Text, With<DebugTextRight>>,
 ) {
     if !visible.0 {
-        if !text.is_empty() {
-            text.clear();
+        if !left.is_empty() {
+            left.clear();
+        }
+        if !right.is_empty() {
+            right.clear();
         }
         return;
     }
+
+    let diagnostics = &ctx.diagnostics;
+    let supervisor = &ctx.supervisor;
+    let server = &ctx.server;
+    let view = &ctx.view;
+    let visuals = &ctx.visuals;
+    let names = &ctx.names;
+    let hotbar = &ctx.hotbar;
+    let input = &ctx.input;
+    let registry = &ctx.registry;
+    let fly = &ctx.fly;
+    let world_time = &ctx.world_time;
+    let player = &ctx.player;
+    let camera = &ctx.camera;
 
     let fps = diagnostics
         .get(&FrameTimeDiagnosticsPlugin::FPS)
         .and_then(|d| d.smoothed())
         .unwrap_or(0.0);
+    let frame = diagnostics.get(&FrameTimeDiagnosticsPlugin::FRAME_TIME);
+    let frame_ms = frame.and_then(|d| d.smoothed()).unwrap_or(0.0);
+    let (frame_min, frame_max) = frame
+        .map(|d| {
+            d.values().fold((f64::INFINITY, 0.0f64), |(mn, mx), &v| {
+                (mn.min(v), mx.max(v))
+            })
+        })
+        .filter(|(mn, _)| mn.is_finite())
+        .unwrap_or((0.0, 0.0));
+
     let game_state = game_state.map(|state| *state.get());
     let embedded = supervisor.target.is_none();
-    let (rx_per_sec, rx_bytes) = session
+    let (rx_per_sec, rx_bytes) = ctx
+        .session
+        .as_ref()
         .map(|session| (session.rx_per_sec, session.rx_bytes))
         .unwrap_or((0, 0));
 
-    let mut lines = vec![
-        format!("fps: {fps:.0}"),
+    let mut left_lines: Vec<String> = Vec::new();
+    let mut right_lines: Vec<String> = vec![
         format!("fallingsand v{}", env!("CARGO_PKG_VERSION")),
+        format!("{fps:.0} fps  {frame_ms:.1} ms ({frame_min:.1}/{frame_max:.1})"),
     ];
+
     match game_state {
         None => {}
         Some(crate::GameState::Connecting) => {
@@ -294,90 +364,218 @@ fn update_overlay(
                 .as_ref()
                 .map(|target| target.url.as_str())
                 .unwrap_or("local server");
-            let mut conn = format!("conn: {target}, attempt {}", supervisor.attempt);
+            let mut conn = format!("connecting: {target}, attempt {}", supervisor.attempt);
             if let Some(err) = &supervisor.last_error {
-                conn.push_str(&format!(", last error: {err}"));
+                conn.push_str(&format!("\nlast error: {err}"));
             }
-            lines.push(conn);
-            lines.push(format!(
-                "net rx: {}/s ({} total)",
+            left_lines.push(conn);
+            right_lines.push(format!(
+                "net rx {}/s ({})",
                 human_bytes(rx_per_sec),
                 human_bytes(rx_bytes)
             ));
         }
         Some(crate::GameState::Playing) => {
-            let mut tick = format!("tick: {}", view.server_tick);
-            if embedded {
-                tick.push_str(&format!(" ({} us sim)", server.sim_micros));
-            }
-            lines.push(tick);
-
-            let mut chunks = "chunks: ".to_string();
-            if embedded {
-                chunks.push_str(&format!(
-                    "{} loaded / {} active / {} border / {} awake (server), ",
-                    server.loaded_chunks,
-                    server.active_chunks,
-                    server.border_chunks,
-                    server.awake_chunks,
-                ));
-            }
-            chunks.push_str(&format!(
-                "{} client, {} uploads ({})",
-                view.chunks.len(),
-                visuals.uploads,
-                human_bytes(visuals.upload_bytes as u64)
+            let aim = input.aim;
+            let chunk = aim.chunk();
+            let off = aim.offset();
+            let region = aim.region();
+            left_lines.push(format!("cursor {},{}", aim.x, aim.y));
+            left_lines.push(format!(
+                "chunk {},{}  +{},{}",
+                chunk.x, chunk.y, off.x, off.y
             ));
-            lines.push(chunks);
+            left_lines.push(format!(
+                "region {},{}  phase {}",
+                region.x,
+                region.y,
+                block_phase(chunk)
+            ));
+            if player.present {
+                let facing = compass(aim.x as f32 - player.pos.x, aim.y as f32 - player.pos.y);
+                left_lines.push(format!("facing {facing}"));
+            }
 
-            let mut net = format!(
-                "net rx: {}/s ({} total)",
-                human_bytes(rx_per_sec),
-                human_bytes(rx_bytes)
-            );
-            if embedded {
-                net.push_str(&format!(
-                    ", server tx: {}/tick",
-                    human_bytes(server.replicated_bytes)
+            let t = world_time.t.rem_euclid(1.0);
+            let minute_of_day = (t * 24.0 * 60.0) as u32;
+            left_lines.push(String::new());
+            left_lines.push(format!(
+                "day {}  {:02}:{:02}  {}",
+                world_time.day,
+                minute_of_day / 60,
+                minute_of_day % 60,
+                moon_name(world_time.moon_phase())
+            ));
+
+            if player.present {
+                let burning = if player.burning { "  burning" } else { "" };
+                let fly = if fly.0 { ", fly" } else { "" };
+                left_lines.push(String::new());
+                left_lines.push(format!(
+                    "hp {:.0}/{:.0}  air {:.1}s{}",
+                    player.hp, MAX_HP, player.air, burning
+                ));
+                left_lines.push(format!(
+                    "pos {:.1},{:.1}  vel {:.0},{:.0}  {}{}",
+                    player.pos.x,
+                    player.pos.y,
+                    player.vel.x,
+                    player.vel.y,
+                    player.mode.label(),
+                    fly
                 ));
             }
-            lines.push(net);
 
-            let mut population = if embedded {
-                format!("players: {}", server.players)
-            } else {
-                format!("players: {}", names.0.len())
+            left_lines.push(String::new());
+            let cursor = match view.get_cell(aim) {
+                Some(cell) => match registry.0.try_get(cell.material) {
+                    Some(material) => format!(
+                        "cursor: {} [{}] \u{03c1}{:.2}",
+                        material.name,
+                        phase_label(material.phase),
+                        material.density
+                    ),
+                    None => "cursor: ?".to_string(),
+                },
+                None => "cursor: unloaded".to_string(),
             };
-            if embedded {
-                population.push_str(&format!(", pixel bodies: {}", server.pixel_bodies));
-            }
-            lines.push(population);
-
-            let cursor_material = view
-                .get_cell(input.aim)
-                .map(|cell| registry.0.get(cell.material).name.as_str())
-                .unwrap_or("unloaded");
-            lines.push(format!(
-                "cursor: {},{} [{}]",
-                input.aim.x, input.aim.y, cursor_material
-            ));
+            left_lines.push(cursor);
             let selected = registry
                 .0
                 .try_get(hotbar.selected)
                 .map(|material| material.name.as_str())
                 .unwrap_or("none");
-            lines.push(format!("selected [1-0, brackets]: {selected}"));
-            let fly = if fly.0 { ", flying" } else { "" };
-            lines.push(format!("mode: {}{fly} (F3+N switch)", mode.0.label()));
-            lines.push(
-                "keys: AD move, space jump (2x fly), LMB dig, RMB place, wheel zoom, F3+G borders+rects, esc pause"
-                    .to_string(),
+            left_lines.push(format!("selected: {selected}"));
+
+            if embedded {
+                let sim_ms = server.sim_micros as f32 / 1000.0;
+                let peak_ms = server.peak_sim_micros as f32 / 1000.0;
+                right_lines.push(format!(
+                    "sim {sim_ms:.2} ms ({:.0}%)  peak {peak_ms:.2}",
+                    sim_ms / BUDGET_MS * 100.0
+                ));
+                right_lines.push(format!(
+                    "tick #{}  {:.0} tps  +{} ms",
+                    server.tick, server.tps, server.slew_ms
+                ));
+            }
+
+            if embedded {
+                right_lines.push(format!(
+                    "chunks L/A/B/W {}/{}/{}/{}  \u{b7}  {} client",
+                    server.loaded_chunks,
+                    server.active_chunks,
+                    server.border_chunks,
+                    server.awake_chunks,
+                    view.chunks.len()
+                ));
+                right_lines.push(format!(
+                    "active cells ~{}  \u{b7}  regions {}/{} dirty",
+                    human_count(server.awake_cells),
+                    server.loaded_regions,
+                    server.dirty_regions
+                ));
+            } else {
+                right_lines.push(format!(
+                    "tick #{}  \u{b7}  {} chunks",
+                    view.server_tick,
+                    view.chunks.len()
+                ));
+            }
+
+            let mut net = format!(
+                "net rx {}/s ({})",
+                human_bytes(rx_per_sec),
+                human_bytes(rx_bytes)
             );
+            if embedded {
+                net.push_str(&format!(
+                    "  \u{b7}  tx {}/tick",
+                    human_bytes(server.replicated_bytes)
+                ));
+            }
+            right_lines.push(net);
+            right_lines.push(format!(
+                "uploads {} ({})  \u{b7}  zoom {:.2}x",
+                visuals.uploads,
+                human_bytes(visuals.upload_bytes as u64),
+                camera.zoom
+            ));
+
+            let particle_count = ctx.particles.iter().count();
+            if embedded {
+                let mem = server.loaded_chunks as u64
+                    * CHUNK_AREA as u64
+                    * std::mem::size_of::<Cell>() as u64;
+                right_lines.push(format!(
+                    "players {}  \u{b7}  bodies {}  \u{b7}  particles {}",
+                    server.players, server.pixel_bodies, particle_count
+                ));
+                right_lines.push(format!("mem ~{}", human_bytes(mem)));
+            } else {
+                right_lines.push(format!(
+                    "players {}  \u{b7}  particles {}",
+                    names.0.len(),
+                    particle_count
+                ));
+            }
         }
     }
-    let joined = lines.join("\n");
-    if ***text != joined {
-        ***text = joined;
+
+    let left_joined = left_lines.join("\n");
+    if ***left != left_joined {
+        ***left = left_joined;
+    }
+    let right_joined = right_lines.join("\n");
+    if ***right != right_joined {
+        ***right = right_joined;
+    }
+}
+
+fn block_phase(chunk: ChunkPos) -> u8 {
+    (chunk.x.rem_euclid(2) + chunk.y.rem_euclid(2) * 2) as u8
+}
+
+fn compass(dx: f32, dy: f32) -> &'static str {
+    if dx == 0.0 && dy == 0.0 {
+        return "-";
+    }
+    const DIRS: [&str; 8] = ["E", "NE", "N", "NW", "W", "SW", "S", "SE"];
+    let deg = dy.atan2(dx).to_degrees().rem_euclid(360.0);
+    DIRS[(((deg + 22.5) / 45.0) as usize) % 8]
+}
+
+fn moon_name(phase: u32) -> &'static str {
+    match phase {
+        0 => "new moon",
+        1 => "waxing crescent",
+        2 => "first quarter",
+        3 => "waxing gibbous",
+        4 => "full moon",
+        5 => "waning gibbous",
+        6 => "last quarter",
+        _ => "waning crescent",
+    }
+}
+
+fn phase_label(phase: Phase) -> &'static str {
+    match phase {
+        Phase::Empty => "empty",
+        Phase::Solid => "solid",
+        Phase::Powder => "powder",
+        Phase::Liquid => "liquid",
+        Phase::Gas => "gas",
+        Phase::Fire => "fire",
+    }
+}
+
+fn human_count(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}k", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
     }
 }
 

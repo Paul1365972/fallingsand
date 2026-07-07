@@ -15,7 +15,7 @@ const FLAME_TTL: f32 = 0.45;
 const FLAME_INTERVAL: f32 = 0.05;
 
 #[derive(Component)]
-struct Particle {
+pub struct Particle {
     velocity: Vec2,
     gravity: f32,
     ttl: f32,

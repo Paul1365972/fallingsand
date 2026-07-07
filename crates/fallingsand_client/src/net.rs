@@ -147,14 +147,20 @@ pub struct ServerMsg(pub ServerMessage);
 #[derive(Message)]
 pub struct SessionEnded;
 
-#[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Resource, Default, Clone, Copy, PartialEq)]
 pub struct EmbeddedServerStats {
     pub tick: u64,
     pub sim_micros: u64,
+    pub peak_sim_micros: u64,
+    pub tps: f32,
+    pub slew_ms: u32,
     pub awake_chunks: usize,
+    pub awake_cells: u64,
     pub loaded_chunks: usize,
     pub active_chunks: usize,
     pub border_chunks: usize,
+    pub loaded_regions: u32,
+    pub dirty_regions: u32,
     pub players: usize,
     pub replicated_bytes: u64,
     pub pixel_bodies: usize,
@@ -563,10 +569,16 @@ pub mod embedded {
                 EmbeddedServerStats {
                     tick: stats.tick,
                     sim_micros: stats.sim_micros,
+                    peak_sim_micros: stats.peak_sim_micros,
+                    tps: stats.tps,
+                    slew_ms: stats.slew_ms,
                     awake_chunks: stats.awake_chunks,
+                    awake_cells: stats.awake_cells,
                     loaded_chunks: stats.loaded_chunks,
                     active_chunks: stats.active_chunks,
                     border_chunks: stats.border_chunks,
+                    loaded_regions: stats.loaded_regions,
+                    dirty_regions: stats.dirty_regions,
                     players: stats.players,
                     replicated_bytes: stats.replicated_bytes,
                     pixel_bodies: stats.pixel_bodies,

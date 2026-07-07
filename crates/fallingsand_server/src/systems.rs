@@ -635,6 +635,11 @@ pub fn step_simulation(
     });
     stats.tick = sim.0.tick();
     stats.sim_micros = start.elapsed().as_micros() as u64;
+    if stats.tick.is_multiple_of(120) {
+        stats.peak_sim_micros = stats.sim_micros;
+    } else {
+        stats.peak_sim_micros = stats.peak_sim_micros.max(stats.sim_micros);
+    }
     stats.active_chunks = tickets.active.len();
     stats.border_chunks = tickets.border.len();
 }
@@ -737,6 +742,7 @@ pub fn step_physics(
 pub fn replicate(
     mut sessions: ResMut<Sessions>,
     sim: Res<SimWorld>,
+    regions: Res<crate::regions::RegionMap>,
     mut stats: ResMut<TickStats>,
     query: Query<(
         &Player,
@@ -859,7 +865,9 @@ pub fn replicate(
 
     stats.players = entities.len();
     stats.awake_chunks = sim.0.awake_chunk_count();
+    stats.awake_cells = sim.0.awake_cell_count();
     stats.loaded_chunks = sim.0.chunks().count();
+    (stats.loaded_regions, stats.dirty_regions) = regions.counts();
     stats.replicated_bytes = sent_bytes;
 }
 

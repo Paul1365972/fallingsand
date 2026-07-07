@@ -66,10 +66,16 @@ pub struct WorldInfo {
 pub struct TickStats {
     pub tick: u64,
     pub sim_micros: u64,
+    pub peak_sim_micros: u64,
+    pub tps: f32,
+    pub slew_ms: u32,
     pub awake_chunks: usize,
+    pub awake_cells: u64,
     pub loaded_chunks: usize,
     pub active_chunks: usize,
     pub border_chunks: usize,
+    pub loaded_regions: u32,
+    pub dirty_regions: u32,
     pub players: usize,
     pub replicated_bytes: u64,
     pub pixel_bodies: usize,
@@ -252,6 +258,11 @@ impl Server {
                 self.save_all(false);
             }
             if !control.paused() {
+                {
+                    let mut stats = self.world.resource_mut::<TickStats>();
+                    stats.tps = timer.tps();
+                    stats.slew_ms = timer.slew_ms();
+                }
                 self.tick();
                 let stats = self.stats();
                 if stats.tick.is_multiple_of(10 * TICK_RATE as u64) {
@@ -276,6 +287,7 @@ impl Server {
 pub struct StepTimer {
     period: Duration,
     last_time: Instant,
+    last_period: Duration,
     behind: Duration,
 }
 
@@ -284,8 +296,18 @@ impl StepTimer {
         Self {
             period,
             last_time: Instant::now(),
+            last_period: period,
             behind: Duration::ZERO,
         }
+    }
+
+    pub fn tps(&self) -> f32 {
+        let secs = self.last_period.as_secs_f32();
+        if secs > 0.0 { 1.0 / secs } else { 0.0 }
+    }
+
+    pub fn slew_ms(&self) -> u32 {
+        self.behind.as_millis() as u32
     }
 
     pub fn sleep(&mut self) {
@@ -303,6 +325,8 @@ impl StepTimer {
             self.behind = Duration::ZERO;
         }
         spin_sleep::sleep(self.period.saturating_sub(passed));
-        self.last_time = Instant::now();
+        let now = Instant::now();
+        self.last_period = now - self.last_time;
+        self.last_time = now;
     }
 }

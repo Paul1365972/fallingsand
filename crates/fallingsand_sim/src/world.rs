@@ -136,6 +136,17 @@ impl CellWorld {
             .count()
     }
 
+    pub fn awake_cell_count(&self) -> u64 {
+        self.chunks
+            .values()
+            .filter(|chunk| !chunk.sim_dirty().is_empty())
+            .map(|chunk| {
+                let rect = chunk.dirty();
+                rect.width() as u64 * rect.height() as u64
+            })
+            .sum()
+    }
+
     pub fn count_material(&self, material: MaterialId) -> usize {
         self.chunks
             .values()

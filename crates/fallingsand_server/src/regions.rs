@@ -36,6 +36,14 @@ pub struct RegionMap {
     pub states: FxHashMap<RegionPos, RegionState>,
 }
 
+impl RegionMap {
+    pub fn counts(&self) -> (u32, u32) {
+        let loaded = self.states.len() as u32;
+        let dirty = self.states.values().filter(|state| state.dirty).count() as u32;
+        (loaded, dirty)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TicketLevel {
     Active,
