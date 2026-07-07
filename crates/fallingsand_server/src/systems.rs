@@ -864,8 +864,7 @@ pub fn replicate(
     }
 
     stats.players = entities.len();
-    stats.awake_chunks = sim.0.awake_chunk_count();
-    stats.awake_cells = sim.0.awake_cell_count();
+    (stats.awake_chunks, stats.awake_cells) = sim.0.awake_counts();
     stats.loaded_chunks = sim.0.chunks().count();
     (stats.loaded_regions, stats.dirty_regions) = regions.counts();
     stats.replicated_bytes = sent_bytes;

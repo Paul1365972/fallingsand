@@ -300,8 +300,8 @@ fn update_overlay(
     visible: Res<DebugVisible>,
     game_state: Option<Res<State<crate::GameState>>>,
     ctx: Overlay,
-    mut left: Single<&mut Text, With<DebugTextLeft>>,
-    mut right: Single<&mut Text, With<DebugTextRight>>,
+    mut left: Single<&mut Text, (With<DebugTextLeft>, Without<DebugTextRight>)>,
+    mut right: Single<&mut Text, (With<DebugTextRight>, Without<DebugTextLeft>)>,
 ) {
     if !visible.0 {
         if !left.is_empty() {
@@ -533,7 +533,7 @@ fn update_overlay(
 }
 
 fn block_phase(chunk: ChunkPos) -> u8 {
-    (chunk.x.rem_euclid(2) + chunk.y.rem_euclid(2) * 2) as u8
+    ((chunk.x >> 1).rem_euclid(2) + (chunk.y >> 1).rem_euclid(2) * 2) as u8
 }
 
 fn compass(dx: f32, dy: f32) -> &'static str {

@@ -136,15 +136,18 @@ impl CellWorld {
             .count()
     }
 
-    pub fn awake_cell_count(&self) -> u64 {
-        self.chunks
-            .values()
-            .filter(|chunk| !chunk.sim_dirty().is_empty())
-            .map(|chunk| {
-                let rect = chunk.dirty();
-                rect.width() as u64 * rect.height() as u64
-            })
-            .sum()
+    pub fn awake_counts(&self) -> (usize, u64) {
+        let mut chunks = 0;
+        let mut cells = 0;
+        for chunk in self.chunks.values() {
+            let rect = chunk.sim_dirty();
+            if rect.is_empty() {
+                continue;
+            }
+            chunks += 1;
+            cells += rect.width() as u64 * rect.height() as u64;
+        }
+        (chunks, cells)
     }
 
     pub fn count_material(&self, material: MaterialId) -> usize {
