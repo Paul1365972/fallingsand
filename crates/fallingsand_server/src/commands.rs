@@ -63,7 +63,7 @@ const TIME: CommandSpec = CommandSpec {
                     .strip_prefix('+')
                     .and_then(|days| days.parse().ok())
                     .ok_or_else(|| format!("usage: {}", TIME.usage))?;
-                clock.day += days;
+                clock.day = clock.day.saturating_add(days);
             }
         }
         let (t, day) = (clock.t, clock.day);
