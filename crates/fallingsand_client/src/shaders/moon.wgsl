@@ -5,7 +5,6 @@ struct MoonParams {
     illumination: f32,
     umbra: vec2<f32>,
     umbra_r: f32,
-    time: f32,
     sky_color: vec4<f32>,
 }
 
@@ -44,16 +43,18 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let term = (1.0 - 2.0 * params.illumination) * hw;
     let lit = clamp((along - term) / 0.10, 0.0, 1.0);
 
-    let dark_col = vec3<f32>(0.03, 0.035, 0.05);
-    var col = mix(dark_col, surface, lit);
+    let dark_col = vec3<f32>(0.004, 0.005, 0.008);
+    let albedo = mix(dark_col, surface, lit);
+    var night_col = albedo * 4.2;
 
     let ud = length(p - params.umbra);
     let shade = 1.0 - smoothstep(params.umbra_r - 0.14, params.umbra_r + 0.14, ud);
     let pen = 1.0 - smoothstep(params.umbra_r, params.umbra_r + 1.1, ud);
-    col = col * (1.0 - 0.4 * pen);
+    night_col = night_col * (1.0 - 0.4 * pen);
     let blood = vec3<f32>(0.36, 0.09, 0.05);
-    col = mix(col, blood, shade);
+    night_col = mix(night_col, blood, shade);
 
-    col = col + params.sky_color.rgb;
+    let day_col = mix(vec3<f32>(0.009, 0.010, 0.012), surface * 0.15, lit);
+    let col = mix(night_col, day_col, params.sky_color.a) + params.sky_color.rgb;
     return vec4<f32>(col, disc);
 }

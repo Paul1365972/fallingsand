@@ -108,8 +108,7 @@ impl Material2d for DarknessMaterial {
 pub struct SunParams {
     pub redness: f32,
     pub occlusion: f32,
-    pub time: f32,
-    pub _pad: f32,
+    pub _pad: Vec2,
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
@@ -134,7 +133,6 @@ pub struct MoonParams {
     pub illumination: f32,
     pub umbra: Vec2,
     pub umbra_r: f32,
-    pub time: f32,
     pub sky_color: Vec4,
 }
 
@@ -350,7 +348,6 @@ fn sync_time(mut time: ResMut<WorldTime>, mut messages: MessageReader<ServerMsg>
 #[allow(clippy::type_complexity)]
 fn update_orbits(
     time: Res<WorldTime>,
-    real: Res<Time>,
     window: Single<&Window>,
     control: Res<CameraControl>,
     assets: Res<SkyAssets>,
@@ -366,7 +363,6 @@ fn update_orbits(
     let cal = time.calendar;
     let r = view_size(&window, control.zoom).y.max(100.0) * ORBIT_RADIUS_FRAC;
     let center = Vec2::new(0.0, -HORIZON_FRAC * r);
-    let t = real.elapsed_secs();
 
     let sun_ang = (cal.day_fraction() - 0.25) * TAU;
     let (sa, ca) = sun_ang.sin_cos();
@@ -396,7 +392,7 @@ fn update_orbits(
     let moon_up = smoothstep(-0.10, 0.10, (moon_pos.y / r).clamp(-1.0, 1.0));
     let moonlight = cal.moon_illumination() * moon_up * (1.0 - lunar_shadow) * MOON_LIGHT_MAX;
     let light = sunlight.max(moonlight + SKYGLOW).clamp(0.0, 1.0);
-    let star_alpha = 1.0 - smoothstep(0.06, 0.25, light);
+    let star_alpha = 1.0 - smoothstep(0.02, 0.45, light);
     let sun_dir = (sun_pos - moon_pos).normalize_or_zero();
 
     *celestial = CelestialState {
@@ -418,7 +414,6 @@ fn update_orbits(
     if let Some(mut material) = sun_mats.get_mut(&assets.sun) {
         material.params.redness = 1.0 - smoothstep(0.0, 0.35, sa);
         material.params.occlusion = solar_occ;
-        material.params.time = t;
     }
 
     if let Ok((mut tf, mut vis)) = moon_q.single_mut() {
@@ -428,12 +423,13 @@ fn update_orbits(
         *vis = Visibility::Inherited;
     }
     if let Some(mut material) = moon_mats.get_mut(&assets.moon) {
+        let sky = sky_color(light, sa, solar_occ);
+        let lin = Color::srgb(sky.x, sky.y, sky.z).to_linear();
         material.params.sun_dir = sun_dir;
         material.params.illumination = cal.moon_illumination();
         material.params.umbra = umbra;
         material.params.umbra_r = umbra_r;
-        material.params.time = t;
-        material.params.sky_color = sky_color(light, sa, solar_occ).extend(1.0);
+        material.params.sky_color = Vec4::new(lin.red, lin.green, lin.blue, day_raw);
     }
 }
 
@@ -472,15 +468,27 @@ fn fit_fullscreen_quads(
     mut horizon_mats: ResMut<Assets<HorizonMaterial>>,
     mut dark_q: Query<
         (&mut Transform, &mut Visibility),
-        (With<DarknessQuad>, Without<StarfieldQuad>, Without<HorizonQuad>),
+        (
+            With<DarknessQuad>,
+            Without<StarfieldQuad>,
+            Without<HorizonQuad>,
+        ),
     >,
     mut star_q: Query<
         (&mut Transform, &mut Visibility),
-        (With<StarfieldQuad>, Without<DarknessQuad>, Without<HorizonQuad>),
+        (
+            With<StarfieldQuad>,
+            Without<DarknessQuad>,
+            Without<HorizonQuad>,
+        ),
     >,
     mut horizon_q: Query<
         (&mut Transform, &mut Visibility),
-        (With<HorizonQuad>, Without<DarknessQuad>, Without<StarfieldQuad>),
+        (
+            With<HorizonQuad>,
+            Without<DarknessQuad>,
+            Without<StarfieldQuad>,
+        ),
     >,
 ) {
     let size = view_size(&window, control.zoom) * 1.1;

@@ -1,8 +1,10 @@
 use crate::net::Session;
 use crate::player::PlayerVisual;
 use crate::{AppState, PauseState};
-use bevy::camera::ScalingMode;
+use bevy::camera::{Hdr, ScalingMode};
+use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
+use bevy::post_process::bloom::{Bloom, BloomPrefilter};
 use bevy::prelude::*;
 
 pub struct CameraPlugin;
@@ -57,6 +59,16 @@ fn reset_camera(
 fn setup_camera(mut commands: Commands) {
     commands.spawn((
         Camera2d,
+        Hdr,
+        Tonemapping::AcesFitted,
+        Bloom {
+            intensity: 0.55,
+            prefilter: BloomPrefilter {
+                threshold: 1.0,
+                threshold_softness: 0.4,
+            },
+            ..Bloom::NATURAL
+        },
         Projection::Orthographic(OrthographicProjection {
             scaling_mode: ScalingMode::AutoMin {
                 min_width: VIRTUAL_WIDTH,
