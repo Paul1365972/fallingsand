@@ -25,14 +25,14 @@ const EMISSIVE_MERGE_DIST: f32 = 24.0;
 const EMISSIVE_MAX_RADIUS: f32 = 60.0;
 const EMISSIVE_SCAN_STRIDE: i32 = 8;
 const LIGHT_SCAN_INTERVAL: f32 = 0.1;
-const ORBIT_RADIUS_FRAC: f32 = 0.42;
 const HORIZON_FRAC: f32 = 0.43;
-const HORIZON_UV: f32 = 0.5 + HORIZON_FRAC * ORBIT_RADIUS_FRAC;
+const ORBIT_RADIUS: f32 = 133.0;
 
 const MOON_DISC_FRAC: f32 = 0.90;
 const SUN_SIZE: f32 = 48.0;
 const MOON_SIZE: f32 = 28.0;
 const STAR_TEX_SIZE: f32 = 512.0;
+const STAR_PIXEL: f32 = 4.5;
 
 fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
@@ -366,8 +366,6 @@ fn sync_time(mut time: ResMut<WorldTime>, mut messages: MessageReader<ServerMsg>
 #[allow(clippy::type_complexity)]
 fn update_orbits(
     time: Res<WorldTime>,
-    window: Single<&Window>,
-    control: Res<CameraControl>,
     assets: Res<SkyAssets>,
     mut sky: ResMut<Sky>,
     mut sun_mats: ResMut<Assets<SunMaterial>>,
@@ -380,7 +378,7 @@ fn update_orbits(
     }
     let calendar = time.calendar;
     let celestial = calendar.celestial();
-    let radius = view_size(&window, control.zoom).y.max(100.0) * ORBIT_RADIUS_FRAC;
+    let radius = ORBIT_RADIUS;
     let center = Vec2::new(0.0, -HORIZON_FRAC * radius);
 
     let sun_position = Vec2::from(celestial.sun_position) * radius;
@@ -485,7 +483,9 @@ fn fit_fullscreen_quads(
         ),
     >,
 ) {
-    let size = view_size(&window, control.zoom) * 1.1;
+    let view = view_size(&window, control.zoom);
+    let size = view * 1.1;
+    let horizon_uv = 0.5 + HORIZON_FRAC * ORBIT_RADIUS / view.y;
     let darkness_on = sky.synced && sky.darkness() > 0.001;
     for (mut transform, mut visibility) in &mut dark_q {
         transform.scale = Vec3::new(size.x, size.y, 1.0);
@@ -513,10 +513,10 @@ fn fit_fullscreen_quads(
         };
     }
     if let Some(mut material) = star_mats.get_mut(&assets.starfield) {
-        material.params.tiling = (size.x / STAR_TEX_SIZE).max(0.05);
+        material.params.tiling = (window.width() * 1.1 / (STAR_TEX_SIZE * STAR_PIXEL)).max(0.05);
         material.params.aspect = (window.width() / window.height().max(1.0)).max(0.1);
         material.params.star_alpha = sky.star_alpha;
-        material.params.horizon = HORIZON_UV;
+        material.params.horizon = horizon_uv;
         material.params.time = real.elapsed_secs();
     }
     if let Some(mut material) = horizon_mats.get_mut(&assets.horizon) {
@@ -527,7 +527,7 @@ fn fit_fullscreen_quads(
         let horizon_band = (1.0 - sky.state.sun_altitude.abs()).powi(2);
         let color = base.lerp(warm, horizon_band * (1.0 - sky.state.solar_occlusion) * 0.7);
         material.params.color = color.extend(1.0);
-        material.params.horizon = HORIZON_UV;
+        material.params.horizon = horizon_uv;
         material.params.intensity = 0.25 + 0.6 * sky.state.light;
     }
 }
