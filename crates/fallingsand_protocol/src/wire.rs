@@ -4,6 +4,7 @@ use serde::de::DeserializeOwned;
 
 pub const COMPRESSION_THRESHOLD: usize = 256;
 pub const CELL_WIRE_BYTES: usize = 3;
+pub const MAX_DECOMPRESSED_LEN: usize = 64 * 1024 * 1024;
 
 const TAG_RAW: u8 = 0;
 const TAG_LZ4: u8 = 1;
@@ -18,6 +19,8 @@ pub enum WireError {
     Empty,
     #[error("unknown compression tag {0}")]
     UnknownTag(u8),
+    #[error("declared decompressed size {0} exceeds limit {MAX_DECOMPRESSED_LEN}")]
+    TooLarge(usize),
     #[error("cell payload has invalid length {0}")]
     BadCellPayload(usize),
 }
@@ -43,6 +46,12 @@ pub fn decode_message<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, WireError>
     match tag {
         TAG_RAW => Ok(postcard::from_bytes(payload)?),
         TAG_LZ4 => {
+            if let Some(prefix) = payload.get(..4) {
+                let size = u32::from_le_bytes(prefix.try_into().unwrap()) as usize;
+                if size > MAX_DECOMPRESSED_LEN {
+                    return Err(WireError::TooLarge(size));
+                }
+            }
             let raw = lz4_flex::decompress_size_prepended(payload)?;
             Ok(postcard::from_bytes(&raw)?)
         }
