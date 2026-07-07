@@ -1,4 +1,5 @@
 pub mod calendar;
+pub mod celestial;
 pub mod cell;
 pub mod chunk;
 pub mod coords;
@@ -16,6 +17,7 @@ pub const SURVIVAL_REACH: f32 = 48.0;
 pub const BRUSH_RADIUS: i32 = 3;
 
 pub use calendar::{AGE_PER_TICK, Calendar, DAY_UNITS, DRACONIC_UNITS, SYNODIC_UNITS};
+pub use celestial::CelestialState;
 pub use cell::{Cell, VEL_ONE};
 pub use chunk::{CHUNK_AREA, CHUNK_SIZE, Chunk, DirtyRect};
 pub use coords::{CellOffset, CellPos, ChunkOffset, ChunkPos, RegionPos};

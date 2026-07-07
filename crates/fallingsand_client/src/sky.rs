@@ -7,9 +7,9 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderType};
 use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dPlugin};
-use fallingsand_core::{Calendar, CellPos};
+use fallingsand_core::celestial::{MOON_DISC, SUN_DISC, UMBRA_RADIUS};
+use fallingsand_core::{Calendar, CelestialState, CellPos};
 use fallingsand_protocol::ServerMessage;
-use std::f32::consts::TAU;
 
 pub struct SkyPlugin;
 
@@ -26,14 +26,6 @@ const ORBIT_RADIUS_FRAC: f32 = 0.42;
 const HORIZON_FRAC: f32 = 0.43;
 const HORIZON_UV: f32 = 0.5 + HORIZON_FRAC * ORBIT_RADIUS_FRAC;
 
-const MOON_LIGHT_MAX: f32 = 0.5;
-const SKYGLOW: f32 = 0.03;
-
-const INCLINATION_MAX: f32 = 0.576;
-const SUN_DISC: f32 = 0.090;
-const MOON_DISC: f32 = 0.096;
-const UMBRA_R: f32 = 0.153;
-const ECLIPSE_WIN: f32 = 0.05;
 const SUN_DISC_FRAC: f32 = 0.35;
 const MOON_DISC_FRAC: f32 = 0.90;
 
@@ -55,19 +47,16 @@ impl WorldTime {
 }
 
 #[derive(Resource, Default, Clone, Copy)]
-pub struct CelestialState {
-    pub sun_alt: f32,
-    pub solar_occ: f32,
-    pub lunar_shadow: f32,
-    pub light: f32,
+pub struct Sky {
+    pub state: CelestialState,
     pub star_alpha: f32,
     pub sidereal: f32,
     pub synced: bool,
 }
 
-impl CelestialState {
+impl Sky {
     pub fn darkness(&self) -> f32 {
-        (1.0 - self.light) * MAX_DARKNESS
+        (1.0 - self.state.light) * MAX_DARKNESS
     }
 }
 
@@ -129,10 +118,10 @@ impl Material2d for SunMaterial {
 
 #[derive(ShaderType, Debug, Clone, Default)]
 pub struct MoonParams {
-    pub sun_dir: Vec2,
+    pub sun_direction: Vec2,
     pub illumination: f32,
     pub umbra: Vec2,
-    pub umbra_r: f32,
+    pub umbra_radius: f32,
     pub sky_color: Vec4,
 }
 
@@ -247,7 +236,7 @@ impl Plugin for SkyPlugin {
             .add_plugins(Material2dPlugin::<StarfieldMaterial>::default())
             .add_plugins(Material2dPlugin::<HorizonMaterial>::default())
             .init_resource::<WorldTime>()
-            .init_resource::<CelestialState>()
+            .init_resource::<Sky>()
             .init_resource::<EmissiveLights>()
             .add_systems(PostStartup, setup_sky)
             .add_systems(
@@ -351,7 +340,7 @@ fn update_orbits(
     window: Single<&Window>,
     control: Res<CameraControl>,
     assets: Res<SkyAssets>,
-    mut celestial: ResMut<CelestialState>,
+    mut sky: ResMut<Sky>,
     mut sun_mats: ResMut<Assets<SunMaterial>>,
     mut moon_mats: ResMut<Assets<MoonMaterial>>,
     mut sun_q: Query<(&mut Transform, &mut Visibility), (With<SunVisual>, Without<MoonVisual>)>,
@@ -360,76 +349,51 @@ fn update_orbits(
     if !time.synced {
         return;
     }
-    let cal = time.calendar;
-    let r = view_size(&window, control.zoom).y.max(100.0) * ORBIT_RADIUS_FRAC;
-    let center = Vec2::new(0.0, -HORIZON_FRAC * r);
+    let calendar = time.calendar;
+    let celestial = calendar.celestial();
+    let radius = view_size(&window, control.zoom).y.max(100.0) * ORBIT_RADIUS_FRAC;
+    let center = Vec2::new(0.0, -HORIZON_FRAC * radius);
 
-    let sun_ang = (cal.day_fraction() - 0.25) * TAU;
-    let (sa, ca) = sun_ang.sin_cos();
-    let sun_pos = Vec2::new(ca * r * 1.4, sa * r);
+    let sun_position = Vec2::from(celestial.sun_position) * radius;
+    let moon_position = Vec2::from(celestial.moon_position) * radius;
+    let sun_altitude = celestial.sun_altitude;
+    let solar_occlusion = celestial.solar_occlusion;
 
-    let moon_ang = sun_ang - cal.elongation();
-    let (sm, cm) = moon_ang.sin_cos();
-    let beta = INCLINATION_MAX * cal.ecliptic_latitude();
-    let radial = Vec2::new(cm, sm);
-    let moon_pos = Vec2::new(cm * r * 1.4, sm * r) + radial * (beta * r);
+    let world_to_moon_uv = MOON_DISC_FRAC / (MOON_DISC * radius);
+    let umbra = (-sun_position - moon_position) * world_to_moon_uv;
+    let umbra_radius = UMBRA_RADIUS * MOON_DISC_FRAC / MOON_DISC;
 
-    let syn = cal.synodic_fraction();
-    let newness = (1.0 - syn.min(1.0 - syn) / ECLIPSE_WIN).clamp(0.0, 1.0);
-    let fullness = (1.0 - (syn - 0.5).abs() / ECLIPSE_WIN).clamp(0.0, 1.0);
-    let sep = (moon_pos - sun_pos).length() / r;
-    let overlap = (1.0 - sep / (SUN_DISC + MOON_DISC)).clamp(0.0, 1.0);
-    let solar_occ = overlap * newness;
-    let shadow_sep = (moon_pos + sun_pos).length() / r;
-    let lunar_shadow = (1.0 - shadow_sep / (UMBRA_R + MOON_DISC)).clamp(0.0, 1.0) * fullness;
+    sky.state = celestial;
+    sky.star_alpha = 1.0 - smoothstep(0.02, 0.45, celestial.light);
+    sky.sidereal = calendar.day_fraction();
+    sky.synced = true;
 
-    let moon_to_p = MOON_DISC_FRAC / (MOON_DISC * r);
-    let umbra = (-sun_pos - moon_pos) * moon_to_p;
-    let umbra_r = UMBRA_R * MOON_DISC_FRAC / MOON_DISC;
-
-    let day_raw = smoothstep(-0.12, 0.10, sa);
-    let sunlight = day_raw * (1.0 - solar_occ);
-    let moon_up = smoothstep(-0.10, 0.10, (moon_pos.y / r).clamp(-1.0, 1.0));
-    let moonlight = cal.moon_illumination() * moon_up * (1.0 - lunar_shadow) * MOON_LIGHT_MAX;
-    let light = sunlight.max(moonlight + SKYGLOW).clamp(0.0, 1.0);
-    let star_alpha = 1.0 - smoothstep(0.02, 0.45, light);
-    let sun_dir = (sun_pos - moon_pos).normalize_or_zero();
-
-    *celestial = CelestialState {
-        sun_alt: sa,
-        solar_occ,
-        lunar_shadow,
-        light,
-        star_alpha,
-        sidereal: cal.day_fraction(),
-        synced: true,
-    };
-
-    if let Ok((mut tf, mut vis)) = sun_q.single_mut() {
-        let s = 2.0 * SUN_DISC * r / SUN_DISC_FRAC;
-        tf.translation = (sun_pos + center).extend(-50.0);
-        tf.scale = Vec3::new(s, s, 1.0);
-        *vis = Visibility::Inherited;
+    if let Ok((mut transform, mut visibility)) = sun_q.single_mut() {
+        let size = 2.0 * SUN_DISC * radius / SUN_DISC_FRAC;
+        transform.translation = (sun_position + center).extend(-50.0);
+        transform.scale = Vec3::new(size, size, 1.0);
+        *visibility = Visibility::Inherited;
     }
     if let Some(mut material) = sun_mats.get_mut(&assets.sun) {
-        material.params.redness = 1.0 - smoothstep(0.0, 0.35, sa);
-        material.params.occlusion = solar_occ;
+        material.params.redness = 1.0 - smoothstep(0.0, 0.35, sun_altitude);
+        material.params.occlusion = solar_occlusion;
     }
 
-    if let Ok((mut tf, mut vis)) = moon_q.single_mut() {
-        let s = 2.0 * MOON_DISC * r / MOON_DISC_FRAC;
-        tf.translation = (moon_pos + center).extend(-49.0);
-        tf.scale = Vec3::new(s, s, 1.0);
-        *vis = Visibility::Inherited;
+    if let Ok((mut transform, mut visibility)) = moon_q.single_mut() {
+        let size = 2.0 * MOON_DISC * radius / MOON_DISC_FRAC;
+        transform.translation = (moon_position + center).extend(-49.0);
+        transform.scale = Vec3::new(size, size, 1.0);
+        *visibility = Visibility::Inherited;
     }
     if let Some(mut material) = moon_mats.get_mut(&assets.moon) {
-        let sky = sky_color(light, sa, solar_occ);
-        let lin = Color::srgb(sky.x, sky.y, sky.z).to_linear();
-        material.params.sun_dir = sun_dir;
-        material.params.illumination = cal.moon_illumination();
+        let color = sky_color(celestial.light, sun_altitude, solar_occlusion);
+        let linear = Color::srgb(color.x, color.y, color.z).to_linear();
+        material.params.sun_direction = Vec2::from(celestial.sun_direction);
+        material.params.illumination = celestial.illumination;
         material.params.umbra = umbra;
-        material.params.umbra_r = umbra_r;
-        material.params.sky_color = Vec4::new(lin.red, lin.green, lin.blue, day_raw);
+        material.params.umbra_radius = umbra_radius;
+        material.params.sky_color =
+            Vec4::new(linear.red, linear.green, linear.blue, celestial.daylight);
     }
 }
 
@@ -448,18 +412,22 @@ fn sky_color(light: f32, sun_alt: f32, solar_occ: f32) -> Vec3 {
     rgb
 }
 
-fn update_sky_tint(cel: Res<CelestialState>, mut clear: ResMut<ClearColor>) {
-    if !cel.synced {
+fn update_sky_tint(sky: Res<Sky>, mut clear: ResMut<ClearColor>) {
+    if !sky.synced {
         return;
     }
-    let rgb = sky_color(cel.light, cel.sun_alt, cel.solar_occ);
-    clear.0 = Color::srgb(rgb.x, rgb.y, rgb.z);
+    let color = sky_color(
+        sky.state.light,
+        sky.state.sun_altitude,
+        sky.state.solar_occlusion,
+    );
+    clear.0 = Color::srgb(color.x, color.y, color.z);
 }
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
 fn fit_fullscreen_quads(
-    cel: Res<CelestialState>,
+    sky: Res<Sky>,
     real: Res<Time>,
     window: Single<&Window>,
     control: Res<CameraControl>,
@@ -492,36 +460,36 @@ fn fit_fullscreen_quads(
     >,
 ) {
     let size = view_size(&window, control.zoom) * 1.1;
-    let dark_on = cel.synced && cel.darkness() > 0.001;
-    for (mut tf, mut vis) in &mut dark_q {
-        tf.scale = Vec3::new(size.x, size.y, 1.0);
-        *vis = if dark_on {
+    let darkness_on = sky.synced && sky.darkness() > 0.001;
+    for (mut transform, mut visibility) in &mut dark_q {
+        transform.scale = Vec3::new(size.x, size.y, 1.0);
+        *visibility = if darkness_on {
             Visibility::Inherited
         } else {
             Visibility::Hidden
         };
     }
-    let star_on = cel.synced && cel.star_alpha > 0.001;
-    for (mut tf, mut vis) in &mut star_q {
-        tf.scale = Vec3::new(size.x, size.y, 1.0);
-        *vis = if star_on {
+    let stars_on = sky.synced && sky.star_alpha > 0.001;
+    for (mut transform, mut visibility) in &mut star_q {
+        transform.scale = Vec3::new(size.x, size.y, 1.0);
+        *visibility = if stars_on {
             Visibility::Inherited
         } else {
             Visibility::Hidden
         };
     }
-    for (mut tf, mut vis) in &mut horizon_q {
-        tf.scale = Vec3::new(size.x, size.y, 1.0);
-        *vis = if cel.synced {
+    for (mut transform, mut visibility) in &mut horizon_q {
+        transform.scale = Vec3::new(size.x, size.y, 1.0);
+        *visibility = if sky.synced {
             Visibility::Inherited
         } else {
             Visibility::Hidden
         };
     }
     if let Some(mut material) = star_mats.get_mut(&assets.starfield) {
-        material.params.sidereal = cel.sidereal;
+        material.params.sidereal = sky.sidereal;
         material.params.aspect = (window.width() / window.height().max(1.0)).max(0.1);
-        material.params.star_alpha = cel.star_alpha;
+        material.params.star_alpha = sky.star_alpha;
         material.params.time = real.elapsed_secs();
         material.params.horizon = HORIZON_UV;
     }
@@ -529,19 +497,19 @@ fn fit_fullscreen_quads(
         let day_haze = Vec3::new(0.72, 0.82, 0.96);
         let night_haze = Vec3::new(0.08, 0.11, 0.20);
         let warm = Vec3::new(0.98, 0.6, 0.38);
-        let base = night_haze.lerp(day_haze, cel.light);
-        let band = (1.0 - cel.sun_alt.abs()).powi(2);
-        let col = base.lerp(warm, band * (1.0 - cel.solar_occ) * 0.7);
-        material.params.color = col.extend(1.0);
+        let base = night_haze.lerp(day_haze, sky.state.light);
+        let horizon_band = (1.0 - sky.state.sun_altitude.abs()).powi(2);
+        let color = base.lerp(warm, horizon_band * (1.0 - sky.state.solar_occlusion) * 0.7);
+        material.params.color = color.extend(1.0);
         material.params.horizon = HORIZON_UV;
-        material.params.intensity = 0.25 + 0.6 * cel.light;
+        material.params.intensity = 0.25 + 0.6 * sky.state.light;
     }
 }
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
 fn scan_emissive(
-    cel: Res<CelestialState>,
+    sky: Res<Sky>,
     real: Res<Time>,
     registry: Res<ClientRegistry>,
     view: Res<WorldView>,
@@ -556,7 +524,7 @@ fn scan_emissive(
         return;
     }
     *cooldown = LIGHT_SCAN_INTERVAL;
-    if !cel.synced || cel.darkness() <= 0.001 {
+    if !sky.synced || sky.darkness() <= 0.001 {
         if !emissive_lights.0.is_empty() {
             emissive_lights.0.clear();
         }
@@ -604,7 +572,7 @@ fn scan_emissive(
 }
 
 fn apply_lighting(
-    cel: Res<CelestialState>,
+    sky: Res<Sky>,
     assets: Res<SkyAssets>,
     mut materials: ResMut<Assets<DarknessMaterial>>,
     emissive_lights: Res<EmissiveLights>,
@@ -615,7 +583,7 @@ fn apply_lighting(
     let Some(mut material) = materials.get_mut(&assets.darkness) else {
         return;
     };
-    let darkness = if cel.synced { cel.darkness() } else { 0.0 };
+    let darkness = if sky.synced { sky.darkness() } else { 0.0 };
     material.params.darkness = darkness;
     if darkness <= 0.001 {
         material.params.light_count = 0;
@@ -663,7 +631,7 @@ fn apply_lighting(
 #[allow(clippy::too_many_arguments)]
 fn reset_sky(
     mut time: ResMut<WorldTime>,
-    mut celestial: ResMut<CelestialState>,
+    mut sky: ResMut<Sky>,
     mut clear: ResMut<ClearColor>,
     mut emissive_lights: ResMut<EmissiveLights>,
     assets: Option<Res<SkyAssets>>,
@@ -674,7 +642,7 @@ fn reset_sky(
     mut horizon_mats: ResMut<Assets<HorizonMaterial>>,
 ) {
     *time = WorldTime::default();
-    *celestial = CelestialState::default();
+    *sky = Sky::default();
     clear.0 = Color::srgb(0.08, 0.09, 0.13);
     emissive_lights.0.clear();
     if let Some(assets) = assets {

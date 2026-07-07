@@ -1,10 +1,10 @@
 #import bevy_sprite::mesh2d_vertex_output::VertexOutput
 
 struct MoonParams {
-    sun_dir: vec2<f32>,
+    sun_direction: vec2<f32>,
     illumination: f32,
     umbra: vec2<f32>,
-    umbra_r: f32,
+    umbra_radius: f32,
     sky_color: vec4<f32>,
 }
 
@@ -35,7 +35,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let maria = smoothstep(0.42, 0.62, m);
     let surface = mix(vec3<f32>(0.87, 0.89, 0.96), vec3<f32>(0.60, 0.64, 0.80), maria);
 
-    let s = normalize(params.sun_dir + vec2<f32>(1e-5, 0.0));
+    let s = normalize(params.sun_direction + vec2<f32>(1e-5, 0.0));
     let sp = vec2<f32>(-s.y, s.x);
     let along = dot(p, s);
     let perp = dot(p, sp);
@@ -48,8 +48,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     var night_col = albedo * 4.2;
 
     let ud = length(p - params.umbra);
-    let shade = 1.0 - smoothstep(params.umbra_r - 0.14, params.umbra_r + 0.14, ud);
-    let pen = 1.0 - smoothstep(params.umbra_r, params.umbra_r + 1.1, ud);
+    let shade = 1.0 - smoothstep(params.umbra_radius - 0.14, params.umbra_radius + 0.14, ud);
+    let pen = 1.0 - smoothstep(params.umbra_radius, params.umbra_radius + 1.1, ud);
     night_col = night_col * (1.0 - 0.4 * pen);
     let blood = vec3<f32>(0.36, 0.09, 0.05);
     night_col = mix(night_col, blood, shade);

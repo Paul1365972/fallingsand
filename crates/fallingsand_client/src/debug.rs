@@ -4,7 +4,7 @@ use crate::net::{EmbeddedServerStats, ServerMsg, Session, Supervisor};
 use crate::particles::Particle;
 use crate::player::{Hotbar, InputState, LocalPlayerState, PlayerNames};
 use crate::render::ChunkVisuals;
-use crate::sky::{CelestialState, WorldTime};
+use crate::sky::{Sky, WorldTime};
 use crate::worldview::WorldView;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::ecs::system::SystemParam;
@@ -344,7 +344,7 @@ struct Overlay<'w, 's> {
     registry: Res<'w, ClientRegistry>,
     fly: Res<'w, crate::player::FlyToggle>,
     world_time: Res<'w, WorldTime>,
-    celestial: Res<'w, CelestialState>,
+    celestial: Res<'w, Sky>,
     player: Res<'w, LocalPlayerState>,
     camera: Res<'w, CameraControl>,
     particles: Query<'w, 's, (), With<Particle>>,
@@ -455,9 +455,9 @@ fn update_overlay(
             }
 
             let minute_of_day = world_time.calendar.minute_of_day();
-            let eclipse = if ctx.celestial.solar_occ > 0.5 {
+            let eclipse = if ctx.celestial.state.is_solar_eclipse() {
                 " solar eclipse"
-            } else if ctx.celestial.lunar_shadow > 0.5 {
+            } else if ctx.celestial.state.is_lunar_eclipse() {
                 " lunar eclipse"
             } else {
                 ""
