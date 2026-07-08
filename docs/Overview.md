@@ -14,7 +14,7 @@ Multiplayer Noita-like falling-sand game. Inspirations: Noita (world sim, destru
 Co-op survival for ~10 players in one persistent, infinite world: gather, build, defend, expand — but every mechanic routes through the material sim. You dig through actual sand and rock; bases flood if you breach an aquifer; fire spreads through what's flammable.
 
 - Infinite in all directions, content around a surface band at y≈0. Depth trades better materials for worse hazards. No bedrock — depth is gated by hardness and hazard, never fiat.
-- Digging is bare-handed, gated by per-material hardness. Dug cells fill a per-material inventory and place back out — cells are the resource, no item drops.
+- Digging is bare-handed, gated by per-material hardness. Dug material becomes stackable **material items** (very high stack caps, so digging stays forgiving); items are the resource. Items craft and drop into the world as physical entities — but every placeable material item still routes through the material sim when placed. Items are a thin layer over materials, not a parallel economy.
 - Hazards are material contact (burn, drown, crush). Per-player game modes via chat commands (`/gamemode`).
 
 ## Docs
@@ -26,5 +26,6 @@ Co-op survival for ~10 players in one persistent, infinite world: gather, build,
 - [Server.md](Server.md) — tick loop, interest, persistence
 - [Networking.md](Networking.md) — protocol and latency
 - [Client.md](Client.md) — rendering and UI
+- [Inventory.md](Inventory.md) — items, slots, crafting, dropped items
 - [Worldgen.md](Worldgen.md) — generation pipeline
 - [References.md](References.md) — prior art

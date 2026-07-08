@@ -1,15 +1,15 @@
 use fallingsand_core::{
-    CHUNK_AREA, CHUNK_SIZE, Cell, ChunkOffset, DirtyRect, Fixed, MaterialId, MaterialRegistry,
-    REGION_AREA_CHUNKS, Region, RegionPos,
+    CHUNK_AREA, CHUNK_SIZE, Cell, ChunkOffset, DirtyRect, Fixed, Inventory as CoreInventory,
+    ItemId, ItemRegistry, ItemStack, MaterialId, PLAYER_SLOTS, REGION_AREA_CHUNKS, Region,
+    RegionPos,
 };
 use fallingsand_protocol::{GameMode, PlayerUuid};
 use redb::{Database, ReadableDatabase, TableDefinition};
-use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-pub const REGION_FORMAT_VERSION: u8 = 3;
-pub const WORLD_FORMAT_VERSION: u16 = 7;
+pub const REGION_FORMAT_VERSION: u8 = 5;
+pub const WORLD_FORMAT_VERSION: u16 = 9;
 const CELL_BYTES: usize = 7;
 const RECT_BYTES: usize = 4;
 const REGION_CELL_BYTES: usize = REGION_AREA_CHUNKS * CHUNK_AREA * CELL_BYTES;
@@ -28,6 +28,8 @@ pub struct WorldMeta {
     pub tick: u64,
 }
 
+pub type SlotRecord = Option<(String, u32)>;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlayerRecord {
     pub x: Fixed,
@@ -36,34 +38,65 @@ pub struct PlayerRecord {
     pub mode: GameMode,
     pub air: f32,
     pub burning: f32,
-    pub inventory: Vec<(String, u64)>,
+    pub inventory: Vec<SlotRecord>,
+    pub cursor: SlotRecord,
 }
 
-pub fn inventory_to_record(
-    registry: &MaterialRegistry,
-    counts: &FxHashMap<MaterialId, u64>,
-) -> Vec<(String, u64)> {
-    let mut list: Vec<(String, u64)> = counts
-        .iter()
-        .filter(|&(_, &count)| count > 0)
-        .map(|(&id, &count)| (registry.get(id).name.clone(), count))
-        .collect();
-    list.sort();
-    list
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DroppedRecord {
+    pub x: Fixed,
+    pub y: Fixed,
+    pub vx: f32,
+    pub vy: f32,
+    pub item: String,
+    pub count: u32,
 }
 
-pub fn inventory_from_record(
-    registry: &MaterialRegistry,
-    list: &[(String, u64)],
-) -> FxHashMap<MaterialId, u64> {
-    let mut counts = FxHashMap::default();
-    for (name, count) in list {
-        match registry.id_of(name) {
-            Some(id) if id != MaterialId::AIR => *counts.entry(id).or_insert(0) += count,
-            _ => tracing::warn!("dropping {count} of unknown material {name:?} from inventory"),
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RegionExtras {
+    pub items: Vec<DroppedRecord>,
+}
+
+pub fn stack_to_record(reg: &ItemRegistry, stack: Option<ItemStack>) -> SlotRecord {
+    let stack = stack.filter(|s| s.count > 0)?;
+    let name = reg.try_get(stack.item)?.name.clone();
+    Some((name, stack.count))
+}
+
+pub fn stack_from_record(reg: &ItemRegistry, record: &SlotRecord) -> Option<ItemStack> {
+    let (name, count) = record.as_ref()?;
+    if *count == 0 {
+        return None;
+    }
+    match reg.id_of(name) {
+        Some(id) if id != ItemId::NONE => Some(ItemStack::new(id, *count)),
+        _ => {
+            tracing::warn!("dropping {count} of unknown item {name:?}");
+            None
         }
     }
-    counts
+}
+
+pub fn slots_to_record(reg: &ItemRegistry, inv: &CoreInventory) -> Vec<SlotRecord> {
+    inv.slots
+        .iter()
+        .map(|slot| stack_to_record(reg, *slot))
+        .collect()
+}
+
+pub fn slots_from_record(reg: &ItemRegistry, list: &[SlotRecord], len: usize) -> CoreInventory {
+    let mut inv = CoreInventory::with_capacity(len);
+    for (i, record) in list.iter().enumerate() {
+        if i >= len {
+            break;
+        }
+        inv.slots[i] = stack_from_record(reg, record);
+    }
+    inv
+}
+
+pub fn player_slots_from_record(reg: &ItemRegistry, list: &[SlotRecord]) -> CoreInventory {
+    slots_from_record(reg, list, PLAYER_SLOTS)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -160,7 +193,10 @@ impl WorldStore {
         Ok(())
     }
 
-    pub fn load_region(&self, pos: RegionPos) -> Result<Option<Region>, StoreError> {
+    pub fn load_region(
+        &self,
+        pos: RegionPos,
+    ) -> Result<Option<(Region, RegionExtras)>, StoreError> {
         let read = self.db.begin_read()?;
         let table = read.open_table(REGIONS)?;
         let Some(guard) = table.get(pos.zorder_key())? else {
@@ -218,7 +254,7 @@ fn parse_meta(bytes: &[u8]) -> Result<WorldMeta, StoreError> {
     Ok(postcard::from_bytes(bytes)?)
 }
 
-pub fn encode_region(region: &Region) -> Vec<u8> {
+pub fn encode_region(region: &Region, extras: &RegionExtras) -> Vec<u8> {
     let mut raw = Vec::with_capacity(REGION_RAW_BYTES);
     for chunk in region.chunks() {
         for cell in chunk.cells() {
@@ -232,9 +268,13 @@ pub fn encode_region(region: &Region) -> Vec<u8> {
         let rect = chunk.sim_dirty();
         raw.extend_from_slice(&[rect.min_x, rect.min_y, rect.max_x, rect.max_y]);
     }
-    let mut blob = Vec::with_capacity(raw.len() / 8 + 16);
+    let cell_blob = lz4_flex::compress_prepend_size(&raw);
+    let extras_blob = postcard::to_allocvec(extras).expect("extras serialize");
+    let mut blob = Vec::with_capacity(cell_blob.len() + extras_blob.len() + 8);
     blob.push(REGION_FORMAT_VERSION);
-    blob.extend_from_slice(&lz4_flex::compress_prepend_size(&raw));
+    blob.extend_from_slice(&(cell_blob.len() as u32).to_le_bytes());
+    blob.extend_from_slice(&cell_blob);
+    blob.extend_from_slice(&extras_blob);
     blob
 }
 
@@ -252,13 +292,22 @@ fn decode_rect(bytes: &[u8]) -> DirtyRect {
     )
 }
 
-pub fn decode_region(blob: &[u8]) -> Result<Region, StoreError> {
-    let (&version, compressed) = blob
+pub fn decode_region(blob: &[u8]) -> Result<(Region, RegionExtras), StoreError> {
+    let (&version, rest) = blob
         .split_first()
         .ok_or_else(|| StoreError::CorruptRegion("empty blob".into()))?;
     if version != REGION_FORMAT_VERSION {
         return Err(StoreError::UnsupportedRegion(version));
     }
+    if rest.len() < 4 {
+        return Err(StoreError::CorruptRegion("missing length header".into()));
+    }
+    let cell_len = u32::from_le_bytes([rest[0], rest[1], rest[2], rest[3]]) as usize;
+    let body = &rest[4..];
+    if body.len() < cell_len {
+        return Err(StoreError::CorruptRegion("truncated cell blob".into()));
+    }
+    let (compressed, extras_blob) = body.split_at(cell_len);
     let raw = lz4_flex::decompress_size_prepended(compressed)
         .map_err(|err| StoreError::CorruptRegion(err.to_string()))?;
     if raw.len() != REGION_RAW_BYTES {
@@ -286,5 +335,10 @@ pub fn decode_region(blob: &[u8]) -> Result<Region, StoreError> {
     for (chunk, bytes) in region.chunks_mut().iter_mut().zip(rects) {
         chunk.keep_bounds = decode_rect(bytes);
     }
-    Ok(region)
+    let extras = if extras_blob.is_empty() {
+        RegionExtras::default()
+    } else {
+        postcard::from_bytes(extras_blob)?
+    };
+    Ok((region, extras))
 }

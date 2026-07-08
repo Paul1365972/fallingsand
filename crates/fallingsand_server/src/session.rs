@@ -18,6 +18,7 @@ pub struct Session {
     pub known_chunks: FxHashSet<ChunkPos>,
     pub last_chat_tick: u64,
     pub debug: bool,
+    pub items_visible: bool,
 }
 
 impl Session {
@@ -31,6 +32,7 @@ impl Session {
             known_chunks: FxHashSet::default(),
             last_chat_tick: 0,
             debug: false,
+            items_visible: false,
         }
     }
 }

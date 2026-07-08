@@ -1,6 +1,9 @@
-use fallingsand_core::{CellPos, ChunkPos, DirtyRect, Fixed, MaterialId};
+use fallingsand_core::{CellPos, ChunkPos, DirtyRect, Fixed, ItemId, ItemStack};
 use serde::{Deserialize, Serialize};
 use std::fmt;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct EntityId(pub u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct PlayerId(pub u32);
@@ -61,7 +64,8 @@ pub struct PlayerInput {
     pub primary: bool,
     pub secondary: bool,
     pub aim: CellPos,
-    pub selected: MaterialId,
+    pub selected_slot: u8,
+    pub brush_radius: u8,
 }
 
 impl Default for PlayerInput {
@@ -74,9 +78,29 @@ impl Default for PlayerInput {
             primary: false,
             secondary: false,
             aim: CellPos::new(0, 0),
-            selected: MaterialId::AIR,
+            selected_slot: 0,
+            brush_radius: 3,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum SlotAction {
+    LeftClick { slot: u16 },
+    RightClick { slot: u16 },
+    QuickMove { slot: u16 },
+    DropSlot { slot: u16, all: bool },
+    DropCursor { all: bool },
+    Craft { recipe: u16, times: u8 },
+    CreativeGrab { item: ItemId },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ItemEntityState {
+    pub id: EntityId,
+    pub x: Fixed,
+    pub y: Fixed,
+    pub stack: ItemStack,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -106,6 +130,7 @@ pub enum ClientMessage {
         name: String,
     },
     Input(PlayerInput),
+    Slot(SlotAction),
     Chat {
         text: String,
     },
@@ -120,6 +145,7 @@ pub enum ServerMessage {
     HelloAck {
         protocol_version: u16,
         registry_hash: u64,
+        item_registry_hash: u64,
         player: PlayerId,
         tick: u64,
         spawn: CellPos,
@@ -158,7 +184,11 @@ pub enum ServerMessage {
         text: String,
     },
     Inventory {
-        counts: Vec<(MaterialId, u64)>,
+        slots: Vec<Option<ItemStack>>,
+        cursor: Option<ItemStack>,
+    },
+    ItemEntities {
+        items: Vec<ItemEntityState>,
     },
     DebugRects {
         chunks: Vec<ChunkDebugRects>,

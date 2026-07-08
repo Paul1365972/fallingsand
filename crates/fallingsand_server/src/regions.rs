@@ -1,6 +1,12 @@
-use crate::persistence::{PlayerRecord, WorldMeta, WorldStore, encode_region};
+use crate::inventory::{
+    DroppedItem, Inventory, ItemBody, ItemReg, NextEntityId, gather_region_extras,
+    region_has_entities, spawn_region_extras,
+};
+use crate::persistence::{
+    DroppedRecord, PlayerRecord, RegionExtras, WorldMeta, WorldStore, encode_region,
+};
 use crate::session::Sessions;
-use crate::systems::{Air, Burning, Health, Inventory, Mode, PhysicsBody, player_record};
+use crate::systems::{Air, Burning, Health, Mode, PhysicsBody, player_record};
 use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y, SimWorld, WorldClock, WorldInfo};
 use bevy_ecs::prelude::*;
 use fallingsand_core::{
@@ -148,13 +154,17 @@ fn body_overlaps_region(body: &PixelBody, pos: RegionPos) -> bool {
 
 #[allow(clippy::too_many_arguments)]
 pub fn manage_regions(
+    mut commands: Commands,
     mut sim: ResMut<SimWorld>,
     mut regions: ResMut<RegionMap>,
     generator: Res<Generator>,
     store: Res<Store>,
     registry: Res<crate::Registry>,
+    item_reg: Res<ItemReg>,
     tickets: Res<ChunkTickets>,
     mut bodies: ResMut<crate::bodies::PixelBodies>,
+    mut next_id: ResMut<NextEntityId>,
+    items: Query<(Entity, &DroppedItem, &ItemBody)>,
 ) {
     let tick = sim.0.tick();
     let wanted = wanted_regions(&tickets);
@@ -180,14 +190,17 @@ pub fn manage_regions(
                 None
             })
         });
-        let region = match loaded {
-            Some(mut region) => {
+        let (region, extras) = match loaded {
+            Some((mut region, extras)) => {
                 strip_body_flags(&mut region);
-                region
+                (region, Some(extras))
             }
-            None => generator.0.generate_region(pos),
+            None => (generator.0.generate_region(pos), None),
         };
         insert_region(&mut sim.0, pos, region);
+        if let Some(extras) = extras {
+            spawn_region_extras(&mut commands, &mut next_id, &item_reg.0, &extras);
+        }
         regions.states.insert(
             pos,
             RegionState {
@@ -243,8 +256,13 @@ pub fn manage_regions(
     for pos in expired {
         let state = regions.states.remove(&pos).expect("state exists");
         let region = extract_region(&mut sim.0, pos);
-        if state.dirty && store.0.is_some() {
-            to_save.push((pos, encode_region(&region)));
+        let (extras, entities) = gather_region_extras(pos, &item_reg.0, &items);
+        for entity in entities {
+            commands.entity(entity).despawn();
+        }
+        let has_extras = !extras.items.is_empty();
+        if store.0.is_some() && (state.dirty || has_extras) {
+            to_save.push((pos, encode_region(&region, &extras)));
         }
     }
     if let Some(store) = store.0.as_ref()
@@ -261,7 +279,7 @@ pub fn autosave(
     mut regions: ResMut<RegionMap>,
     store: Res<Store>,
     sessions: Res<Sessions>,
-    registry: Res<crate::Registry>,
+    item_reg: Res<ItemReg>,
     info: Res<WorldInfo>,
     clock: Res<WorldClock>,
     query: Query<(
@@ -273,6 +291,7 @@ pub fn autosave(
         &Burning,
         &Inventory,
     )>,
+    items: Query<(Entity, &DroppedItem, &ItemBody)>,
 ) {
     let Some(store) = store.0.as_ref() else {
         return;
@@ -284,7 +303,8 @@ pub fn autosave(
 
     let mut to_save: Vec<(RegionPos, Vec<u8>)> = Vec::new();
     for (pos, state) in regions.states.iter_mut() {
-        if !state.dirty {
+        let has_entities = region_has_entities(*pos, &items);
+        if !state.dirty && !has_entities {
             continue;
         }
         let base = pos.base_chunk();
@@ -296,7 +316,8 @@ pub fn autosave(
                 *region.chunk_mut(offset) = chunk.clone();
             }
         }
-        to_save.push((*pos, encode_region(&region)));
+        let (extras, _) = gather_region_extras(*pos, &item_reg.0, &items);
+        to_save.push((*pos, encode_region(&region, &extras)));
         state.dirty = false;
     }
     match store.save_regions(&to_save) {
@@ -313,7 +334,7 @@ pub fn autosave(
             let (player, body, health, mode, air, burning, inventory) = query.get(entity).ok()?;
             Some((
                 player.uuid,
-                player_record(&registry.0, &body.0, health, mode, air, burning, inventory),
+                player_record(&item_reg.0, &body.0, health, mode, air, burning, inventory),
             ))
         })
         .collect();
@@ -373,12 +394,37 @@ pub fn save_everything(world: &mut bevy_ecs::world::World, final_save: bool) {
         *world.resource_mut::<crate::bodies::PixelBodies>() = bodies;
     }
 
+    let item_reg = world.resource::<ItemReg>().0.clone();
+    let mut region_extras: FxHashMap<RegionPos, RegionExtras> = FxHashMap::default();
+    {
+        let mut items = world.query::<(&DroppedItem, &ItemBody)>();
+        for (dropped, body) in items.iter(world) {
+            let Some(def) = item_reg.try_get(dropped.stack.item) else {
+                continue;
+            };
+            let region = CellPos::new(body.0.x.floor_cell(), body.0.y.floor_cell()).region();
+            region_extras
+                .entry(region)
+                .or_default()
+                .items
+                .push(DroppedRecord {
+                    x: body.0.x,
+                    y: body.0.y,
+                    vx: body.0.vx.to_f32(),
+                    vy: body.0.vy.to_f32(),
+                    item: def.name.clone(),
+                    count: dropped.stack.count,
+                });
+        }
+    }
+
     let mut to_save: Vec<(RegionPos, Vec<u8>)> = Vec::new();
     {
         let regions = world.resource::<RegionMap>();
         let sim = world.resource::<SimWorld>();
         for (pos, state) in regions.states.iter() {
-            if !state.dirty {
+            let extras = region_extras.get(pos);
+            if !state.dirty && extras.is_none() {
                 continue;
             }
             let base = pos.base_chunk();
@@ -390,7 +436,8 @@ pub fn save_everything(world: &mut bevy_ecs::world::World, final_save: bool) {
                     *region.chunk_mut(offset) = chunk.clone();
                 }
             }
-            to_save.push((*pos, encode_region(&region)));
+            let extras = extras.cloned().unwrap_or_default();
+            to_save.push((*pos, encode_region(&region, &extras)));
         }
     }
     if let Err(err) = store.save_regions(&to_save) {
@@ -404,7 +451,6 @@ pub fn save_everything(world: &mut bevy_ecs::world::World, final_save: bool) {
 
     let mut players: Vec<(PlayerUuid, PlayerRecord)> = Vec::new();
     {
-        let registry = world.resource::<crate::Registry>().0.clone();
         let mut query = world.query::<(
             &crate::session::Player,
             &PhysicsBody,
@@ -417,7 +463,7 @@ pub fn save_everything(world: &mut bevy_ecs::world::World, final_save: bool) {
         for (player, body, health, mode, air, burning, inventory) in query.iter(world) {
             players.push((
                 player.uuid,
-                player_record(&registry, &body.0, health, mode, air, burning, inventory),
+                player_record(&item_reg, &body.0, health, mode, air, burning, inventory),
             ));
         }
     }

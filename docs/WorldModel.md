@@ -12,4 +12,4 @@ Cell velocity is `Q8.8` `i16` cells/tick, sim-only: it drives movement and persi
 
 ## Materials are data
 
-`data/materials.ron` defines phase, density, restitution, palette, tags, decay, emission, and reactions (per-pair probability + tag operands, e.g. `fire + [woody] → fire + burning_wood`). The kernel switches on **phase + properties**, never material identity — a new powder is a data edit, zero engine code. The server hashes the registry to detect client mismatch.
+`data/materials.ron` defines phase, density, restitution, palette, tags, decay, emission, and reactions (per-pair probability + tag operands, e.g. `fire + [woody] → fire + burning_wood`). The kernel switches on **phase + properties**, never material identity — a new powder is a data edit, zero engine code. The server hashes the registry to detect client mismatch. `data/items.ron` (+ auto-generated material items) and `data/recipes.ron` layer the item model on top; see [Inventory.md](Inventory.md). Region blobs (`REGION_FORMAT_VERSION`) and player records (`WORLD_FORMAT_VERSION`) carry dropped-item and per-slot inventory state respectively.

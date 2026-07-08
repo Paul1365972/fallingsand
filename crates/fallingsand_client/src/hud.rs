@@ -1,9 +1,9 @@
-use crate::ClientRegistry;
+use crate::inventory::{LocalInventory, SelectedSlot, item_color};
 use crate::net::{NetSet, ServerMsg, Session};
-use crate::player::{Hotbar, LocalInventory, LocalMode};
-use crate::{AppState, GameState};
+use crate::player::LocalMode;
+use crate::{AppState, ClientItemRegistry, ClientRegistry, GameState};
 use bevy::prelude::*;
-use fallingsand_core::{MAX_AIR_SECS, MaterialId};
+use fallingsand_core::{HOTBAR_SLOTS, ItemStack, MAX_AIR_SECS};
 use fallingsand_protocol::{GameMode, ServerMessage};
 
 pub struct HudPlugin;
@@ -35,7 +35,10 @@ struct AirFill;
 struct DamageFlash;
 
 #[derive(Component)]
-struct HotbarSlot(MaterialId);
+struct HotbarSlot(usize);
+
+#[derive(Component)]
+struct HotbarIcon;
 
 #[derive(Resource, Default)]
 pub struct LocalHealth(pub f32);
@@ -62,7 +65,7 @@ impl Plugin for HudPlugin {
             .add_systems(
                 Update,
                 (
-                    rebuild_hotbar,
+                    update_hotbar,
                     highlight_hotbar,
                     update_health_bar,
                     update_air_bar,
@@ -225,87 +228,108 @@ fn track_vitals(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+fn hotbar_slots(inventory: &LocalInventory) -> Vec<Option<ItemStack>> {
+    (0..HOTBAR_SLOTS)
+        .map(|i| inventory.slots.get(i).copied().flatten())
+        .collect()
+}
+
 #[allow(clippy::type_complexity)]
-fn rebuild_hotbar(
+fn update_hotbar(
     mut commands: Commands,
     registry: Res<ClientRegistry>,
-    hotbar: Res<Hotbar>,
-    mode: Res<LocalMode>,
+    item_reg: Res<ClientItemRegistry>,
     inventory: Res<LocalInventory>,
     row: Query<Entity, With<HotbarRow>>,
     slots: Query<Entity, With<HotbarSlot>>,
-    mut shown: Local<Option<(GameMode, Vec<(MaterialId, u64)>)>>,
+    mut shown: Local<Option<Vec<Option<ItemStack>>>>,
 ) {
-    let survival = mode.0 == GameMode::Survival;
-    let visible = hotbar.visible(mode.0, &inventory);
-    let entries: Vec<(MaterialId, u64)> = visible
-        .iter()
-        .map(|&id| (id, if survival { inventory.count(id) } else { 0 }))
-        .collect();
-    let key = (mode.0, entries.clone());
-    if shown.as_ref() == Some(&key) && slots.iter().count() == entries.len() {
+    if !inventory.is_changed() && slots.iter().count() == HOTBAR_SLOTS {
+        return;
+    }
+    let hot = hotbar_slots(&inventory);
+    if shown.as_ref() == Some(&hot) && slots.iter().count() == HOTBAR_SLOTS {
         return;
     }
     let Ok(row) = row.single() else {
         *shown = None;
         return;
     };
-    *shown = Some(key);
+    *shown = Some(hot.clone());
     for slot in &slots {
         commands.entity(slot).despawn();
     }
     commands.entity(row).with_children(|parent| {
-        for (index, &(material, count)) in entries.iter().enumerate() {
-            let definition = registry.0.get(material);
-            let color = definition.colors[0];
+        for (index, stack) in hot.iter().enumerate() {
             parent
                 .spawn((
-                    HotbarSlot(material),
+                    HotbarSlot(index),
                     Node {
                         width: px(SLOT_SIZE),
                         height: px(SLOT_SIZE),
                         border: UiRect::all(px(2)),
+                        padding: UiRect::all(px(3)),
                         flex_direction: FlexDirection::Column,
-                        align_items: AlignItems::Center,
+                        align_items: AlignItems::FlexStart,
                         justify_content: JustifyContent::SpaceBetween,
                         ..default()
                     },
-                    BackgroundColor(Color::srgba_u8(color[0], color[1], color[2], 200)),
+                    BackgroundColor(Color::srgba(0.06, 0.07, 0.10, 0.85)),
                     BorderColor::all(Color::srgba(0.0, 0.0, 0.0, 0.6)),
                 ))
                 .with_children(|slot| {
-                    let digit = if index < 9 {
-                        format!("{}", index + 1)
-                    } else if index == 9 {
-                        "0".to_string()
-                    } else {
-                        String::new()
-                    };
                     slot.spawn((
-                        Text::new(digit),
+                        Text::new(format!("{}", index + 1)),
                         TextFont {
-                            font_size: FontSize::Px(11.0),
+                            font_size: FontSize::Px(10.0),
                             ..default()
                         },
-                        TextColor(Color::srgba(1.0, 1.0, 1.0, 0.85)),
+                        TextColor(Color::srgba(1.0, 1.0, 1.0, 0.6)),
+                        GlobalZIndex(1),
+                        Pickable::IGNORE,
                     ));
-                    if survival {
+                    if let Some(item) = stack {
+                        let color = item_color(&item_reg.0, &registry.0, item.item);
                         slot.spawn((
-                            Text::new(format_count(count)),
-                            TextFont {
-                                font_size: FontSize::Px(11.0),
+                            HotbarIcon,
+                            Node {
+                                position_type: PositionType::Absolute,
+                                left: px(9),
+                                top: px(9),
+                                width: px(SLOT_SIZE - 18.0),
+                                height: px(SLOT_SIZE - 18.0),
                                 ..default()
                             },
-                            TextColor(Color::srgba(1.0, 1.0, 1.0, 0.95)),
+                            BackgroundColor(Color::srgba_u8(
+                                color[0], color[1], color[2], color[3],
+                            )),
+                            Pickable::IGNORE,
                         ));
+                        if item.count > 1 {
+                            slot.spawn((
+                                Text::new(format_count(item.count)),
+                                TextFont {
+                                    font_size: FontSize::Px(11.0),
+                                    ..default()
+                                },
+                                TextColor(Color::srgba(1.0, 1.0, 1.0, 0.95)),
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    right: px(3),
+                                    bottom: px(1),
+                                    ..default()
+                                },
+                                GlobalZIndex(2),
+                                Pickable::IGNORE,
+                            ));
+                        }
                     }
                 });
         }
     });
 }
 
-fn format_count(count: u64) -> String {
+pub fn format_count(count: u32) -> String {
     if count >= 100_000 {
         format!("{}k", count / 1000)
     } else {
@@ -362,9 +386,12 @@ fn update_flash(
     }
 }
 
-fn highlight_hotbar(hotbar: Res<Hotbar>, mut slots: Query<(&HotbarSlot, &mut BorderColor)>) {
+fn highlight_hotbar(
+    selected: Res<SelectedSlot>,
+    mut slots: Query<(&HotbarSlot, &mut BorderColor)>,
+) {
     for (slot, mut border) in &mut slots {
-        *border = if slot.0 == hotbar.selected {
+        *border = if slot.0 == selected.0 {
             BorderColor::all(Color::srgb(1.0, 0.9, 0.4))
         } else {
             BorderColor::all(Color::srgba(0.0, 0.0, 0.0, 0.6))

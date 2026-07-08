@@ -4,7 +4,7 @@ A small custom module in `fallingsand_sim` — everything collides against the c
 
 ## Entities & controller
 
-Entities (players, items, creatures) are kinematic AABB/capsule bodies, swept against solid cells, with material-aware drag and sinking. The controller is Celeste ported to cells/s and tuned server-side (coyote time, jump buffer, variable height, corner correction, step assists) plus Minecraft-flavored swimming (drag-limited swim, idle sink, treading bob, bank vault, wade drag).
+Entities (players, items, creatures) are kinematic AABB/capsule bodies, swept against solid cells, with material-aware drag and sinking. The controller is Celeste ported to cells/s and tuned server-side (coyote time, jump buffer, variable height, corner correction, step assists) plus Minecraft-flavored swimming (drag-limited swim, idle sink, treading bob, bank vault, wade drag). Dropped items reuse the same `move_body` sweep with gravity + ground friction and settle when at rest (idle-free); pickup/merge are strictly local (see [Inventory.md](Inventory.md)).
 
 ## Solidity & overlaps
 

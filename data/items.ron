@@ -1,0 +1,41 @@
+(
+    items: [
+        (
+            name: "stick",
+            display: "Stick",
+            category: Component,
+            stack_max: 99,
+            icon: Some(Material("wood")),
+        ),
+        (
+            name: "iron_ingot",
+            display: "Iron Ingot",
+            category: Component,
+            stack_max: 99,
+            icon: Some(Material("iron_ore")),
+        ),
+        (
+            name: "gold_ingot",
+            display: "Gold Ingot",
+            category: Component,
+            stack_max: 99,
+            icon: Some(Material("gold_ore")),
+        ),
+        (
+            name: "wooden_pickaxe",
+            display: "Wooden Pickaxe",
+            category: Tool,
+            stack_max: 1,
+            icon: Some(Material("planks")),
+            tags: ["tool"],
+        ),
+        (
+            name: "stone_pickaxe",
+            display: "Stone Pickaxe",
+            category: Tool,
+            stack_max: 1,
+            icon: Some(Material("stone")),
+            tags: ["tool"],
+        ),
+    ],
+)

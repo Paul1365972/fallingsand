@@ -1,5 +1,10 @@
 use crate::commands::{PendingCommand, PendingCommands};
-use crate::persistence::inventory_from_record;
+use crate::inventory::{
+    DroppedItem, Inventory, ItemBody, ItemReg, NextEntityId, SlotActions, spawn_dropped_item,
+};
+use crate::persistence::{
+    PlayerRecord, player_slots_from_record, slots_to_record, stack_to_record,
+};
 use crate::regions::Store;
 use crate::session::{Player, Session, SessionState, Sessions};
 use crate::{
@@ -7,16 +12,19 @@ use crate::{
     SimWorld, SpawnPoint, TickStats,
 };
 use bevy_ecs::prelude::*;
-use fallingsand_core::{CellOffset, CellPos, Fixed, MaterialId, MaterialRegistry, Phase, TICK_DT};
+use fallingsand_core::{
+    CellOffset, CellPos, Fixed, ItemId, ItemRegistry, ItemStack, MaterialId, MaterialRegistry,
+    Phase, TICK_DT,
+};
 use fallingsand_protocol::{
-    ChunkDebugRects, ClientMessage, EntityState, GameMode, PROTOCOL_VERSION, PlayerId,
-    ServerMessage, cells_to_wire, decode_message, encode_message,
+    ChunkDebugRects, ClientMessage, EntityState, GameMode, ItemEntityState, PROTOCOL_VERSION,
+    PlayerId, ServerMessage, cells_to_wire, decode_message, encode_message,
 };
 use fallingsand_sim::EntityBox;
 use fallingsand_sim::physics::{
     Body, Controller, PlayerParams, StepInput, scatter_powder, step_player,
 };
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 use std::time::Instant;
 
 pub const PLAYER_HALF_W: Fixed = Fixed::from_f32(1.9);
@@ -79,61 +87,24 @@ impl Burning {
     }
 }
 
-#[derive(Component, Default)]
-pub struct Inventory {
-    pub counts: FxHashMap<MaterialId, u64>,
-    pub dirty: bool,
-}
-
-impl Inventory {
-    pub fn count(&self, material: MaterialId) -> u64 {
-        self.counts.get(&material).copied().unwrap_or(0)
-    }
-
-    pub fn add(&mut self, material: MaterialId, amount: u64) {
-        if amount == 0 {
-            return;
-        }
-        *self.counts.entry(material).or_insert(0) += amount;
-        self.dirty = true;
-    }
-
-    pub fn remove(&mut self, material: MaterialId, amount: u64) -> bool {
-        if amount == 0 {
-            return true;
-        }
-        let Some(count) = self.counts.get_mut(&material) else {
-            return false;
-        };
-        if *count < amount {
-            return false;
-        }
-        *count -= amount;
-        if *count == 0 {
-            self.counts.remove(&material);
-        }
-        self.dirty = true;
-        true
-    }
-}
-
 pub fn player_record(
-    registry: &MaterialRegistry,
+    item_reg: &ItemRegistry,
     body: &Body,
     health: &Health,
     mode: &Mode,
     air: &Air,
     burning: &Burning,
     inventory: &Inventory,
-) -> crate::persistence::PlayerRecord {
-    crate::persistence::PlayerRecord {
+) -> PlayerRecord {
+    PlayerRecord {
         x: body.x,
         y: body.y + (PLAYER_HALF_H - body.half_h),
         hp: health.hp,
         mode: mode.0,
         air: air.secs,
         burning: burning.secs,
-        inventory: crate::persistence::inventory_to_record(registry, &inventory.counts),
+        inventory: slots_to_record(item_reg, &inventory.inner),
+        cursor: stack_to_record(item_reg, inventory.cursor),
     }
 }
 
@@ -144,6 +115,7 @@ pub fn drain_network(
     mut listener: ResMut<NetListener>,
     mut sessions: ResMut<Sessions>,
     mut pending: ResMut<PendingCommands>,
+    mut slot_actions: ResMut<SlotActions>,
     mut players: Query<(
         &mut Player,
         &PhysicsBody,
@@ -154,6 +126,7 @@ pub fn drain_network(
         &mut Inventory,
     )>,
     registry: Res<Registry>,
+    item_reg: Res<ItemReg>,
     sim: Res<SimWorld>,
     spawn_point: Res<SpawnPoint>,
     store: Res<Store>,
@@ -285,10 +258,16 @@ pub fn drain_network(
                                             .max(0.0),
                                     },
                                     Inventory {
-                                        counts: inventory_from_record(
-                                            &registry.0,
+                                        inner: player_slots_from_record(
+                                            &item_reg.0,
                                             record.map(|r| r.inventory.as_slice()).unwrap_or(&[]),
                                         ),
+                                        cursor: record.and_then(|r| {
+                                            crate::persistence::stack_from_record(
+                                                &item_reg.0,
+                                                &r.cursor,
+                                            )
+                                        }),
                                         dirty: true,
                                     },
                                 ))
@@ -305,6 +284,7 @@ pub fn drain_network(
                     session.conn.send(encode_message(&ServerMessage::HelloAck {
                         protocol_version: PROTOCOL_VERSION,
                         registry_hash: registry.0.hash(),
+                        item_registry_hash: item_reg.0.hash(),
                         player,
                         tick: sim.0.tick(),
                         spawn,
@@ -334,6 +314,13 @@ pub fn drain_network(
                         && let Ok((mut player, ..)) = players.get_mut(entity)
                     {
                         player.input = input;
+                    }
+                }
+                ClientMessage::Slot(action) => {
+                    if matches!(sessions.sessions[index].state, SessionState::Playing)
+                        && let Some(entity) = sessions.sessions[index].entity
+                    {
+                        slot_actions.0.push((entity, action));
                     }
                 }
                 ClientMessage::Chat { text } => {
@@ -386,7 +373,7 @@ pub fn drain_network(
                         records.push((
                             uuid,
                             player_record(
-                                &registry.0,
+                                &item_reg.0,
                                 &body.0,
                                 health,
                                 mode,
@@ -444,16 +431,24 @@ pub fn drain_network(
     }
 }
 
+pub const MAX_BRUSH: i32 = 6;
+
+#[allow(clippy::too_many_arguments)]
 pub fn apply_player_inputs(
+    mut commands: Commands,
     mut sim: ResMut<SimWorld>,
     registry: Res<Registry>,
+    item_reg: Res<ItemReg>,
     obstacles: Res<SimObstacles>,
     mut bodies: ResMut<crate::bodies::PixelBodies>,
+    mut next_id: ResMut<NextEntityId>,
     mut query: Query<(&Player, &PhysicsBody, &Mode, &mut DigState, &mut Inventory)>,
 ) {
+    let reg = &item_reg.0;
     for (player, body, mode, mut dig, mut inventory) in &mut query {
         let input = &player.input;
         let survival = mode.0 == GameMode::Survival;
+        let radius = (input.brush_radius as i32).clamp(0, MAX_BRUSH);
         if !input.primary {
             dig.budget = 0.0;
         }
@@ -469,9 +464,31 @@ pub fn apply_player_inputs(
         let mut dug = false;
         if input.primary {
             if survival {
-                dug = survival_dig(&mut sim.0, &registry.0, &mut dig, &mut inventory, input.aim);
+                let mut drops = Vec::new();
+                dug = survival_dig(
+                    &mut sim.0,
+                    &registry.0,
+                    reg,
+                    &mut dig,
+                    &mut inventory,
+                    input.aim,
+                    radius,
+                    &mut drops,
+                );
+                for (pos, stack) in drops {
+                    spawn_dropped_item(
+                        &mut commands,
+                        &mut next_id,
+                        stack,
+                        Fixed::cell_center(pos.x),
+                        Fixed::cell_center(pos.y),
+                        0.0,
+                        40.0,
+                        0,
+                    );
+                }
             } else {
-                for (_, pos) in brush_cells(input.aim) {
+                for (_, pos) in brush_cells(input.aim, radius) {
                     let Some(cell) = sim.0.get_cell(pos) else {
                         continue;
                     };
@@ -481,30 +498,40 @@ pub fn apply_player_inputs(
                     }
                 }
             }
-        } else if registry
-            .0
-            .try_get(input.selected)
-            .is_some_and(|material| material.phase != Phase::Empty)
-        {
-            'place: for (_, pos) in brush_cells(input.aim) {
-                let Some(cell) = sim.0.get_cell(pos) else {
-                    continue;
-                };
-                if !cell.is_air() || cell_overlaps_body(pos, &body.0) || obstacles.0.occupied(pos) {
-                    continue;
+        } else if input.secondary {
+            let slot = input.selected_slot as usize;
+            if let Some(stack) = inventory.inner.get(slot)
+                && let Some(material) = reg.try_get(stack.item).and_then(|def| def.place)
+            {
+                let mut placed = 0u32;
+                let budget = if survival { stack.count } else { u32::MAX };
+                for (_, pos) in brush_cells(input.aim, radius) {
+                    if placed >= budget {
+                        break;
+                    }
+                    let Some(cell) = sim.0.get_cell(pos) else {
+                        continue;
+                    };
+                    if !cell.is_air()
+                        || cell_overlaps_body(pos, &body.0)
+                        || obstacles.0.occupied(pos)
+                    {
+                        continue;
+                    }
+                    sim.0.place_material(pos, material);
+                    placed += 1;
                 }
-                if survival && !inventory.remove(input.selected, 1) {
-                    break 'place;
+                if survival && placed > 0 {
+                    consume_slot(&mut inventory, slot, placed);
                 }
-                sim.0.place_material(pos, input.selected);
             }
         }
         if dug {
-            let ring = BRUSH_RADIUS + 1;
+            let ring = radius + 1;
             for oy in -ring..=ring {
                 for ox in -ring..=ring {
                     let dist_sq = ox * ox + oy * oy;
-                    if dist_sq <= BRUSH_RADIUS * BRUSH_RADIUS || dist_sq > ring * ring {
+                    if dist_sq <= radius * radius || dist_sq > ring * ring {
                         continue;
                     }
                     bodies.candidates.push(input.aim.translated(ox, oy));
@@ -514,23 +541,37 @@ pub fn apply_player_inputs(
     }
 }
 
-fn brush_cells(aim: CellPos) -> impl Iterator<Item = (i32, CellPos)> {
-    (-BRUSH_RADIUS..=BRUSH_RADIUS).flat_map(move |oy| {
-        (-BRUSH_RADIUS..=BRUSH_RADIUS).filter_map(move |ox| {
+fn consume_slot(inventory: &mut Inventory, slot: usize, amount: u32) {
+    if let Some(stack) = inventory.inner.slots.get_mut(slot).and_then(|s| s.as_mut()) {
+        stack.count = stack.count.saturating_sub(amount);
+        if stack.count == 0 {
+            inventory.inner.slots[slot] = None;
+        }
+    }
+    inventory.dirty = true;
+}
+
+fn brush_cells(aim: CellPos, radius: i32) -> impl Iterator<Item = (i32, CellPos)> {
+    (-radius..=radius).flat_map(move |oy| {
+        (-radius..=radius).filter_map(move |ox| {
             let dist_sq = ox * ox + oy * oy;
-            (dist_sq <= BRUSH_RADIUS * BRUSH_RADIUS).then_some((dist_sq, aim.translated(ox, oy)))
+            (dist_sq <= radius * radius).then_some((dist_sq, aim.translated(ox, oy)))
         })
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn survival_dig(
     world: &mut fallingsand_sim::CellWorld,
     registry: &MaterialRegistry,
+    item_reg: &ItemRegistry,
     dig: &mut DigState,
     inventory: &mut Inventory,
     aim: CellPos,
+    radius: i32,
+    drops: &mut Vec<(CellPos, ItemStack)>,
 ) -> bool {
-    let mut candidates: Vec<(i32, i32, i32)> = brush_cells(aim)
+    let mut candidates: Vec<(i32, i32, i32)> = brush_cells(aim, radius)
         .filter(|&(_, pos)| {
             world.get_cell(pos).is_some_and(|cell| {
                 matches!(
@@ -563,38 +604,19 @@ pub fn survival_dig(
         }
         dig.budget -= cost;
         world.place_material(pos, MaterialId::AIR);
-        inventory.add(cell.material, 1);
+        let item = item_reg.item_for_material(cell.material);
+        if item != ItemId::NONE {
+            if let Some(overflow) = inventory
+                .inner
+                .insert_first_fit(ItemStack::new(item, 1), item_reg)
+            {
+                drops.push((pos, overflow));
+            }
+            inventory.dirty = true;
+        }
         dug = true;
     }
     dug
-}
-
-pub fn sync_inventories(mut sessions: ResMut<Sessions>, mut query: Query<&mut Inventory>) {
-    for session in &mut sessions.sessions {
-        if !matches!(session.state, SessionState::Playing) {
-            continue;
-        }
-        let Some(entity) = session.entity else {
-            continue;
-        };
-        let Ok(mut inventory) = query.get_mut(entity) else {
-            continue;
-        };
-        if !inventory.dirty {
-            continue;
-        }
-        inventory.dirty = false;
-        let mut counts: Vec<(MaterialId, u64)> = inventory
-            .counts
-            .iter()
-            .filter(|&(_, &count)| count > 0)
-            .map(|(&id, &count)| (id, count))
-            .collect();
-        counts.sort_unstable();
-        session
-            .conn
-            .send(encode_message(&ServerMessage::Inventory { counts }));
-    }
 }
 
 fn cell_overlaps_body(pos: CellPos, body: &Body) -> bool {
@@ -753,7 +775,23 @@ pub fn replicate(
         &Burning,
         &Air,
     )>,
+    dropped: Query<(&DroppedItem, &ItemBody)>,
 ) {
+    let item_states: Vec<(fallingsand_core::ChunkPos, ItemEntityState)> = dropped
+        .iter()
+        .map(|(item, body)| {
+            let chunk = CellPos::new(body.0.x.floor_cell(), body.0.y.floor_cell()).chunk();
+            (
+                chunk,
+                ItemEntityState {
+                    id: item.id,
+                    x: body.0.x,
+                    y: body.0.y,
+                    stack: item.stack,
+                },
+            )
+        })
+        .collect();
     let entities: Vec<EntityState> = query
         .iter()
         .map(
@@ -861,6 +899,18 @@ pub fn replicate(
 
         sent_bytes += entity_message.len() as u64;
         session.conn.send(entity_message.clone());
+
+        let visible: Vec<ItemEntityState> = item_states
+            .iter()
+            .filter(|(chunk, _)| interest.contains(chunk))
+            .map(|(_, state)| *state)
+            .collect();
+        if !visible.is_empty() || session.items_visible {
+            session.items_visible = !visible.is_empty();
+            let item_message = encode_message(&ServerMessage::ItemEntities { items: visible });
+            sent_bytes += item_message.len() as u64;
+            session.conn.send(item_message);
+        }
     }
 
     stats.players = entities.len();

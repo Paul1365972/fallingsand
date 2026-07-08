@@ -167,10 +167,12 @@ fn resize_world_target(
 }
 
 fn zoom_input(
+    keys: Res<ButtonInput<KeyCode>>,
     mut wheel: MessageReader<MouseWheel>,
     mut control: ResMut<CameraControl>,
     mut projections: Query<&mut Projection, With<GameCamera>>,
 ) {
+    let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
     let scroll: f32 = wheel
         .read()
         .map(|event| match event.unit {
@@ -178,7 +180,7 @@ fn zoom_input(
             MouseScrollUnit::Pixel => event.y / 60.0,
         })
         .sum();
-    if scroll != 0.0 {
+    if ctrl && scroll != 0.0 {
         let range = ZOOM_STEPS as f32;
         control.scroll = (control.scroll - scroll).clamp(-range, range);
         control.zoom = 2f32.powf(control.scroll.round() / range);

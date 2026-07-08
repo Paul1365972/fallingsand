@@ -1,8 +1,9 @@
 use crate::ClientRegistry;
 use crate::camera::CameraControl;
+use crate::inventory::{LocalInventory, SelectedSlot};
 use crate::net::{EmbeddedServerStats, ServerMsg, Session, Supervisor};
 use crate::particles::Particle;
-use crate::player::{Hotbar, InputState, LocalPlayerState, PlayerNames};
+use crate::player::{InputState, LocalPlayerState, PlayerNames};
 use crate::render::ChunkVisuals;
 use crate::sky::{Sky, WorldTime};
 use crate::worldview::WorldView;
@@ -339,7 +340,9 @@ struct Overlay<'w, 's> {
     view: Res<'w, WorldView>,
     visuals: Res<'w, ChunkVisuals>,
     names: Res<'w, PlayerNames>,
-    hotbar: Res<'w, Hotbar>,
+    selected: Res<'w, SelectedSlot>,
+    inventory: Res<'w, LocalInventory>,
+    item_reg: Res<'w, crate::ClientItemRegistry>,
     input: Res<'w, InputState>,
     registry: Res<'w, ClientRegistry>,
     fly: Res<'w, crate::player::FlyToggle>,
@@ -377,7 +380,6 @@ fn update_overlay(
     let view = &ctx.view;
     let visuals = &ctx.visuals;
     let names = &ctx.names;
-    let hotbar = &ctx.hotbar;
     let input = &ctx.input;
     let registry = &ctx.registry;
     let fly = &ctx.fly;
@@ -503,11 +505,19 @@ fn update_overlay(
                 None => "cursor: unloaded".to_string(),
             };
             left_lines.push(cursor);
-            let selected = registry
-                .0
-                .try_get(hotbar.selected)
-                .map(|material| material.name.as_str())
-                .unwrap_or("none");
+            let selected = ctx
+                .inventory
+                .slots
+                .get(ctx.selected.0)
+                .copied()
+                .flatten()
+                .and_then(|stack| {
+                    ctx.item_reg
+                        .0
+                        .try_get(stack.item)
+                        .map(|def| def.display.clone())
+                })
+                .unwrap_or_else(|| "empty".to_string());
             left_lines.push(format!("selected: {selected}"));
 
             if embedded {

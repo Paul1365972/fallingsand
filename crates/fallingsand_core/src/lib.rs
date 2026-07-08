@@ -4,6 +4,7 @@ pub mod cell;
 pub mod chunk;
 pub mod coords;
 pub mod fixed;
+pub mod item;
 pub mod material;
 pub mod region;
 
@@ -22,6 +23,10 @@ pub use cell::{Cell, VEL_ONE};
 pub use chunk::{CHUNK_AREA, CHUNK_SIZE, Chunk, DirtyRect};
 pub use coords::{CellOffset, CellPos, ChunkOffset, ChunkPos, RegionPos};
 pub use fixed::Fixed;
+pub use item::{
+    HOTBAR_SLOTS, IconSpec, Inventory, ItemCategory, ItemDef, ItemId, ItemRegistry, ItemStack,
+    MAIN_SLOTS, MATERIAL_STACK_MAX, PLAYER_SLOTS, Recipe, RecipeRegistry,
+};
 pub use material::{
     Dynamics, Material, MaterialId, MaterialRegistry, Phase, Reaction, ReactionDef, per_tick_chance,
 };

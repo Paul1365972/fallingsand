@@ -7,6 +7,8 @@ mod hud;
 mod icon;
 mod identity;
 mod interpolation;
+mod inventory;
+mod inventory_ui;
 mod menu;
 mod net;
 mod particles;
@@ -18,10 +20,12 @@ mod sky;
 mod worldview;
 
 use bevy::prelude::*;
-use fallingsand_core::MaterialRegistry;
+use fallingsand_core::{ItemRegistry, MaterialRegistry, RecipeRegistry};
 use std::sync::Arc;
 
 pub const MATERIALS_RON: &str = include_str!("../../../data/materials.ron");
+pub const ITEMS_RON: &str = include_str!("../../../data/items.ron");
+pub const RECIPES_RON: &str = include_str!("../../../data/recipes.ron");
 
 #[derive(States, Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum AppState {
@@ -49,9 +53,22 @@ pub enum PauseState {
 #[derive(Resource, Clone)]
 pub struct ClientRegistry(pub Arc<MaterialRegistry>);
 
+#[derive(Resource, Clone)]
+pub struct ClientItemRegistry(pub Arc<ItemRegistry>);
+
+#[derive(Resource, Clone)]
+pub struct ClientRecipes(pub Arc<RecipeRegistry>);
+
 fn main() {
     let registry = Arc::new(
         MaterialRegistry::from_ron(MATERIALS_RON).expect("data/materials.ron must be valid"),
+    );
+    let item_registry = Arc::new(
+        ItemRegistry::from_ron(ITEMS_RON, &registry).expect("data/items.ron must be valid"),
+    );
+    let recipes = Arc::new(
+        RecipeRegistry::from_ron(RECIPES_RON, &item_registry)
+            .expect("data/recipes.ron must be valid"),
     );
     let connect_target = net::cli_connect_target();
     let world_name = net::cli_world_name();
@@ -78,6 +95,8 @@ fn main() {
     )
     .insert_resource(ClearColor(Color::srgb(0.08, 0.09, 0.13)))
     .insert_resource(ClientRegistry(registry))
+    .insert_resource(ClientItemRegistry(item_registry))
+    .insert_resource(ClientRecipes(recipes))
     .insert_resource(net::Supervisor::new(connect_target))
     .insert_state(initial_state)
     .add_sub_state::<GameState>()
@@ -100,6 +119,8 @@ fn main() {
         sky::SkyPlugin,
         connscreen::ConnScreenPlugin,
         settings::SettingsPlugin,
+        inventory::InventoryPlugin,
+        inventory_ui::InventoryUiPlugin,
     ));
     #[cfg(not(target_family = "wasm"))]
     app.add_plugins(icon::IconPlugin);

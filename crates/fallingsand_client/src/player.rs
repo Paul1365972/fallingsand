@@ -1,17 +1,20 @@
 use crate::camera::WORLD_LAYER;
 use crate::interpolation::Interpolated;
+use crate::inventory::{BrushRadius, InventoryOpen, SelectedSlot};
 use crate::net::{NetSet, ServerMsg, Session, SessionEnded};
-use crate::{AppState, ClientRegistry, PauseState};
+use crate::{AppState, PauseState};
 use bevy::camera::visibility::RenderLayers;
+use bevy::input::mouse::MouseWheel;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
-use fallingsand_core::{CellPos, MaterialId, Phase, TICK_RATE};
+use fallingsand_core::{CellPos, HOTBAR_SLOTS, TICK_RATE};
 use fallingsand_protocol::{ClientMessage, GameMode, PlayerId, PlayerInput, ServerMessage};
 
 pub struct PlayerPlugin;
 
 pub const PLAYER_SIZE: Vec2 = Vec2::new(3.8, 11.0);
 pub const PLAYER_DUCK_SIZE: Vec2 = Vec2::new(3.8, 6.0);
+pub const MAX_BRUSH: u8 = 6;
 const SNAP_DISTANCE: f32 = 64.0;
 const DOUBLE_TAP_SECS: f32 = 0.3;
 
@@ -37,34 +40,6 @@ pub struct LocalMode(pub GameMode);
 pub struct FlyToggle(pub bool);
 
 #[derive(Resource, Default)]
-pub struct LocalInventory(pub Vec<(MaterialId, u64)>);
-
-impl LocalInventory {
-    pub fn count(&self, material: MaterialId) -> u64 {
-        self.0
-            .iter()
-            .find(|&&(id, _)| id == material)
-            .map(|&(_, count)| count)
-            .unwrap_or(0)
-    }
-}
-
-#[derive(Resource)]
-pub struct Hotbar {
-    pub palette: Vec<MaterialId>,
-    pub selected: MaterialId,
-}
-
-impl Hotbar {
-    pub fn visible(&self, mode: GameMode, inventory: &LocalInventory) -> Vec<MaterialId> {
-        match mode {
-            GameMode::Creative => self.palette.clone(),
-            GameMode::Survival => inventory.0.iter().map(|&(id, _)| id).collect(),
-        }
-    }
-}
-
-#[derive(Resource, Default)]
 pub struct InputState {
     pub aim: CellPos,
 }
@@ -82,27 +57,16 @@ pub struct LocalPlayerState {
 
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
-        let registry = &app.world().resource::<ClientRegistry>().0;
-        let palette: Vec<MaterialId> = registry
-            .iter()
-            .filter(|(_, material)| material.phase != Phase::Empty)
-            .map(|(id, _)| id)
-            .collect();
-        let selected = palette.first().copied().unwrap_or(MaterialId::AIR);
-        app.insert_resource(Hotbar { palette, selected })
-            .init_resource::<PlayerVisuals>()
+        app.init_resource::<PlayerVisuals>()
             .init_resource::<PlayerNames>()
             .init_resource::<InputState>()
             .init_resource::<LocalPlayerState>()
             .init_resource::<LocalMode>()
             .init_resource::<FlyToggle>()
-            .init_resource::<LocalInventory>()
             .insert_resource(Time::<Fixed>::from_hz(TICK_RATE as f64))
             .add_systems(
                 PreUpdate,
-                (track_names, track_inventory, apply_entity_states)
-                    .chain()
-                    .after(NetSet),
+                (track_names, apply_entity_states).chain().after(NetSet),
             )
             .add_systems(
                 FixedUpdate,
@@ -111,7 +75,7 @@ impl Plugin for PlayerPlugin {
             .add_systems(
                 Update,
                 (
-                    (select_material, toggle_fly).run_if(in_state(PauseState::Running)),
+                    (select_slot, toggle_fly).run_if(in_state(PauseState::Running)),
                     update_nametags.run_if(resource_changed::<PlayerNames>),
                 ),
             )
@@ -120,17 +84,10 @@ impl Plugin for PlayerPlugin {
     }
 }
 
-fn track_inventory(mut inventory: ResMut<LocalInventory>, mut messages: MessageReader<ServerMsg>) {
-    for ServerMsg(message) in messages.read() {
-        if let ServerMessage::Inventory { counts } = message {
-            inventory.0 = counts.clone();
-        }
-    }
-}
-
 fn toggle_fly(
     keys: Res<ButtonInput<KeyCode>>,
     chat_open: Res<crate::chat::ChatOpen>,
+    inv_open: Res<InventoryOpen>,
     time: Res<Time>,
     mode: Res<LocalMode>,
     mut fly: ResMut<FlyToggle>,
@@ -140,7 +97,7 @@ fn toggle_fly(
         fly.0 = false;
         return;
     }
-    if chat_open.0 {
+    if chat_open.0 || inv_open.0 {
         return;
     }
     if keys.just_pressed(KeyCode::Space) {
@@ -288,7 +245,7 @@ fn cleanup_players(
     mut input: ResMut<InputState>,
     mut mode: ResMut<LocalMode>,
     mut fly: ResMut<FlyToggle>,
-    mut inventory: ResMut<LocalInventory>,
+    mut selected: ResMut<SelectedSlot>,
     mut local_state: ResMut<LocalPlayerState>,
 ) {
     for (_, entity) in visuals.0.drain() {
@@ -298,25 +255,23 @@ fn cleanup_players(
     *input = InputState::default();
     *mode = LocalMode::default();
     fly.0 = false;
-    inventory.0.clear();
+    selected.0 = 0;
     *local_state = LocalPlayerState::default();
 }
 
-fn select_material(
+fn select_slot(
     keys: Res<ButtonInput<KeyCode>>,
-    mut hotbar: ResMut<Hotbar>,
+    mut wheel: MessageReader<MouseWheel>,
     chat_open: Res<crate::chat::ChatOpen>,
-    mode: Res<LocalMode>,
-    inventory: Res<LocalInventory>,
+    inv_open: Res<InventoryOpen>,
+    mut selected: ResMut<SelectedSlot>,
+    mut brush: ResMut<BrushRadius>,
 ) {
     if chat_open.0 {
+        wheel.clear();
         return;
     }
-    let visible = hotbar.visible(mode.0, &inventory);
-    if visible.is_empty() {
-        return;
-    }
-    const DIGITS: [KeyCode; 10] = [
+    const DIGITS: [KeyCode; 9] = [
         KeyCode::Digit1,
         KeyCode::Digit2,
         KeyCode::Digit3,
@@ -326,24 +281,36 @@ fn select_material(
         KeyCode::Digit7,
         KeyCode::Digit8,
         KeyCode::Digit9,
-        KeyCode::Digit0,
     ];
     for (index, key) in DIGITS.iter().enumerate() {
-        if keys.just_pressed(*key) && index < visible.len() {
-            hotbar.selected = visible[index];
+        if keys.just_pressed(*key) {
+            selected.0 = index;
         }
     }
-    let len = visible.len();
-    let current = visible
-        .iter()
-        .position(|&id| id == hotbar.selected)
-        .unwrap_or(0);
-    if keys.just_pressed(KeyCode::BracketLeft) {
-        hotbar.selected = visible[(current + len - 1) % len];
+
+    let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
+    let scroll: f32 = wheel.read().map(|event| event.y).sum();
+    if !inv_open.0 && !ctrl && scroll.abs() > 0.01 {
+        let step = if scroll > 0.0 { HOTBAR_SLOTS - 1 } else { 1 };
+        selected.0 = (selected.0 + step) % HOTBAR_SLOTS;
     }
-    if keys.just_pressed(KeyCode::BracketRight) {
-        hotbar.selected = visible[(current + 1) % len];
+
+    if keys.just_pressed(KeyCode::BracketLeft) || keys.just_pressed(KeyCode::Minus) {
+        brush.0 = brush.0.saturating_sub(1);
     }
+    if keys.just_pressed(KeyCode::BracketRight) || keys.just_pressed(KeyCode::Equal) {
+        brush.0 = (brush.0 + 1).min(MAX_BRUSH);
+    }
+}
+
+fn cursor_cell(
+    window: &Window,
+    camera: &Camera,
+    camera_transform: &GlobalTransform,
+) -> Option<CellPos> {
+    let cursor = window.cursor_position()?;
+    let world = camera.viewport_to_world_2d(camera_transform, cursor).ok()?;
+    Some(CellPos::new(world.x.floor() as i32, world.y.floor() as i32))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -352,8 +319,10 @@ fn send_input(
     buttons: Res<ButtonInput<MouseButton>>,
     window: Single<&Window>,
     camera: Single<(&Camera, &GlobalTransform), With<crate::camera::SkyCamera>>,
-    hotbar: Res<Hotbar>,
+    selected: Res<SelectedSlot>,
+    brush: Res<BrushRadius>,
     chat_open: Res<crate::chat::ChatOpen>,
+    inv_open: Res<InventoryOpen>,
     fly: Res<FlyToggle>,
     mut state: ResMut<InputState>,
     session: Option<ResMut<Session>>,
@@ -363,19 +332,20 @@ fn send_input(
     };
 
     let (camera, camera_transform) = *camera;
-    if let Some(cursor) = window.cursor_position()
-        && let Ok(world) = camera.viewport_to_world_2d(camera_transform, cursor)
-    {
-        state.aim = CellPos::new(world.x.floor() as i32, world.y.floor() as i32);
+    if let Some(cell) = cursor_cell(&window, camera, camera_transform) {
+        state.aim = cell;
     }
 
-    if chat_open.0 {
-        session.send(&ClientMessage::Input(PlayerInput {
-            aim: state.aim,
-            selected: hotbar.selected,
-            fly: fly.0,
-            ..default()
-        }));
+    let base = PlayerInput {
+        aim: state.aim,
+        selected_slot: selected.0 as u8,
+        brush_radius: brush.0,
+        fly: fly.0,
+        ..default()
+    };
+
+    if chat_open.0 || inv_open.0 {
+        session.send(&ClientMessage::Input(base));
         return;
     }
 
@@ -393,11 +363,9 @@ fn send_input(
             || keys.pressed(KeyCode::KeyW)
             || keys.pressed(KeyCode::ArrowUp),
         down: keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown),
-        fly: fly.0,
         primary: buttons.pressed(MouseButton::Left),
         secondary: buttons.pressed(MouseButton::Right),
-        aim: state.aim,
-        selected: hotbar.selected,
+        ..base
     };
     session.send(&ClientMessage::Input(input));
 }

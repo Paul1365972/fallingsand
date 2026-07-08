@@ -265,6 +265,7 @@ fn drain(
     mut supervisor: ResMut<Supervisor>,
     mut messages: MessageWriter<ServerMsg>,
     registry: Res<ClientRegistry>,
+    item_registry: Res<crate::ClientItemRegistry>,
     pause: Option<Res<State<crate::PauseState>>>,
     time: Res<Time>,
 ) {
@@ -285,6 +286,7 @@ fn drain(
                 if let ServerMessage::HelloAck {
                     protocol_version,
                     registry_hash,
+                    item_registry_hash,
                     player,
                     spawn,
                     ..
@@ -295,6 +297,9 @@ fn drain(
                     }
                     if *registry_hash != registry.0.hash() {
                         error!("material registry hash mismatch with server");
+                    }
+                    if *item_registry_hash != item_registry.0.hash() {
+                        error!("item registry hash mismatch with server");
                     }
                     session.player = Some(*player);
                     info!("joined as {player:?}, spawn {spawn:?}");

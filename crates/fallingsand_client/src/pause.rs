@@ -1,3 +1,4 @@
+use crate::inventory::InventoryOpen;
 use crate::menu::{BUTTON_BG, BUTTON_HOVER, spawn_button};
 use crate::net::Session;
 #[cfg(not(target_family = "wasm"))]
@@ -40,19 +41,22 @@ pub(crate) fn toggle_pause(
     state: Option<Res<State<PauseState>>>,
     next: Option<ResMut<NextState<PauseState>>>,
     chat_open: Res<crate::chat::ChatOpen>,
+    mut inv_open: ResMut<InventoryOpen>,
 ) {
     let (Some(state), Some(mut next)) = (state, next) else {
         return;
     };
-    if chat_open.0 {
+    if chat_open.0 || !keys.just_pressed(KeyCode::Escape) {
         return;
     }
-    if keys.just_pressed(KeyCode::Escape) {
-        next.set(match state.get() {
-            PauseState::Running => PauseState::Paused,
-            PauseState::Paused => PauseState::Running,
-        });
+    if inv_open.0 {
+        inv_open.0 = false;
+        return;
     }
+    next.set(match state.get() {
+        PauseState::Running => PauseState::Paused,
+        PauseState::Paused => PauseState::Running,
+    });
 }
 
 fn freeze_input(session: Option<ResMut<Session>>) {

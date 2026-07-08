@@ -1,13 +1,16 @@
 pub mod bodies;
 pub mod commands;
 pub mod hazards;
+pub mod inventory;
 pub mod persistence;
 pub mod regions;
 pub mod session;
 pub mod systems;
 
 use bevy_ecs::prelude::*;
-use fallingsand_core::{Calendar, CellPos, DAY_UNITS, MaterialRegistry};
+use fallingsand_core::{
+    Calendar, CellPos, DAY_UNITS, ItemRegistry, MaterialRegistry, RecipeRegistry,
+};
 use fallingsand_net::Listener;
 use fallingsand_sim::CellWorld;
 use fallingsand_worldgen::WorldGenerator;
@@ -130,6 +133,10 @@ pub enum ServerError {
     Store(#[from] persistence::StoreError),
     #[error(transparent)]
     Gen(#[from] fallingsand_worldgen::GenError),
+    #[error(transparent)]
+    Item(#[from] fallingsand_core::item::ItemError),
+    #[error(transparent)]
+    Recipe(#[from] fallingsand_core::item::RecipeError),
 }
 
 impl Server {
@@ -164,6 +171,14 @@ impl Server {
         };
         let seed = meta.seed;
         let generator = Arc::new(WorldGenerator::new(seed, &config.registry)?);
+        let item_registry = Arc::new(ItemRegistry::from_ron(
+            include_str!("../../../data/items.ron"),
+            &config.registry,
+        )?);
+        let recipes = Arc::new(RecipeRegistry::from_ron(
+            include_str!("../../../data/recipes.ron"),
+            &item_registry,
+        )?);
 
         let spawn_x = 0;
         let spawn = CellPos::new(spawn_x, generator.surface_height(spawn_x) + 12);
@@ -173,6 +188,10 @@ impl Server {
         let mut world = World::new();
         world.insert_resource(SimWorld(cell_world));
         world.insert_resource(Registry(config.registry));
+        world.insert_resource(inventory::ItemReg(item_registry));
+        world.insert_resource(inventory::Recipes(recipes));
+        world.insert_resource(inventory::NextEntityId::default());
+        world.insert_resource(inventory::SlotActions::default());
         world.insert_resource(NetListener(config.listener));
         world.insert_resource(Sessions::default());
         world.insert_resource(TickStats::default());
@@ -199,6 +218,7 @@ impl Server {
                     systems::drain_network,
                     commands::run_commands,
                     systems::apply_player_inputs,
+                    inventory::apply_slot_actions,
                     regions::compute_tickets,
                     regions::manage_regions,
                     systems::build_obstacles,
@@ -207,10 +227,11 @@ impl Server {
                     .chain(),
                 (
                     systems::step_physics,
+                    inventory::step_items,
                     bodies::step_bodies,
                     hazards::apply_hazards,
                     systems::advance_clock,
-                    systems::sync_inventories,
+                    inventory::sync_inventories,
                     systems::replicate,
                     systems::finish_tick,
                     regions::autosave,
