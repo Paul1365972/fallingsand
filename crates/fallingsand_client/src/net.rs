@@ -1,3 +1,4 @@
+#[cfg(not(target_family = "wasm"))]
 use crate::ClientRegistry;
 use bevy::prelude::*;
 use fallingsand_net::{Connection, ConnectionStatus};
@@ -254,8 +255,6 @@ fn drain(
     mut supervisor: ResMut<Supervisor>,
     mut messages: MessageWriter<ServerMsg>,
     mut frames: MessageWriter<TickMessage>,
-    registry: Res<ClientRegistry>,
-    item_registry: Res<crate::ClientItemRegistry>,
     pause: Option<Res<State<crate::PauseState>>>,
     time: Res<Time>,
 ) {
@@ -278,8 +277,6 @@ fn drain(
             Ok(message) => {
                 if let ServerMessage::HelloAck {
                     protocol_version,
-                    registry_hash,
-                    item_registry_hash,
                     player,
                     spawn,
                 } = &message
@@ -287,11 +284,6 @@ fn drain(
                     if *protocol_version != PROTOCOL_VERSION {
                         error!("server protocol {protocol_version} != {PROTOCOL_VERSION}");
                         session.conn.close("protocol version mismatch");
-                    } else if *registry_hash != registry.0.hash()
-                        || *item_registry_hash != item_registry.0.hash()
-                    {
-                        error!("registry hash mismatch with server");
-                        session.conn.close("registry mismatch");
                     } else {
                         session.player = Some(*player);
                         info!("joined as {player:?}, spawn {spawn:?}");

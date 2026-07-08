@@ -193,8 +193,6 @@ pub enum ClientMessage {
 pub enum ServerMessage {
     HelloAck {
         protocol_version: u16,
-        registry_hash: u64,
-        item_registry_hash: u64,
         player: PlayerId,
         spawn: CellPos,
     },

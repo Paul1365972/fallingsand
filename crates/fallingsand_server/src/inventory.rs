@@ -1,4 +1,5 @@
 use crate::persistence::{DroppedRecord, RegionExtras};
+use crate::regions::RegionMap;
 use crate::session::Player;
 use crate::systems::{Mode, PlayerActor};
 use crate::{Registry, SimWorld};
@@ -8,22 +9,20 @@ use fallingsand_core::{
     RecipeRegistry, RegionPos, TICK_DT,
 };
 use fallingsand_protocol::{EntityId, GameMode, SlotAction};
-use fallingsand_rng::{FNV_OFFSET, fnv1a, fnv1a_word};
 use fallingsand_sim::physics::{Actor, body_submersion, move_body};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 
 pub const ITEM_HALF: Fixed = Fixed::from_f32(1.0);
-const ITEM_MAX_FALL: f32 = 160.0;
-const ITEM_GROUND_KEEP_PER_SEC: f32 = 1.0e-8;
+const ITEM_MAX_FALL: f32 = 600.0;
+const ITEM_GROUND_KEEP_PER_SEC: f32 = 0.05;
 const ITEM_AIR_KEEP_PER_SEC: f32 = 0.3;
-const ITEM_SLEEP_SECS: f32 = 0.3;
+const ITEM_SLEEP_SECS: f32 = 1.0;
 const ITEM_REST_SPEED: f32 = 1.0;
 const GRAB_RANGE_SQ: f32 = 34.0 * 34.0;
 const PICKUP_RANGE_SQ: f32 = 9.0 * 9.0;
 const MAGNET_ACCEL: f32 = 620.0;
 const MERGE_RADIUS_SQ: f32 = 6.0 * 6.0;
-const COALESCE_THRESHOLD: usize = 128;
 const DROP_PICKUP_SECS: f32 = 0.6;
 pub const DROP_PICKUP_DELAY: u16 = fallingsand_core::ticks_from_secs(DROP_PICKUP_SECS) as u16;
 
@@ -180,22 +179,6 @@ pub fn gather_region_extras(
         }
     }
     (extras, entities)
-}
-
-pub fn extras_sig(extras: &RegionExtras) -> u64 {
-    let mut sig = 0u64;
-    for item in &extras.items {
-        let mut h = fnv1a(FNV_OFFSET, item.item.as_bytes());
-        for field in [
-            item.count as u64,
-            item.x.raw() as u32 as u64,
-            item.y.raw() as u32 as u64,
-        ] {
-            h = fnv1a_word(h, field);
-        }
-        sig = sig.wrapping_add(h);
-    }
-    sig
 }
 
 pub fn spawn_region_extras(
@@ -399,10 +382,12 @@ pub fn step_items(
     sim: Res<SimWorld>,
     registry: Res<Registry>,
     item_reg: Res<ItemReg>,
+    mut regions: ResMut<RegionMap>,
     mut items: Query<(Entity, &mut DroppedItem, &mut ItemActor)>,
     mut players: Query<(Entity, &PlayerActor, &mut Inventory), With<Player>>,
 ) {
     let reg = &item_reg.0;
+    let mut dirtied: FxHashSet<RegionPos> = FxHashSet::default();
 
     let mut order: Vec<(Entity, EntityId)> = items
         .iter()
@@ -463,6 +448,7 @@ pub fn step_items(
         dropped.asleep = false;
         dropped.age_ticks += 1;
         dropped.pickup_delay = dropped.pickup_delay.saturating_sub(1);
+        dirtied.insert(body.0.cell().region());
 
         if let Some((pe, dx, dy, dist_sq)) = nearest
             && dropped.pickup_delay == 0
@@ -499,6 +485,7 @@ pub fn step_items(
             air_keep
         };
         body.0.vx = body.0.vx.mul(keep);
+        dirtied.insert(body.0.cell().region());
 
         let at_rest = body.0.on_ground
             && nearest.is_none()
@@ -516,7 +503,14 @@ pub fn step_items(
     }
 
     for entity in removed {
+        if let Ok((_, _, body)) = items.get(entity) {
+            dirtied.insert(body.0.cell().region());
+        }
         commands.entity(entity).despawn();
+    }
+
+    for pos in dirtied {
+        regions.mark_dirty(pos);
     }
 }
 
@@ -536,11 +530,7 @@ fn merge_items(
         }
     }
     for bucket in buckets.values() {
-        merge_bucket(bucket, items, reg, removed, Some(MERGE_RADIUS_SQ));
-        let live = bucket.iter().filter(|e| !removed.contains(e)).count();
-        if live > COALESCE_THRESHOLD {
-            merge_bucket(bucket, items, reg, removed, None);
-        }
+        merge_bucket(bucket, items, reg, removed, MERGE_RADIUS_SQ);
     }
 }
 
@@ -549,7 +539,7 @@ fn merge_bucket(
     items: &mut Query<(Entity, &mut DroppedItem, &mut ItemActor)>,
     reg: &ItemRegistry,
     removed: &mut FxHashSet<Entity>,
-    radius_sq: Option<f32>,
+    radius_sq: f32,
 ) {
     for i in 0..bucket.len() {
         let a = bucket[i];
@@ -573,12 +563,10 @@ fn merge_bucket(
             if b_drop.stack.item != a_item {
                 continue;
             }
-            if let Some(r2) = radius_sq {
-                let dx = b_body.0.x.to_f32() - ax;
-                let dy = b_body.0.y.to_f32() - ay;
-                if dx * dx + dy * dy > r2 {
-                    continue;
-                }
+            let dx = b_body.0.x.to_f32() - ax;
+            let dy = b_body.0.y.to_f32() - ay;
+            if dx * dx + dy * dy > radius_sq {
+                continue;
             }
             let moved = (max - a_count).min(b_drop.stack.count);
             a_count += moved;

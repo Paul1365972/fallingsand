@@ -10,7 +10,6 @@ Item-centric inventory over the material sim. Items are the resource; materials 
 - `ItemDef`: category, `stack_max`, icon (`MaterialSwatch` or atlas index), tags, optional `place`
   (material id). Named data items aren't placeable; tools are `stack_max = 1` stubs (no durability/use
   in v1).
-- Registry hash folds the material hash + `items.ron`; sent in `HelloAck` as `item_registry_hash`.
 - `RecipeRegistry` from `data/recipes.ron` — shapeless, count-based (`inputs → output`).
 
 ## Slots
@@ -41,9 +40,11 @@ dirty — there is no standalone inventory message.
 
 ## Dropped items (Terraria-style)
 
-`DroppedItem` + `ItemActor(Actor)` — small AABB reusing `move_body`. `step_items`: gravity + grid sweep +
-seconds-based ground/air drag; same-item merge within a chunk; magnetic pull toward a nearby player with
-room, absorbed within pickup range (thrown items have a short pickup delay). A per-chunk entity count crossing `COALESCE_THRESHOLD` triggers chunk-wide same-item coalescing (drains stacks together, never deletes) — mass is conserved, only emptied entities despawn.
+`DroppedItem` + `ItemActor(Actor)` — small AABB reusing `move_body`. `step_items`: gravity (capped at a
+speed-of-light-safe fall clamp) + grid sweep + seconds-based ground/air drag; local same-item touch-merge
+(overlapping stacks drain together, never deletes — mass is conserved, only emptied entities despawn);
+magnetic pull toward a nearby player with room, absorbed within pickup range (thrown items have a short
+pickup delay).
 Items **sleep** once settled on the ground with no player in grab range — skipping physics, merge, and
 replication until a player nears — so a resting pile costs ~nothing. Client renders a swatch sprite that
 bobs and interpolates. Replicated as interest-filtered `ServerMessage::ItemDelta { spawned, moved,
@@ -61,7 +62,7 @@ slots 0..9. World input is suppressed while the overlay (or chat) is open.
 
 `WORLD_FORMAT_VERSION = 10`, `REGION_FORMAT_VERSION = 7` (no migrations). `PlayerRecord` stores per-slot
 `(item_name, count)` + cursor. Region blobs append `RegionExtras { items }` (item name, position,
-velocity, age, pickup delay); re-spawned on region load, gathered on unload/autosave. Each region keeps
-a signature of its persisted items, so it re-saves exactly when its item set changed — clearing a stale
-blob when items are picked up or drift across a boundary, and skipping idle item-bearing regions. This
-closes the pickup/boundary dupe and keeps conservation of mass across save/reload.
+velocity, age, pickup delay); re-spawned on region load, gathered on unload/autosave. Active items mark
+their region dirty each tick (both the region they leave and the one they enter, so boundary crossings
+clear the stale blob); asleep items mark nothing, so an idle region — terrain and items alike — is never
+re-saved. This closes the pickup/boundary dupe and keeps conservation of mass across save/reload.

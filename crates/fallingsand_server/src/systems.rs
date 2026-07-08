@@ -127,7 +127,6 @@ pub fn drain_network(
         &Burning,
         &mut Inventory,
     )>,
-    registry: Res<Registry>,
     item_reg: Res<ItemReg>,
     sim: Res<SimWorld>,
     spawn_point: Res<SpawnPoint>,
@@ -285,8 +284,6 @@ pub fn drain_network(
                     session.uuid = Some(uuid);
                     session.send(&ServerMessage::HelloAck {
                         protocol_version: PROTOCOL_VERSION,
-                        registry_hash: registry.0.hash(),
-                        item_registry_hash: item_reg.0.hash(),
                         player,
                         spawn,
                     });

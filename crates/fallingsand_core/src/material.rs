@@ -133,7 +133,6 @@ pub struct Dynamics {
 pub struct MaterialRegistry {
     materials: Vec<Material>,
     by_name: HashMap<String, MaterialId>,
-    hash: u64,
     tag_index: HashMap<String, u32>,
     tag_bits: Vec<u32>,
     sustain_bits: Vec<u32>,
@@ -410,7 +409,6 @@ impl MaterialRegistry {
             })
             .collect();
 
-        let hash = registry_hash(&materials, &reaction_defs);
         let tag_index = tag_index
             .into_iter()
             .map(|(tag, index)| (tag.to_string(), index))
@@ -418,7 +416,6 @@ impl MaterialRegistry {
         Ok(Self {
             materials,
             by_name,
-            hash,
             tag_index,
             tag_bits,
             sustain_bits,
@@ -460,10 +457,6 @@ impl MaterialRegistry {
             .iter()
             .enumerate()
             .map(|(i, m)| (MaterialId(i as u16), m))
-    }
-
-    pub const fn hash(&self) -> u64 {
-        self.hash
     }
 
     #[inline]
@@ -522,9 +515,4 @@ impl MaterialRegistry {
     pub fn has_tag(&self, id: MaterialId, mask: u32) -> bool {
         self.tag_bits[id.0 as usize] & mask != 0
     }
-}
-
-fn registry_hash(materials: &[Material], reactions: &[ReactionDef]) -> u64 {
-    let bytes = postcard::to_allocvec(&(materials, reactions)).expect("materials serialize");
-    fallingsand_rng::fnv1a(fallingsand_rng::FNV_OFFSET, &bytes)
 }

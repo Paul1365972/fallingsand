@@ -22,9 +22,8 @@ The client demultiplexes the frame once; no system re-scans a message union.
 Cells pack to 3 bytes (material + shade flags), dropping per-cell velocity and timing — the client
 renders from streamed positions and the server re-derives them each tick. IDs: `PlayerId` (session),
 `EntityId` (replicated non-player entities; today only dropped items), `PlayerUuid` (account).
-`HelloAck` carries the server's protocol version and **two** independent registry hashes — the material
-registry and the item registry — and the client rejects the connection on any protocol-version or
-either-hash mismatch.
+`HelloAck` carries the server's protocol version; the client rejects the connection on a mismatch.
+`PROTOCOL_VERSION` gates content compatibility too — any change to `materials.ron`/`items.ron` bumps it.
 
 The single-stream choice is load-bearing: reliable+ordered means deltas always apply on top of the last
 state, so there's no per-chunk versioning, no resync, no input sequence numbers. Packet loss costs a

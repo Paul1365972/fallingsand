@@ -88,20 +88,15 @@ pub struct ItemRegistry {
     items: Vec<ItemDef>,
     by_name: HashMap<String, ItemId>,
     mat_to_item: Vec<ItemId>,
-    hash: u64,
 }
 
 impl ItemRegistry {
     pub fn from_ron(source: &str, materials: &MaterialRegistry) -> Result<Self, ItemError> {
         let file: ItemFile = ron::from_str(source)?;
-        Self::build(file.items, materials, source)
+        Self::build(file.items, materials)
     }
 
-    fn build(
-        entries: Vec<ItemEntry>,
-        materials: &MaterialRegistry,
-        source: &str,
-    ) -> Result<Self, ItemError> {
+    fn build(entries: Vec<ItemEntry>, materials: &MaterialRegistry) -> Result<Self, ItemError> {
         let material_items = materials
             .iter()
             .filter(|(_, material)| material.phase != crate::Phase::Empty)
@@ -174,12 +169,10 @@ impl ItemRegistry {
             items.push(def);
         }
 
-        let hash = registry_hash(materials.hash(), source);
         Ok(Self {
             items,
             by_name,
             mat_to_item,
-            hash,
         })
     }
 
@@ -225,10 +218,6 @@ impl ItemRegistry {
     pub fn stack_max(&self, item: ItemId) -> u32 {
         self.try_get(item).map(|def| def.stack_max).unwrap_or(1)
     }
-
-    pub const fn hash(&self) -> u64 {
-        self.hash
-    }
 }
 
 fn pretty_name(raw: &str) -> String {
@@ -244,13 +233,6 @@ fn pretty_name(raw: &str) -> String {
         }
     }
     out
-}
-
-fn registry_hash(material_hash: u64, items_source: &str) -> u64 {
-    fallingsand_rng::fnv1a(
-        fallingsand_rng::FNV_OFFSET ^ material_hash,
-        items_source.as_bytes(),
-    )
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

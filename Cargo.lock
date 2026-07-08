@@ -2629,7 +2629,6 @@ dependencies = [
  "fallingsand_core",
  "fallingsand_net",
  "fallingsand_protocol",
- "fallingsand_rng",
  "fallingsand_sim",
  "fallingsand_worldgen",
  "instant-acme",

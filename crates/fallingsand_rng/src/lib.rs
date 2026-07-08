@@ -1,20 +1,5 @@
 const GOLDEN: u64 = 0x9e37_79b9_7f4a_7c15;
 
-pub const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-pub const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
-
-#[inline]
-pub const fn fnv1a_word(hash: u64, word: u64) -> u64 {
-    (hash ^ word).wrapping_mul(FNV_PRIME)
-}
-
-#[inline]
-pub fn fnv1a(seed: u64, bytes: &[u8]) -> u64 {
-    bytes
-        .iter()
-        .fold(seed, |hash, &byte| fnv1a_word(hash, byte as u64))
-}
-
 #[inline]
 pub const fn mix(mut z: u64) -> u64 {
     z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
