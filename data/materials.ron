@@ -259,6 +259,7 @@
             rigid_capable: true,
             hardness: 0.4,
             restitution: 0.55,
+            surface_grip: 0.05,
             tags: ["dissolvable"],
         ),
         (
@@ -435,6 +436,7 @@
             rigid_capable: true,
             hardness: 0.1,
             restitution: 0.45,
+            surface_bounce: 0.6,
             tags: ["burnable", "foliage", "dissolvable"],
         ),
         (
@@ -450,6 +452,7 @@
             rigid_capable: true,
             hardness: 0.1,
             restitution: 0.45,
+            surface_bounce: 0.6,
             tags: ["burnable", "foliage", "dissolvable", "emissive"],
         ),
         (

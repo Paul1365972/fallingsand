@@ -226,6 +226,7 @@ impl Server {
                 )
                     .chain(),
                 (
+                    systems::push_players,
                     systems::step_physics,
                     inventory::step_items,
                     bodies::step_bodies,

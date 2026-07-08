@@ -760,6 +760,91 @@ pub fn step_physics(
     impulses.0.clear();
 }
 
+const PUSH_RESTITUTION: f32 = 0.2;
+const PUSH_BOUNCE_SPEED: f32 = 30.0;
+
+pub fn push_players(mut query: Query<&mut PhysicsBody>) {
+    let mut combos = query.iter_combinations_mut::<2>();
+    while let Some([mut a, mut b]) = combos.fetch_next() {
+        let dx = b.0.x - a.0.x;
+        let dy = b.0.y - a.0.y;
+        let ox = (a.0.half_w + b.0.half_w) - dx.abs();
+        let oy = (a.0.half_h + b.0.half_h) - dy.abs();
+        if ox <= Fixed::ZERO || oy <= Fixed::ZERO {
+            continue;
+        }
+        if ox < oy {
+            let push = ox.mul(Fixed::HALF);
+            let n = if dx >= Fixed::ZERO { 1.0 } else { -1.0 };
+            if dx >= Fixed::ZERO {
+                a.0.x -= push;
+                b.0.x += push;
+            } else {
+                a.0.x += push;
+                b.0.x -= push;
+            }
+            let rel = (b.0.vx - a.0.vx).to_f32();
+            if rel * n < 0.0 {
+                let e = if rel.abs() > PUSH_BOUNCE_SPEED {
+                    PUSH_RESTITUTION
+                } else {
+                    0.0
+                };
+                let delta = (1.0 + e) * rel * 0.5;
+                b.0.vx = b.0.vx.add_f32(-delta);
+                a.0.vx = a.0.vx.add_f32(delta);
+            }
+        } else {
+            let push = oy.mul(Fixed::HALF);
+            let n = if dy >= Fixed::ZERO { 1.0 } else { -1.0 };
+            if dy >= Fixed::ZERO {
+                a.0.y -= push;
+                b.0.y += push;
+            } else {
+                a.0.y += push;
+                b.0.y -= push;
+            }
+            let rel = (b.0.vy - a.0.vy).to_f32();
+            if rel * n < 0.0 {
+                let e = if rel.abs() > PUSH_BOUNCE_SPEED {
+                    PUSH_RESTITUTION
+                } else {
+                    0.0
+                };
+                let delta = (1.0 + e) * rel * 0.5;
+                b.0.vy = b.0.vy.add_f32(-delta);
+                a.0.vy = a.0.vy.add_f32(delta);
+            }
+        }
+    }
+}
+
+pub fn apply_radial_impulse(
+    impulses: &mut crate::PlayerImpulses,
+    players: &[(Entity, Fixed, Fixed)],
+    center: (Fixed, Fixed),
+    radius: f32,
+    strength: f32,
+) {
+    for &(entity, x, y) in players {
+        let dx = (x - center.0).to_f32();
+        let dy = (y - center.1).to_f32();
+        let dist = dx.hypot(dy);
+        if dist > radius {
+            continue;
+        }
+        let (nx, ny) = if dist > 1e-3 {
+            (dx / dist, dy / dist)
+        } else {
+            (0.0, 1.0)
+        };
+        let mag = strength * (1.0 - dist / radius);
+        let entry = impulses.0.entry(entity).or_insert((0.0, 0.0));
+        entry.0 += nx * mag;
+        entry.1 += ny * mag;
+    }
+}
+
 #[allow(clippy::type_complexity)]
 pub fn replicate(
     mut sessions: ResMut<Sessions>,

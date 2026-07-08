@@ -30,6 +30,8 @@ pub struct Material {
     pub drag: f32,
     #[serde(default)]
     pub friction: f32,
+    #[serde(default = "default_grip")]
+    pub surface_grip: f32,
     #[serde(default)]
     pub cohesion: f32,
     #[serde(default)]
@@ -40,6 +42,8 @@ pub struct Material {
     pub hardness: f32,
     #[serde(default)]
     pub restitution: f32,
+    #[serde(default)]
+    pub surface_bounce: f32,
     #[serde(default)]
     pub contact_damage: f32,
     #[serde(default)]
@@ -74,6 +78,10 @@ pub struct ReactionDef {
 
 fn default_rate() -> f32 {
     f32::INFINITY
+}
+
+fn default_grip() -> f32 {
+    1.0
 }
 
 pub fn per_tick_chance(rate: f32) -> f32 {

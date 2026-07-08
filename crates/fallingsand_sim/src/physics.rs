@@ -1,6 +1,13 @@
 use crate::obstacles::Obstacles;
 use crate::world::CellWorld;
-use fallingsand_core::{Cell, CellPos, Fixed, MaterialRegistry, Phase, TICK_DT};
+use fallingsand_core::{
+    Cell, CellPos, Fixed, MaterialRegistry, Phase, TICK_DT, TICK_RATE, VEL_ONE,
+};
+
+const BOUNCE_MIN_SPEED: Fixed = Fixed::from_int(30);
+const LAUNCH_MIN_SPEED: Fixed = Fixed::from_int(80);
+const LEDGE_LAUNCH_K: Fixed = Fixed::from_f32(0.35);
+const MIN_GRIP: f32 = 0.06;
 
 pub const STEP_UP_CELLS: i32 = 3;
 pub const STEP_DOWN_CELLS: i32 = 3;
@@ -143,6 +150,8 @@ fn rect_blocked<W: CellSource>(
 pub struct Submersion {
     pub fraction: f32,
     pub liquid_density: f32,
+    pub flow_vx: f32,
+    pub flow_vy: f32,
 }
 
 pub fn body_submersion<W: CellSource>(
@@ -154,6 +163,8 @@ pub fn body_submersion<W: CellSource>(
     let mut total = 0u32;
     let mut liquid = 0u32;
     let mut density_sum = 0.0f32;
+    let mut flow_x = 0i64;
+    let mut flow_y = 0i64;
     for y in y0..=y1 {
         for x in x0..=x1 {
             total += 1;
@@ -164,15 +175,22 @@ pub fn body_submersion<W: CellSource>(
             if material.phase == Phase::Liquid {
                 liquid += 1;
                 density_sum += material.density;
+                let (cvx, cvy) = cell.vel();
+                flow_x += cvx as i64;
+                flow_y += cvy as i64;
             }
         }
     }
     if liquid == 0 {
         return Submersion::default();
     }
+    let per_cell = 1.0 / liquid as f32;
+    let to_per_sec = TICK_RATE as f32 / VEL_ONE as f32;
     Submersion {
         fraction: liquid as f32 / total as f32,
         liquid_density: density_sum / liquid as f32,
+        flow_vx: flow_x as f32 * per_cell * to_per_sec,
+        flow_vy: -(flow_y as f32) * per_cell * to_per_sec,
     }
 }
 
@@ -230,6 +248,45 @@ fn approach(value: Fixed, target: Fixed, delta: Fixed) -> Fixed {
         (value + delta).min(target)
     } else {
         (value - delta).max(target)
+    }
+}
+
+fn resolve_axis(v: Fixed, e: f32) -> Fixed {
+    if v.abs() > BOUNCE_MIN_SPEED {
+        -v.mul(Fixed::from_f32(e))
+    } else {
+        Fixed::ZERO
+    }
+}
+
+fn solids_bounce<W: CellSource>(world: &W, registry: &MaterialRegistry, solids: &[CellPos]) -> f32 {
+    let mut e = 0.0f32;
+    for &pos in solids {
+        if let Some(cell) = world.cell_at(pos) {
+            e = e.max(registry.get(cell.material).surface_bounce);
+        }
+    }
+    e
+}
+
+fn ground_grip<W: CellSource>(world: &W, registry: &MaterialRegistry, body: &Body) -> f32 {
+    let (x0, _, x1, _) = cell_bounds(body.x, body.y, body.half_w, body.half_h);
+    let feet = (body.y - body.half_h - GROUND_PROBE).floor_cell();
+    let mut grip = 0.0f32;
+    let mut found = false;
+    for x in x0..=x1 {
+        if let Some(cell) = world.cell_at(CellPos::new(x, feet)) {
+            let material = registry.get(cell.material);
+            if matches!(material.phase, Phase::Solid | Phase::Powder) {
+                found = true;
+                grip = grip.max(material.surface_grip);
+            }
+        }
+    }
+    if found {
+        grip.clamp(MIN_GRIP, 1.0)
+    } else {
+        1.0
     }
 }
 
@@ -333,11 +390,20 @@ fn normal_update<W: CellSource>(
         unduck(params, body, ctrl);
     }
 
+    let grip = if body.on_ground {
+        Fixed::from_f32(ground_grip(world, registry, body))
+    } else {
+        Fixed::ONE
+    };
     if body.on_ground && ctrl.ducking {
-        body.vx = approach(body.vx, Fixed::ZERO, params.duck_friction.per_tick());
+        body.vx = approach(
+            body.vx,
+            Fixed::ZERO,
+            params.duck_friction.mul(grip).per_tick(),
+        );
     } else {
         let mult = if body.on_ground {
-            Fixed::ONE
+            grip
         } else {
             params.air_mult
         };
@@ -391,12 +457,15 @@ fn normal_update<W: CellSource>(
     }
 
     if submersion.fraction > 0.0 {
-        let speed = body.vx.to_f32().hypot(body.vy.to_f32());
+        let vx = body.vx.to_f32();
+        let vy = body.vy.to_f32();
+        let rel_x = vx - submersion.flow_vx;
+        let rel_y = vy - submersion.flow_vy;
+        let speed = rel_x.hypot(rel_y);
         let drag = ((FLUID_DRAG_LINEAR + FLUID_DRAG_QUAD * speed) * submersion.fraction * TICK_DT)
             .min(MAX_FLUID_DRAG);
-        let keep = Fixed::from_f32(1.0 - drag);
-        body.vx = body.vx.mul(keep);
-        body.vy = body.vy.mul(keep);
+        body.vx = Fixed::from_f32(vx - rel_x * drag);
+        body.vy = Fixed::from_f32(vy - rel_y * drag);
     }
 
     if ctrl.var_jump_timer > 0.0 {
@@ -636,6 +705,9 @@ fn try_step_up<W: CellSource>(
     }
     body.y += rise_needed;
     body.climb_debt += rise_needed.mul(CLIMB_COST);
+    if body.vx.abs() > LAUNCH_MIN_SPEED {
+        body.vy = body.vy.max(body.vx.abs().mul(LEDGE_LAUNCH_K));
+    }
     true
 }
 
@@ -719,8 +791,10 @@ pub fn move_body<W: CellSource>(
                     climbed = true;
                     continue;
                 }
-                result.record_blocked(&blockage.solids, body.vx.to_f32(), 0.0);
-                body.vx = Fixed::ZERO;
+                let e = solids_bounce(world, registry, &blockage.solids);
+                let after = resolve_axis(body.vx, e);
+                result.record_blocked(&blockage.solids, (body.vx - after).to_f32(), 0.0);
+                body.vx = after;
                 break;
             }
             let blockage = passage(world, registry, body, next_x, body.y, &result.displaced);
@@ -741,7 +815,9 @@ pub fn move_body<W: CellSource>(
                 target = body.x + (target - body.x).mul(damp);
                 continue;
             }
-            result.record_blocked(&blockage.solids, body.vx.to_f32(), 0.0);
+            let e = solids_bounce(world, registry, &blockage.solids);
+            let after = resolve_axis(body.vx, e);
+            result.record_blocked(&blockage.solids, (body.vx - after).to_f32(), 0.0);
             let snap = blockage.near_col(dir);
             blockage.dig(&mut result.displaced);
             body.x = match snap {
@@ -750,12 +826,12 @@ pub fn move_body<W: CellSource>(
                 None if dir > 0 => Fixed::from_cell(next_col) - body.half_w,
                 None => Fixed::from_cell(next_col + 1) + body.half_w,
             };
-            body.vx = Fixed::ZERO;
+            body.vx = after;
             break;
         }
     }
 
-    if climbed && was_grounded {
+    if climbed && was_grounded && body.vy <= Fixed::ZERO {
         body.on_ground = true;
     }
 
@@ -802,11 +878,13 @@ pub fn move_body<W: CellSource>(
                 if blockage.free() {
                     body.y = target;
                 } else {
-                    result.record_blocked(&blockage.solids, 0.0, body.vy.to_f32());
+                    let e = solids_bounce(world, registry, &blockage.solids);
+                    let after = resolve_axis(body.vy, e);
+                    result.record_blocked(&blockage.solids, 0.0, (body.vy - after).to_f32());
                     if dir > 0 {
                         result.hit_ceiling = true;
                     }
-                    body.vy = Fixed::ZERO;
+                    body.vy = after;
                 }
                 break;
             }
@@ -832,17 +910,19 @@ pub fn move_body<W: CellSource>(
                     }
                     result.hit_ceiling = true;
                 }
-                result.record_blocked(&blockage.solids, 0.0, body.vy.to_f32());
+                let e = solids_bounce(world, registry, &blockage.solids);
+                let after = resolve_axis(body.vy, e);
+                result.record_blocked(&blockage.solids, 0.0, (body.vy - after).to_f32());
                 body.y = match blockage.near_row(dir) {
                     Some(near) if dir > 0 => Fixed::from_cell(near) - body.half_h,
                     Some(near) => Fixed::from_cell(near + 1) + body.half_h,
                     None if dir > 0 => Fixed::from_cell(next_row) - body.half_h,
                     None => Fixed::from_cell(next_row + 1) + body.half_h,
                 };
-                if dir < 0 {
+                if dir < 0 && after <= Fixed::ZERO {
                     body.on_ground = true;
                 }
-                body.vy = Fixed::ZERO;
+                body.vy = after;
                 break;
             }
         }
