@@ -1,7 +1,7 @@
 use crate::ClientRegistry;
 use crate::camera::CameraControl;
 use crate::inventory::{LocalInventory, SelectedSlot};
-use crate::net::{EmbeddedServerStats, ServerMsg, Session, Supervisor};
+use crate::net::{ServerMsg, ServerStats, Session, Supervisor, TickFrame};
 use crate::particles::Particle;
 use crate::player::{InputState, LocalPlayerState, PlayerNames};
 use crate::render::ChunkVisuals;
@@ -227,12 +227,12 @@ fn sync_debug_stream(
 
 fn track_rects(
     mut flashes: ResMut<RectFlashes>,
-    mut messages: MessageReader<ServerMsg>,
+    mut frames: MessageReader<TickFrame>,
     time: Res<Time>,
     borders: Res<BordersVisible>,
 ) {
     if !borders.0 {
-        messages.clear();
+        frames.clear();
         if !flashes.0.is_empty() {
             flashes.0.clear();
         }
@@ -240,11 +240,8 @@ fn track_rects(
     }
     let now = time.elapsed_secs();
     flashes.0.retain(|flash| now - flash.at < FLASH_SECS);
-    for ServerMsg(message) in messages.read() {
-        let fallingsand_protocol::ServerMessage::DebugRects { chunks } = message else {
-            continue;
-        };
-        for entry in chunks {
+    for TickFrame(tick) in frames.read() {
+        for entry in &tick.debug {
             for (rect, keep_alive) in [(entry.change, false), (entry.keep_alive, true)] {
                 if rect.is_empty() {
                     continue;
@@ -335,7 +332,7 @@ fn draw_borders(
 struct Overlay<'w, 's> {
     diagnostics: Res<'w, DiagnosticsStore>,
     supervisor: Res<'w, Supervisor>,
-    server: Res<'w, EmbeddedServerStats>,
+    server: Res<'w, ServerStats>,
     session: Option<Res<'w, Session>>,
     view: Res<'w, WorldView>,
     visuals: Res<'w, ChunkVisuals>,

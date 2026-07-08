@@ -128,6 +128,49 @@ pub struct ChunkDebugRects {
     pub keep_alive: DirtyRect,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct SelfState {
+    pub hp: f32,
+    pub air: f32,
+    pub mode: GameMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum TileOp {
+    Load {
+        pos: ChunkPos,
+        cells: Vec<u8>,
+    },
+    Unload {
+        pos: ChunkPos,
+    },
+    Delta {
+        pos: ChunkPos,
+        rect: DirtyRect,
+        cells: Vec<u8>,
+    },
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ItemDelta {
+    pub spawned: Vec<ItemEntityState>,
+    pub moved: Vec<ItemMove>,
+    pub despawned: Vec<EntityId>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Tick {
+    pub tick: u64,
+    pub age: u64,
+    pub tiles: Vec<TileOp>,
+    pub players: Vec<EntityState>,
+    pub items: ItemDelta,
+    pub inventory: Vec<(u16, Option<ItemStack>)>,
+    pub cursor: Option<Option<ItemStack>>,
+    pub self_state: Option<SelfState>,
+    pub debug: Vec<ChunkDebugRects>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ClientMessage {
     Hello {
@@ -159,26 +202,6 @@ pub enum ServerMessage {
     Reject {
         reason: String,
     },
-    ChunkLoad {
-        pos: ChunkPos,
-        cells: Vec<u8>,
-    },
-    ChunkUnload {
-        pos: ChunkPos,
-    },
-    ChunkDelta {
-        pos: ChunkPos,
-        rect: DirtyRect,
-        cells: Vec<u8>,
-    },
-    EntityStates {
-        entities: Vec<EntityState>,
-    },
-    SelfState {
-        hp: f32,
-        air: f32,
-        mode: GameMode,
-    },
     PlayerJoined {
         player: PlayerId,
         name: String,
@@ -194,24 +217,5 @@ pub enum ServerMessage {
     System {
         text: String,
     },
-    Inventory {
-        slots: Vec<Option<ItemStack>>,
-        cursor: Option<ItemStack>,
-    },
-    InventoryDelta {
-        slots: Vec<(u16, Option<ItemStack>)>,
-        cursor: Option<ItemStack>,
-    },
-    ItemDelta {
-        spawned: Vec<ItemEntityState>,
-        moved: Vec<ItemMove>,
-        despawned: Vec<EntityId>,
-    },
-    DebugRects {
-        chunks: Vec<ChunkDebugRects>,
-    },
-    TickEnd {
-        tick: u64,
-        age: u64,
-    },
+    Tick(Tick),
 }

@@ -2,7 +2,8 @@ use crate::ClientRegistry;
 use bevy::prelude::*;
 use fallingsand_net::{Connection, ConnectionStatus};
 use fallingsand_protocol::{
-    ClientMessage, PROTOCOL_VERSION, PlayerId, ServerMessage, decode_message, encode_message,
+    ClientMessage, PROTOCOL_VERSION, PlayerId, ServerMessage, Stats, Tick, decode_message,
+    encode_message,
 };
 
 pub struct NetPlugin;
@@ -31,7 +32,6 @@ pub struct Session {
     handshake_secs: f32,
     window: f32,
     window_bytes: u64,
-    batch: Vec<ServerMessage>,
 }
 
 impl Session {
@@ -45,7 +45,6 @@ impl Session {
             handshake_secs: 0.0,
             window: 0.0,
             window_bytes: 0,
-            batch: Vec::new(),
         };
         session.send(&ClientMessage::Hello {
             protocol_version: PROTOCOL_VERSION,
@@ -61,12 +60,6 @@ impl Session {
 
     fn status(&self) -> ConnectionStatus {
         self.conn.status()
-    }
-
-    fn flush(&mut self, messages: &mut MessageWriter<ServerMsg>) {
-        for message in self.batch.drain(..) {
-            messages.write(ServerMsg(message));
-        }
     }
 }
 
@@ -145,25 +138,19 @@ impl Supervisor {
 pub struct ServerMsg(pub ServerMessage);
 
 #[derive(Message)]
+pub struct TickFrame(pub Tick);
+
+#[derive(Message)]
 pub struct SessionEnded;
 
 #[derive(Resource, Default, Clone, Copy, PartialEq)]
-pub struct EmbeddedServerStats {
-    pub tick: u64,
-    pub sim_micros: u64,
-    pub peak_sim_micros: u64,
-    pub tps: f32,
-    pub slew_ms: u32,
-    pub awake_chunks: usize,
-    pub awake_cells: u64,
-    pub loaded_chunks: usize,
-    pub active_chunks: usize,
-    pub border_chunks: usize,
-    pub loaded_regions: u32,
-    pub dirty_regions: u32,
-    pub players: usize,
-    pub replicated_bytes: u64,
-    pub pixel_bodies: usize,
+pub struct ServerStats(pub Stats);
+
+impl std::ops::Deref for ServerStats {
+    type Target = Stats;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 pub fn parse_cert_hash(hex: &str) -> Option<Vec<u8>> {
@@ -211,8 +198,9 @@ pub fn cli_connect_target() -> Option<ConnectTarget> {
 impl Plugin for NetPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Supervisor>()
-            .init_resource::<EmbeddedServerStats>()
+            .init_resource::<ServerStats>()
             .add_message::<ServerMsg>()
+            .add_message::<TickFrame>()
             .add_message::<SessionEnded>()
             .add_systems(OnEnter(crate::AppState::InGame), open)
             .add_systems(OnExit(crate::AppState::InGame), close)
@@ -260,10 +248,12 @@ fn close(world: &mut World) {
     world.remove_resource::<Dialing>();
 }
 
+#[allow(clippy::too_many_arguments)]
 fn drain(
     mut session: ResMut<Session>,
     mut supervisor: ResMut<Supervisor>,
     mut messages: MessageWriter<ServerMsg>,
+    mut frames: MessageWriter<TickFrame>,
     registry: Res<ClientRegistry>,
     item_registry: Res<crate::ClientItemRegistry>,
     pause: Option<Res<State<crate::PauseState>>>,
@@ -282,6 +272,9 @@ fn drain(
         session.rx_bytes += bytes.len() as u64;
         session.window_bytes += bytes.len() as u64;
         match decode_message::<ServerMessage>(&bytes) {
+            Ok(ServerMessage::Tick(tick)) => {
+                frames.write(TickFrame(tick));
+            }
             Ok(message) => {
                 if let ServerMessage::HelloAck {
                     protocol_version,
@@ -294,33 +287,29 @@ fn drain(
                 {
                     if *protocol_version != PROTOCOL_VERSION {
                         error!("server protocol {protocol_version} != {PROTOCOL_VERSION}");
+                        session.conn.close("protocol version mismatch");
+                    } else if *registry_hash != registry.0.hash()
+                        || *item_registry_hash != item_registry.0.hash()
+                    {
+                        error!("registry hash mismatch with server");
+                        session.conn.close("registry mismatch");
+                    } else {
+                        session.player = Some(*player);
+                        info!("joined as {player:?}, spawn {spawn:?}");
                     }
-                    if *registry_hash != registry.0.hash() {
-                        error!("material registry hash mismatch with server");
-                    }
-                    if *item_registry_hash != item_registry.0.hash() {
-                        error!("item registry hash mismatch with server");
-                    }
-                    session.player = Some(*player);
-                    info!("joined as {player:?}, spawn {spawn:?}");
                 }
                 if let ServerMessage::Reject { reason } = &message {
                     error!("server rejected connection: {reason}");
                     supervisor.target = None;
                     supervisor.last_error = Some(reason.clone());
                 }
-                let flush = matches!(message, ServerMessage::TickEnd { .. });
-                session.batch.push(message);
-                if flush {
-                    session.flush(&mut messages);
-                }
+                messages.write(ServerMsg(message));
             }
             Err(err) => error!("bad message: {err}"),
         }
     }
 
     if closed {
-        session.flush(&mut messages);
         return;
     }
 
@@ -342,14 +331,12 @@ fn drain(
 
 fn enter_playing(
     session: Option<Res<Session>>,
-    mut messages: MessageReader<ServerMsg>,
+    mut frames: MessageReader<TickFrame>,
     mut next: ResMut<NextState<crate::GameState>>,
 ) {
     let joined = session.is_some_and(|session| session.player.is_some());
-    let tick_end = messages
-        .read()
-        .any(|ServerMsg(message)| matches!(message, ServerMessage::TickEnd { .. }));
-    if joined && tick_end {
+    let got_frame = frames.read().next().is_some();
+    if joined && got_frame {
         next.set(crate::GameState::Playing);
     }
 }
@@ -564,31 +551,9 @@ pub mod embedded {
         hasher.finish()
     }
 
-    pub fn mirror_stats(
-        server: Option<Res<EmbeddedServer>>,
-        mut mirror: ResMut<EmbeddedServerStats>,
-    ) {
+    pub fn mirror_stats(server: Option<Res<EmbeddedServer>>, mut mirror: ResMut<ServerStats>) {
         let next = server
-            .map(|server| {
-                let stats = *server.stats.lock().unwrap();
-                EmbeddedServerStats {
-                    tick: stats.tick,
-                    sim_micros: stats.sim_micros,
-                    peak_sim_micros: stats.peak_sim_micros,
-                    tps: stats.tps,
-                    slew_ms: stats.slew_ms,
-                    awake_chunks: stats.awake_chunks,
-                    awake_cells: stats.awake_cells,
-                    loaded_chunks: stats.loaded_chunks,
-                    active_chunks: stats.active_chunks,
-                    border_chunks: stats.border_chunks,
-                    loaded_regions: stats.loaded_regions,
-                    dirty_regions: stats.dirty_regions,
-                    players: stats.players,
-                    replicated_bytes: stats.replicated_bytes,
-                    pixel_bodies: stats.pixel_bodies,
-                }
-            })
+            .map(|server| ServerStats(server.stats.lock().unwrap().0))
             .unwrap_or_default();
         mirror.set_if_neq(next);
     }

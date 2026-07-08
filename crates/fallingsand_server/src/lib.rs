@@ -56,23 +56,22 @@ pub struct WorldInfo {
     pub name: String,
 }
 
+pub use fallingsand_protocol::Stats;
+
 #[derive(Resource, Default, Debug, Clone, Copy)]
-pub struct TickStats {
-    pub tick: u64,
-    pub sim_micros: u64,
-    pub peak_sim_micros: u64,
-    pub tps: f32,
-    pub slew_ms: u32,
-    pub awake_chunks: usize,
-    pub awake_cells: u64,
-    pub loaded_chunks: usize,
-    pub active_chunks: usize,
-    pub border_chunks: usize,
-    pub loaded_regions: u32,
-    pub dirty_regions: u32,
-    pub players: usize,
-    pub replicated_bytes: u64,
-    pub pixel_bodies: usize,
+pub struct TickStats(pub Stats);
+
+impl std::ops::Deref for TickStats {
+    type Target = Stats;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for TickStats {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 
 pub struct WorldConfig {
@@ -194,6 +193,7 @@ impl Server {
         world.insert_resource(inventory::SlotActions::default());
         world.insert_resource(NetListener(config.listener));
         world.insert_resource(Sessions::default());
+        world.insert_resource(systems::LastPlayers::default());
         world.insert_resource(TickStats::default());
         world.insert_resource(Generator(generator));
         world.insert_resource(Store(store));
@@ -232,9 +232,7 @@ impl Server {
                     bodies::step_bodies,
                     hazards::apply_hazards,
                     systems::advance_clock,
-                    inventory::sync_inventories,
                     systems::replicate,
-                    systems::finish_tick,
                     regions::autosave,
                 )
                     .chain(),

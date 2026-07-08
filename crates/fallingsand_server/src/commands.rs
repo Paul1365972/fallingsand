@@ -2,7 +2,7 @@ use crate::session::{SessionState, Sessions};
 use crate::systems::{Mode, PLAYER_MASS, PhysicsBody, apply_radial_impulse};
 use bevy_ecs::prelude::*;
 use fallingsand_core::{DAY_UNITS, Fixed};
-use fallingsand_protocol::{GameMode, ServerMessage, encode_message};
+use fallingsand_protocol::{GameMode, ServerMessage};
 
 pub struct PendingCommand {
     pub entity: Entity,
@@ -143,11 +143,10 @@ pub fn run_commands(world: &mut World) {
 }
 
 fn send_system(world: &mut World, entity: Entity, text: &str) {
-    let message = encode_message(&ServerMessage::System { text: text.into() });
     let mut sessions = world.resource_mut::<Sessions>();
     for session in &mut sessions.sessions {
         if session.entity == Some(entity) && matches!(session.state, SessionState::Playing) {
-            session.conn.send(message.clone());
+            session.send(&ServerMessage::System { text: text.into() });
         }
     }
 }

@@ -1,12 +1,12 @@
 use crate::camera::WORLD_LAYER;
 use crate::interpolation::{Interpolated, interpolate};
-use crate::net::{NetSet, ServerMsg, SessionEnded};
+use crate::net::{NetSet, SessionEnded, TickFrame};
 use crate::{AppState, ClientItemRegistry, ClientRegistry};
 use bevy::camera::visibility::RenderLayers;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use fallingsand_core::{IconSpec, ItemId, ItemRegistry, ItemStack, MaterialRegistry};
-use fallingsand_protocol::{EntityId, ServerMessage};
+use fallingsand_protocol::EntityId;
 
 pub struct InventoryPlugin;
 
@@ -74,24 +74,17 @@ pub fn item_color(item_reg: &ItemRegistry, materials: &MaterialRegistry, item: I
     }
 }
 
-fn track_inventory(mut inventory: ResMut<LocalInventory>, mut messages: MessageReader<ServerMsg>) {
-    for ServerMsg(message) in messages.read() {
-        match message {
-            ServerMessage::Inventory { slots, cursor } => {
-                inventory.slots = slots.clone();
-                inventory.cursor = *cursor;
+fn track_inventory(mut inventory: ResMut<LocalInventory>, mut frames: MessageReader<TickFrame>) {
+    for TickFrame(tick) in frames.read() {
+        for &(index, stack) in &tick.inventory {
+            let index = index as usize;
+            if index >= inventory.slots.len() {
+                inventory.slots.resize(index + 1, None);
             }
-            ServerMessage::InventoryDelta { slots, cursor } => {
-                for &(index, stack) in slots {
-                    let index = index as usize;
-                    if index >= inventory.slots.len() {
-                        inventory.slots.resize(index + 1, None);
-                    }
-                    inventory.slots[index] = stack;
-                }
-                inventory.cursor = *cursor;
-            }
-            _ => {}
+            inventory.slots[index] = stack;
+        }
+        if let Some(cursor) = tick.cursor {
+            inventory.cursor = cursor;
         }
     }
 }
@@ -101,18 +94,13 @@ fn track_items(
     mut visuals: ResMut<DroppedVisuals>,
     item_reg: Res<ClientItemRegistry>,
     registry: Res<ClientRegistry>,
-    mut messages: MessageReader<ServerMsg>,
+    mut frames: MessageReader<TickFrame>,
     mut query: Query<(&mut Interpolated, &mut Sprite)>,
 ) {
-    for ServerMsg(message) in messages.read() {
-        let ServerMessage::ItemDelta {
-            spawned,
-            moved,
-            despawned,
-        } = message
-        else {
-            continue;
-        };
+    for TickFrame(tick) in frames.read() {
+        let spawned = &tick.items.spawned;
+        let moved = &tick.items.moved;
+        let despawned = &tick.items.despawned;
         for state in spawned {
             let target = Vec2::new(state.x.to_f32(), state.y.to_f32());
             let color = item_color(&item_reg.0, &registry.0, state.stack.item);

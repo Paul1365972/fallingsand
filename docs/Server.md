@@ -9,8 +9,8 @@
 3. Load/generate/unload regions per ticket changes
 4. Step CA (4 phases, rayon) + deferred world edits
 5. Step physics (entities, then dropped-item `step_items`, then the serial bodies pass: damage → island registration → dynamics + re-stamp → sleep)
-6. Game logic (health, hazards, dig/place, slot actions + crafting, inventory sync)
-7. Snapshot dirty state → replicate (chunks, public player pose + per-recipient self-state, interest-filtered item deltas)
+6. Game logic (health, hazards, dig/place, slot actions + crafting)
+7. Build and send one `Tick` frame per session (chunks, players, items, inventory, self-state, `tick`+`age`)
 8. Periodic persistence flush + autosave
 
 Budget ~16 ms/tick, sim ≤8 ms; sleeping is what keeps ~2000 active chunks inside it.

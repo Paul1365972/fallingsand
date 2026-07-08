@@ -1,10 +1,10 @@
 use crate::inventory::{LocalInventory, SelectedSlot, item_color};
-use crate::net::{NetSet, ServerMsg};
+use crate::net::{NetSet, TickFrame};
 use crate::player::LocalMode;
 use crate::{AppState, ClientItemRegistry, ClientRegistry, GameState};
 use bevy::prelude::*;
 use fallingsand_core::{HOTBAR_SLOTS, ItemStack, MAX_AIR_SECS};
-use fallingsand_protocol::{GameMode, ServerMessage};
+use fallingsand_protocol::GameMode;
 
 pub struct HudPlugin;
 
@@ -207,18 +207,18 @@ fn despawn_hud(
 }
 
 fn track_vitals(
-    mut messages: MessageReader<ServerMsg>,
+    mut frames: MessageReader<TickFrame>,
     mut health: ResMut<LocalHealth>,
     mut air: ResMut<LocalAir>,
     mut flash: ResMut<FlashTimer>,
 ) {
-    for ServerMsg(message) in messages.read() {
-        if let ServerMessage::SelfState { hp, air: secs, .. } = message {
-            if *hp < health.0 - 0.01 && *hp > 0.0 {
+    for TickFrame(tick) in frames.read() {
+        if let Some(self_state) = tick.self_state {
+            if self_state.hp < health.0 - 0.01 && self_state.hp > 0.0 {
                 flash.0 = FLASH_SECS;
             }
-            health.0 = *hp;
-            air.0 = *secs;
+            health.0 = self_state.hp;
+            air.0 = self_state.air;
         }
     }
 }

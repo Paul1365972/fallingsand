@@ -1,5 +1,5 @@
 use crate::persistence::{DroppedRecord, RegionExtras};
-use crate::session::{Player, SessionState, Sessions};
+use crate::session::Player;
 use crate::systems::{Mode, PhysicsBody};
 use crate::{Registry, SimWorld};
 use bevy_ecs::prelude::*;
@@ -7,7 +7,7 @@ use fallingsand_core::{
     ChunkPos, Fixed, GRAVITY, Inventory as CoreInventory, ItemId, ItemRegistry, ItemStack,
     RecipeRegistry, RegionPos, TICK_DT,
 };
-use fallingsand_protocol::{EntityId, GameMode, ServerMessage, SlotAction, encode_message};
+use fallingsand_protocol::{EntityId, GameMode, SlotAction};
 use fallingsand_sim::physics::{Body, body_submersion, move_body};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
@@ -49,7 +49,6 @@ pub struct Inventory {
     pub inner: CoreInventory,
     pub cursor: Option<ItemStack>,
     pub dirty: bool,
-    synced: bool,
     last_slots: Vec<Option<ItemStack>>,
     last_cursor: Option<ItemStack>,
 }
@@ -64,15 +63,49 @@ impl Inventory {
             inner,
             cursor,
             dirty: true,
-            synced: false,
             last_slots: Vec::new(),
             last_cursor: None,
         }
     }
 
-    pub fn resync(&mut self) {
-        self.dirty = true;
-        self.synced = false;
+    #[allow(clippy::type_complexity)]
+    pub fn delta(
+        &mut self,
+        fresh: bool,
+    ) -> (Vec<(u16, Option<ItemStack>)>, Option<Option<ItemStack>>) {
+        if fresh {
+            self.dirty = false;
+            self.last_slots = self.inner.slots.clone();
+            self.last_cursor = self.cursor;
+            let slots = self
+                .inner
+                .slots
+                .iter()
+                .enumerate()
+                .map(|(i, stack)| (i as u16, *stack))
+                .collect();
+            return (slots, Some(self.cursor));
+        }
+        if !self.dirty {
+            return (Vec::new(), None);
+        }
+        self.dirty = false;
+        let changes: Vec<(u16, Option<ItemStack>)> = self
+            .inner
+            .slots
+            .iter()
+            .zip(self.last_slots.iter())
+            .enumerate()
+            .filter_map(|(i, (cur, last))| (cur != last).then_some((i as u16, *cur)))
+            .collect();
+        let cursor_changed = self.cursor != self.last_cursor;
+        if changes.is_empty() && !cursor_changed {
+            return (Vec::new(), None);
+        }
+        self.last_slots = self.inner.slots.clone();
+        self.last_cursor = self.cursor;
+        let cursor = cursor_changed.then_some(self.cursor);
+        (changes, cursor)
     }
 }
 
@@ -580,53 +613,4 @@ fn cap_items(
         }
     }
     extra
-}
-
-pub fn sync_inventories(mut sessions: ResMut<Sessions>, mut query: Query<&mut Inventory>) {
-    for session in &mut sessions.sessions {
-        if !matches!(session.state, SessionState::Playing) {
-            continue;
-        }
-        let Some(entity) = session.entity else {
-            continue;
-        };
-        let Ok(mut inventory) = query.get_mut(entity) else {
-            continue;
-        };
-        if !inventory.dirty {
-            continue;
-        }
-        inventory.dirty = false;
-        if !inventory.synced {
-            inventory.synced = true;
-            inventory.last_slots = inventory.inner.slots.clone();
-            inventory.last_cursor = inventory.cursor;
-            session.conn.send(encode_message(&ServerMessage::Inventory {
-                slots: inventory.inner.slots.clone(),
-                cursor: inventory.cursor,
-            }));
-            continue;
-        }
-        let changes: Vec<(u16, Option<ItemStack>)> = inventory
-            .inner
-            .slots
-            .iter()
-            .zip(inventory.last_slots.iter())
-            .enumerate()
-            .filter_map(|(i, (cur, last))| (cur != last).then_some((i as u16, *cur)))
-            .collect();
-        let cursor_changed = inventory.cursor != inventory.last_cursor;
-        if changes.is_empty() && !cursor_changed {
-            continue;
-        }
-        inventory.last_slots = inventory.inner.slots.clone();
-        inventory.last_cursor = inventory.cursor;
-        let cursor = inventory.cursor;
-        session
-            .conn
-            .send(encode_message(&ServerMessage::InventoryDelta {
-                slots: changes,
-                cursor,
-            }));
-    }
 }

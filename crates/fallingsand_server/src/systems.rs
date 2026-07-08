@@ -17,9 +17,9 @@ use fallingsand_core::{
     Phase, TICK_DT,
 };
 use fallingsand_protocol::{
-    ChunkDebugRects, ClientMessage, EntityId, EntityState, GameMode, ItemEntityState, ItemMove,
-    MAX_BRUSH, PROTOCOL_VERSION, PlayerId, ServerMessage, cells_to_wire, decode_message,
-    encode_message,
+    ChunkDebugRects, ClientMessage, EntityId, EntityState, GameMode, ItemDelta, ItemEntityState,
+    ItemMove, MAX_BRUSH, PROTOCOL_VERSION, PlayerId, SelfState, ServerMessage, Tick, TileOp,
+    cells_to_wire, decode_message,
 };
 use fallingsand_sim::EntityBox;
 use fallingsand_sim::physics::{
@@ -162,11 +162,11 @@ pub fn drain_network(
                             "rejected {name}: protocol {protocol_version} != {PROTOCOL_VERSION}"
                         );
                         let session = &mut sessions.sessions[index];
-                        session.conn.send(encode_message(&ServerMessage::Reject {
+                        session.send(&ServerMessage::Reject {
                             reason: format!(
                                 "protocol version mismatch: server {PROTOCOL_VERSION}, client {protocol_version}"
                             ),
-                        }));
+                        });
                         session.conn.close("protocol version mismatch");
                         continue;
                     }
@@ -176,9 +176,9 @@ pub fn drain_network(
                     let mut taken_entity = None;
                     for other in &mut sessions.sessions {
                         if other.uuid == Some(uuid) {
-                            other.conn.send(encode_message(&ServerMessage::Reject {
+                            other.send(&ServerMessage::Reject {
                                 reason: "superseded by a new session".into(),
-                            }));
+                            });
                             other.conn.close("superseded by a new session");
                             other.uuid = None;
                             taken_entity = other.entity.take().or(taken_entity);
@@ -190,13 +190,10 @@ pub fn drain_network(
 
                     let mut takeover = None;
                     if let Some(entity) = taken_entity {
-                        if let Ok((mut existing, body, _, _, _, _, mut inventory)) =
-                            players.get_mut(entity)
-                        {
+                        if let Ok((mut existing, body, _, _, _, _, _)) = players.get_mut(entity) {
                             existing.id = player;
                             existing.name = name.clone();
                             existing.input = Default::default();
-                            inventory.resync();
                             takeover = Some((
                                 entity,
                                 CellPos::new(body.0.x.floor_cell(), body.0.y.floor_cell()),
@@ -281,30 +278,26 @@ pub fn drain_network(
                     session.entity = Some(entity);
                     session.player = Some(player);
                     session.uuid = Some(uuid);
-                    session.conn.send(encode_message(&ServerMessage::HelloAck {
+                    session.send(&ServerMessage::HelloAck {
                         protocol_version: PROTOCOL_VERSION,
                         registry_hash: registry.0.hash(),
                         item_registry_hash: item_reg.0.hash(),
                         player,
                         tick: sim.0.tick(),
                         spawn,
-                    }));
-                    session
-                        .conn
-                        .send(encode_message(&ServerMessage::PlayerJoined {
-                            player,
-                            name: name.clone(),
-                        }));
+                    });
+                    session.send(&ServerMessage::PlayerJoined {
+                        player,
+                        name: name.clone(),
+                    });
                     for (existing, ..) in players.iter() {
                         if existing.id == player {
                             continue;
                         }
-                        session
-                            .conn
-                            .send(encode_message(&ServerMessage::PlayerJoined {
-                                player: existing.id,
-                                name: existing.name.clone(),
-                            }));
+                        session.send(&ServerMessage::PlayerJoined {
+                            player: existing.id,
+                            name: existing.name.clone(),
+                        });
                     }
                     tracing::info!("{name} ({uuid}) joined as player {}", player.0);
                     joined.push((player, name));
@@ -406,27 +399,21 @@ pub fn drain_network(
         }
         for (player, name) in &joined {
             if session.player != Some(*player) {
-                session
-                    .conn
-                    .send(encode_message(&ServerMessage::PlayerJoined {
-                        player: *player,
-                        name: name.clone(),
-                    }));
+                session.send(&ServerMessage::PlayerJoined {
+                    player: *player,
+                    name: name.clone(),
+                });
             }
         }
         for player in &left {
-            session
-                .conn
-                .send(encode_message(&ServerMessage::PlayerLeft {
-                    player: *player,
-                }));
+            session.send(&ServerMessage::PlayerLeft { player: *player });
         }
         for (player, name, text) in &chats {
-            session.conn.send(encode_message(&ServerMessage::Chat {
+            session.send(&ServerMessage::Chat {
                 player: *player,
                 name: name.clone(),
                 text: text.clone(),
-            }));
+            });
         }
     }
 }
@@ -845,11 +832,17 @@ pub fn apply_radial_impulse(
     }
 }
 
+#[derive(Resource, Default)]
+pub struct LastPlayers(pub rustc_hash::FxHashMap<PlayerId, EntityState>);
+
+#[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
 pub fn replicate(
     mut sessions: ResMut<Sessions>,
     sim: Res<SimWorld>,
+    clock: Res<crate::WorldClock>,
     regions: Res<crate::regions::RegionMap>,
+    mut last_players: ResMut<LastPlayers>,
     mut stats: ResMut<TickStats>,
     query: Query<(
         &Player,
@@ -860,8 +853,33 @@ pub fn replicate(
         &Burning,
         &Air,
     )>,
+    mut inventories: Query<&mut Inventory>,
     dropped: Query<(&DroppedItem, &ItemBody)>,
 ) {
+    let tick = sim.0.tick();
+    let age = clock.0.age;
+
+    let mut all_players: Vec<EntityState> = query
+        .iter()
+        .map(|(player, body, control, _, _, burning, _)| EntityState {
+            player: player.id,
+            x: body.0.x,
+            y: body.0.y,
+            ducking: control.0.ducking(),
+            burning: burning.active(),
+        })
+        .collect();
+    all_players.sort_unstable_by_key(|state| state.player.0);
+    let changed_players: Vec<EntityState> = all_players
+        .iter()
+        .filter(|state| last_players.0.get(&state.player) != Some(*state))
+        .copied()
+        .collect();
+    last_players.0 = all_players
+        .iter()
+        .map(|state| (state.player, *state))
+        .collect();
+
     let item_views: Vec<(EntityId, fallingsand_core::ChunkPos, ItemEntityState, bool)> = dropped
         .iter()
         .map(|(item, body)| {
@@ -878,21 +896,6 @@ pub fn replicate(
             )
         })
         .collect();
-    let entities: Vec<EntityState> = query
-        .iter()
-        .map(|(player, body, control, _, _, burning, _)| EntityState {
-            player: player.id,
-            x: body.0.x,
-            y: body.0.y,
-            ducking: control.0.ducking(),
-            burning: burning.active(),
-        })
-        .collect();
-    let entity_message = encode_message(&ServerMessage::EntityStates {
-        entities: entities.clone(),
-    });
-
-    let mut sent_bytes = 0u64;
 
     for session in &mut sessions.sessions {
         if !matches!(session.state, SessionState::Playing) {
@@ -916,140 +919,147 @@ pub fn replicate(
             }
         }
 
-        let mut known = std::mem::take(&mut session.known_chunks);
-        known.retain(|&pos| {
-            if interest.contains(&pos) {
-                return true;
-            }
-            let message = encode_message(&ServerMessage::ChunkUnload { pos });
-            sent_bytes += message.len() as u64;
-            session.conn.send(message);
-            false
-        });
-
-        let mut debug_rects = Vec::new();
-        for &pos in &interest {
-            let chunk = sim.0.chunk(pos).expect("interest chunks are loaded");
-            if session.debug {
-                let change = chunk.dirty();
-                let keep_alive = chunk.keep_dirty();
-                if !change.is_empty() || !keep_alive.is_empty() {
-                    debug_rects.push(ChunkDebugRects {
-                        pos,
-                        change,
-                        keep_alive,
-                    });
-                }
-            }
-            if known.insert(pos) {
-                let message = encode_message(&ServerMessage::ChunkLoad {
-                    pos,
-                    cells: cells_to_wire(chunk.cells()),
-                });
-                sent_bytes += message.len() as u64;
-                session.conn.send(message);
-                continue;
-            }
-            let rect = chunk.dirty();
-            if rect.is_empty() {
-                continue;
-            }
-            let mut cells = Vec::with_capacity((rect.width() * rect.height()) as usize);
-            for y in rect.min_y..=rect.max_y {
-                for x in rect.min_x..=rect.max_x {
-                    cells.push(chunk.get(CellOffset::new(x, y)));
-                }
-            }
-            let message = encode_message(&ServerMessage::ChunkDelta {
-                pos,
-                rect,
-                cells: cells_to_wire(&cells),
-            });
-            sent_bytes += message.len() as u64;
-            session.conn.send(message);
-        }
-        session.known_chunks = known;
-
-        if !debug_rects.is_empty() {
-            let message = encode_message(&ServerMessage::DebugRects {
-                chunks: debug_rects,
-            });
-            sent_bytes += message.len() as u64;
-            session.conn.send(message);
-        }
-
-        sent_bytes += entity_message.len() as u64;
-        session.conn.send(entity_message.clone());
-
-        let self_message = encode_message(&ServerMessage::SelfState {
+        let mut debug = Vec::new();
+        let tiles = build_tiles(
+            &mut session.known_chunks,
+            session.debug,
+            &sim.0,
+            &interest,
+            &mut debug,
+        );
+        let players = if session.fresh {
+            all_players.clone()
+        } else {
+            changed_players.clone()
+        };
+        let items = build_items(&mut session.known_items, &interest, &item_views);
+        let (inventory, cursor) = match inventories.get_mut(entity) {
+            Ok(mut inv) => inv.delta(session.fresh),
+            Err(_) => (Vec::new(), None),
+        };
+        let current_self = SelfState {
             hp: health.hp,
             air: air.secs,
             mode: mode.0,
-        });
-        sent_bytes += self_message.len() as u64;
-        session.conn.send(self_message);
+        };
+        let self_state = if session.last_self != Some(current_self) {
+            session.last_self = Some(current_self);
+            Some(current_self)
+        } else {
+            None
+        };
 
-        let mut spawned: Vec<ItemEntityState> = Vec::new();
-        let mut moved: Vec<ItemMove> = Vec::new();
-        let mut visible_ids: FxHashSet<EntityId> = FxHashSet::default();
-        for (id, chunk, state, has_moved) in &item_views {
-            if !interest.contains(chunk) {
-                continue;
-            }
-            visible_ids.insert(*id);
-            if session.known_items.contains(id) {
-                if *has_moved {
-                    moved.push(ItemMove {
-                        id: *id,
-                        x: state.x,
-                        y: state.y,
-                    });
-                }
-            } else {
-                spawned.push(*state);
-            }
-        }
-        let despawned: Vec<EntityId> = session
-            .known_items
-            .iter()
-            .filter(|id| !visible_ids.contains(id))
-            .copied()
-            .collect();
-        session.known_items = visible_ids;
-        if !spawned.is_empty() || !moved.is_empty() || !despawned.is_empty() {
-            let item_message = encode_message(&ServerMessage::ItemDelta {
-                spawned,
-                moved,
-                despawned,
-            });
-            sent_bytes += item_message.len() as u64;
-            session.conn.send(item_message);
-        }
+        session.fresh = false;
+        session.send(&ServerMessage::Tick(Tick {
+            tick,
+            age,
+            tiles,
+            players,
+            items,
+            inventory,
+            cursor,
+            self_state,
+            debug,
+        }));
     }
 
-    stats.players = entities.len();
+    stats.players = all_players.len();
     (stats.awake_chunks, stats.awake_cells) = sim.0.awake_counts();
     stats.loaded_chunks = sim.0.chunks().count();
     (stats.loaded_regions, stats.dirty_regions) = regions.counts();
-    stats.replicated_bytes = sent_bytes;
+    stats.replicated_bytes = sessions.sessions.iter().map(|s| s.sent_bytes).sum();
+    for session in &mut sessions.sessions {
+        session.sent_bytes = 0;
+    }
+}
+
+fn build_tiles(
+    known: &mut FxHashSet<fallingsand_core::ChunkPos>,
+    debug: bool,
+    sim: &fallingsand_sim::CellWorld,
+    interest: &FxHashSet<fallingsand_core::ChunkPos>,
+    debug_rects: &mut Vec<ChunkDebugRects>,
+) -> Vec<TileOp> {
+    let mut ops = Vec::new();
+    known.retain(|&pos| {
+        if interest.contains(&pos) {
+            return true;
+        }
+        ops.push(TileOp::Unload { pos });
+        false
+    });
+    for &pos in interest {
+        let chunk = sim.chunk(pos).expect("interest chunks are loaded");
+        if debug {
+            let change = chunk.dirty();
+            let keep_alive = chunk.keep_dirty();
+            if !change.is_empty() || !keep_alive.is_empty() {
+                debug_rects.push(ChunkDebugRects {
+                    pos,
+                    change,
+                    keep_alive,
+                });
+            }
+        }
+        if known.insert(pos) {
+            ops.push(TileOp::Load {
+                pos,
+                cells: cells_to_wire(chunk.cells()),
+            });
+            continue;
+        }
+        let rect = chunk.dirty();
+        if rect.is_empty() {
+            continue;
+        }
+        let mut cells = Vec::with_capacity((rect.width() * rect.height()) as usize);
+        for y in rect.min_y..=rect.max_y {
+            for x in rect.min_x..=rect.max_x {
+                cells.push(chunk.get(CellOffset::new(x, y)));
+            }
+        }
+        ops.push(TileOp::Delta {
+            pos,
+            rect,
+            cells: cells_to_wire(&cells),
+        });
+    }
+    ops
+}
+
+fn build_items(
+    known: &mut FxHashSet<EntityId>,
+    interest: &FxHashSet<fallingsand_core::ChunkPos>,
+    views: &[(EntityId, fallingsand_core::ChunkPos, ItemEntityState, bool)],
+) -> ItemDelta {
+    let mut delta = ItemDelta::default();
+    let mut visible: FxHashSet<EntityId> = FxHashSet::default();
+    for (id, chunk, state, has_moved) in views {
+        if !interest.contains(chunk) {
+            continue;
+        }
+        visible.insert(*id);
+        if known.contains(id) {
+            if *has_moved {
+                delta.moved.push(ItemMove {
+                    id: *id,
+                    x: state.x,
+                    y: state.y,
+                });
+            }
+        } else {
+            delta.spawned.push(*state);
+        }
+    }
+    delta.despawned = known
+        .iter()
+        .filter(|id| !visible.contains(id))
+        .copied()
+        .collect();
+    *known = visible;
+    delta
 }
 
 pub fn advance_clock(mut clock: ResMut<crate::WorldClock>) {
     clock.0.advance();
-}
-
-pub fn finish_tick(
-    mut sessions: ResMut<Sessions>,
-    sim: Res<SimWorld>,
-    clock: Res<crate::WorldClock>,
-) {
-    let message = encode_message(&ServerMessage::TickEnd {
-        tick: sim.0.tick(),
-        age: clock.0.age,
-    });
-    for session in &mut sessions.sessions {
-        if matches!(session.state, SessionState::Playing) {
-            session.conn.send(message.clone());
-        }
-    }
 }

@@ -1,8 +1,8 @@
-use crate::net::{ServerMsg, SessionEnded};
+use crate::net::{SessionEnded, TickFrame};
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use fallingsand_core::{CHUNK_AREA, Cell, CellOffset, CellPos, ChunkPos, DirtyRect};
-use fallingsand_protocol::{ServerMessage, cells_from_wire};
+use fallingsand_protocol::{TileOp, cells_from_wire};
 
 pub struct WorldViewPlugin;
 
@@ -46,51 +46,50 @@ fn clear_view(mut view: ResMut<WorldView>) {
     view.server_tick = 0;
 }
 
-fn apply_updates(mut view: ResMut<WorldView>, mut messages: MessageReader<ServerMsg>) {
-    for ServerMsg(message) in messages.read() {
-        match message {
-            ServerMessage::ChunkLoad { pos, cells } => match cells_from_wire(cells) {
-                Ok(decoded) if decoded.len() == CHUNK_AREA => {
-                    let mut buffer = Box::new([Cell::AIR; CHUNK_AREA]);
-                    buffer.copy_from_slice(&decoded);
-                    view.chunks.insert(
-                        *pos,
-                        ViewChunk {
-                            cells: buffer,
-                            dirty: true,
-                            pending: Vec::new(),
-                        },
-                    );
+fn apply_updates(mut view: ResMut<WorldView>, mut frames: MessageReader<TickFrame>) {
+    for TickFrame(tick) in frames.read() {
+        view.server_tick = view.server_tick.max(tick.tick);
+        for op in &tick.tiles {
+            match op {
+                TileOp::Load { pos, cells } => match cells_from_wire(cells) {
+                    Ok(decoded) if decoded.len() == CHUNK_AREA => {
+                        let mut buffer = Box::new([Cell::AIR; CHUNK_AREA]);
+                        buffer.copy_from_slice(&decoded);
+                        view.chunks.insert(
+                            *pos,
+                            ViewChunk {
+                                cells: buffer,
+                                dirty: true,
+                                pending: Vec::new(),
+                            },
+                        );
+                    }
+                    _ => error!("bad chunk load payload for {pos:?}"),
+                },
+                TileOp::Unload { pos } => {
+                    view.chunks.remove(pos);
                 }
-                _ => error!("bad chunk load payload for {pos:?}"),
-            },
-            ServerMessage::ChunkUnload { pos } => {
-                view.chunks.remove(pos);
+                TileOp::Delta { pos, rect, cells } => {
+                    let Some(chunk) = view.chunks.get_mut(pos) else {
+                        continue;
+                    };
+                    if rect.is_empty() {
+                        continue;
+                    }
+                    let Ok(decoded) = cells_from_wire(cells) else {
+                        error!("bad delta payload for {pos:?}");
+                        continue;
+                    };
+                    if decoded.len() != (rect.width() * rect.height()) as usize {
+                        error!("delta size mismatch for {pos:?}");
+                        continue;
+                    }
+                    apply_rect(chunk, *rect, &decoded);
+                    if !chunk.dirty {
+                        chunk.pending.push(*rect);
+                    }
+                }
             }
-            ServerMessage::ChunkDelta { pos, rect, cells } => {
-                let Some(chunk) = view.chunks.get_mut(pos) else {
-                    continue;
-                };
-                if rect.is_empty() {
-                    continue;
-                }
-                let Ok(decoded) = cells_from_wire(cells) else {
-                    error!("bad delta payload for {pos:?}");
-                    continue;
-                };
-                if decoded.len() != (rect.width() * rect.height()) as usize {
-                    error!("delta size mismatch for {pos:?}");
-                    continue;
-                }
-                apply_rect(chunk, *rect, &decoded);
-                if !chunk.dirty {
-                    chunk.pending.push(*rect);
-                }
-            }
-            ServerMessage::TickEnd { tick, .. } => {
-                view.server_tick = view.server_tick.max(*tick);
-            }
-            _ => {}
         }
     }
 }

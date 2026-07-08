@@ -1,7 +1,7 @@
 use crate::camera::WORLD_LAYER;
 use crate::interpolation::Interpolated;
 use crate::inventory::{BrushRadius, InventoryOpen, SelectedSlot};
-use crate::net::{NetSet, ServerMsg, Session, SessionEnded};
+use crate::net::{NetSet, ServerMsg, Session, SessionEnded, TickFrame};
 use crate::{AppState, PauseState};
 use bevy::camera::visibility::RenderLayers;
 use bevy::input::mouse::MouseWheel;
@@ -67,7 +67,7 @@ impl Plugin for PlayerPlugin {
             .insert_resource(Time::<Fixed>::from_hz(TICK_RATE as f64))
             .add_systems(
                 PreUpdate,
-                (track_names, apply_entity_states, apply_self_state)
+                (track_names, apply_players, apply_self_state)
                     .chain()
                     .after(NetSet),
             )
@@ -114,7 +114,12 @@ fn toggle_fly(
     }
 }
 
-fn track_names(mut names: ResMut<PlayerNames>, mut messages: MessageReader<ServerMsg>) {
+fn track_names(
+    mut commands: Commands,
+    mut names: ResMut<PlayerNames>,
+    mut visuals: ResMut<PlayerVisuals>,
+    mut messages: MessageReader<ServerMsg>,
+) {
     for ServerMsg(message) in messages.read() {
         match message {
             ServerMessage::PlayerJoined { player, name } => {
@@ -122,6 +127,9 @@ fn track_names(mut names: ResMut<PlayerNames>, mut messages: MessageReader<Serve
             }
             ServerMessage::PlayerLeft { player } => {
                 names.0.remove(player);
+                if let Some(entity) = visuals.0.remove(player) {
+                    commands.entity(entity).despawn();
+                }
             }
             _ => {}
         }
@@ -138,23 +146,18 @@ fn update_nametags(names: Res<PlayerNames>, mut tags: Query<(&NameTag, &mut Text
 }
 
 #[allow(clippy::too_many_arguments)]
-fn apply_entity_states(
+fn apply_players(
     mut commands: Commands,
     mut visuals: ResMut<PlayerVisuals>,
-    mut messages: MessageReader<ServerMsg>,
+    mut frames: MessageReader<TickFrame>,
     mut query: Query<(&mut Interpolated, &mut Sprite, &mut PlayerVisual)>,
     session: Option<Res<Session>>,
     names: Res<PlayerNames>,
     mut local_state: ResMut<LocalPlayerState>,
 ) {
     let local = session.and_then(|session| session.player);
-    let mut seen: Option<Vec<PlayerId>> = None;
-    for ServerMsg(message) in messages.read() {
-        let ServerMessage::EntityStates { entities } = message else {
-            continue;
-        };
-        seen = Some(entities.iter().map(|state| state.player).collect());
-        for state in entities {
+    for TickFrame(tick) in frames.read() {
+        for state in &tick.players {
             if local == Some(state.player) {
                 local_state.pos = Vec2::new(state.x.to_f32(), state.y.to_f32());
                 local_state.burning = state.burning;
@@ -216,36 +219,21 @@ fn apply_entity_states(
             }
         }
     }
-
-    let Some(seen) = seen else {
-        return;
-    };
-    let stale: Vec<PlayerId> = visuals
-        .0
-        .keys()
-        .filter(|id| !seen.contains(id))
-        .copied()
-        .collect();
-    for id in stale {
-        if let Some(entity) = visuals.0.remove(&id) {
-            commands.entity(entity).despawn();
-        }
-    }
 }
 
 fn apply_self_state(
-    mut messages: MessageReader<ServerMsg>,
+    mut frames: MessageReader<TickFrame>,
     mut mode: ResMut<LocalMode>,
     mut local_state: ResMut<LocalPlayerState>,
 ) {
-    for ServerMsg(message) in messages.read() {
-        if let ServerMessage::SelfState { hp, air, mode: m } = message {
-            if mode.0 != *m {
-                mode.0 = *m;
+    for TickFrame(tick) in frames.read() {
+        if let Some(self_state) = tick.self_state {
+            if mode.0 != self_state.mode {
+                mode.0 = self_state.mode;
             }
-            local_state.hp = *hp;
-            local_state.air = *air;
-            local_state.mode = *m;
+            local_state.hp = self_state.hp;
+            local_state.air = self_state.air;
+            local_state.mode = self_state.mode;
         }
     }
 }

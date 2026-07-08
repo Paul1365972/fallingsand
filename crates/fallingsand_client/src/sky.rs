@@ -1,7 +1,7 @@
 use crate::camera::{
     CameraControl, SkyCamera, VIRTUAL_HEIGHT, VIRTUAL_WIDTH, WorldCamera, WorldTarget,
 };
-use crate::net::{NetSet, ServerMsg, Session};
+use crate::net::{NetSet, Session, TickFrame};
 use crate::player::{PlayerVisual, PlayerVisuals};
 use crate::worldview::WorldView;
 use crate::{AppState, ClientRegistry, GameState};
@@ -14,7 +14,6 @@ use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dPlugin};
 use fallingsand_core::celestial::{MOON_DISC, UMBRA_RADIUS};
 use fallingsand_core::{Calendar, CelestialState, CellPos};
-use fallingsand_protocol::ServerMessage;
 
 pub struct SkyPlugin;
 
@@ -359,12 +358,10 @@ fn setup_sky(
     });
 }
 
-fn sync_time(mut time: ResMut<WorldTime>, mut messages: MessageReader<ServerMsg>) {
-    for ServerMsg(message) in messages.read() {
-        if let ServerMessage::TickEnd { age, .. } = message {
-            time.calendar.age = *age;
-            time.synced = true;
-        }
+fn sync_time(mut time: ResMut<WorldTime>, mut frames: MessageReader<TickFrame>) {
+    for TickFrame(tick) in frames.read() {
+        time.calendar.age = tick.age;
+        time.synced = true;
     }
 }
 
