@@ -17,8 +17,9 @@ use fallingsand_core::{
     Phase, TICK_DT,
 };
 use fallingsand_protocol::{
-    ChunkDebugRects, ClientMessage, EntityState, GameMode, ItemEntityState, PROTOCOL_VERSION,
-    PlayerId, ServerMessage, cells_to_wire, decode_message, encode_message,
+    ChunkDebugRects, ClientMessage, EntityId, EntityState, GameMode, ItemEntityState, ItemMove,
+    MAX_BRUSH, PROTOCOL_VERSION, PlayerId, ServerMessage, cells_to_wire, decode_message,
+    encode_message,
 };
 use fallingsand_sim::EntityBox;
 use fallingsand_sim::physics::{
@@ -195,7 +196,7 @@ pub fn drain_network(
                             existing.id = player;
                             existing.name = name.clone();
                             existing.input = Default::default();
-                            inventory.dirty = true;
+                            inventory.resync();
                             takeover = Some((
                                 entity,
                                 CellPos::new(body.0.x.floor_cell(), body.0.y.floor_cell()),
@@ -257,19 +258,18 @@ pub fn drain_network(
                                             .unwrap_or(0.0)
                                             .max(0.0),
                                     },
-                                    Inventory {
-                                        inner: player_slots_from_record(
+                                    Inventory::with(
+                                        player_slots_from_record(
                                             &item_reg.0,
                                             record.map(|r| r.inventory.as_slice()).unwrap_or(&[]),
                                         ),
-                                        cursor: record.and_then(|r| {
+                                        record.and_then(|r| {
                                             crate::persistence::stack_from_record(
                                                 &item_reg.0,
                                                 &r.cursor,
                                             )
                                         }),
-                                        dirty: true,
-                                    },
+                                    ),
                                 ))
                                 .id();
                             (entity, spawn)
@@ -431,8 +431,6 @@ pub fn drain_network(
     }
 }
 
-pub const MAX_BRUSH: i32 = 6;
-
 #[allow(clippy::too_many_arguments)]
 pub fn apply_player_inputs(
     mut commands: Commands,
@@ -448,7 +446,7 @@ pub fn apply_player_inputs(
     for (player, body, mode, mut dig, mut inventory) in &mut query {
         let input = &player.input;
         let survival = mode.0 == GameMode::Survival;
-        let radius = (input.brush_radius as i32).clamp(0, MAX_BRUSH);
+        let radius = (input.brush_radius as i32).clamp(0, MAX_BRUSH as i32);
         if !input.primary {
             dig.budget = 0.0;
         }
@@ -485,6 +483,7 @@ pub fn apply_player_inputs(
                         0.0,
                         40.0,
                         0,
+                        0,
                     );
                 }
             } else {
@@ -500,7 +499,8 @@ pub fn apply_player_inputs(
             }
         } else if input.secondary {
             let slot = input.selected_slot as usize;
-            if let Some(stack) = inventory.inner.get(slot)
+            if slot < fallingsand_core::HOTBAR_SLOTS
+                && let Some(stack) = inventory.inner.get(slot)
                 && let Some(material) = reg.try_get(stack.item).and_then(|def| def.place)
             {
                 let mut placed = 0u32;
@@ -542,11 +542,11 @@ pub fn apply_player_inputs(
 }
 
 fn consume_slot(inventory: &mut Inventory, slot: usize, amount: u32) {
-    if let Some(stack) = inventory.inner.slots.get_mut(slot).and_then(|s| s.as_mut()) {
-        stack.count = stack.count.saturating_sub(amount);
-        if stack.count == 0 {
-            inventory.inner.slots[slot] = None;
-        }
+    if let Some(stack) = inventory.inner.get(slot) {
+        let count = stack.count.saturating_sub(amount);
+        inventory
+            .inner
+            .set(slot, Some(ItemStack::new(stack.item, count)));
     }
     inventory.dirty = true;
 }
@@ -777,35 +777,31 @@ pub fn replicate(
     )>,
     dropped: Query<(&DroppedItem, &ItemBody)>,
 ) {
-    let item_states: Vec<(fallingsand_core::ChunkPos, ItemEntityState)> = dropped
+    let item_views: Vec<(EntityId, fallingsand_core::ChunkPos, ItemEntityState, bool)> = dropped
         .iter()
         .map(|(item, body)| {
-            let chunk = CellPos::new(body.0.x.floor_cell(), body.0.y.floor_cell()).chunk();
             (
-                chunk,
+                item.id,
+                body.0.cell().chunk(),
                 ItemEntityState {
                     id: item.id,
                     x: body.0.x,
                     y: body.0.y,
                     stack: item.stack,
                 },
+                item.moved,
             )
         })
         .collect();
     let entities: Vec<EntityState> = query
         .iter()
-        .map(
-            |(player, body, control, health, mode, burning, air)| EntityState {
-                player: player.id,
-                x: body.0.x,
-                y: body.0.y,
-                hp: health.hp,
-                ducking: control.0.ducking(),
-                mode: mode.0,
-                burning: burning.active(),
-                air: air.secs,
-            },
-        )
+        .map(|(player, body, control, _, _, burning, _)| EntityState {
+            player: player.id,
+            x: body.0.x,
+            y: body.0.y,
+            ducking: control.0.ducking(),
+            burning: burning.active(),
+        })
         .collect();
     let entity_message = encode_message(&ServerMessage::EntityStates {
         entities: entities.clone(),
@@ -820,11 +816,11 @@ pub fn replicate(
         let Some(entity) = session.entity else {
             continue;
         };
-        let Some((_, body, ..)) = query.get(entity).ok() else {
+        let Ok((_, body, _, health, mode, _, air)) = query.get(entity) else {
             continue;
         };
 
-        let center = CellPos::new(body.0.x.floor_cell(), body.0.y.floor_cell()).chunk();
+        let center = body.0.cell().chunk();
         let mut interest = FxHashSet::default();
         for dy in -INTEREST_RADIUS_Y..=INTEREST_RADIUS_Y {
             for dx in -INTEREST_RADIUS_X..=INTEREST_RADIUS_X {
@@ -900,14 +896,47 @@ pub fn replicate(
         sent_bytes += entity_message.len() as u64;
         session.conn.send(entity_message.clone());
 
-        let visible: Vec<ItemEntityState> = item_states
+        let self_message = encode_message(&ServerMessage::SelfState {
+            hp: health.hp,
+            air: air.secs,
+            mode: mode.0,
+        });
+        sent_bytes += self_message.len() as u64;
+        session.conn.send(self_message);
+
+        let mut spawned: Vec<ItemEntityState> = Vec::new();
+        let mut moved: Vec<ItemMove> = Vec::new();
+        let mut visible_ids: FxHashSet<EntityId> = FxHashSet::default();
+        for (id, chunk, state, has_moved) in &item_views {
+            if !interest.contains(chunk) {
+                continue;
+            }
+            visible_ids.insert(*id);
+            if session.known_items.contains(id) {
+                if *has_moved {
+                    moved.push(ItemMove {
+                        id: *id,
+                        x: state.x,
+                        y: state.y,
+                    });
+                }
+            } else {
+                spawned.push(*state);
+            }
+        }
+        let despawned: Vec<EntityId> = session
+            .known_items
             .iter()
-            .filter(|(chunk, _)| interest.contains(chunk))
-            .map(|(_, state)| *state)
+            .filter(|id| !visible_ids.contains(id))
+            .copied()
             .collect();
-        if !visible.is_empty() || session.items_visible {
-            session.items_visible = !visible.is_empty();
-            let item_message = encode_message(&ServerMessage::ItemEntities { items: visible });
+        session.known_items = visible_ids;
+        if !spawned.is_empty() || !moved.is_empty() || !despawned.is_empty() {
+            let item_message = encode_message(&ServerMessage::ItemDelta {
+                spawned,
+                moved,
+                despawned,
+            });
             sent_bytes += item_message.len() as u64;
             session.conn.send(item_message);
         }

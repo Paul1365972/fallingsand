@@ -4,18 +4,20 @@ use crate::systems::{Mode, PhysicsBody};
 use crate::{Registry, SimWorld};
 use bevy_ecs::prelude::*;
 use fallingsand_core::{
-    CellPos, ChunkPos, Fixed, GRAVITY, Inventory as CoreInventory, ItemId, ItemRegistry, ItemStack,
+    ChunkPos, Fixed, GRAVITY, Inventory as CoreInventory, ItemId, ItemRegistry, ItemStack,
     RecipeRegistry, RegionPos, TICK_DT,
 };
 use fallingsand_protocol::{EntityId, GameMode, ServerMessage, SlotAction, encode_message};
 use fallingsand_sim::physics::{Body, body_submersion, move_body};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 
 pub const ITEM_HALF: Fixed = Fixed::from_f32(1.0);
 const ITEM_MAX_FALL: f32 = 160.0;
-const ITEM_GROUND_FRICTION: f32 = 0.72;
-const ITEM_AIR_FRICTION: f32 = 0.02;
+const ITEM_GROUND_KEEP_PER_SEC: f32 = 1.0e-8;
+const ITEM_AIR_KEEP_PER_SEC: f32 = 0.3;
+const ITEM_SLEEP_SECS: f32 = 0.3;
+const ITEM_REST_SPEED: f32 = 1.0;
 const GRAB_RANGE_SQ: f32 = 34.0 * 34.0;
 const PICKUP_RANGE_SQ: f32 = 9.0 * 9.0;
 const MAGNET_ACCEL: f32 = 620.0;
@@ -47,15 +49,30 @@ pub struct Inventory {
     pub inner: CoreInventory,
     pub cursor: Option<ItemStack>,
     pub dirty: bool,
+    synced: bool,
+    last_slots: Vec<Option<ItemStack>>,
+    last_cursor: Option<ItemStack>,
 }
 
 impl Inventory {
     pub fn new(inner: CoreInventory) -> Self {
+        Self::with(inner, None)
+    }
+
+    pub fn with(inner: CoreInventory, cursor: Option<ItemStack>) -> Self {
         Self {
             inner,
-            cursor: None,
+            cursor,
             dirty: true,
+            synced: false,
+            last_slots: Vec::new(),
+            last_cursor: None,
         }
+    }
+
+    pub fn resync(&mut self) {
+        self.dirty = true;
+        self.synced = false;
     }
 }
 
@@ -71,10 +88,47 @@ pub struct DroppedItem {
     pub id: EntityId,
     pub age_ticks: u64,
     pub pickup_delay: u16,
+    pub rest_secs: f32,
+    pub asleep: bool,
+    pub moved: bool,
 }
 
 #[derive(Component)]
 pub struct ItemBody(pub Body);
+
+fn dropped_record(
+    dropped: &DroppedItem,
+    body: &ItemBody,
+    reg: &ItemRegistry,
+) -> Option<DroppedRecord> {
+    let def = reg.try_get(dropped.stack.item)?;
+    Some(DroppedRecord {
+        x: body.0.x,
+        y: body.0.y,
+        vx: body.0.vx.to_f32(),
+        vy: body.0.vy.to_f32(),
+        item: def.name.clone(),
+        count: dropped.stack.count,
+        age_ticks: dropped.age_ticks,
+        pickup_delay: dropped.pickup_delay,
+    })
+}
+
+pub fn bucket_dropped<'a>(
+    items: impl Iterator<Item = (&'a DroppedItem, &'a ItemBody)>,
+    reg: &ItemRegistry,
+) -> FxHashMap<RegionPos, RegionExtras> {
+    let mut map: FxHashMap<RegionPos, RegionExtras> = FxHashMap::default();
+    for (dropped, body) in items {
+        if let Some(record) = dropped_record(dropped, body, reg) {
+            map.entry(body.0.cell().region())
+                .or_default()
+                .items
+                .push(record);
+        }
+    }
+    map
+}
 
 pub fn gather_region_extras(
     pos: RegionPos,
@@ -84,33 +138,34 @@ pub fn gather_region_extras(
     let mut extras = RegionExtras::default();
     let mut entities = Vec::new();
     for (entity, dropped, body) in items.iter() {
-        let cell = CellPos::new(body.0.x.floor_cell(), body.0.y.floor_cell());
-        if cell.region() != pos {
+        if body.0.cell().region() != pos {
             continue;
         }
-        let Some(def) = reg.try_get(dropped.stack.item) else {
-            continue;
-        };
-        extras.items.push(DroppedRecord {
-            x: body.0.x,
-            y: body.0.y,
-            vx: body.0.vx.to_f32(),
-            vy: body.0.vy.to_f32(),
-            item: def.name.clone(),
-            count: dropped.stack.count,
-        });
-        entities.push(entity);
+        if let Some(record) = dropped_record(dropped, body, reg) {
+            extras.items.push(record);
+            entities.push(entity);
+        }
     }
     (extras, entities)
 }
 
-pub fn region_has_entities(
-    pos: RegionPos,
-    items: &Query<(Entity, &DroppedItem, &ItemBody)>,
-) -> bool {
-    items
-        .iter()
-        .any(|(_, _, b)| CellPos::new(b.0.x.floor_cell(), b.0.y.floor_cell()).region() == pos)
+pub fn extras_sig(extras: &RegionExtras) -> u64 {
+    let mut sig = 0u64;
+    for item in &extras.items {
+        let mut h = 0xcbf2_9ce4_8422_2325u64;
+        for byte in item.item.bytes() {
+            h = (h ^ byte as u64).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        for field in [
+            item.count as u64,
+            item.x.raw() as u32 as u64,
+            item.y.raw() as u32 as u64,
+        ] {
+            h = (h ^ field).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        sig = sig.wrapping_add(h);
+    }
+    sig
 }
 
 pub fn spawn_region_extras(
@@ -120,8 +175,8 @@ pub fn spawn_region_extras(
     extras: &RegionExtras,
 ) {
     for record in &extras.items {
-        if let Some(item) = reg.id_of(&record.item) {
-            spawn_dropped_item(
+        match reg.id_of(&record.item) {
+            Some(item) => spawn_dropped_item(
                 commands,
                 next_id,
                 ItemStack::new(item, record.count),
@@ -129,8 +184,10 @@ pub fn spawn_region_extras(
                 record.y,
                 record.vx,
                 record.vy,
-                0,
-            );
+                record.age_ticks,
+                record.pickup_delay,
+            ),
+            None => tracing::warn!("dropping persisted item of unknown kind {:?}", record.item),
         }
     }
 }
@@ -144,6 +201,7 @@ pub fn spawn_dropped_item(
     y: Fixed,
     vx: f32,
     vy: f32,
+    age_ticks: u64,
     pickup_delay: u16,
 ) {
     let id = next_id.alloc();
@@ -154,8 +212,11 @@ pub fn spawn_dropped_item(
         DroppedItem {
             stack,
             id,
-            age_ticks: 0,
+            age_ticks,
             pickup_delay,
+            rest_secs: 0.0,
+            asleep: false,
+            moved: true,
         },
         ItemBody(body),
     ));
@@ -202,6 +263,7 @@ fn throw_item(
         y,
         dir * 48.0,
         70.0,
+        0,
         DROP_PICKUP_DELAY,
     );
 }
@@ -264,12 +326,12 @@ pub fn apply_slot_actions(
                     pinv.dirty = true;
                 }
             }
-            SlotAction::Craft { recipe, times } => {
+            SlotAction::Craft { recipe, all } => {
                 let Some(recipe) = recipes.0.get(recipe as usize).cloned() else {
                     continue;
                 };
                 let mut crafted = false;
-                for _ in 0..times.max(1) {
+                loop {
                     if !recipes.0.can_craft(&recipe, &pinv.inner) {
                         break;
                     }
@@ -281,6 +343,9 @@ pub fn apply_slot_actions(
                         throw_item(&mut commands, &mut next_id, overflow, px, py, pvx);
                     }
                     crafted = true;
+                    if !all {
+                        break;
+                    }
                 }
                 if crafted {
                     pinv.dirty = true;
@@ -315,11 +380,13 @@ pub fn step_items(
         .collect();
     order.sort_unstable_by_key(|&(_, id)| id.0);
 
-    let mut removed: Vec<Entity> = Vec::new();
-    merge_items(&order, &mut items, reg, &mut removed);
-    cap_items(&order, &items, &removed)
-        .into_iter()
-        .for_each(|e| removed.push(e));
+    let mut removed: FxHashSet<Entity> = FxHashSet::default();
+    if items.iter().any(|(_, dropped, _)| !dropped.asleep) {
+        merge_items(&order, &mut items, reg, &mut removed);
+        for entity in cap_items(&order, &items, &removed) {
+            removed.insert(entity);
+        }
+    }
 
     let player_positions: Vec<(Entity, f32, f32)> = players
         .iter()
@@ -328,6 +395,8 @@ pub fn step_items(
 
     let gravity_step = Fixed::from_f32(GRAVITY * TICK_DT);
     let max_fall = Fixed::from_f32(ITEM_MAX_FALL);
+    let ground_keep = Fixed::from_f32(ITEM_GROUND_KEEP_PER_SEC.powf(TICK_DT));
+    let air_keep = Fixed::from_f32(ITEM_AIR_KEEP_PER_SEC.powf(TICK_DT));
     for &(entity, _) in &order {
         if removed.contains(&entity) {
             continue;
@@ -335,8 +404,6 @@ pub fn step_items(
         let Ok((_, mut dropped, mut body)) = items.get_mut(entity) else {
             continue;
         };
-        dropped.age_ticks += 1;
-        dropped.pickup_delay = dropped.pickup_delay.saturating_sub(1);
 
         let ix = body.0.x.to_f32();
         let iy = body.0.y.to_f32();
@@ -362,6 +429,14 @@ pub fn step_items(
             }
         }
 
+        if dropped.asleep && nearest.is_none() {
+            dropped.moved = false;
+            continue;
+        }
+        dropped.asleep = false;
+        dropped.age_ticks += 1;
+        dropped.pickup_delay = dropped.pickup_delay.saturating_sub(1);
+
         if let Some((pe, dx, dy, dist_sq)) = nearest
             && dropped.pickup_delay == 0
         {
@@ -372,7 +447,7 @@ pub fn step_items(
                     match leftover {
                         Some(rest) => dropped.stack = rest,
                         None => {
-                            removed.push(entity);
+                            removed.insert(entity);
                             continue;
                         }
                     }
@@ -391,12 +466,26 @@ pub fn step_items(
         }
         let submersion = body_submersion(&sim.0, &registry.0, &body.0).fraction;
         move_body(&sim.0, &registry.0, &mut body.0, submersion);
-        let friction = if body.0.on_ground {
-            ITEM_GROUND_FRICTION
+        let keep = if body.0.on_ground {
+            ground_keep
         } else {
-            1.0 - ITEM_AIR_FRICTION
+            air_keep
         };
-        body.0.vx = body.0.vx.mul(Fixed::from_f32(friction));
+        body.0.vx = body.0.vx.mul(keep);
+
+        let at_rest = body.0.on_ground
+            && nearest.is_none()
+            && body.0.vx.to_f32().abs() < ITEM_REST_SPEED
+            && body.0.vy.to_f32().abs() < ITEM_REST_SPEED;
+        if at_rest {
+            dropped.rest_secs += TICK_DT;
+            if dropped.rest_secs >= ITEM_SLEEP_SECS {
+                dropped.asleep = true;
+            }
+        } else {
+            dropped.rest_secs = 0.0;
+        }
+        dropped.moved = true;
     }
 
     for entity in removed {
@@ -408,13 +497,15 @@ fn merge_items(
     order: &[(Entity, EntityId)],
     items: &mut Query<(Entity, &mut DroppedItem, &mut ItemBody)>,
     reg: &ItemRegistry,
-    removed: &mut Vec<Entity>,
+    removed: &mut FxHashSet<Entity>,
 ) {
     let mut buckets: FxHashMap<ChunkPos, Vec<Entity>> = FxHashMap::default();
     for &(entity, _) in order {
         if let Ok((_, _, body)) = items.get(entity) {
-            let chunk = CellPos::new(body.0.x.floor_cell(), body.0.y.floor_cell()).chunk();
-            buckets.entry(chunk).or_default().push(entity);
+            buckets
+                .entry(body.0.cell().chunk())
+                .or_default()
+                .push(entity);
         }
     }
     for bucket in buckets.values() {
@@ -450,7 +541,7 @@ fn merge_items(
                 if let Ok((_, mut b_drop, _)) = items.get_mut(b) {
                     b_drop.stack.count -= moved;
                     if b_drop.stack.count == 0 {
-                        removed.push(b);
+                        removed.insert(b);
                     }
                 }
             }
@@ -464,7 +555,7 @@ fn merge_items(
 fn cap_items(
     order: &[(Entity, EntityId)],
     items: &Query<(Entity, &mut DroppedItem, &mut ItemBody)>,
-    removed: &[Entity],
+    removed: &FxHashSet<Entity>,
 ) -> Vec<Entity> {
     let mut buckets: FxHashMap<ChunkPos, Vec<Entity>> = FxHashMap::default();
     for &(entity, _) in order {
@@ -472,8 +563,10 @@ fn cap_items(
             continue;
         }
         if let Ok((_, _, body)) = items.get(entity) {
-            let chunk = CellPos::new(body.0.x.floor_cell(), body.0.y.floor_cell()).chunk();
-            buckets.entry(chunk).or_default().push(entity);
+            buckets
+                .entry(body.0.cell().chunk())
+                .or_default()
+                .push(entity);
         }
     }
     let mut extra = Vec::new();
@@ -504,9 +597,36 @@ pub fn sync_inventories(mut sessions: ResMut<Sessions>, mut query: Query<&mut In
             continue;
         }
         inventory.dirty = false;
-        session.conn.send(encode_message(&ServerMessage::Inventory {
-            slots: inventory.inner.slots.clone(),
-            cursor: inventory.cursor,
-        }));
+        if !inventory.synced {
+            inventory.synced = true;
+            inventory.last_slots = inventory.inner.slots.clone();
+            inventory.last_cursor = inventory.cursor;
+            session.conn.send(encode_message(&ServerMessage::Inventory {
+                slots: inventory.inner.slots.clone(),
+                cursor: inventory.cursor,
+            }));
+            continue;
+        }
+        let changes: Vec<(u16, Option<ItemStack>)> = inventory
+            .inner
+            .slots
+            .iter()
+            .zip(inventory.last_slots.iter())
+            .enumerate()
+            .filter_map(|(i, (cur, last))| (cur != last).then_some((i as u16, *cur)))
+            .collect();
+        let cursor_changed = inventory.cursor != inventory.last_cursor;
+        if changes.is_empty() && !cursor_changed {
+            continue;
+        }
+        inventory.last_slots = inventory.inner.slots.clone();
+        inventory.last_cursor = inventory.cursor;
+        let cursor = inventory.cursor;
+        session
+            .conn
+            .send(encode_message(&ServerMessage::InventoryDelta {
+                slots: changes,
+                cursor,
+            }));
     }
 }

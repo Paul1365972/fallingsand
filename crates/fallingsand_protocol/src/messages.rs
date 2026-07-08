@@ -55,6 +55,8 @@ impl GameMode {
     }
 }
 
+pub const MAX_BRUSH: u8 = 6;
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PlayerInput {
     pub move_x: i8,
@@ -91,7 +93,7 @@ pub enum SlotAction {
     QuickMove { slot: u16 },
     DropSlot { slot: u16, all: bool },
     DropCursor { all: bool },
-    Craft { recipe: u16, times: u8 },
+    Craft { recipe: u16, all: bool },
     CreativeGrab { item: ItemId },
 }
 
@@ -104,15 +106,19 @@ pub struct ItemEntityState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ItemMove {
+    pub id: EntityId,
+    pub x: Fixed,
+    pub y: Fixed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct EntityState {
     pub player: PlayerId,
     pub x: Fixed,
     pub y: Fixed,
-    pub hp: f32,
     pub ducking: bool,
-    pub mode: GameMode,
     pub burning: bool,
-    pub air: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -168,6 +174,11 @@ pub enum ServerMessage {
     EntityStates {
         entities: Vec<EntityState>,
     },
+    SelfState {
+        hp: f32,
+        air: f32,
+        mode: GameMode,
+    },
     PlayerJoined {
         player: PlayerId,
         name: String,
@@ -187,8 +198,14 @@ pub enum ServerMessage {
         slots: Vec<Option<ItemStack>>,
         cursor: Option<ItemStack>,
     },
-    ItemEntities {
-        items: Vec<ItemEntityState>,
+    InventoryDelta {
+        slots: Vec<(u16, Option<ItemStack>)>,
+        cursor: Option<ItemStack>,
+    },
+    ItemDelta {
+        spawned: Vec<ItemEntityState>,
+        moved: Vec<ItemMove>,
+        despawned: Vec<EntityId>,
     },
     DebugRects {
         chunks: Vec<ChunkDebugRects>,

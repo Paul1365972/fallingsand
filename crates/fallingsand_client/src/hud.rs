@@ -1,5 +1,5 @@
 use crate::inventory::{LocalInventory, SelectedSlot, item_color};
-use crate::net::{NetSet, ServerMsg, Session};
+use crate::net::{NetSet, ServerMsg};
 use crate::player::LocalMode;
 use crate::{AppState, ClientItemRegistry, ClientRegistry, GameState};
 use bevy::prelude::*;
@@ -208,22 +208,17 @@ fn despawn_hud(
 
 fn track_vitals(
     mut messages: MessageReader<ServerMsg>,
-    session: Option<Res<Session>>,
     mut health: ResMut<LocalHealth>,
     mut air: ResMut<LocalAir>,
     mut flash: ResMut<FlashTimer>,
 ) {
-    let local = session.and_then(|session| session.player);
     for ServerMsg(message) in messages.read() {
-        if let ServerMessage::EntityStates { entities } = message
-            && let Some(id) = local
-            && let Some(state) = entities.iter().find(|state| state.player == id)
-        {
-            if state.hp < health.0 - 0.01 && state.hp > 0.0 {
+        if let ServerMessage::SelfState { hp, air: secs, .. } = message {
+            if *hp < health.0 - 0.01 && *hp > 0.0 {
                 flash.0 = FLASH_SECS;
             }
-            health.0 = state.hp;
-            air.0 = state.air;
+            health.0 = *hp;
+            air.0 = *secs;
         }
     }
 }

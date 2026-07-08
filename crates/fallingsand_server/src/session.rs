@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use fallingsand_core::ChunkPos;
 use fallingsand_net::Connection;
-use fallingsand_protocol::{PlayerId, PlayerInput, PlayerUuid};
+use fallingsand_protocol::{EntityId, PlayerId, PlayerInput, PlayerUuid};
 use rustc_hash::FxHashSet;
 
 pub enum SessionState {
@@ -16,9 +16,9 @@ pub struct Session {
     pub player: Option<PlayerId>,
     pub uuid: Option<PlayerUuid>,
     pub known_chunks: FxHashSet<ChunkPos>,
+    pub known_items: FxHashSet<EntityId>,
     pub last_chat_tick: u64,
     pub debug: bool,
-    pub items_visible: bool,
 }
 
 impl Session {
@@ -30,9 +30,9 @@ impl Session {
             player: None,
             uuid: None,
             known_chunks: FxHashSet::default(),
+            known_items: FxHashSet::default(),
             last_chat_tick: 0,
             debug: false,
-            items_visible: false,
         }
     }
 }

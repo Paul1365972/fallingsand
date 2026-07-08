@@ -22,26 +22,31 @@ Ops: `insert_first_fit` (fill matches then empties, returns overflow), `left_cli
 ## Dig / place (server `systems.rs`)
 
 - Selected hotbar slot is `PlayerInput.selected_slot`; brush size is `PlayerInput.brush_radius`
-  (0..=6, `[`/`]` or `-`/`=`; scroll cycles the hotbar).
+  (0..=6, `[`/`]` or `-`/`=`; scroll cycles the hotbar). The server clamps `selected_slot` to the
+  hotbar and `brush_radius` to `MAX_BRUSH` before use — slot eligibility is server-authoritative.
 - Survival dig → `item_for_material` into the inventory; overflow spawns a dropped item at the cell.
 - Place reads the selected slot's `place` material and stamps it across the brush (survival decrements
   per cell).
 
 ## Slot actions (`ClientMessage::Slot(SlotAction)` → `apply_slot_actions`)
 
-Server-authoritative: `LeftClick/RightClick` (cursor), `QuickMove` (shift; hotbar↔main),
-`DropSlot`/`DropCursor` (throw into world), `Craft { recipe, times }`, `CreativeGrab` (creative:
-infinite stack onto cursor). Inventory syncs via `ServerMessage::Inventory { slots, cursor }` when
-dirty.
+Server-authoritative and intent-based — the client resolves its keybinds to intents, no raw modifiers
+cross the wire: `LeftClick`/`RightClick` (cursor), `QuickMove` (hotbar↔main), `DropSlot`/`DropCursor`
+(throw into world), `Craft { recipe, all }` (server crafts once, or repeatedly until inputs run out),
+`CreativeGrab` (creative: infinite stack onto cursor). The server holds the cursor and re-validates
+every action against authoritative state. Inventory syncs as a full `ServerMessage::Inventory { slots,
+cursor }` on join/takeover, then per-slot `InventoryDelta { slots, cursor }` diffs while dirty.
 
 ## Dropped items (Terraria-style)
 
-`DroppedItem { stack }` + `ItemBody(Body)` — small AABB reusing `move_body`. `step_items`: gravity +
-grid sweep + ground friction; same-item merge within a chunk; magnetic pull toward a nearby player with
+`DroppedItem` + `ItemBody(Body)` — small AABB reusing `move_body`. `step_items`: gravity + grid sweep +
+seconds-based ground/air drag; same-item merge within a chunk; magnetic pull toward a nearby player with
 room, absorbed within pickup range (thrown items have a short pickup delay); per-chunk cap bounds count.
-Client renders a swatch sprite that bobs and interpolates. Replicated interest-filtered as
-`ServerMessage::ItemEntities`, sent only when a viewer has items in interest (plus one clearing
-message on the non-empty→empty edge, so an idle world sends nothing); persisted in the region blob.
+Items **sleep** once settled on the ground with no player in grab range — skipping physics, merge, and
+replication until a player nears — so a resting pile costs ~nothing. Client renders a swatch sprite that
+bobs and interpolates. Replicated as interest-filtered `ServerMessage::ItemDelta { spawned, moved,
+despawned }` against a per-session known-item set: only awake (moving) items send positions, so an idle
+world sends nothing; persisted in the owning region blob.
 
 ## Client UI
 
@@ -52,6 +57,9 @@ slots 0..9. World input is suppressed while the overlay (or chat) is open.
 
 ## Persistence
 
-`WORLD_FORMAT_VERSION = 9`, `REGION_FORMAT_VERSION = 5` (no migrations). `PlayerRecord` stores per-slot
-`(item_name, count)` + cursor. Region blobs append `RegionExtras { items }` by item name;
-re-spawned on region load, gathered on unload/autosave.
+`WORLD_FORMAT_VERSION = 10`, `REGION_FORMAT_VERSION = 6` (no migrations). `PlayerRecord` stores per-slot
+`(item_name, count)` + cursor. Region blobs append `RegionExtras { items }` (item name, position,
+velocity, age, pickup delay); re-spawned on region load, gathered on unload/autosave. Each region keeps
+a signature of its persisted items, so it re-saves exactly when its item set changed — clearing a stale
+blob when items are picked up or drift across a boundary, and skipping idle item-bearing regions. This
+closes the pickup/boundary dupe and keeps conservation of mass across save/reload.

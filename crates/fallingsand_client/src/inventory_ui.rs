@@ -443,6 +443,7 @@ fn handle_clicks(
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     open: Res<InventoryOpen>,
+    inventory: Res<LocalInventory>,
     slots: Query<(&UiSlot, &Interaction)>,
     drop_zone: Query<&Interaction, With<DropZone>>,
     session: Option<ResMut<Session>>,
@@ -481,10 +482,7 @@ fn handle_clicks(
                 if !left {
                     return;
                 }
-                SlotAction::Craft {
-                    recipe,
-                    times: if shift { 10 } else { 1 },
-                }
+                SlotAction::Craft { recipe, all: shift }
             }
             SlotRegion::Palette(item) => {
                 if !left {
@@ -500,7 +498,7 @@ fn handle_clicks(
     let on_backdrop = drop_zone
         .iter()
         .any(|interaction| !matches!(interaction, Interaction::None));
-    if on_backdrop {
+    if on_backdrop && inventory.cursor.is_some() {
         session.send(&ClientMessage::Slot(SlotAction::DropCursor { all: left }));
     }
 }

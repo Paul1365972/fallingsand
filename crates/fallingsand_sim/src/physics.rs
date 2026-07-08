@@ -62,6 +62,10 @@ impl Body {
             on_ground: false,
         }
     }
+
+    pub fn cell(&self) -> CellPos {
+        CellPos::new(self.x.floor_cell(), self.y.floor_cell())
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]

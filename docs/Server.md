@@ -10,7 +10,7 @@
 4. Step CA (4 phases, rayon) + deferred world edits
 5. Step physics (entities, then dropped-item `step_items`, then the serial bodies pass: damage → island registration → dynamics + re-stamp → sleep)
 6. Game logic (health, hazards, dig/place, slot actions + crafting, inventory sync)
-7. Snapshot dirty state → replicate (chunks, players, interest-filtered item entities)
+7. Snapshot dirty state → replicate (chunks, public player pose + per-recipient self-state, interest-filtered item deltas)
 8. Periodic persistence flush + autosave
 
 Budget ~16 ms/tick, sim ≤8 ms; sleeping is what keeps ~2000 active chunks inside it.
@@ -25,4 +25,4 @@ redb, server-side only: `regions` (z-order → lz4 blob, versioned), `players`, 
 
 - Pixel bodies persist as their grid cells (not separately); unload settles them (motion lost), load strips leftover flags — a crash degrades in-flight bodies to plain terrain.
 - Each chunk saves a **resume rect** (union of change + keep-alive) restored as a keep-alive on load, so in-flight processes continue after reload at zero replication cost.
-- Dropped items ride the owning region blob (`RegionExtras`, by item name); re-spawned on region load, gathered on unload/autosave. Player inventories are per-slot in the player record. See [Inventory.md](Inventory.md).
+- Dropped items ride the owning region blob (`RegionExtras`); re-spawned on region load, gathered on unload/autosave. A per-region item signature gates re-saves so a region is rewritten exactly when its item set changed (clearing stale blobs on pickup/boundary drift, skipping idle piles). Player inventories are per-slot in the player record. See [Inventory.md](Inventory.md).

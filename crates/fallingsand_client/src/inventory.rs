@@ -76,9 +76,22 @@ pub fn item_color(item_reg: &ItemRegistry, materials: &MaterialRegistry, item: I
 
 fn track_inventory(mut inventory: ResMut<LocalInventory>, mut messages: MessageReader<ServerMsg>) {
     for ServerMsg(message) in messages.read() {
-        if let ServerMessage::Inventory { slots, cursor } = message {
-            inventory.slots = slots.clone();
-            inventory.cursor = *cursor;
+        match message {
+            ServerMessage::Inventory { slots, cursor } => {
+                inventory.slots = slots.clone();
+                inventory.cursor = *cursor;
+            }
+            ServerMessage::InventoryDelta { slots, cursor } => {
+                for &(index, stack) in slots {
+                    let index = index as usize;
+                    if index >= inventory.slots.len() {
+                        inventory.slots.resize(index + 1, None);
+                    }
+                    inventory.slots[index] = stack;
+                }
+                inventory.cursor = *cursor;
+            }
+            _ => {}
         }
     }
 }
@@ -91,54 +104,53 @@ fn track_items(
     mut messages: MessageReader<ServerMsg>,
     mut query: Query<(&mut Interpolated, &mut Sprite)>,
 ) {
-    let mut latest: Option<&Vec<fallingsand_protocol::ItemEntityState>> = None;
     for ServerMsg(message) in messages.read() {
-        if let ServerMessage::ItemEntities { items } = message {
-            latest = Some(items);
+        let ServerMessage::ItemDelta {
+            spawned,
+            moved,
+            despawned,
+        } = message
+        else {
+            continue;
+        };
+        for state in spawned {
+            let target = Vec2::new(state.x.to_f32(), state.y.to_f32());
+            let color = item_color(&item_reg.0, &registry.0, state.stack.item);
+            if let Some(&entity) = visuals.0.get(&state.id) {
+                if let Ok((mut interp, mut sprite)) = query.get_mut(entity) {
+                    interp.record(target, 0.0, true);
+                    sprite.color = Color::srgba_u8(color[0], color[1], color[2], color[3]);
+                }
+            } else {
+                let phase = (state.id.0 as f32 * 1.37) % (std::f32::consts::TAU);
+                let entity = commands
+                    .spawn((
+                        DroppedItemVisual { bob_phase: phase },
+                        Interpolated::snapped(target, 0.0),
+                        Sprite::from_color(
+                            Color::srgba_u8(color[0], color[1], color[2], color[3]),
+                            Vec2::splat(ITEM_SIZE),
+                        ),
+                        Transform::from_xyz(target.x, target.y, 8.0),
+                        RenderLayers::layer(WORLD_LAYER),
+                    ))
+                    .id();
+                visuals.0.insert(state.id, entity);
+            }
         }
-    }
-    let Some(items) = latest else {
-        return;
-    };
-
-    let mut seen: Vec<EntityId> = Vec::with_capacity(items.len());
-    for state in items {
-        seen.push(state.id);
-        let target = Vec2::new(state.x.to_f32(), state.y.to_f32());
-        let color = item_color(&item_reg.0, &registry.0, state.stack.item);
-        if let Some(&entity) = visuals.0.get(&state.id) {
-            if let Ok((mut interp, mut sprite)) = query.get_mut(entity) {
+        for mv in moved {
+            if let Some(&entity) = visuals.0.get(&mv.id)
+                && let Ok((mut interp, _)) = query.get_mut(entity)
+            {
+                let target = Vec2::new(mv.x.to_f32(), mv.y.to_f32());
                 let snap = interp.target_position().distance_squared(target) > 64.0 * 64.0;
                 interp.record(target, 0.0, snap);
-                sprite.color = Color::srgba_u8(color[0], color[1], color[2], color[3]);
             }
-        } else {
-            let phase = (state.id.0 as f32 * 1.37) % (std::f32::consts::TAU);
-            let entity = commands
-                .spawn((
-                    DroppedItemVisual { bob_phase: phase },
-                    Interpolated::snapped(target, 0.0),
-                    Sprite::from_color(
-                        Color::srgba_u8(color[0], color[1], color[2], color[3]),
-                        Vec2::splat(ITEM_SIZE),
-                    ),
-                    Transform::from_xyz(target.x, target.y, 8.0),
-                    RenderLayers::layer(WORLD_LAYER),
-                ))
-                .id();
-            visuals.0.insert(state.id, entity);
         }
-    }
-
-    let stale: Vec<EntityId> = visuals
-        .0
-        .keys()
-        .filter(|id| !seen.contains(id))
-        .copied()
-        .collect();
-    for id in stale {
-        if let Some(entity) = visuals.0.remove(&id) {
-            commands.entity(entity).despawn();
+        for id in despawned {
+            if let Some(entity) = visuals.0.remove(id) {
+                commands.entity(entity).despawn();
+            }
         }
     }
 }

@@ -8,8 +8,8 @@ use redb::{Database, ReadableDatabase, TableDefinition};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-pub const REGION_FORMAT_VERSION: u8 = 5;
-pub const WORLD_FORMAT_VERSION: u16 = 9;
+pub const REGION_FORMAT_VERSION: u8 = 6;
+pub const WORLD_FORMAT_VERSION: u16 = 10;
 const CELL_BYTES: usize = 7;
 const RECT_BYTES: usize = 4;
 const REGION_CELL_BYTES: usize = REGION_AREA_CHUNKS * CHUNK_AREA * CELL_BYTES;
@@ -50,6 +50,8 @@ pub struct DroppedRecord {
     pub vy: f32,
     pub item: String,
     pub count: u32,
+    pub age_ticks: u64,
+    pub pickup_delay: u16,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -84,19 +86,12 @@ pub fn slots_to_record(reg: &ItemRegistry, inv: &CoreInventory) -> Vec<SlotRecor
         .collect()
 }
 
-pub fn slots_from_record(reg: &ItemRegistry, list: &[SlotRecord], len: usize) -> CoreInventory {
-    let mut inv = CoreInventory::with_capacity(len);
-    for (i, record) in list.iter().enumerate() {
-        if i >= len {
-            break;
-        }
-        inv.slots[i] = stack_from_record(reg, record);
+pub fn player_slots_from_record(reg: &ItemRegistry, list: &[SlotRecord]) -> CoreInventory {
+    let mut inv = CoreInventory::with_capacity(PLAYER_SLOTS);
+    for (slot, record) in inv.slots.iter_mut().zip(list) {
+        *slot = stack_from_record(reg, record);
     }
     inv
-}
-
-pub fn player_slots_from_record(reg: &ItemRegistry, list: &[SlotRecord]) -> CoreInventory {
-    slots_from_record(reg, list, PLAYER_SLOTS)
 }
 
 #[derive(Debug, thiserror::Error)]

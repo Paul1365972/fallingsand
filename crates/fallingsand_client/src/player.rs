@@ -8,13 +8,14 @@ use bevy::input::mouse::MouseWheel;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use fallingsand_core::{CellPos, HOTBAR_SLOTS, TICK_RATE};
-use fallingsand_protocol::{ClientMessage, GameMode, PlayerId, PlayerInput, ServerMessage};
+use fallingsand_protocol::{
+    ClientMessage, GameMode, MAX_BRUSH, PlayerId, PlayerInput, ServerMessage,
+};
 
 pub struct PlayerPlugin;
 
 pub const PLAYER_SIZE: Vec2 = Vec2::new(3.8, 11.0);
 pub const PLAYER_DUCK_SIZE: Vec2 = Vec2::new(3.8, 6.0);
-pub const MAX_BRUSH: u8 = 6;
 const SNAP_DISTANCE: f32 = 64.0;
 const DOUBLE_TAP_SECS: f32 = 0.3;
 
@@ -66,7 +67,9 @@ impl Plugin for PlayerPlugin {
             .insert_resource(Time::<Fixed>::from_hz(TICK_RATE as f64))
             .add_systems(
                 PreUpdate,
-                (track_names, apply_entity_states).chain().after(NetSet),
+                (track_names, apply_entity_states, apply_self_state)
+                    .chain()
+                    .after(NetSet),
             )
             .add_systems(
                 FixedUpdate,
@@ -142,7 +145,6 @@ fn apply_entity_states(
     mut query: Query<(&mut Interpolated, &mut Sprite, &mut PlayerVisual)>,
     session: Option<Res<Session>>,
     names: Res<PlayerNames>,
-    mut mode: ResMut<LocalMode>,
     mut local_state: ResMut<LocalPlayerState>,
 ) {
     let local = session.and_then(|session| session.player);
@@ -154,15 +156,9 @@ fn apply_entity_states(
         seen = Some(entities.iter().map(|state| state.player).collect());
         for state in entities {
             if local == Some(state.player) {
-                if mode.0 != state.mode {
-                    mode.0 = state.mode;
-                }
                 local_state.pos = Vec2::new(state.x.to_f32(), state.y.to_f32());
-                local_state.hp = state.hp;
-                local_state.air = state.air;
                 local_state.burning = state.burning;
                 local_state.ducking = state.ducking;
-                local_state.mode = state.mode;
                 local_state.present = true;
             }
             let target = Vec2::new(state.x.to_f32(), state.y.to_f32());
@@ -233,6 +229,23 @@ fn apply_entity_states(
     for id in stale {
         if let Some(entity) = visuals.0.remove(&id) {
             commands.entity(entity).despawn();
+        }
+    }
+}
+
+fn apply_self_state(
+    mut messages: MessageReader<ServerMsg>,
+    mut mode: ResMut<LocalMode>,
+    mut local_state: ResMut<LocalPlayerState>,
+) {
+    for ServerMsg(message) in messages.read() {
+        if let ServerMessage::SelfState { hp, air, mode: m } = message {
+            if mode.0 != *m {
+                mode.0 = *m;
+            }
+            local_state.hp = *hp;
+            local_state.air = *air;
+            local_state.mode = *m;
         }
     }
 }
