@@ -1,7 +1,7 @@
 use crate::obstacles::Obstacles;
 use crate::world::CellWorld;
 use fallingsand_core::{
-    Cell, CellPos, Fixed, MaterialRegistry, Phase, TICK_DT, TICK_RATE, VEL_ONE,
+    Cell, CellPos, Fixed, MaterialRegistry, Phase, TICK_DT, VEL_ONE,
 };
 
 const BOUNCE_MIN_SPEED: Fixed = Fixed::from_int(30);
@@ -185,7 +185,7 @@ pub fn body_submersion<W: CellSource>(
         return Submersion::default();
     }
     let per_cell = 1.0 / liquid as f32;
-    let to_per_sec = TICK_RATE as f32 / VEL_ONE as f32;
+    let to_per_sec = 1.0 / VEL_ONE as f32;
     Submersion {
         fraction: liquid as f32 / total as f32,
         liquid_density: density_sum / liquid as f32,

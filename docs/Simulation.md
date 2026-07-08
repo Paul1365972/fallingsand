@@ -10,12 +10,12 @@ The CA (`fallingsand_sim`) collides against the cell grid directly, so terrain c
 
 ## Movement rules
 
-Every cell carries a velocity (`vx`/`vy`, Q8.8 cells/tick). Movement is that velocity integrated locally each tick — no phase-specific heuristics, no sweeps. Each step is written so a settled cell writes nothing (and sleeps). Per moving cell, in order:
+Every cell carries a velocity (`vx`/`vy`, Q12.4 cells/second). Movement is that velocity integrated locally each tick (per-tick displacement = velocity ÷ tick rate) — no phase-specific heuristics, no sweeps. Each step is written so a settled cell writes nothing (and sleeps). Per moving cell, in order:
 
 - **Accelerate**: gravity (global `GRAVITY`; powders/liquids fall, gases/fire rise), reduced by buoyancy from the fluid being displaced (a dense grain sinks slowly through water, snow floats), then `drag` — amplified in a dense medium, so things settle slowly underwater instead of dropping straight through. Crucially the *driving* force can go to zero (a same-density parcel is neutrally buoyant) without stalling flow: leveling is driven by **redirect** below, not by velocity. A lighter liquid trapped under a denser one floats up by a direct swap. Rising gases and fire also carry a per-material `turbulence`: a tick-seeded horizontal velocity kick, bled by drag into a gentle mean-reverting sway, so smoke wisps and curls instead of climbing in a rigid column.
 - **Contact friction**: while resting on a blocked face, horizontal velocity bleeds by `friction`. Low-friction water keeps its momentum and shoots off a ledge; high-friction sand loses it and dribbles 1–2 cells.
 - **Cohesion**: velocity is pulled toward the mean of like-phase neighbours (`cohesion`, read-only) — a fast stream drags its neighbours into a coherent jet; powders barely couple.
-- **Traverse**: step cell-by-cell along the velocity (fractional speed resolved by a tick-seeded chance, capped at 8 cells/tick). Steps are cardinal, so a diagonal needs an open orthogonal cell — corners seal for free.
+- **Traverse**: step cell-by-cell along the velocity (fractional speed resolved by a tick-seeded chance, per-tick displacement capped at `MAX_STEP` = 32 cells). That cap is the speed-of-light budget: a cell update reaches `MAX_STEP` + neighbour reads ≤ 64 (one chunk halo), so it can never exceed ~62. Steps are cardinal, so a diagonal needs an open orthogonal cell — corners seal for free.
 - **Collide & redirect**: a blocked face reflects that velocity component by `restitution` (near-inelastic, so things settle). A cell that can't advance but can descend diagonally does so, converting blocked fall to sideways velocity scaled by `(1 − friction)` — ledges and jets for liquids, the angle-of-repose slide for powders (gated per-grain by `friction` with RNG jitter, so piles are irregular and each powder stacks differently). A liquid that can't descend also spreads one cell across a level surface — no velocity gain, so it injects no energy — which is what collapses a liquid to a flat top instead of a powder-like pile.
 - **Settle**: velocity into a blocked face is killed and sub-threshold velocity snaps to zero, so a supported cell nets no change and its chunk sleeps.
 
@@ -27,7 +27,11 @@ Each chunk tracks the dirty rect of cells changed last tick. Everything keys off
 
 A separate **keep-alive rect** marks cells that must re-simulate without having changed (clinging fire, pending decay, reactive pairs). The sim schedules from both; replication reads only the change rect, so keep-alives cost zero bandwidth. This is why a mostly-settled world of ~2000 active chunks stays inside the tick budget.
 
-Cell particles: cells knocked loose fly ballistically as free particles and reinsert into the grid on impact.
+Cell particles (aspirational): cells knocked loose would fly ballistically as free particles and reinsert on impact. Not yet built — a future store must carry `Fixed` cells/s velocity, not the grid's `Q12.4` `i16` (its ±2047 cells/s cap is for in-grid flow).
+
+## Tuning units
+
+Constants are seconds-based; a small vocabulary converts each kind to per-tick from `TICK_DT`, so behaviour is ~invariant to tick rate. Rates (`1/s`): `per_tick_chance` = `1−e^(−r·dt)` (reactions, decay, emit, flow, powder repose slide, flicker); `per_tick_keep` = `e^(−r·dt)` (drag, contact-friction bleed); `per_tick_blend` = `1−e^(−r·dt)` (cohesion). Accelerations (`cells/s²`, e.g. `GRAVITY`) integrate as `a·dt` into cells/s velocity. Turbulence is a random-walk kick intensity scaled by `√dt`. Durations (`s`) become tick counts via `s·TICK_RATE`. Restitution, density ratios, and redirect gain are dimensionless — no conversion.
 
 ## Combustion
 

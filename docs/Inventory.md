@@ -57,7 +57,7 @@ slots 0..9. World input is suppressed while the overlay (or chat) is open.
 
 ## Persistence
 
-`WORLD_FORMAT_VERSION = 10`, `REGION_FORMAT_VERSION = 6` (no migrations). `PlayerRecord` stores per-slot
+`WORLD_FORMAT_VERSION = 10`, `REGION_FORMAT_VERSION = 7` (no migrations). `PlayerRecord` stores per-slot
 `(item_name, count)` + cursor. Region blobs append `RegionExtras { items }` (item name, position,
 velocity, age, pickup delay); re-spawned on region load, gathered on unload/autosave. Each region keeps
 a signature of its persisted items, so it re-saves exactly when its item set changed — clearing a stale

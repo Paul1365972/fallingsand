@@ -24,6 +24,7 @@ use fallingsand_core::{ItemRegistry, MaterialRegistry, RecipeRegistry};
 use std::sync::Arc;
 
 pub const MATERIALS_RON: &str = include_str!("../../../data/materials.ron");
+pub const REACTIONS_RON: &str = include_str!("../../../data/reactions.ron");
 pub const ITEMS_RON: &str = include_str!("../../../data/items.ron");
 pub const RECIPES_RON: &str = include_str!("../../../data/recipes.ron");
 
@@ -61,7 +62,8 @@ pub struct ClientRecipes(pub Arc<RecipeRegistry>);
 
 fn main() {
     let registry = Arc::new(
-        MaterialRegistry::from_ron(MATERIALS_RON).expect("data/materials.ron must be valid"),
+        MaterialRegistry::from_ron(MATERIALS_RON, REACTIONS_RON)
+            .expect("data/materials.ron must be valid"),
     );
     let item_registry = Arc::new(
         ItemRegistry::from_ron(ITEMS_RON, &registry).expect("data/items.ron must be valid"),

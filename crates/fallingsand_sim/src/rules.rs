@@ -1,8 +1,8 @@
 use crate::obstacles::Obstacles;
 use crate::window::SimWindow;
 use fallingsand_core::{
-    Cell, CellPos, Dynamics, GRAVITY, MaterialId, MaterialRegistry, Phase, TICK_DT, VEL_ONE,
-    per_tick_chance,
+    Cell, CellPos, Dynamics, GRAVITY, MaterialId, MaterialRegistry, Phase, TICK_DT, TICK_RATE,
+    VEL_ONE, per_tick_chance,
 };
 use fallingsand_rng::{Hash, Rng};
 use std::sync::LazyLock;
@@ -11,13 +11,13 @@ const NEIGHBORS: [(i32, i32); 4] = [(0, -1), (-1, 0), (1, 0), (0, 1)];
 const FLICKER_RATE: f32 = 18.0;
 static FLICKER_CHANCE: LazyLock<f32> = LazyLock::new(|| per_tick_chance(FLICKER_RATE));
 
-const VEL_MAX: i32 = 8 * VEL_ONE;
-const MAX_STEP: i32 = 8;
-const SETTLE: i32 = VEL_ONE / 8;
+const VEL_MAX: i32 = 2000 * VEL_ONE;
+const MAX_STEP: i32 = 32;
+const SETTLE: i32 = (7.5 * VEL_ONE as f32) as i32;
 const SUBMERGED_DENSITY: f32 = 100.0;
 const SUBMERGED_DRAG: f32 = 6.0;
 static GRAVITY_DV: LazyLock<i32> =
-    LazyLock::new(|| (GRAVITY * TICK_DT * TICK_DT * VEL_ONE as f32).round() as i32);
+    LazyLock::new(|| (GRAVITY * TICK_DT * VEL_ONE as f32).round() as i32);
 
 pub(crate) fn update_cell(
     window: &mut SimWindow,
@@ -263,14 +263,11 @@ fn can_enter(
 }
 
 fn step_cells(v: i32, rng: &mut Rng) -> i32 {
+    let denom = VEL_ONE * TICK_RATE as i32;
     let mag = v.abs();
-    let cells = (mag / VEL_ONE + rng.draw().chance((mag % VEL_ONE) as f32 / VEL_ONE as f32) as i32)
+    let cells = (mag / denom + rng.draw().chance((mag % denom) as f32 / denom as f32) as i32)
         .min(MAX_STEP);
     cells * v.signum()
-}
-
-fn slide_chance(friction: f32) -> f32 {
-    (1.0 - friction).clamp(0.05, 1.0)
 }
 
 fn reflect(v: i32, restitution: f32) -> i32 {
@@ -341,7 +338,7 @@ fn update_dynamic(
         below,
     );
     if supported {
-        vx = (vx as f32 * (1.0 - dynamics.friction)).round() as i32;
+        vx = (vx as f32 * dynamics.friction_keep).round() as i32;
     }
     if window.get(below).is_some_and(|c| c.is_body()) {
         window.note_structural(below);
@@ -503,7 +500,7 @@ fn redirect(
     dynamics: Dynamics,
     rng: &mut Rng,
 ) -> bool {
-    let gain = ((1.0 - dynamics.friction) * vy.unsigned_abs() as f32).round() as i32;
+    let gain = (dynamics.slide_gain * vy.unsigned_abs() as f32).round() as i32;
     let prefer = match (*vx).cmp(&0) {
         std::cmp::Ordering::Greater => 1,
         std::cmp::Ordering::Less => -1,
@@ -540,7 +537,7 @@ fn redirect(
             diag,
         );
         if is_powder {
-            if diag_open && rng.draw().chance(slide_chance(dynamics.friction)) {
+            if diag_open && rng.draw().chance(dynamics.slide_chance) {
                 *vx += side * gain;
                 window.swap(*cur, diag);
                 *cur = diag;

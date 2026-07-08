@@ -23,7 +23,8 @@ const PICKUP_RANGE_SQ: f32 = 9.0 * 9.0;
 const MAGNET_ACCEL: f32 = 620.0;
 const MERGE_RADIUS_SQ: f32 = 6.0 * 6.0;
 const PER_CHUNK_ITEM_CAP: usize = 128;
-pub const DROP_PICKUP_DELAY: u16 = 36;
+const DROP_PICKUP_SECS: f32 = 0.6;
+pub const DROP_PICKUP_DELAY: u16 = (DROP_PICKUP_SECS * crate::TICK_RATE as f32) as u16;
 
 #[derive(Resource, Clone)]
 pub struct ItemReg(pub Arc<ItemRegistry>);

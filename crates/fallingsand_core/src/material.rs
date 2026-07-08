@@ -30,6 +30,10 @@ pub struct Material {
     pub drag: f32,
     #[serde(default)]
     pub friction: f32,
+    #[serde(default)]
+    pub repose: f32,
+    #[serde(default = "default_one")]
+    pub redirect_keep: f32,
     #[serde(default = "default_grip")]
     pub surface_grip: f32,
     #[serde(default)]
@@ -84,14 +88,29 @@ fn default_grip() -> f32 {
     1.0
 }
 
+fn default_one() -> f32 {
+    1.0
+}
+
 pub fn per_tick_chance(rate: f32) -> f32 {
+    1.0 - (-rate * crate::TICK_DT).exp()
+}
+
+pub fn per_tick_keep(rate: f32) -> f32 {
+    (-rate * crate::TICK_DT).exp()
+}
+
+pub fn per_tick_blend(rate: f32) -> f32 {
     1.0 - (-rate * crate::TICK_DT).exp()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MaterialFile {
     pub materials: Vec<Material>,
-    #[serde(default)]
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReactionFile {
     pub reactions: Vec<ReactionDef>,
 }
 
@@ -105,10 +124,12 @@ pub struct Reaction {
 #[derive(Debug, Clone, Copy)]
 pub struct Dynamics {
     pub drag_keep: f32,
-    pub friction: f32,
+    pub friction_keep: f32,
     pub cohesion: f32,
     pub restitution: f32,
     pub turbulence: f32,
+    pub slide_chance: f32,
+    pub slide_gain: f32,
     pub flow_chance: f32,
 }
 
@@ -158,9 +179,10 @@ enum Operand {
 }
 
 impl MaterialRegistry {
-    pub fn from_ron(source: &str) -> Result<Self, RegistryError> {
-        let file: MaterialFile = ron::from_str(source)?;
-        Self::from_materials(file.materials, file.reactions)
+    pub fn from_ron(materials_src: &str, reactions_src: &str) -> Result<Self, RegistryError> {
+        let materials: MaterialFile = ron::from_str(materials_src)?;
+        let reactions: ReactionFile = ron::from_str(reactions_src)?;
+        Self::from_materials(materials.materials, reactions.reactions)
     }
 
     pub fn from_materials(
@@ -377,14 +399,13 @@ impl MaterialRegistry {
         let dynamics: Vec<Dynamics> = materials
             .iter()
             .map(|material| Dynamics {
-                drag_keep: (1.0 - material.drag * crate::TICK_DT).clamp(0.0, 1.0),
-                friction: material.friction.clamp(0.0, 1.0),
-                cohesion: (material.cohesion * crate::TICK_DT).clamp(0.0, 1.0),
+                drag_keep: per_tick_keep(material.drag),
+                friction_keep: per_tick_keep(material.friction),
+                cohesion: per_tick_blend(material.cohesion),
                 restitution: material.restitution.clamp(0.0, 1.0),
-                turbulence: material.turbulence
-                    * crate::TICK_DT
-                    * crate::TICK_DT
-                    * crate::VEL_ONE as f32,
+                turbulence: material.turbulence * crate::TICK_DT.sqrt() * crate::VEL_ONE as f32,
+                slide_chance: per_tick_chance(material.repose),
+                slide_gain: material.redirect_keep.clamp(0.0, 1.0),
                 flow_chance: if material.flow_rate > 0.0 {
                     per_tick_chance(material.flow_rate)
                 } else {

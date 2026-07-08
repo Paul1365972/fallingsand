@@ -48,7 +48,8 @@ fn main() -> anyhow::Result<()> {
     let domain = domain.or_else(|| std::env::var("FALLINGSAND_DOMAIN").ok());
 
     let materials = include_str!("../../../data/materials.ron");
-    let registry = Arc::new(MaterialRegistry::from_ron(materials)?);
+    let reactions = include_str!("../../../data/reactions.ron");
+    let registry = Arc::new(MaterialRegistry::from_ron(materials, reactions)?);
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

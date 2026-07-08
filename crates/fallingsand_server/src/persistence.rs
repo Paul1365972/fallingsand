@@ -8,7 +8,7 @@ use redb::{Database, ReadableDatabase, TableDefinition};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-pub const REGION_FORMAT_VERSION: u8 = 6;
+pub const REGION_FORMAT_VERSION: u8 = 7;
 pub const WORLD_FORMAT_VERSION: u16 = 10;
 const CELL_BYTES: usize = 7;
 const RECT_BYTES: usize = 4;

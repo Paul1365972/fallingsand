@@ -17,7 +17,7 @@ pub const REACH: f32 = 80.0;
 pub const SURVIVAL_REACH: f32 = 48.0;
 pub const BRUSH_RADIUS: i32 = 3;
 
-pub use calendar::{AGE_PER_TICK, Calendar, DAY_UNITS, DRACONIC_UNITS, SYNODIC_UNITS};
+pub use calendar::{AGE_PER_SEC, AGE_PER_TICK, Calendar, DAY_UNITS, DRACONIC_UNITS, SYNODIC_UNITS};
 pub use celestial::CelestialState;
 pub use cell::{Cell, VEL_ONE};
 pub use chunk::{CHUNK_AREA, CHUNK_SIZE, Chunk, DirtyRect};
@@ -28,6 +28,7 @@ pub use item::{
     MAIN_SLOTS, MATERIAL_STACK_MAX, PLAYER_SLOTS, Recipe, RecipeRegistry,
 };
 pub use material::{
-    Dynamics, Material, MaterialId, MaterialRegistry, Phase, Reaction, ReactionDef, per_tick_chance,
+    Dynamics, Material, MaterialId, MaterialRegistry, Phase, Reaction, ReactionDef, per_tick_blend,
+    per_tick_chance, per_tick_keep,
 };
 pub use region::{REGION_AREA_CHUNKS, REGION_SIZE_CELLS, REGION_SIZE_CHUNKS, Region};
