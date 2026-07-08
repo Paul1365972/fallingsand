@@ -1,7 +1,7 @@
 use crate::ClientRegistry;
 use crate::camera::CameraControl;
 use crate::inventory::{LocalInventory, SelectedSlot};
-use crate::net::{ServerMsg, ServerStats, Session, Supervisor, TickFrame};
+use crate::net::{ServerMsg, ServerStats, Session, Supervisor, TickMessage};
 use crate::particles::Particle;
 use crate::player::{InputState, LocalPlayerState, PlayerNames};
 use crate::render::ChunkVisuals;
@@ -227,7 +227,7 @@ fn sync_debug_stream(
 
 fn track_rects(
     mut flashes: ResMut<RectFlashes>,
-    mut frames: MessageReader<TickFrame>,
+    mut frames: MessageReader<TickMessage>,
     time: Res<Time>,
     borders: Res<BordersVisible>,
 ) {
@@ -240,7 +240,7 @@ fn track_rects(
     }
     let now = time.elapsed_secs();
     flashes.0.retain(|flash| now - flash.at < FLASH_SECS);
-    for TickFrame(tick) in frames.read() {
+    for TickMessage(tick) in frames.read() {
         for entry in &tick.debug {
             for (rect, keep_alive) in [(entry.change, false), (entry.keep_alive, true)] {
                 if rect.is_empty() {

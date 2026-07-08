@@ -9,7 +9,7 @@ pub mod water;
 
 use biomes::{
     BEACH_DEPTH, BEACH_RANGE, Band, Beach, MAX_OVERHANG, MOSS_CHANCE, MOSS_MAX_DEPTH,
-    OVERHANG_AMPLITUDE, Palette, SNOW_COVER_DEPTH, SNOW_LINE, WorldDef, world_def,
+    OVERHANG_AMPLITUDE, OVERHANG_FADE, Palette, SNOW_COVER_DEPTH, SNOW_LINE, WorldDef, world_def,
 };
 use caves::Caves;
 use fallingsand_core::{
@@ -75,13 +75,12 @@ impl Ctx<'_> {
 
     fn solid_depth(&self, column: &Column, x: i32, y: i32) -> f32 {
         let base = (column.surface - y) as f32;
-        if base > MAX_OVERHANG as f32 {
+        let over = base.abs() / MAX_OVERHANG as f32;
+        if over >= 1.0 {
             return base;
         }
-        if base < -(MAX_OVERHANG as f32) {
-            return base;
-        }
-        base + self.shape.at(x, y) * OVERHANG_AMPLITUDE * column.rugged
+        let falloff = ((1.0 - over) / OVERHANG_FADE).min(1.0);
+        base + self.shape.at(x, y) * OVERHANG_AMPLITUDE * column.rugged * falloff
     }
 
     fn cave_sample(&self, x: i32, y: i32) -> caves::CaveSample {
@@ -125,26 +124,26 @@ impl Ctx<'_> {
         if depth <= 0.0 {
             if y <= def.sea_level {
                 if biome.beach == Beach::Ice && y >= def.sea_level - 1 {
-                    return shaded(palette.ice, x, y);
+                    return shaded(generator.seed, palette.ice, x, y);
                 }
-                return shaded(palette.water, x, y);
+                return shaded(generator.seed, palette.water, x, y);
             }
             if let Some(level) = column.pond_level
                 && y <= level
             {
                 if biome.beach == Beach::Ice && y == level {
-                    return shaded(palette.ice, x, y);
+                    return shaded(generator.seed, palette.ice, x, y);
                 }
-                return shaded(palette.water, x, y);
+                return shaded(generator.seed, palette.water, x, y);
             }
             if (biome.snow_cover || column.surface > SNOW_LINE)
                 && y <= column.surface + SNOW_COVER_DEPTH
                 && depth > -(SNOW_COVER_DEPTH as f32 + 1.0)
             {
-                return shaded(palette.snow, x, y);
+                return shaded(generator.seed, palette.snow, x, y);
             }
             if column.tuft_height > 0 && y <= column.surface + column.tuft_height {
-                return shaded(biome.surface, x, y);
+                return shaded(generator.seed, biome.surface, x, y);
             }
             return Cell::AIR;
         }
@@ -162,7 +161,7 @@ impl Ctx<'_> {
                 depth,
             );
             return match filled {
-                Some(material) => shaded(material, x, y),
+                Some(material) => shaded(generator.seed, material, x, y),
                 None => Cell::AIR,
             };
         }
@@ -180,7 +179,7 @@ impl Ctx<'_> {
             if (below > 0.0 && self.carved(column, band, x, y - 1, below))
                 || (above > 0.0 && self.carved(column, band, x, y + 1, above))
             {
-                return shaded(palette.moss, x, y);
+                return shaded(generator.seed, palette.moss, x, y);
             }
         }
 
@@ -208,7 +207,7 @@ impl Ctx<'_> {
             } else {
                 band.stone
             };
-        shaded(material, x, y)
+        shaded(generator.seed, material, x, y)
     }
 }
 
@@ -343,7 +342,7 @@ impl WorldGenerator {
                     base.y,
                     vein.x,
                     vein.y,
-                    shaded(vein.material, vein.x, vein.y),
+                    shaded(self.seed, vein.material, vein.x, vein.y),
                 );
             }
         }
@@ -383,7 +382,7 @@ impl WorldGenerator {
                 let value = if cell.material == MaterialId::AIR {
                     Cell::AIR
                 } else {
-                    shaded(cell.material, cell.x, cell.y)
+                    shaded(self.seed, cell.material, cell.x, cell.y)
                 };
                 region_set(&mut region, base.x, base.y, cell.x, cell.y, value);
             } else if cell.material != MaterialId::AIR
@@ -395,7 +394,7 @@ impl WorldGenerator {
                     base.y,
                     cell.x,
                     cell.y,
-                    shaded(cell.material, cell.x, cell.y),
+                    shaded(self.seed, cell.material, cell.x, cell.y),
                 );
             }
         }
@@ -434,7 +433,7 @@ impl WorldGenerator {
                     base.y,
                     cell.x,
                     cell.y,
-                    shaded(cell.material, cell.x, cell.y),
+                    shaded(self.seed, cell.material, cell.x, cell.y),
                 );
             }
         }
@@ -462,6 +461,6 @@ fn region_set(region: &mut Region, base_x: i32, base_y: i32, x: i32, y: i32, cel
     region.chunk_mut(chunk).cells_mut()[offset.index()] = cell;
 }
 
-fn shaded(material: MaterialId, x: i32, y: i32) -> Cell {
-    Cell::new(material, Hash::new().pos(x, y).bits(4) as u8)
+fn shaded(seed: u64, material: MaterialId, x: i32, y: i32) -> Cell {
+    Cell::new(material, Hash::seed(seed).pos(x, y).bits(4) as u8)
 }

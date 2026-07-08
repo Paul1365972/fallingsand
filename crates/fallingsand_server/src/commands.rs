@@ -1,7 +1,7 @@
 use crate::session::{SessionState, Sessions};
-use crate::systems::{Mode, PLAYER_MASS, PhysicsBody, apply_radial_impulse};
+use crate::systems::Mode;
 use bevy_ecs::prelude::*;
-use fallingsand_core::{DAY_UNITS, Fixed};
+use fallingsand_core::DAY_UNITS;
 use fallingsand_protocol::{GameMode, ServerMessage};
 
 pub struct PendingCommand {
@@ -21,42 +21,7 @@ pub struct CommandSpec {
     pub run: CommandRun,
 }
 
-pub const COMMANDS: &[CommandSpec] = &[GAMEMODE, TIME, KNOCKBACK];
-
-const KNOCKBACK: CommandSpec = CommandSpec {
-    name: "knockback",
-    aliases: &["boom"],
-    usage: "/knockback [speed] [radius]",
-    run: |world, entity, args| {
-        let parse_num = |s: &str| s.parse::<f32>().ok().filter(|v| v.is_finite() && *v >= 0.0);
-        let speed = match args.first() {
-            Some(arg) => parse_num(arg).ok_or_else(|| format!("usage: {}", KNOCKBACK.usage))?,
-            None => 130.0,
-        };
-        let radius = match args.get(1) {
-            Some(arg) => parse_num(arg).ok_or_else(|| format!("usage: {}", KNOCKBACK.usage))?,
-            None => 60.0,
-        };
-        if radius <= 0.0 {
-            return Err("radius must be positive".to_string());
-        }
-        let center = {
-            let body = world
-                .get::<PhysicsBody>(entity)
-                .ok_or_else(|| "player not in world".to_string())?;
-            (body.0.x, body.0.y)
-        };
-        let mut players: Vec<(Entity, Fixed, Fixed)> = Vec::new();
-        let mut query = world.query::<(Entity, &PhysicsBody)>();
-        for (other, body) in query.iter(world) {
-            players.push((other, body.0.x, body.0.y));
-        }
-        let strength = speed * PLAYER_MASS;
-        let mut impulses = world.resource_mut::<crate::PlayerImpulses>();
-        apply_radial_impulse(&mut impulses, &players, center, radius, strength);
-        Ok(Some(format!("boom! ({speed:.0} cells/s, r={radius:.0})")))
-    },
-};
+pub const COMMANDS: &[CommandSpec] = &[GAMEMODE, TIME];
 
 const GAMEMODE: CommandSpec = CommandSpec {
     name: "gamemode",
@@ -91,7 +56,7 @@ const TIME: CommandSpec = CommandSpec {
         let day = clock.0.day();
         match *arg {
             "day" | "noon" => clock.0.age = day * DAY_UNITS + DAY_UNITS / 2,
-            "night" | "midnight" => clock.0.age = day.saturating_add(1).saturating_mul(DAY_UNITS),
+            "night" | "midnight" => clock.0.age = day * DAY_UNITS,
             arg => {
                 let target: f64 = arg
                     .parse()

@@ -2569,7 +2569,6 @@ dependencies = [
  "fallingsand_protocol",
  "fallingsand_rng",
  "fallingsand_server",
- "fallingsand_sim",
  "getrandom 0.3.4",
  "image",
  "js-sys",
@@ -2582,6 +2581,7 @@ dependencies = [
 name = "fallingsand_core"
 version = "0.2.0"
 dependencies = [
+ "fallingsand_rng",
  "postcard",
  "ron",
  "serde",
@@ -2629,6 +2629,7 @@ dependencies = [
  "fallingsand_core",
  "fallingsand_net",
  "fallingsand_protocol",
+ "fallingsand_rng",
  "fallingsand_sim",
  "fallingsand_worldgen",
  "instant-acme",

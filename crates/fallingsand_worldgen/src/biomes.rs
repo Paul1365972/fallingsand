@@ -136,6 +136,7 @@ pub struct WorldDef {
 
 pub const MAX_OVERHANG: i32 = 48;
 pub const OVERHANG_AMPLITUDE: f32 = 26.0;
+pub const OVERHANG_FADE: f32 = 0.35;
 pub const BEACH_RANGE: i32 = 3;
 pub const BEACH_DEPTH: i32 = 6;
 pub const SOIL_TRANSITION_JITTER: f32 = 2.0;

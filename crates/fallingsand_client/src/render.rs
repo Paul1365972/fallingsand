@@ -48,7 +48,7 @@ pub struct RenderShared {
 
 #[derive(Resource, Default)]
 pub struct ChunkVisuals {
-    pub entities: HashMap<ChunkPos, (Entity, Handle<Image>)>,
+    pub chunk_entities: HashMap<ChunkPos, (Entity, Handle<Image>)>,
     pub uploads: usize,
     pub upload_bytes: usize,
 }
@@ -202,13 +202,13 @@ fn sync_chunks(
     visuals.upload_bytes = 0;
 
     let mut removed: Vec<ChunkPos> = Vec::new();
-    for &pos in visuals.entities.keys() {
+    for &pos in visuals.chunk_entities.keys() {
         if !view.chunks.contains_key(&pos) {
             removed.push(pos);
         }
     }
     for pos in removed {
-        if let Some((entity, image)) = visuals.entities.remove(&pos) {
+        if let Some((entity, image)) = visuals.chunk_entities.remove(&pos) {
             commands.entity(entity).despawn();
             images.remove(&image);
         }
@@ -221,7 +221,7 @@ fn sync_chunks(
             visuals.uploads += 1;
             visuals.upload_bytes += CHUNK_AREA * 4;
 
-            if let Some((_, image)) = visuals.entities.get(&pos) {
+            if let Some((_, image)) = visuals.chunk_entities.get(&pos) {
                 queue.0.push(ChunkUpload {
                     image: image.id(),
                     rect: DirtyRect::FULL,
@@ -260,14 +260,14 @@ fn sync_chunks(
                     RenderLayers::layer(WORLD_LAYER),
                 ))
                 .id();
-            visuals.entities.insert(pos, (entity, image));
+            visuals.chunk_entities.insert(pos, (entity, image));
             continue;
         }
 
         if chunk.pending.is_empty() {
             continue;
         }
-        let image = match visuals.entities.get(&pos) {
+        let image = match visuals.chunk_entities.get(&pos) {
             Some((_, image)) => image.id(),
             None => {
                 chunk.dirty = true;

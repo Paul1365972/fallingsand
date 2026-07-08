@@ -1,15 +1,13 @@
 use crate::inventory::{
-    DroppedItem, Inventory, ItemBody, ItemReg, NextEntityId, bucket_dropped, extras_sig,
+    DroppedItem, Inventory, ItemActor, ItemReg, NextEntityId, bucket_dropped, extras_sig,
     gather_region_extras, spawn_region_extras,
 };
 use crate::persistence::{PlayerRecord, RegionExtras, WorldMeta, WorldStore, encode_region};
 use crate::session::Sessions;
-use crate::systems::{Air, Burning, Health, Mode, PhysicsBody, player_record};
+use crate::systems::{Air, Burning, Health, Mode, PlayerActor, player_record};
 use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y, SimWorld, WorldClock, WorldInfo};
 use bevy_ecs::prelude::*;
-use fallingsand_core::{
-    CellPos, ChunkOffset, ChunkPos, REGION_SIZE_CELLS, REGION_SIZE_CHUNKS, Region, RegionPos,
-};
+use fallingsand_core::{CellPos, ChunkPos, REGION_SIZE_CELLS, Region, RegionPos};
 use fallingsand_protocol::PlayerUuid;
 use fallingsand_sim::bodies::settle_body;
 use fallingsand_sim::{CellWorld, PixelBody};
@@ -20,8 +18,8 @@ use std::sync::Arc;
 pub const BORDER_MARGIN: i32 = 3;
 pub const UNLOAD_GRACE_SECS: f32 = 5.0;
 pub const AUTOSAVE_INTERVAL_SECS: f32 = 10.0;
-pub const UNLOAD_GRACE_TICKS: u64 = (UNLOAD_GRACE_SECS * crate::TICK_RATE as f32) as u64;
-pub const AUTOSAVE_INTERVAL_TICKS: u64 = (AUTOSAVE_INTERVAL_SECS * crate::TICK_RATE as f32) as u64;
+pub const UNLOAD_GRACE_TICKS: u64 = fallingsand_core::ticks_from_secs(UNLOAD_GRACE_SECS);
+pub const AUTOSAVE_INTERVAL_TICKS: u64 = fallingsand_core::ticks_from_secs(AUTOSAVE_INTERVAL_SECS);
 pub const MAX_LOADS_PER_TICK: usize = 1;
 
 #[derive(Resource)]
@@ -49,13 +47,6 @@ impl RegionMap {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TicketLevel {
-    Active,
-    Border,
-    Loaded,
-}
-
 #[derive(Resource, Default)]
 pub struct ChunkTickets {
     pub active: FxHashSet<ChunkPos>,
@@ -66,19 +57,9 @@ impl ChunkTickets {
     pub fn simulates(&self, pos: ChunkPos) -> bool {
         self.active.contains(&pos) || self.border.contains(&pos)
     }
-
-    pub fn level(&self, pos: ChunkPos) -> TicketLevel {
-        if self.active.contains(&pos) {
-            TicketLevel::Active
-        } else if self.border.contains(&pos) {
-            TicketLevel::Border
-        } else {
-            TicketLevel::Loaded
-        }
-    }
 }
 
-pub fn compute_tickets(mut tickets: ResMut<ChunkTickets>, query: Query<&PhysicsBody>) {
+pub fn compute_tickets(mut tickets: ResMut<ChunkTickets>, query: Query<&PlayerActor>) {
     let ChunkTickets { active, border } = &mut *tickets;
     active.clear();
     border.clear();
@@ -108,8 +89,7 @@ pub fn wanted_regions(tickets: &ChunkTickets) -> FxHashSet<RegionPos> {
 }
 
 fn strip_body_flags(region: &mut Region) {
-    for index in 0..REGION_SIZE_CHUNKS * REGION_SIZE_CHUNKS {
-        let chunk = region.chunk_mut(ChunkOffset::from_index(index));
+    for chunk in region.chunks_mut().iter_mut() {
         for cell in chunk.cells_mut().iter_mut() {
             if cell.is_body() {
                 cell.set_body(false);
@@ -119,23 +99,26 @@ fn strip_body_flags(region: &mut Region) {
 }
 
 fn insert_region(sim: &mut CellWorld, pos: RegionPos, region: Region) {
-    let base = pos.base_chunk();
-    let chunks = *region.into_chunks();
-    for (index, chunk) in chunks.into_iter().enumerate() {
-        let offset = ChunkOffset::from_index(index);
-        let chunk_pos = ChunkPos::new(base.x + offset.x as i32, base.y + offset.y as i32);
+    for ((_, chunk_pos), chunk) in pos.chunk_positions().zip(*region.into_chunks()) {
         sim.insert_chunk(chunk_pos, chunk);
     }
 }
 
 fn extract_region(sim: &mut CellWorld, pos: RegionPos) -> Region {
-    let base = pos.base_chunk();
     let mut region = Region::new();
-    for index in 0..REGION_SIZE_CHUNKS * REGION_SIZE_CHUNKS {
-        let offset = ChunkOffset::from_index(index);
-        let chunk_pos = ChunkPos::new(base.x + offset.x as i32, base.y + offset.y as i32);
+    for (offset, chunk_pos) in pos.chunk_positions() {
         if let Some(chunk) = sim.remove_chunk(chunk_pos) {
             *region.chunk_mut(offset) = chunk;
+        }
+    }
+    region
+}
+
+fn snapshot_region(sim: &CellWorld, pos: RegionPos) -> Region {
+    let mut region = Region::new();
+    for (offset, chunk_pos) in pos.chunk_positions() {
+        if let Some(chunk) = sim.chunk(chunk_pos) {
+            *region.chunk_mut(offset) = chunk.clone();
         }
     }
     region
@@ -163,7 +146,7 @@ pub fn manage_regions(
     tickets: Res<ChunkTickets>,
     mut bodies: ResMut<crate::bodies::PixelBodies>,
     mut next_id: ResMut<NextEntityId>,
-    items: Query<(Entity, &DroppedItem, &ItemBody)>,
+    items: Query<(Entity, &DroppedItem, &ItemActor)>,
 ) {
     let tick = sim.0.tick();
     let wanted = wanted_regions(&tickets);
@@ -240,10 +223,7 @@ pub fn manage_regions(
         if state.dirty {
             continue;
         }
-        let base = pos.base_chunk();
-        'scan: for index in 0..REGION_SIZE_CHUNKS * REGION_SIZE_CHUNKS {
-            let offset = ChunkOffset::from_index(index);
-            let chunk_pos = ChunkPos::new(base.x + offset.x as i32, base.y + offset.y as i32);
+        'scan: for (_, chunk_pos) in pos.chunk_positions() {
             if let Some(chunk) = sim.0.chunk(chunk_pos)
                 && !chunk.dirty().is_empty()
             {
@@ -284,14 +264,14 @@ pub fn autosave(
     clock: Res<WorldClock>,
     query: Query<(
         &crate::session::Player,
-        &PhysicsBody,
+        &PlayerActor,
         &Health,
         &Mode,
         &Air,
         &Burning,
         &Inventory,
     )>,
-    items: Query<(Entity, &DroppedItem, &ItemBody)>,
+    items: Query<(Entity, &DroppedItem, &ItemActor)>,
 ) {
     let Some(store) = store.0.as_ref() else {
         return;
@@ -309,15 +289,7 @@ pub fn autosave(
         if !state.dirty && sig == state.extras_sig {
             continue;
         }
-        let base = pos.base_chunk();
-        let mut region = Region::new();
-        for index in 0..REGION_SIZE_CHUNKS * REGION_SIZE_CHUNKS {
-            let offset = ChunkOffset::from_index(index);
-            let chunk_pos = ChunkPos::new(base.x + offset.x as i32, base.y + offset.y as i32);
-            if let Some(chunk) = sim.0.chunk(chunk_pos) {
-                *region.chunk_mut(offset) = chunk.clone();
-            }
-        }
+        let region = snapshot_region(&sim.0, *pos);
         to_save.push((*pos, encode_region(&region, &extras)));
         state.dirty = false;
         state.extras_sig = sig;
@@ -353,7 +325,7 @@ pub fn world_meta(info: &WorldInfo, clock: &WorldClock, tick: u64) -> WorldMeta 
         format_version: crate::persistence::WORLD_FORMAT_VERSION,
         seed: info.seed,
         name: info.name.clone(),
-        age: clock.0.age,
+        world_age: clock.0.age,
         tick,
     }
 }
@@ -398,7 +370,7 @@ pub fn save_everything(world: &mut bevy_ecs::world::World, final_save: bool) {
 
     let item_reg = world.resource::<ItemReg>().0.clone();
     let region_extras = {
-        let mut items = world.query::<(&DroppedItem, &ItemBody)>();
+        let mut items = world.query::<(&DroppedItem, &ItemActor)>();
         bucket_dropped(items.iter(world), &item_reg)
     };
 
@@ -413,15 +385,7 @@ pub fn save_everything(world: &mut bevy_ecs::world::World, final_save: bool) {
             if !state.dirty && sig == state.extras_sig {
                 continue;
             }
-            let base = pos.base_chunk();
-            let mut region = Region::new();
-            for index in 0..REGION_SIZE_CHUNKS * REGION_SIZE_CHUNKS {
-                let offset = ChunkOffset::from_index(index);
-                let chunk_pos = ChunkPos::new(base.x + offset.x as i32, base.y + offset.y as i32);
-                if let Some(chunk) = sim.0.chunk(chunk_pos) {
-                    *region.chunk_mut(offset) = chunk.clone();
-                }
-            }
+            let region = snapshot_region(&sim.0, *pos);
             to_save.push((*pos, encode_region(&region, &extras)));
             saved_sigs.push((*pos, sig));
         }
@@ -443,7 +407,7 @@ pub fn save_everything(world: &mut bevy_ecs::world::World, final_save: bool) {
     {
         let mut query = world.query::<(
             &crate::session::Player,
-            &PhysicsBody,
+            &PlayerActor,
             &Health,
             &Mode,
             &Air,

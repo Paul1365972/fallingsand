@@ -290,6 +290,9 @@ pub fn mushrooms_for_rect(
             let Some(base) = floor_air else {
                 continue;
             };
+            if !(MUSHROOM_MIN_Y..=MUSHROOM_MAX_Y).contains(&base) {
+                continue;
+            }
             let stem = rng.draw().range(5, 12);
             let cap_rx = rng.draw().range(3, 6);
             let cap_ry = rng.draw().range(2, 3);

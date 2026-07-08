@@ -1,7 +1,7 @@
 # fallingsand
 
 Multiplayer Noita-like falling-sand game.
-docs/ is the single source of truth: start at docs/Overview.md (it indexes the rest); read the relevant doc first and flag any deviation you make.
+docs/ is the source of truth for intended design: start at docs/Overview.md (it indexes the rest). It can lag the code, so read the relevant doc first and reconcile any deviation you spot (fix the doc or the code, whichever is wrong).
 
 ## Commands
 

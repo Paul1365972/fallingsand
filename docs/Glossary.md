@@ -1,0 +1,52 @@
+# Glossary
+
+Canonical names for the core domain vocabulary. One concept, one name.
+
+## Grid & coordinates
+
+| Term | Meaning |
+|------|---------|
+| **Cell** | 8-byte grid unit (`core::cell::Cell`): `material: MaterialId`, `vx`/`vy: i16` (Q11.4 cells/s), `shade_flags`, `updated` |
+| **Chunk** | 64×64 cells; unit of dirty-tracking, sleeping, replication, rendering |
+| **Region** | 8×8 chunks; unit of generation, storage, load/unload |
+| **CellPos / ChunkPos / RegionPos** | `i32` x,y coordinates at cell / chunk / region granularity |
+| **CellOffset / ChunkOffset** | `u8` in-parent index (cell-in-chunk, chunk-in-region) |
+| **bounds / keep_bounds** | per-chunk change rect (feeds replication + persistence) / keep-alive rect (feeds sim scheduling only) |
+
+## Numbers & units
+
+| Term | Meaning |
+|------|---------|
+| **Fixed** | Q24.8 `i32` fixed-point for continuous pose/velocity (actors, bodies, items); on the wire and in saves |
+| **Cell velocity** | `Cell.vx/vy` = `i16` Q11.4 **cells/s**, sim-only, never sent on the wire |
+| **VEL_MAX** | in-flow clamp on cell velocity: ±2000 cells/s (storage range is ±2047) |
+| **GRID_GRAVITY / BODY_GRAVITY / PlayerParams.gravity** | grid-CA / pixel-body / player-controller gravity; y is **up** (falling = negative vy) |
+
+## Movers
+
+| Term | Meaning |
+|------|---------|
+| **Actor** | kinematic AABB controller (`sim::physics::Actor`): players and dropped items — pos, velocity, half-extents, `on_ground` |
+| **PixelBody** | rigid body made of cells (pose + angle + spin + mass + raster); the only "Body" |
+| **PlayerActor / ItemActor** | server ECS components wrapping an `Actor` (a player / a dropped item) |
+| **ActorAabb / ActorDynamics** | actor collision proxies handed to the sim and the pixel-body pass |
+
+## Protocol & ids
+
+| Term | Meaning |
+|------|---------|
+| **TickFrame** | the one frame sent per server tick: `tick`, `world_age`, `chunks`, `players`, `items`, inventory/cursor/self/debug |
+| **ChunkOp** | per-chunk wire delta inside a `TickFrame`: `Load` / `Delta` / `Unload` |
+| **PlayerState** | wire snapshot of a player (pos, ducking, burning) |
+| **PlayerId / PlayerUuid** | session player id / persistent account id |
+| **EntityId** | id for replicated non-player world entities (today: dropped items; reserved for creatures) |
+| **tick / world_age / age_ticks** | monotonic sim tick number / calendar clock (DAY_UNITS) / a dropped item's lifetime |
+
+## Sim internals
+
+| Term | Meaning |
+|------|---------|
+| **SimWindow** | a worker's 4×4-chunk window; simulates the inner 2×2 block and reads one chunk beyond |
+| **SPEED_OF_LIGHT** | max reach of one update = `CHUNK_SIZE` = 64 cells |
+| **Dynamics** | per-material precomputed per-tick sim coefficients (drag_keep, friction_keep, cohesion, restitution, redirect_keep, …) |
+| **WorldEdit** | queued long-range edit applied after the 4 CA phases |

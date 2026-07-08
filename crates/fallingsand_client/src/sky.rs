@@ -1,7 +1,7 @@
 use crate::camera::{
     CameraControl, SkyCamera, VIRTUAL_HEIGHT, VIRTUAL_WIDTH, WorldCamera, WorldTarget,
 };
-use crate::net::{NetSet, Session, TickFrame};
+use crate::net::{NetSet, Session, TickMessage};
 use crate::player::{PlayerVisual, PlayerVisuals};
 use crate::worldview::WorldView;
 use crate::{AppState, ClientRegistry, GameState};
@@ -13,7 +13,7 @@ use bevy::render::render_resource::{AsBindGroup, ShaderType};
 use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dPlugin};
 use fallingsand_core::celestial::{MOON_DISC, UMBRA_RADIUS};
-use fallingsand_core::{Calendar, CelestialState, CellPos};
+use fallingsand_core::{Calendar, CelestialState, CellPos, smoothstep};
 
 pub struct SkyPlugin;
 
@@ -33,11 +33,6 @@ const MOON_DISC_FRAC: f32 = 0.90;
 const SUN_SIZE: f32 = 48.0;
 const MOON_SIZE: f32 = 28.0;
 const STAR_TEX_SIZE: f32 = 512.0;
-
-fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
-    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
-}
 
 #[derive(Resource, Default, Clone, Copy)]
 pub struct WorldTime {
@@ -358,9 +353,9 @@ fn setup_sky(
     });
 }
 
-fn sync_time(mut time: ResMut<WorldTime>, mut frames: MessageReader<TickFrame>) {
-    for TickFrame(tick) in frames.read() {
-        time.calendar.age = tick.age;
+fn sync_time(mut time: ResMut<WorldTime>, mut frames: MessageReader<TickMessage>) {
+    for TickMessage(tick) in frames.read() {
+        time.calendar.age = tick.world_age;
         time.synced = true;
     }
 }
@@ -535,7 +530,6 @@ fn fit_fullscreen_quads(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::type_complexity)]
 fn scan_emissive(
     sky: Res<Sky>,
     real: Res<Time>,

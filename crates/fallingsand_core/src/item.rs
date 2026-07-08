@@ -27,16 +27,6 @@ impl ItemStack {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ItemCategory {
-    Material,
-    Placeable,
-    Tool,
-    Weapon,
-    Consumable,
-    Component,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IconSpec {
     MaterialSwatch(MaterialId),
@@ -47,7 +37,6 @@ pub enum IconSpec {
 pub struct ItemDef {
     pub name: String,
     pub display: String,
-    pub category: ItemCategory,
     pub stack_max: u32,
     pub icon: IconSpec,
     pub tags: Vec<String>,
@@ -70,7 +59,6 @@ enum IconEntry {
 struct ItemEntry {
     name: String,
     display: String,
-    category: ItemCategory,
     stack_max: u32,
     #[serde(default)]
     tags: Vec<String>,
@@ -114,13 +102,21 @@ impl ItemRegistry {
         materials: &MaterialRegistry,
         source: &str,
     ) -> Result<Self, ItemError> {
+        let material_items = materials
+            .iter()
+            .filter(|(_, material)| material.phase != crate::Phase::Empty)
+            .count();
+        let total = 1 + entries.len() + material_items;
+        if total > u16::MAX as usize {
+            return Err(ItemError::TooMany(total));
+        }
+
         let mut items: Vec<ItemDef> = Vec::new();
         let mut by_name: HashMap<String, ItemId> = HashMap::new();
 
         items.push(ItemDef {
             name: "none".into(),
             display: "None".into(),
-            category: ItemCategory::Material,
             stack_max: 0,
             icon: IconSpec::MaterialSwatch(MaterialId::AIR),
             tags: Vec::new(),
@@ -143,7 +139,6 @@ impl ItemRegistry {
             };
             let def = ItemDef {
                 display: entry.display,
-                category: entry.category,
                 stack_max: entry.stack_max.max(1),
                 icon,
                 tags: entry.tags,
@@ -165,7 +160,6 @@ impl ItemRegistry {
             let name = format!("mat:{}", material.name);
             let def = ItemDef {
                 display: pretty_name(&material.name),
-                category: ItemCategory::Material,
                 stack_max: MATERIAL_STACK_MAX,
                 icon: IconSpec::MaterialSwatch(id),
                 tags: Vec::new(),
@@ -178,10 +172,6 @@ impl ItemRegistry {
             }
             mat_to_item[id.0 as usize] = item_id;
             items.push(def);
-        }
-
-        if items.len() > u16::MAX as usize {
-            return Err(ItemError::TooMany(items.len()));
         }
 
         let hash = registry_hash(materials.hash(), source);
@@ -257,12 +247,10 @@ fn pretty_name(raw: &str) -> String {
 }
 
 fn registry_hash(material_hash: u64, items_source: &str) -> u64 {
-    let mut hash = 0xcbf2_9ce4_8422_2325u64 ^ material_hash;
-    for byte in items_source.bytes() {
-        hash ^= byte as u64;
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    hash
+    fallingsand_rng::fnv1a(
+        fallingsand_rng::FNV_OFFSET ^ material_hash,
+        items_source.as_bytes(),
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

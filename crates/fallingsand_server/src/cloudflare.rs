@@ -31,7 +31,19 @@ struct ApiResponse<T> {
     success: bool,
     result: Option<T>,
     #[serde(default)]
-    errors: serde_json::Value,
+    errors: Vec<ApiError>,
+}
+
+#[derive(Deserialize)]
+struct ApiError {
+    code: i64,
+    message: String,
+}
+
+impl std::fmt::Display for ApiError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[{}] {}", self.code, self.message)
+    }
 }
 
 #[derive(Deserialize)]
@@ -57,7 +69,15 @@ async fn api_call<T: serde::de::DeserializeOwned>(
     request: reqwest::RequestBuilder,
 ) -> anyhow::Result<T> {
     let body: ApiResponse<T> = request.bearer_auth(token).send().await?.json().await?;
-    ensure!(body.success, "cloudflare api error: {}", body.errors);
+    ensure!(
+        body.success,
+        "cloudflare api error: {}",
+        body.errors
+            .iter()
+            .map(ApiError::to_string)
+            .collect::<Vec<_>>()
+            .join("; ")
+    );
     body.result.context("cloudflare api returned no result")
 }
 
@@ -65,6 +85,8 @@ impl CloudflareHost {
     pub async fn new(token: String, domain: String) -> anyhow::Result<Self> {
         let client = reqwest::Client::builder()
             .local_address(IpAddr::V4(Ipv4Addr::UNSPECIFIED))
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
             .build()?;
         let zones: Vec<Zone> =
             api_call(&token, client.get(format!("{CF_API}/zones?per_page=50"))).await?;

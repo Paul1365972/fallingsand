@@ -1,8 +1,8 @@
-use crate::net::{SessionEnded, TickFrame};
+use crate::net::{SessionEnded, TickMessage};
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
-use fallingsand_core::{CHUNK_AREA, Cell, CellOffset, CellPos, ChunkPos, DirtyRect};
-use fallingsand_protocol::{TileOp, cells_from_wire};
+use fallingsand_core::{CHUNK_AREA, CHUNK_SIZE, Cell, CellOffset, CellPos, ChunkPos, DirtyRect};
+use fallingsand_protocol::{ChunkOp, cells_from_wire};
 
 pub struct WorldViewPlugin;
 
@@ -26,12 +26,6 @@ impl WorldView {
     }
 }
 
-impl fallingsand_sim::physics::CellSource for WorldView {
-    fn cell_at(&self, pos: CellPos) -> Option<Cell> {
-        self.get_cell(pos)
-    }
-}
-
 impl Plugin for WorldViewPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<WorldView>()
@@ -46,12 +40,12 @@ fn clear_view(mut view: ResMut<WorldView>) {
     view.server_tick = 0;
 }
 
-fn apply_updates(mut view: ResMut<WorldView>, mut frames: MessageReader<TickFrame>) {
-    for TickFrame(tick) in frames.read() {
+fn apply_updates(mut view: ResMut<WorldView>, mut frames: MessageReader<TickMessage>) {
+    for TickMessage(tick) in frames.read() {
         view.server_tick = view.server_tick.max(tick.tick);
-        for op in &tick.tiles {
+        for op in &tick.chunks {
             match op {
-                TileOp::Load { pos, cells } => match cells_from_wire(cells) {
+                ChunkOp::Load { pos, cells } => match cells_from_wire(cells) {
                     Ok(decoded) if decoded.len() == CHUNK_AREA => {
                         let mut buffer = Box::new([Cell::AIR; CHUNK_AREA]);
                         buffer.copy_from_slice(&decoded);
@@ -66,14 +60,18 @@ fn apply_updates(mut view: ResMut<WorldView>, mut frames: MessageReader<TickFram
                     }
                     _ => error!("bad chunk load payload for {pos:?}"),
                 },
-                TileOp::Unload { pos } => {
+                ChunkOp::Unload { pos } => {
                     view.chunks.remove(pos);
                 }
-                TileOp::Delta { pos, rect, cells } => {
+                ChunkOp::Delta { pos, rect, cells } => {
                     let Some(chunk) = view.chunks.get_mut(pos) else {
                         continue;
                     };
                     if rect.is_empty() {
+                        continue;
+                    }
+                    if rect.max_x as usize >= CHUNK_SIZE || rect.max_y as usize >= CHUNK_SIZE {
+                        error!("delta rect out of bounds for {pos:?}");
                         continue;
                     }
                     let Ok(decoded) = cells_from_wire(cells) else {

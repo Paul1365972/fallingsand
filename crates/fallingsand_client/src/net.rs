@@ -2,7 +2,7 @@ use crate::ClientRegistry;
 use bevy::prelude::*;
 use fallingsand_net::{Connection, ConnectionStatus};
 use fallingsand_protocol::{
-    ClientMessage, PROTOCOL_VERSION, PlayerId, ServerMessage, Stats, Tick, decode_message,
+    ClientMessage, PROTOCOL_VERSION, PlayerId, ServerMessage, Stats, TickFrame, decode_message,
     encode_message,
 };
 
@@ -138,7 +138,7 @@ impl Supervisor {
 pub struct ServerMsg(pub ServerMessage);
 
 #[derive(Message)]
-pub struct TickFrame(pub Tick);
+pub struct TickMessage(pub TickFrame);
 
 #[derive(Message)]
 pub struct SessionEnded;
@@ -154,7 +154,7 @@ impl std::ops::Deref for ServerStats {
 }
 
 pub fn parse_cert_hash(hex: &str) -> Option<Vec<u8>> {
-    if hex.len() != 64 || !hex.len().is_multiple_of(2) {
+    if hex.len() != 64 {
         return None;
     }
     (0..hex.len())
@@ -200,7 +200,7 @@ impl Plugin for NetPlugin {
         app.init_resource::<Supervisor>()
             .init_resource::<ServerStats>()
             .add_message::<ServerMsg>()
-            .add_message::<TickFrame>()
+            .add_message::<TickMessage>()
             .add_message::<SessionEnded>()
             .add_systems(OnEnter(crate::AppState::InGame), open)
             .add_systems(OnExit(crate::AppState::InGame), close)
@@ -253,7 +253,7 @@ fn drain(
     mut session: ResMut<Session>,
     mut supervisor: ResMut<Supervisor>,
     mut messages: MessageWriter<ServerMsg>,
-    mut frames: MessageWriter<TickFrame>,
+    mut frames: MessageWriter<TickMessage>,
     registry: Res<ClientRegistry>,
     item_registry: Res<crate::ClientItemRegistry>,
     pause: Option<Res<State<crate::PauseState>>>,
@@ -272,8 +272,8 @@ fn drain(
         session.rx_bytes += bytes.len() as u64;
         session.window_bytes += bytes.len() as u64;
         match decode_message::<ServerMessage>(&bytes) {
-            Ok(ServerMessage::Tick(tick)) => {
-                frames.write(TickFrame(tick));
+            Ok(ServerMessage::TickFrame(tick)) => {
+                frames.write(TickMessage(tick));
             }
             Ok(message) => {
                 if let ServerMessage::HelloAck {
@@ -282,7 +282,6 @@ fn drain(
                     item_registry_hash,
                     player,
                     spawn,
-                    ..
                 } = &message
                 {
                     if *protocol_version != PROTOCOL_VERSION {
@@ -331,7 +330,7 @@ fn drain(
 
 fn enter_playing(
     session: Option<Res<Session>>,
-    mut frames: MessageReader<TickFrame>,
+    mut frames: MessageReader<TickMessage>,
     mut next: ResMut<NextState<crate::GameState>>,
 ) {
     let joined = session.is_some_and(|session| session.player.is_some());

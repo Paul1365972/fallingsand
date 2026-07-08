@@ -16,7 +16,6 @@ embed-resource = "3"
 [dependencies]
 fallingsand_core = { workspace = true }
 fallingsand_rng = { workspace = true }
-fallingsand_sim = { workspace = true }
 fallingsand_protocol = { workspace = true }
 fallingsand_net = { workspace = true }
 bevy = { workspace = true, features = ["2d", "ui", "default_font", "multi_threaded", "png"] }
@@ -24,7 +23,6 @@ chrono = "0.4"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 fallingsand_server = { workspace = true }
-fallingsand_sim = { workspace = true, features = ["parallel"] }
 fallingsand_net = { workspace = true, features = ["wt-native"] }
 getrandom = "0.3"
 tokio = { workspace = true, features = ["rt-multi-thread"] }

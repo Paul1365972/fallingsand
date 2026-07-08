@@ -17,8 +17,11 @@ pub fn step_scoped(
 ) {
     world.advance_tick();
     let tick = world.tick();
+    let loaded: FxHashSet<ChunkPos> = world.chunk_map_mut().keys().copied().collect();
     for (&pos, chunk) in world.chunk_map_mut().iter_mut() {
-        if !simulate(pos) {
+        let ready = simulate(pos)
+            && (-1..=1).all(|dy| (-1..=1).all(|dx| loaded.contains(&pos.translated(dx, dy))));
+        if !ready {
             chunk.sleeping = true;
             continue;
         }
@@ -114,7 +117,9 @@ fn process_block(
     for oy in 0..2i32 {
         for ox in 0..2i32 {
             let (sx, sy) = (ox + 1, oy + 1);
-            if window.chunk_at(sx, sy).is_none() || !simulate(window.origin().translated(sx, sy)) {
+            if !simulate(window.origin().translated(sx, sy))
+                || (-1..=1).any(|dy| (-1..=1).any(|dx| window.chunk_at(sx + dx, sy + dy).is_none()))
+            {
                 continue;
             }
             let mut rect = DirtyRect::EMPTY;

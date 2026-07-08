@@ -10,7 +10,7 @@ pub const ECLIPSE_WINDOW: f32 = 0.05;
 pub const MOON_LIGHT_MAX: f32 = 0.5;
 pub const SKYGLOW: f32 = 0.03;
 
-fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
+pub fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
 }

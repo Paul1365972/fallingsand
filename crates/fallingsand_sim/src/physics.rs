@@ -1,10 +1,8 @@
 use crate::obstacles::Obstacles;
 use crate::world::CellWorld;
-use fallingsand_core::{
-    Cell, CellPos, Fixed, MaterialRegistry, Phase, TICK_DT, VEL_ONE,
-};
+use fallingsand_core::{Cell, CellPos, Fixed, MaterialRegistry, Phase, TICK_DT, VEL_ONE};
 
-const BOUNCE_MIN_SPEED: Fixed = Fixed::from_int(30);
+pub const BOUNCE_MIN_SPEED: f32 = 30.0;
 const LAUNCH_MIN_SPEED: Fixed = Fixed::from_int(80);
 const LEDGE_LAUNCH_K: Fixed = Fixed::from_f32(0.35);
 const MIN_GRIP: f32 = 0.06;
@@ -45,7 +43,7 @@ impl CellSource for CellWorld {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Body {
+pub struct Actor {
     pub x: Fixed,
     pub y: Fixed,
     pub vx: Fixed,
@@ -56,7 +54,7 @@ pub struct Body {
     pub on_ground: bool,
 }
 
-impl Body {
+impl Actor {
     pub fn new(x: Fixed, y: Fixed, half_w: Fixed, half_h: Fixed) -> Self {
         Self {
             x,
@@ -129,7 +127,7 @@ fn cell_bounds(cx: Fixed, cy: Fixed, half_w: Fixed, half_h: Fixed) -> (i32, i32,
 fn rect_blocked<W: CellSource>(
     world: &W,
     registry: &MaterialRegistry,
-    body: &Body,
+    body: &Actor,
     cx: Fixed,
     cy: Fixed,
 ) -> bool {
@@ -157,7 +155,7 @@ pub struct Submersion {
 pub fn body_submersion<W: CellSource>(
     world: &W,
     registry: &MaterialRegistry,
-    body: &Body,
+    body: &Actor,
 ) -> Submersion {
     let (x0, y0, x1, y1) = cell_bounds(body.x, body.y, body.half_w, body.half_h);
     let mut total = 0u32;
@@ -190,7 +188,7 @@ pub fn body_submersion<W: CellSource>(
         fraction: liquid as f32 / total as f32,
         liquid_density: density_sum / liquid as f32,
         flow_vx: flow_x as f32 * per_cell * to_per_sec,
-        flow_vy: -(flow_y as f32) * per_cell * to_per_sec,
+        flow_vy: flow_y as f32 * per_cell * to_per_sec,
     }
 }
 
@@ -252,7 +250,7 @@ fn approach(value: Fixed, target: Fixed, delta: Fixed) -> Fixed {
 }
 
 fn resolve_axis(v: Fixed, e: f32) -> Fixed {
-    if v.abs() > BOUNCE_MIN_SPEED {
+    if v.abs() > Fixed::from_f32(BOUNCE_MIN_SPEED) {
         -v.mul(Fixed::from_f32(e))
     } else {
         Fixed::ZERO
@@ -269,7 +267,7 @@ fn solids_bounce<W: CellSource>(world: &W, registry: &MaterialRegistry, solids: 
     e
 }
 
-fn ground_grip<W: CellSource>(world: &W, registry: &MaterialRegistry, body: &Body) -> f32 {
+fn ground_grip<W: CellSource>(world: &W, registry: &MaterialRegistry, body: &Actor) -> f32 {
     let (x0, _, x1, _) = cell_bounds(body.x, body.y, body.half_w, body.half_h);
     let feet = (body.y - body.half_h - GROUND_PROBE).floor_cell();
     let mut grip = 0.0f32;
@@ -294,7 +292,7 @@ pub fn step_player<W: CellSource>(
     world: &W,
     registry: &MaterialRegistry,
     params: &PlayerParams,
-    body: &mut Body,
+    body: &mut Actor,
     ctrl: &mut Controller,
     input: StepInput,
 ) -> MoveResult {
@@ -338,7 +336,7 @@ fn fly_update<W: CellSource>(
     world: &W,
     registry: &MaterialRegistry,
     params: &PlayerParams,
-    body: &mut Body,
+    body: &mut Actor,
     ctrl: &mut Controller,
     move_x: i32,
     jump_held: bool,
@@ -372,7 +370,7 @@ fn normal_update<W: CellSource>(
     world: &W,
     registry: &MaterialRegistry,
     params: &PlayerParams,
-    body: &mut Body,
+    body: &mut Actor,
     ctrl: &mut Controller,
     move_x: i32,
     jump_held: bool,
@@ -493,7 +491,7 @@ fn normal_update<W: CellSource>(
 fn bank_ahead<W: CellSource>(
     world: &W,
     registry: &MaterialRegistry,
-    body: &Body,
+    body: &Actor,
     move_x: i32,
 ) -> bool {
     let (x0, y0, x1, y1) = cell_bounds(body.x, body.y, body.half_w, body.half_h);
@@ -515,7 +513,7 @@ fn bank_ahead<W: CellSource>(
     false
 }
 
-fn jump(params: &PlayerParams, body: &mut Body, ctrl: &mut Controller, move_x: i32, scale: Fixed) {
+fn jump(params: &PlayerParams, body: &mut Actor, ctrl: &mut Controller, move_x: i32, scale: Fixed) {
     ctrl.buffer = 0.0;
     ctrl.coyote = 0.0;
     body.vx += params.jump_h_boost.mul(scale).mul_int(move_x);
@@ -524,13 +522,13 @@ fn jump(params: &PlayerParams, body: &mut Body, ctrl: &mut Controller, move_x: i
     ctrl.var_jump_speed = body.vy;
 }
 
-fn duck(params: &PlayerParams, body: &mut Body, ctrl: &mut Controller) {
+fn duck(params: &PlayerParams, body: &mut Actor, ctrl: &mut Controller) {
     body.y -= params.stand_half_h - params.duck_half_h;
     body.half_h = params.duck_half_h;
     ctrl.ducking = true;
 }
 
-fn unduck(params: &PlayerParams, body: &mut Body, ctrl: &mut Controller) {
+fn unduck(params: &PlayerParams, body: &mut Actor, ctrl: &mut Controller) {
     body.y += params.stand_half_h - body.half_h;
     body.half_h = params.stand_half_h;
     ctrl.ducking = false;
@@ -540,7 +538,7 @@ fn can_unduck<W: CellSource>(
     world: &W,
     registry: &MaterialRegistry,
     params: &PlayerParams,
-    body: &Body,
+    body: &Actor,
 ) -> bool {
     let stand_cy = body.y - body.half_h + params.stand_half_h;
     let cur = cell_bounds(body.x, body.y, body.half_w, body.half_h);
@@ -651,7 +649,7 @@ impl Blockage {
 fn passage<W: CellSource>(
     world: &W,
     registry: &MaterialRegistry,
-    body: &Body,
+    body: &Actor,
     cx: Fixed,
     cy: Fixed,
     displaced: &[CellPos],
@@ -690,7 +688,7 @@ fn passage<W: CellSource>(
 fn try_step_up<W: CellSource>(
     world: &W,
     registry: &MaterialRegistry,
-    body: &mut Body,
+    body: &mut Actor,
     blockage: &Blockage,
 ) -> bool {
     let Some(step_top) = blockage.step_top() else {
@@ -714,7 +712,7 @@ fn try_step_up<W: CellSource>(
 fn corner_correct<W: CellSource>(
     world: &W,
     registry: &MaterialRegistry,
-    body: &Body,
+    body: &Actor,
     next_y: Fixed,
     displaced: &[CellPos],
 ) -> Option<Fixed> {
@@ -739,7 +737,7 @@ fn corner_correct<W: CellSource>(
 pub fn move_body<W: CellSource>(
     world: &W,
     registry: &MaterialRegistry,
-    body: &mut Body,
+    body: &mut Actor,
     submersion: f32,
 ) -> MoveResult {
     let mut result = MoveResult::default();
@@ -941,7 +939,7 @@ pub fn scatter_powder(
     world: &mut CellWorld,
     registry: &MaterialRegistry,
     obstacles: &Obstacles,
-    body: &Body,
+    body: &Actor,
     cells: &[CellPos],
 ) {
     let dir = if body.vx > Fixed::ONE {
@@ -960,14 +958,7 @@ pub fn scatter_powder(
         }
         let mut destination: Option<CellPos> = None;
         'search: for radius in 1..=SCATTER_RADIUS {
-            let mut ring: Vec<(i32, i32)> = Vec::new();
-            for dy in -radius..=radius {
-                for dx in -radius..=radius {
-                    if dx.abs().max(dy.abs()) == radius {
-                        ring.push((dx, dy));
-                    }
-                }
-            }
+            let mut ring = crate::chebyshev_ring(radius);
             ring.sort_by_key(|&(dx, dy)| (dir * dx, dy, dx));
             for (dx, dy) in ring {
                 let target = pos.translated(dx, dy);

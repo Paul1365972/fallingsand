@@ -114,7 +114,10 @@ impl Connection for WtConnection {
         match self.rx.lock().unwrap().try_recv() {
             Ok(message) => Some(message),
             Err(TryRecvError::Empty) => None,
-            Err(TryRecvError::Disconnected) => None,
+            Err(TryRecvError::Disconnected) => {
+                self.closed.mark("connection closed");
+                None
+            }
         }
     }
 

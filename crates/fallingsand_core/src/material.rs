@@ -100,10 +100,6 @@ pub fn per_tick_keep(rate: f32) -> f32 {
     (-rate * crate::TICK_DT).exp()
 }
 
-pub fn per_tick_blend(rate: f32) -> f32 {
-    1.0 - (-rate * crate::TICK_DT).exp()
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MaterialFile {
     pub materials: Vec<Material>,
@@ -129,7 +125,7 @@ pub struct Dynamics {
     pub restitution: f32,
     pub turbulence: f32,
     pub slide_chance: f32,
-    pub slide_gain: f32,
+    pub redirect_keep: f32,
     pub flow_chance: f32,
 }
 
@@ -401,11 +397,11 @@ impl MaterialRegistry {
             .map(|material| Dynamics {
                 drag_keep: per_tick_keep(material.drag),
                 friction_keep: per_tick_keep(material.friction),
-                cohesion: per_tick_blend(material.cohesion),
+                cohesion: per_tick_chance(material.cohesion),
                 restitution: material.restitution.clamp(0.0, 1.0),
                 turbulence: material.turbulence * crate::TICK_DT.sqrt() * crate::VEL_ONE as f32,
                 slide_chance: per_tick_chance(material.repose),
-                slide_gain: material.redirect_keep.clamp(0.0, 1.0),
+                redirect_keep: material.redirect_keep.clamp(0.0, 1.0),
                 flow_chance: if material.flow_rate > 0.0 {
                     per_tick_chance(material.flow_rate)
                 } else {
@@ -530,10 +526,5 @@ impl MaterialRegistry {
 
 fn registry_hash(materials: &[Material], reactions: &[ReactionDef]) -> u64 {
     let bytes = postcard::to_allocvec(&(materials, reactions)).expect("materials serialize");
-    let mut hash = 0xcbf2_9ce4_8422_2325u64;
-    for byte in bytes {
-        hash ^= byte as u64;
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    hash
+    fallingsand_rng::fnv1a(fallingsand_rng::FNV_OFFSET, &bytes)
 }

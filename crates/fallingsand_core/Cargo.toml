@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+fallingsand_rng = { workspace = true }
 serde = { workspace = true }
 postcard = { workspace = true }
 ron = { workspace = true }

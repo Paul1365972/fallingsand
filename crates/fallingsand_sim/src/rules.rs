@@ -1,7 +1,7 @@
 use crate::obstacles::Obstacles;
 use crate::window::SimWindow;
 use fallingsand_core::{
-    Cell, CellPos, Dynamics, GRAVITY, MaterialId, MaterialRegistry, Phase, TICK_DT, TICK_RATE,
+    Cell, CellPos, Dynamics, GRID_GRAVITY, MaterialId, MaterialRegistry, Phase, TICK_DT, TICK_RATE,
     VEL_ONE, per_tick_chance,
 };
 use fallingsand_rng::{Hash, Rng};
@@ -17,7 +17,7 @@ const SETTLE: i32 = (7.5 * VEL_ONE as f32) as i32;
 const SUBMERGED_DENSITY: f32 = 100.0;
 const SUBMERGED_DRAG: f32 = 6.0;
 static GRAVITY_DV: LazyLock<i32> =
-    LazyLock::new(|| (GRAVITY * TICK_DT * VEL_ONE as f32).round() as i32);
+    LazyLock::new(|| (GRID_GRAVITY * TICK_DT * VEL_ONE as f32).round() as i32);
 
 pub(crate) fn update_cell(
     window: &mut SimWindow,
@@ -265,8 +265,8 @@ fn can_enter(
 fn step_cells(v: i32, rng: &mut Rng) -> i32 {
     let denom = VEL_ONE * TICK_RATE as i32;
     let mag = v.abs();
-    let cells = (mag / denom + rng.draw().chance((mag % denom) as f32 / denom as f32) as i32)
-        .min(MAX_STEP);
+    let cells =
+        (mag / denom + rng.draw().chance((mag % denom) as f32 / denom as f32) as i32).min(MAX_STEP);
     cells * v.signum()
 }
 
@@ -500,7 +500,7 @@ fn redirect(
     dynamics: Dynamics,
     rng: &mut Rng,
 ) -> bool {
-    let gain = (dynamics.slide_gain * vy.unsigned_abs() as f32).round() as i32;
+    let gain = (dynamics.redirect_keep * vy.unsigned_abs() as f32).round() as i32;
     let prefer = match (*vx).cmp(&0) {
         std::cmp::Ordering::Greater => 1,
         std::cmp::Ordering::Less => -1,

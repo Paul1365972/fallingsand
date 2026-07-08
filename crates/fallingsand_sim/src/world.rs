@@ -57,10 +57,7 @@ impl CellWorld {
         let Some(chunk) = self.chunks.get_mut(&pos.chunk()) else {
             return;
         };
-        if chunk.sleeping {
-            chunk.normalize_updated(self.tick as u8);
-            chunk.sleeping = false;
-        }
+        chunk.wake(self.tick as u8);
         let old = chunk.get(pos.offset());
         cell.updated = self.tick as u8;
         chunk.set(pos.offset(), cell);
@@ -73,10 +70,7 @@ impl CellWorld {
         let Some(chunk) = self.chunks.get_mut(&pos.chunk()) else {
             return;
         };
-        if chunk.sleeping {
-            chunk.normalize_updated(self.tick as u8);
-            chunk.sleeping = false;
-        }
+        chunk.wake(self.tick as u8);
         cell.updated = self.tick as u8;
         chunk.set(pos.offset(), cell);
     }
@@ -90,10 +84,7 @@ impl CellWorld {
         let Some(chunk) = self.chunks.get_mut(&pos.chunk()) else {
             return;
         };
-        if chunk.sleeping {
-            chunk.normalize_updated(self.tick as u8);
-            chunk.sleeping = false;
-        }
+        chunk.wake(self.tick as u8);
         chunk.keep_bounds.mark(pos.offset());
     }
 
@@ -133,13 +124,6 @@ impl CellWorld {
         }
     }
 
-    pub fn awake_chunk_count(&self) -> usize {
-        self.chunks
-            .values()
-            .filter(|chunk| !chunk.sim_dirty().is_empty())
-            .count()
-    }
-
     pub fn awake_counts(&self) -> (usize, u64) {
         let mut chunks = 0;
         let mut cells = 0;
@@ -152,13 +136,5 @@ impl CellWorld {
             cells += rect.width() as u64 * rect.height() as u64;
         }
         (chunks, cells)
-    }
-
-    pub fn count_material(&self, material: MaterialId) -> usize {
-        self.chunks
-            .values()
-            .flat_map(|chunk| chunk.cells().iter())
-            .filter(|cell| cell.material == material)
-            .count()
     }
 }

@@ -1,14 +1,15 @@
 use crate::persistence::{DroppedRecord, RegionExtras};
 use crate::session::Player;
-use crate::systems::{Mode, PhysicsBody};
+use crate::systems::{Mode, PlayerActor};
 use crate::{Registry, SimWorld};
 use bevy_ecs::prelude::*;
 use fallingsand_core::{
-    ChunkPos, Fixed, GRAVITY, Inventory as CoreInventory, ItemId, ItemRegistry, ItemStack,
+    ChunkPos, Fixed, GRID_GRAVITY, Inventory as CoreInventory, ItemId, ItemRegistry, ItemStack,
     RecipeRegistry, RegionPos, TICK_DT,
 };
 use fallingsand_protocol::{EntityId, GameMode, SlotAction};
-use fallingsand_sim::physics::{Body, body_submersion, move_body};
+use fallingsand_rng::{FNV_OFFSET, fnv1a, fnv1a_word};
+use fallingsand_sim::physics::{Actor, body_submersion, move_body};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 
@@ -22,9 +23,11 @@ const GRAB_RANGE_SQ: f32 = 34.0 * 34.0;
 const PICKUP_RANGE_SQ: f32 = 9.0 * 9.0;
 const MAGNET_ACCEL: f32 = 620.0;
 const MERGE_RADIUS_SQ: f32 = 6.0 * 6.0;
-const PER_CHUNK_ITEM_CAP: usize = 128;
+const COALESCE_THRESHOLD: usize = 128;
 const DROP_PICKUP_SECS: f32 = 0.6;
-pub const DROP_PICKUP_DELAY: u16 = (DROP_PICKUP_SECS * crate::TICK_RATE as f32) as u16;
+pub const DROP_PICKUP_DELAY: u16 = fallingsand_core::ticks_from_secs(DROP_PICKUP_SECS) as u16;
+
+type InventoryDiff = (Vec<(u16, Option<ItemStack>)>, Option<Option<ItemStack>>);
 
 #[derive(Resource, Clone)]
 pub struct ItemReg(pub Arc<ItemRegistry>);
@@ -69,11 +72,7 @@ impl Inventory {
         }
     }
 
-    #[allow(clippy::type_complexity)]
-    pub fn delta(
-        &mut self,
-        fresh: bool,
-    ) -> (Vec<(u16, Option<ItemStack>)>, Option<Option<ItemStack>>) {
+    pub fn delta(&mut self, fresh: bool) -> InventoryDiff {
         if fresh {
             self.dirty = false;
             self.last_slots = self.inner.slots.clone();
@@ -128,11 +127,11 @@ pub struct DroppedItem {
 }
 
 #[derive(Component)]
-pub struct ItemBody(pub Body);
+pub struct ItemActor(pub Actor);
 
 fn dropped_record(
     dropped: &DroppedItem,
-    body: &ItemBody,
+    body: &ItemActor,
     reg: &ItemRegistry,
 ) -> Option<DroppedRecord> {
     let def = reg.try_get(dropped.stack.item)?;
@@ -149,7 +148,7 @@ fn dropped_record(
 }
 
 pub fn bucket_dropped<'a>(
-    items: impl Iterator<Item = (&'a DroppedItem, &'a ItemBody)>,
+    items: impl Iterator<Item = (&'a DroppedItem, &'a ItemActor)>,
     reg: &ItemRegistry,
 ) -> FxHashMap<RegionPos, RegionExtras> {
     let mut map: FxHashMap<RegionPos, RegionExtras> = FxHashMap::default();
@@ -167,7 +166,7 @@ pub fn bucket_dropped<'a>(
 pub fn gather_region_extras(
     pos: RegionPos,
     reg: &ItemRegistry,
-    items: &Query<(Entity, &DroppedItem, &ItemBody)>,
+    items: &Query<(Entity, &DroppedItem, &ItemActor)>,
 ) -> (RegionExtras, Vec<Entity>) {
     let mut extras = RegionExtras::default();
     let mut entities = Vec::new();
@@ -186,16 +185,13 @@ pub fn gather_region_extras(
 pub fn extras_sig(extras: &RegionExtras) -> u64 {
     let mut sig = 0u64;
     for item in &extras.items {
-        let mut h = 0xcbf2_9ce4_8422_2325u64;
-        for byte in item.item.bytes() {
-            h = (h ^ byte as u64).wrapping_mul(0x0000_0100_0000_01b3);
-        }
+        let mut h = fnv1a(FNV_OFFSET, item.item.as_bytes());
         for field in [
             item.count as u64,
             item.x.raw() as u32 as u64,
             item.y.raw() as u32 as u64,
         ] {
-            h = (h ^ field).wrapping_mul(0x0000_0100_0000_01b3);
+            h = fnv1a_word(h, field);
         }
         sig = sig.wrapping_add(h);
     }
@@ -239,7 +235,7 @@ pub fn spawn_dropped_item(
     pickup_delay: u16,
 ) {
     let id = next_id.alloc();
-    let mut body = Body::new(x, y, ITEM_HALF, ITEM_HALF);
+    let mut body = Actor::new(x, y, ITEM_HALF, ITEM_HALF);
     body.vx = Fixed::from_f32(vx);
     body.vy = Fixed::from_f32(vy);
     commands.spawn((
@@ -252,7 +248,7 @@ pub fn spawn_dropped_item(
             asleep: false,
             moved: true,
         },
-        ItemBody(body),
+        ItemActor(body),
     ));
 }
 
@@ -308,7 +304,7 @@ pub fn apply_slot_actions(
     item_reg: Res<ItemReg>,
     recipes: Res<Recipes>,
     mut next_id: ResMut<NextEntityId>,
-    mut players: Query<(&PhysicsBody, &Mode, &mut Inventory), With<Player>>,
+    mut players: Query<(&PlayerActor, &Mode, &mut Inventory), With<Player>>,
 ) {
     let reg = &item_reg.0;
     for (entity, action) in actions.0.drain(..) {
@@ -403,8 +399,8 @@ pub fn step_items(
     sim: Res<SimWorld>,
     registry: Res<Registry>,
     item_reg: Res<ItemReg>,
-    mut items: Query<(Entity, &mut DroppedItem, &mut ItemBody)>,
-    mut players: Query<(Entity, &PhysicsBody, &mut Inventory), With<Player>>,
+    mut items: Query<(Entity, &mut DroppedItem, &mut ItemActor)>,
+    mut players: Query<(Entity, &PlayerActor, &mut Inventory), With<Player>>,
 ) {
     let reg = &item_reg.0;
 
@@ -417,9 +413,6 @@ pub fn step_items(
     let mut removed: FxHashSet<Entity> = FxHashSet::default();
     if items.iter().any(|(_, dropped, _)| !dropped.asleep) {
         merge_items(&order, &mut items, reg, &mut removed);
-        for entity in cap_items(&order, &items, &removed) {
-            removed.insert(entity);
-        }
     }
 
     let player_positions: Vec<(Entity, f32, f32)> = players
@@ -427,7 +420,7 @@ pub fn step_items(
         .map(|(e, body, _)| (e, body.0.x.to_f32(), body.0.y.to_f32()))
         .collect();
 
-    let gravity_step = Fixed::from_f32(GRAVITY * TICK_DT);
+    let gravity_step = Fixed::from_f32(GRID_GRAVITY * TICK_DT);
     let max_fall = Fixed::from_f32(ITEM_MAX_FALL);
     let ground_keep = Fixed::from_f32(ITEM_GROUND_KEEP_PER_SEC.powf(TICK_DT));
     let air_keep = Fixed::from_f32(ITEM_AIR_KEEP_PER_SEC.powf(TICK_DT));
@@ -529,7 +522,7 @@ pub fn step_items(
 
 fn merge_items(
     order: &[(Entity, EntityId)],
-    items: &mut Query<(Entity, &mut DroppedItem, &mut ItemBody)>,
+    items: &mut Query<(Entity, &mut DroppedItem, &mut ItemActor)>,
     reg: &ItemRegistry,
     removed: &mut FxHashSet<Entity>,
 ) {
@@ -543,75 +536,61 @@ fn merge_items(
         }
     }
     for bucket in buckets.values() {
-        for i in 0..bucket.len() {
-            let a = bucket[i];
-            if removed.contains(&a) {
-                continue;
-            }
-            let Ok((_, a_drop, a_body)) = items.get(a) else {
-                continue;
-            };
-            let (ax, ay) = (a_body.0.x.to_f32(), a_body.0.y.to_f32());
-            let a_item = a_drop.stack.item;
-            let max = reg.stack_max(a_item);
-            let mut a_count = a_drop.stack.count;
-            for &b in &bucket[i + 1..] {
-                if a_count >= max || removed.contains(&b) {
-                    continue;
-                }
-                let Ok((_, b_drop, b_body)) = items.get(b) else {
-                    continue;
-                };
-                if b_drop.stack.item != a_item {
-                    continue;
-                }
-                let dx = b_body.0.x.to_f32() - ax;
-                let dy = b_body.0.y.to_f32() - ay;
-                if dx * dx + dy * dy > MERGE_RADIUS_SQ {
-                    continue;
-                }
-                let moved = (max - a_count).min(b_drop.stack.count);
-                a_count += moved;
-                if let Ok((_, mut b_drop, _)) = items.get_mut(b) {
-                    b_drop.stack.count -= moved;
-                    if b_drop.stack.count == 0 {
-                        removed.insert(b);
-                    }
-                }
-            }
-            if let Ok((_, mut a_drop, _)) = items.get_mut(a) {
-                a_drop.stack.count = a_count;
-            }
+        merge_bucket(bucket, items, reg, removed, Some(MERGE_RADIUS_SQ));
+        let live = bucket.iter().filter(|e| !removed.contains(e)).count();
+        if live > COALESCE_THRESHOLD {
+            merge_bucket(bucket, items, reg, removed, None);
         }
     }
 }
 
-fn cap_items(
-    order: &[(Entity, EntityId)],
-    items: &Query<(Entity, &mut DroppedItem, &mut ItemBody)>,
-    removed: &FxHashSet<Entity>,
-) -> Vec<Entity> {
-    let mut buckets: FxHashMap<ChunkPos, Vec<Entity>> = FxHashMap::default();
-    for &(entity, _) in order {
-        if removed.contains(&entity) {
+fn merge_bucket(
+    bucket: &[Entity],
+    items: &mut Query<(Entity, &mut DroppedItem, &mut ItemActor)>,
+    reg: &ItemRegistry,
+    removed: &mut FxHashSet<Entity>,
+    radius_sq: Option<f32>,
+) {
+    for i in 0..bucket.len() {
+        let a = bucket[i];
+        if removed.contains(&a) {
             continue;
         }
-        if let Ok((_, _, body)) = items.get(entity) {
-            buckets
-                .entry(body.0.cell().chunk())
-                .or_default()
-                .push(entity);
-        }
-    }
-    let mut extra = Vec::new();
-    for mut live in buckets.into_values() {
-        if live.len() <= PER_CHUNK_ITEM_CAP {
+        let Ok((_, a_drop, a_body)) = items.get(a) else {
             continue;
+        };
+        let (ax, ay) = (a_body.0.x.to_f32(), a_body.0.y.to_f32());
+        let a_item = a_drop.stack.item;
+        let max = reg.stack_max(a_item);
+        let mut a_count = a_drop.stack.count;
+        for &b in &bucket[i + 1..] {
+            if a_count >= max || removed.contains(&b) {
+                continue;
+            }
+            let Ok((_, b_drop, b_body)) = items.get(b) else {
+                continue;
+            };
+            if b_drop.stack.item != a_item {
+                continue;
+            }
+            if let Some(r2) = radius_sq {
+                let dx = b_body.0.x.to_f32() - ax;
+                let dy = b_body.0.y.to_f32() - ay;
+                if dx * dx + dy * dy > r2 {
+                    continue;
+                }
+            }
+            let moved = (max - a_count).min(b_drop.stack.count);
+            a_count += moved;
+            if let Ok((_, mut b_drop, _)) = items.get_mut(b) {
+                b_drop.stack.count -= moved;
+                if b_drop.stack.count == 0 {
+                    removed.insert(b);
+                }
+            }
         }
-        live.sort_unstable_by_key(|&e| items.get(e).map(|(_, d, _)| d.age_ticks).unwrap_or(0));
-        for &e in live.iter().skip(PER_CHUNK_ITEM_CAP) {
-            extra.push(e);
+        if let Ok((_, mut a_drop, _)) = items.get_mut(a) {
+            a_drop.stack.count = a_count;
         }
     }
-    extra
 }

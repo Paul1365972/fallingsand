@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 pub const CHUNK_BITS: u32 = 6;
 pub const REGION_BITS: u32 = 3;
 
+const _: () = assert!(1usize << CHUNK_BITS == crate::chunk::CHUNK_SIZE);
+const _: () = assert!(1usize << REGION_BITS == crate::region::REGION_SIZE_CHUNKS);
+
 #[derive(
     Debug, Default, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
 )]
@@ -126,6 +129,13 @@ impl RegionPos {
         }
     }
 
+    pub fn chunk_positions(self) -> impl Iterator<Item = (ChunkOffset, ChunkPos)> {
+        (0..crate::region::REGION_AREA_CHUNKS).map(move |index| {
+            let offset = ChunkOffset::from_index(index);
+            (offset, self.chunk(offset))
+        })
+    }
+
     pub const fn zorder_key(self) -> u64 {
         interleave(self.x as u32) | (interleave(self.y as u32) << 1)
     }
@@ -160,7 +170,9 @@ const fn deinterleave(v: u64) -> u32 {
 
 impl CellOffset {
     pub const fn new(x: u8, y: u8) -> Self {
-        debug_assert!(x < 64 && y < 64);
+        debug_assert!(
+            (x as usize) < crate::chunk::CHUNK_SIZE && (y as usize) < crate::chunk::CHUNK_SIZE
+        );
         Self { x, y }
     }
 
@@ -178,7 +190,10 @@ impl CellOffset {
 
 impl ChunkOffset {
     pub const fn new(x: u8, y: u8) -> Self {
-        debug_assert!(x < 8 && y < 8);
+        debug_assert!(
+            (x as usize) < crate::region::REGION_SIZE_CHUNKS
+                && (y as usize) < crate::region::REGION_SIZE_CHUNKS
+        );
         Self { x, y }
     }
 

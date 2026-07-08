@@ -1,7 +1,6 @@
 use fallingsand_core::{
-    CHUNK_AREA, CHUNK_SIZE, Cell, ChunkOffset, DirtyRect, Fixed, Inventory as CoreInventory,
-    ItemId, ItemRegistry, ItemStack, MaterialId, PLAYER_SLOTS, REGION_AREA_CHUNKS, Region,
-    RegionPos,
+    CHUNK_AREA, CHUNK_SIZE, Cell, DirtyRect, Fixed, Inventory as CoreInventory, ItemId,
+    ItemRegistry, ItemStack, MaterialId, PLAYER_SLOTS, REGION_AREA_CHUNKS, Region, RegionPos,
 };
 use fallingsand_protocol::{GameMode, PlayerUuid};
 use redb::{Database, ReadableDatabase, TableDefinition};
@@ -24,7 +23,7 @@ pub struct WorldMeta {
     pub format_version: u16,
     pub seed: u64,
     pub name: String,
-    pub age: u64,
+    pub world_age: u64,
     pub tick: u64,
 }
 
@@ -313,8 +312,7 @@ pub fn decode_region(blob: &[u8]) -> Result<(Region, RegionExtras), StoreError> 
     }
     let mut region = Region::new();
     let mut cursor = raw[..REGION_CELL_BYTES].chunks_exact(CELL_BYTES);
-    for chunk_index in 0..REGION_AREA_CHUNKS {
-        let chunk = region.chunk_mut(ChunkOffset::from_index(chunk_index));
+    for chunk in region.chunks_mut().iter_mut() {
         for cell in chunk.cells_mut() {
             let raw_cell = cursor.next().expect("length checked");
             *cell = Cell {

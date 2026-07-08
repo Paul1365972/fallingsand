@@ -36,7 +36,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libasound2-dev libudev-dev libwayland-dev
 
       - name: Lint
-        run: cargo clippy --workspace --all-targets --locked
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   test:
     runs-on: ubuntu-latest

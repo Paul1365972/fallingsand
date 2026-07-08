@@ -22,8 +22,9 @@ Ops: `insert_first_fit` (fill matches then empties, returns overflow), `left_cli
 ## Dig / place (server `systems.rs`)
 
 - Selected hotbar slot is `PlayerInput.selected_slot`; brush size is `PlayerInput.brush_radius`
-  (0..=6, `[`/`]` or `-`/`=`; scroll cycles the hotbar). The server clamps `selected_slot` to the
-  hotbar and `brush_radius` to `MAX_BRUSH` before use — slot eligibility is server-authoritative.
+  (0..=6, `[`/`]` or `-`/`=`; scroll cycles the hotbar). The server clamps `brush_radius` to
+  `MAX_BRUSH` and ignores a `selected_slot` outside the hotbar before use — slot eligibility is
+  server-authoritative.
 - Survival dig → `item_for_material` into the inventory; overflow spawns a dropped item at the cell.
 - Place reads the selected slot's `place` material and stamps it across the brush (survival decrements
   per cell).
@@ -34,14 +35,15 @@ Server-authoritative and intent-based — the client resolves its keybinds to in
 cross the wire: `LeftClick`/`RightClick` (cursor), `QuickMove` (hotbar↔main), `DropSlot`/`DropCursor`
 (throw into world), `Craft { recipe, all }` (server crafts once, or repeatedly until inputs run out),
 `CreativeGrab` (creative: infinite stack onto cursor). The server holds the cursor and re-validates
-every action against authoritative state. Inventory syncs as a full `ServerMessage::Inventory { slots,
-cursor }` on join/takeover, then per-slot `InventoryDelta { slots, cursor }` diffs while dirty.
+every action against authoritative state. Inventory rides the `TickFrame`: all slots + cursor on a
+session's first frame, then per-slot `(slot, stack)` diffs (plus the cursor when it changes) while
+dirty — there is no standalone inventory message.
 
 ## Dropped items (Terraria-style)
 
-`DroppedItem` + `ItemBody(Body)` — small AABB reusing `move_body`. `step_items`: gravity + grid sweep +
+`DroppedItem` + `ItemActor(Actor)` — small AABB reusing `move_body`. `step_items`: gravity + grid sweep +
 seconds-based ground/air drag; same-item merge within a chunk; magnetic pull toward a nearby player with
-room, absorbed within pickup range (thrown items have a short pickup delay); per-chunk cap bounds count.
+room, absorbed within pickup range (thrown items have a short pickup delay). A per-chunk entity count crossing `COALESCE_THRESHOLD` triggers chunk-wide same-item coalescing (drains stacks together, never deletes) — mass is conserved, only emptied entities despawn.
 Items **sleep** once settled on the ground with no player in grab range — skipping physics, merge, and
 replication until a player nears — so a resting pile costs ~nothing. Client renders a swatch sprite that
 bobs and interpolates. Replicated as interest-filtered `ServerMessage::ItemDelta { spawned, moved,

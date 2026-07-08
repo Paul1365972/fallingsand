@@ -1,13 +1,13 @@
 use crate::regions::ChunkTickets;
-use crate::systems::{PLAYER_MASS, PhysicsBody};
+use crate::systems::{PLAYER_MASS, PlayerActor};
 use crate::{PlayerImpulses, Registry, SimWorld, TickStats};
 use bevy_ecs::prelude::*;
 use fallingsand_core::{CellPos, Fixed, TICK_DT};
 use fallingsand_sim::bodies::{
-    EntityDynamics, PixelBody, apply_damage, detect_island, register_body,
+    ActorDynamics, PixelBody, apply_damage, detect_island, register_body,
     step_bodies as simulate_bodies, wake_covering,
 };
-use fallingsand_sim::{CellWorld, EntityBox};
+use fallingsand_sim::{ActorAabb, CellWorld};
 
 pub const BODY_GRAVITY: Fixed = Fixed::from_int(-400);
 
@@ -31,7 +31,7 @@ pub fn step_bodies(
     mut bodies: ResMut<PixelBodies>,
     mut impulses: ResMut<PlayerImpulses>,
     mut stats: ResMut<TickStats>,
-    query: Query<(Entity, &PhysicsBody)>,
+    query: Query<(Entity, &PlayerActor)>,
 ) {
     let bodies = &mut *bodies;
 
@@ -67,13 +67,13 @@ pub fn step_bodies(
     }
 
     let mut players: Vec<Entity> = Vec::new();
-    let mut entities: Vec<EntityDynamics> = Vec::new();
+    let mut entities: Vec<ActorDynamics> = Vec::new();
     let mut grounded: Vec<bool> = Vec::new();
     for (entity, body) in &query {
         players.push(entity);
         grounded.push(body.0.on_ground);
-        entities.push(EntityDynamics {
-            bbox: EntityBox {
+        entities.push(ActorDynamics {
+            bbox: ActorAabb {
                 x: body.0.x,
                 y: body.0.y,
                 half_w: body.0.half_w,
@@ -128,11 +128,7 @@ fn island_simulated(world: &CellWorld, tickets: &ChunkTickets, island: &[CellPos
     true
 }
 
-fn transfer_standing_weight(
-    world: &CellWorld,
-    bodies: &mut PixelBodies,
-    dynamics: &EntityDynamics,
-) {
+fn transfer_standing_weight(world: &CellWorld, bodies: &mut PixelBodies, dynamics: &ActorDynamics) {
     let bbox = dynamics.bbox;
     let row = (bbox.y - bbox.half_h).floor_cell() - 1;
     let x0 = (bbox.x - bbox.half_w).floor_cell();

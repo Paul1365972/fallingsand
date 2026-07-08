@@ -28,4 +28,6 @@ Co-op survival for ~10 players in one persistent, infinite world: gather, build,
 - [Client.md](Client.md) — rendering and UI
 - [Inventory.md](Inventory.md) — items, slots, crafting, dropped items
 - [Worldgen.md](Worldgen.md) — generation pipeline
+- [Deploy.md](Deploy.md) — dedicated-server networking, DNS/TLS automation
+- [Glossary.md](Glossary.md) — canonical names for core types and units
 - [References.md](References.md) — prior art

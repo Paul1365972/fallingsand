@@ -113,7 +113,7 @@ pub struct ItemMove {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct EntityState {
+pub struct PlayerState {
     pub player: PlayerId,
     pub x: Fixed,
     pub y: Fixed,
@@ -136,7 +136,7 @@ pub struct SelfState {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum TileOp {
+pub enum ChunkOp {
     Load {
         pos: ChunkPos,
         cells: Vec<u8>,
@@ -159,11 +159,11 @@ pub struct ItemDelta {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct Tick {
+pub struct TickFrame {
     pub tick: u64,
-    pub age: u64,
-    pub tiles: Vec<TileOp>,
-    pub players: Vec<EntityState>,
+    pub world_age: u64,
+    pub chunks: Vec<ChunkOp>,
+    pub players: Vec<PlayerState>,
     pub items: ItemDelta,
     pub inventory: Vec<(u16, Option<ItemStack>)>,
     pub cursor: Option<Option<ItemStack>>,
@@ -196,7 +196,6 @@ pub enum ServerMessage {
         registry_hash: u64,
         item_registry_hash: u64,
         player: PlayerId,
-        tick: u64,
         spawn: CellPos,
     },
     Reject {
@@ -217,5 +216,5 @@ pub enum ServerMessage {
     System {
         text: String,
     },
-    Tick(Tick),
+    TickFrame(TickFrame),
 }

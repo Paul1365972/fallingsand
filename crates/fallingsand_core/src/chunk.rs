@@ -198,4 +198,11 @@ impl Chunk {
             cell.updated = tick;
         }
     }
+
+    pub fn wake(&mut self, tick: u8) {
+        if self.sleeping {
+            self.normalize_updated(tick);
+            self.sleeping = false;
+        }
+    }
 }

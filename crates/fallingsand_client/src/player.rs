@@ -1,7 +1,7 @@
 use crate::camera::WORLD_LAYER;
 use crate::interpolation::Interpolated;
 use crate::inventory::{BrushRadius, InventoryOpen, SelectedSlot};
-use crate::net::{NetSet, ServerMsg, Session, SessionEnded, TickFrame};
+use crate::net::{NetSet, ServerMsg, Session, SessionEnded, TickMessage};
 use crate::{AppState, PauseState};
 use bevy::camera::visibility::RenderLayers;
 use bevy::input::mouse::MouseWheel;
@@ -149,14 +149,14 @@ fn update_nametags(names: Res<PlayerNames>, mut tags: Query<(&NameTag, &mut Text
 fn apply_players(
     mut commands: Commands,
     mut visuals: ResMut<PlayerVisuals>,
-    mut frames: MessageReader<TickFrame>,
+    mut frames: MessageReader<TickMessage>,
     mut query: Query<(&mut Interpolated, &mut Sprite, &mut PlayerVisual)>,
     session: Option<Res<Session>>,
     names: Res<PlayerNames>,
     mut local_state: ResMut<LocalPlayerState>,
 ) {
     let local = session.and_then(|session| session.player);
-    for TickFrame(tick) in frames.read() {
+    for TickMessage(tick) in frames.read() {
         for state in &tick.players {
             if local == Some(state.player) {
                 local_state.pos = Vec2::new(state.x.to_f32(), state.y.to_f32());
@@ -222,11 +222,11 @@ fn apply_players(
 }
 
 fn apply_self_state(
-    mut frames: MessageReader<TickFrame>,
+    mut frames: MessageReader<TickMessage>,
     mut mode: ResMut<LocalMode>,
     mut local_state: ResMut<LocalPlayerState>,
 ) {
-    for TickFrame(tick) in frames.read() {
+    for TickMessage(tick) in frames.read() {
         if let Some(self_state) = tick.self_state {
             if mode.0 != self_state.mode {
                 mode.0 = self_state.mode;
@@ -268,7 +268,7 @@ fn select_slot(
     mut selected: ResMut<SelectedSlot>,
     mut brush: ResMut<BrushRadius>,
 ) {
-    if chat_open.0 {
+    if chat_open.0 || inv_open.0 {
         wheel.clear();
         return;
     }
@@ -291,7 +291,7 @@ fn select_slot(
 
     let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
     let scroll: f32 = wheel.read().map(|event| event.y).sum();
-    if !inv_open.0 && !ctrl && scroll.abs() > 0.01 {
+    if !ctrl && scroll.abs() > 0.01 {
         let step = if scroll > 0.0 { HOTBAR_SLOTS - 1 } else { 1 };
         selected.0 = (selected.0 + step) % HOTBAR_SLOTS;
     }

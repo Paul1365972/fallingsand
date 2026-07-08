@@ -58,15 +58,6 @@ impl Caves {
         let value = self.shaft.get_noise_2d(x as f32, 0.0).abs();
         (1.0 - value / SHAFT_WIDTH).max(0.0)
     }
-
-    pub fn sample(&self, x: i32, y: i32) -> CaveSample {
-        CaveSample {
-            tunnel_a: self.tunnel_a.at(x, y),
-            tunnel_b: self.tunnel_b.at(x, y),
-            cheese: self.cheese.at(x, y),
-            rarity: self.rarity.at(x, y),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy)]

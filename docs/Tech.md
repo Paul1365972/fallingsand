@@ -11,7 +11,7 @@ fallingsand_server    # Authoritative server: library + dedicated binary
 fallingsand_client    # Bevy app; builds native + WASM
 ```
 
-Direction: `core ← sim ← {server, client}`, `core ← protocol ← {server, client}`.
+Direction: `core ← sim ← {server, client}`, `core ← protocol ← {server, client}`. `fallingsand_rng` is a dependency-free leaf (splitmix64 + FNV-1a) used by `core`, `sim`, `worldgen`, and `server`.
 
 - **Client stays WASM-clean** — the browser build is join-only, so rayon, storage, and the embedded server compile out for wasm. CI builds the client for `wasm32-unknown-unknown`.
 - Only the client depends on Bevy; only the server depends on redb.

@@ -1,10 +1,11 @@
 use crate::camera::WORLD_LAYER;
+use crate::inventory::BrushRadius;
 use crate::player::{InputState, LocalMode, PlayerVisual, PlayerVisuals};
 use crate::worldview::WorldView;
 use crate::{AppState, ClientRegistry, GameState};
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
-use fallingsand_core::{BRUSH_RADIUS, Phase, REACH, SURVIVAL_REACH};
+use fallingsand_core::{Phase, REACH, SURVIVAL_REACH};
 use fallingsand_protocol::GameMode;
 use fallingsand_rng::Rng;
 
@@ -49,6 +50,7 @@ fn spawn_dig_spray(
     session: Option<Res<crate::net::Session>>,
     visuals: Res<PlayerVisuals>,
     transforms: Query<&Transform, With<PlayerVisual>>,
+    brush: Res<BrushRadius>,
     mut rng: Local<Rng>,
 ) {
     if chat_open.0 || !buttons.pressed(MouseButton::Left) {
@@ -72,15 +74,16 @@ fn spawn_dig_spray(
         return;
     }
 
+    let radius = brush.0 as i32;
     let mut spawned = 0;
     for _ in 0..12 {
         if spawned >= SPRAY_PER_FRAME {
             break;
         }
-        let span = (2 * BRUSH_RADIUS + 1) as f32;
-        let ox = (rng.draw().unit() * span) as i32 - BRUSH_RADIUS;
-        let oy = (rng.draw().unit() * span) as i32 - BRUSH_RADIUS;
-        if ox * ox + oy * oy > BRUSH_RADIUS * BRUSH_RADIUS {
+        let span = (2 * radius + 1) as f32;
+        let ox = (rng.draw().unit() * span) as i32 - radius;
+        let oy = (rng.draw().unit() * span) as i32 - radius;
+        if ox * ox + oy * oy > radius * radius {
             continue;
         }
         let pos = input.aim.translated(ox, oy);

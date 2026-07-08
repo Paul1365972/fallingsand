@@ -1,6 +1,6 @@
 use crate::commands::{PendingCommand, PendingCommands};
 use crate::inventory::{
-    DroppedItem, Inventory, ItemBody, ItemReg, NextEntityId, SlotActions, spawn_dropped_item,
+    DroppedItem, Inventory, ItemActor, ItemReg, NextEntityId, SlotActions, spawn_dropped_item,
 };
 use crate::persistence::{
     PlayerRecord, player_slots_from_record, slots_to_record, stack_to_record,
@@ -17,13 +17,13 @@ use fallingsand_core::{
     Phase, TICK_DT,
 };
 use fallingsand_protocol::{
-    ChunkDebugRects, ClientMessage, EntityId, EntityState, GameMode, ItemDelta, ItemEntityState,
-    ItemMove, MAX_BRUSH, PROTOCOL_VERSION, PlayerId, SelfState, ServerMessage, Tick, TileOp,
-    cells_to_wire, decode_message,
+    ChunkDebugRects, ChunkOp, ClientMessage, EntityId, GameMode, ItemDelta, ItemEntityState,
+    ItemMove, MAX_BRUSH, PROTOCOL_VERSION, PlayerId, PlayerState, SelfState, ServerMessage,
+    TickFrame, cells_to_wire, decode_message,
 };
-use fallingsand_sim::EntityBox;
+use fallingsand_sim::ActorAabb;
 use fallingsand_sim::physics::{
-    Body, Controller, PlayerParams, StepInput, scatter_powder, step_player,
+    Actor, BOUNCE_MIN_SPEED, Controller, PlayerParams, StepInput, scatter_powder, step_player,
 };
 use rustc_hash::FxHashSet;
 use std::time::Instant;
@@ -35,10 +35,11 @@ pub use crate::MAX_HP;
 pub use fallingsand_core::{BRUSH_RADIUS, REACH, SURVIVAL_REACH};
 const CHAT_MAX_CHARS: usize = 240;
 const CHAT_RATE_SECS: f32 = 0.25;
-const CHAT_RATE_TICKS: u64 = (CHAT_RATE_SECS * crate::TICK_RATE as f32) as u64;
+const CHAT_RATE_TICKS: u64 = fallingsand_core::ticks_from_secs(CHAT_RATE_SECS);
+const PEAK_SIM_WINDOW_TICKS: u64 = 2 * crate::TICK_RATE as u64;
 
 #[derive(Component)]
-pub struct PhysicsBody(pub Body);
+pub struct PlayerActor(pub Actor);
 
 #[derive(Component, Default)]
 pub struct Control(pub Controller);
@@ -90,7 +91,7 @@ impl Burning {
 
 pub fn player_record(
     item_reg: &ItemRegistry,
-    body: &Body,
+    body: &Actor,
     health: &Health,
     mode: &Mode,
     air: &Air,
@@ -119,7 +120,7 @@ pub fn drain_network(
     mut slot_actions: ResMut<SlotActions>,
     mut players: Query<(
         &mut Player,
-        &PhysicsBody,
+        &PlayerActor,
         &Health,
         &Mode,
         &Air,
@@ -181,7 +182,11 @@ pub fn drain_network(
                             });
                             other.conn.close("superseded by a new session");
                             other.uuid = None;
-                            taken_entity = other.entity.take().or(taken_entity);
+                            if let Some(entity) = other.entity.take()
+                                && let Some(superseded) = taken_entity.replace(entity)
+                            {
+                                commands.entity(superseded).despawn();
+                            }
                             if let Some(old) = other.player.take() {
                                 left.push(old);
                             }
@@ -224,7 +229,7 @@ pub fn drain_network(
                                         name: name.clone(),
                                         input: Default::default(),
                                     },
-                                    PhysicsBody(Body::new(
+                                    PlayerActor(Actor::new(
                                         record.map(|r| r.x).unwrap_or(Fixed::from_cell(spawn.x)),
                                         record.map(|r| r.y).unwrap_or(Fixed::from_cell(spawn.y)),
                                         PLAYER_HALF_W,
@@ -283,7 +288,6 @@ pub fn drain_network(
                         registry_hash: registry.0.hash(),
                         item_registry_hash: item_reg.0.hash(),
                         player,
-                        tick: sim.0.tick(),
                         spawn,
                     });
                     session.send(&ServerMessage::PlayerJoined {
@@ -427,7 +431,7 @@ pub fn apply_player_inputs(
     obstacles: Res<SimObstacles>,
     mut bodies: ResMut<crate::bodies::PixelBodies>,
     mut next_id: ResMut<NextEntityId>,
-    mut query: Query<(&Player, &PhysicsBody, &Mode, &mut DigState, &mut Inventory)>,
+    mut query: Query<(&Player, &PlayerActor, &Mode, &mut DigState, &mut Inventory)>,
 ) {
     let reg = &item_reg.0;
     for (player, body, mode, mut dig, mut inventory) in &mut query {
@@ -606,7 +610,7 @@ pub fn survival_dig(
     dug
 }
 
-fn cell_overlaps_body(pos: CellPos, body: &Body) -> bool {
+fn cell_overlaps_body(pos: CellPos, body: &Actor) -> bool {
     let cx = Fixed::cell_center(pos.x);
     let cy = Fixed::cell_center(pos.y);
     (cx - body.x).abs() < body.half_w + Fixed::HALF
@@ -617,11 +621,11 @@ pub fn build_obstacles(
     mut sim: ResMut<SimWorld>,
     registry: Res<Registry>,
     mut obstacles: ResMut<SimObstacles>,
-    query: Query<&PhysicsBody>,
+    query: Query<&PlayerActor>,
 ) {
-    let boxes: Vec<EntityBox> = query
+    let boxes: Vec<ActorAabb> = query
         .iter()
-        .map(|body| EntityBox {
+        .map(|body| ActorAabb {
             x: body.0.x,
             y: body.0.y,
             half_w: body.0.half_w,
@@ -644,7 +648,7 @@ pub fn step_simulation(
     });
     stats.tick = sim.0.tick();
     stats.sim_micros = start.elapsed().as_micros() as u64;
-    if stats.tick.is_multiple_of(120) {
+    if stats.tick.is_multiple_of(PEAK_SIM_WINDOW_TICKS) {
         stats.peak_sim_micros = stats.sim_micros;
     } else {
         stats.peak_sim_micros = stats.peak_sim_micros.max(stats.sim_micros);
@@ -667,7 +671,7 @@ pub fn step_physics(
         Entity,
         &Player,
         &Mode,
-        &mut PhysicsBody,
+        &mut PlayerActor,
         &mut Control,
         &mut Health,
         &mut Air,
@@ -735,7 +739,7 @@ pub fn step_physics(
             health.hp = MAX_HP;
             air.secs = MAX_AIR_SECS;
             burning.secs = 0.0;
-            body.0 = Body::new(
+            body.0 = Actor::new(
                 Fixed::from_cell(spawn_point.0.x),
                 Fixed::from_cell(spawn_point.0.y),
                 PLAYER_HALF_W,
@@ -748,9 +752,8 @@ pub fn step_physics(
 }
 
 const PUSH_RESTITUTION: f32 = 0.2;
-const PUSH_BOUNCE_SPEED: f32 = 30.0;
 
-pub fn push_players(mut query: Query<&mut PhysicsBody>) {
+pub fn push_players(mut query: Query<&mut PlayerActor>) {
     let mut combos = query.iter_combinations_mut::<2>();
     while let Some([mut a, mut b]) = combos.fetch_next() {
         let dx = b.0.x - a.0.x;
@@ -772,7 +775,7 @@ pub fn push_players(mut query: Query<&mut PhysicsBody>) {
             }
             let rel = (b.0.vx - a.0.vx).to_f32();
             if rel * n < 0.0 {
-                let e = if rel.abs() > PUSH_BOUNCE_SPEED {
+                let e = if rel.abs() > BOUNCE_MIN_SPEED {
                     PUSH_RESTITUTION
                 } else {
                     0.0
@@ -793,7 +796,7 @@ pub fn push_players(mut query: Query<&mut PhysicsBody>) {
             }
             let rel = (b.0.vy - a.0.vy).to_f32();
             if rel * n < 0.0 {
-                let e = if rel.abs() > PUSH_BOUNCE_SPEED {
+                let e = if rel.abs() > BOUNCE_MIN_SPEED {
                     PUSH_RESTITUTION
                 } else {
                     0.0
@@ -806,34 +809,8 @@ pub fn push_players(mut query: Query<&mut PhysicsBody>) {
     }
 }
 
-pub fn apply_radial_impulse(
-    impulses: &mut crate::PlayerImpulses,
-    players: &[(Entity, Fixed, Fixed)],
-    center: (Fixed, Fixed),
-    radius: f32,
-    strength: f32,
-) {
-    for &(entity, x, y) in players {
-        let dx = (x - center.0).to_f32();
-        let dy = (y - center.1).to_f32();
-        let dist = dx.hypot(dy);
-        if dist > radius {
-            continue;
-        }
-        let (nx, ny) = if dist > 1e-3 {
-            (dx / dist, dy / dist)
-        } else {
-            (0.0, 1.0)
-        };
-        let mag = strength * (1.0 - dist / radius);
-        let entry = impulses.0.entry(entity).or_insert((0.0, 0.0));
-        entry.0 += nx * mag;
-        entry.1 += ny * mag;
-    }
-}
-
 #[derive(Resource, Default)]
-pub struct LastPlayers(pub rustc_hash::FxHashMap<PlayerId, EntityState>);
+pub struct LastPlayers(pub rustc_hash::FxHashMap<PlayerId, PlayerState>);
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
@@ -846,7 +823,7 @@ pub fn replicate(
     mut stats: ResMut<TickStats>,
     query: Query<(
         &Player,
-        &PhysicsBody,
+        &PlayerActor,
         &Control,
         &Health,
         &Mode,
@@ -854,14 +831,14 @@ pub fn replicate(
         &Air,
     )>,
     mut inventories: Query<&mut Inventory>,
-    dropped: Query<(&DroppedItem, &ItemBody)>,
+    dropped: Query<(&DroppedItem, &ItemActor)>,
 ) {
     let tick = sim.0.tick();
-    let age = clock.0.age;
+    let world_age = clock.0.age;
 
-    let mut all_players: Vec<EntityState> = query
+    let mut all_players: Vec<PlayerState> = query
         .iter()
-        .map(|(player, body, control, _, _, burning, _)| EntityState {
+        .map(|(player, body, control, _, _, burning, _)| PlayerState {
             player: player.id,
             x: body.0.x,
             y: body.0.y,
@@ -870,7 +847,7 @@ pub fn replicate(
         })
         .collect();
     all_players.sort_unstable_by_key(|state| state.player.0);
-    let changed_players: Vec<EntityState> = all_players
+    let changed_players: Vec<PlayerState> = all_players
         .iter()
         .filter(|state| last_players.0.get(&state.player) != Some(*state))
         .copied()
@@ -920,7 +897,7 @@ pub fn replicate(
         }
 
         let mut debug = Vec::new();
-        let tiles = build_tiles(
+        let chunks = build_tiles(
             &mut session.known_chunks,
             session.debug,
             &sim.0,
@@ -950,10 +927,10 @@ pub fn replicate(
         };
 
         session.fresh = false;
-        session.send(&ServerMessage::Tick(Tick {
+        session.send(&ServerMessage::TickFrame(TickFrame {
             tick,
-            age,
-            tiles,
+            world_age,
+            chunks,
             players,
             items,
             inventory,
@@ -979,13 +956,13 @@ fn build_tiles(
     sim: &fallingsand_sim::CellWorld,
     interest: &FxHashSet<fallingsand_core::ChunkPos>,
     debug_rects: &mut Vec<ChunkDebugRects>,
-) -> Vec<TileOp> {
+) -> Vec<ChunkOp> {
     let mut ops = Vec::new();
     known.retain(|&pos| {
         if interest.contains(&pos) {
             return true;
         }
-        ops.push(TileOp::Unload { pos });
+        ops.push(ChunkOp::Unload { pos });
         false
     });
     for &pos in interest {
@@ -1002,7 +979,7 @@ fn build_tiles(
             }
         }
         if known.insert(pos) {
-            ops.push(TileOp::Load {
+            ops.push(ChunkOp::Load {
                 pos,
                 cells: cells_to_wire(chunk.cells()),
             });
@@ -1018,7 +995,7 @@ fn build_tiles(
                 cells.push(chunk.get(CellOffset::new(x, y)));
             }
         }
-        ops.push(TileOp::Delta {
+        ops.push(ChunkOp::Delta {
             pos,
             rect,
             cells: cells_to_wire(&cells),

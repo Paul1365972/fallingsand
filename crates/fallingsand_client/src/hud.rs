@@ -1,10 +1,12 @@
 use crate::inventory::{LocalInventory, SelectedSlot, item_color};
-use crate::net::{NetSet, TickFrame};
+use crate::net::{NetSet, TickMessage};
 use crate::player::LocalMode;
 use crate::{AppState, ClientItemRegistry, ClientRegistry, GameState};
 use bevy::prelude::*;
 use fallingsand_core::{HOTBAR_SLOTS, ItemStack, MAX_AIR_SECS};
 use fallingsand_protocol::GameMode;
+
+type ShownHotbar = Option<Vec<Option<ItemStack>>>;
 
 pub struct HudPlugin;
 
@@ -207,12 +209,12 @@ fn despawn_hud(
 }
 
 fn track_vitals(
-    mut frames: MessageReader<TickFrame>,
+    mut frames: MessageReader<TickMessage>,
     mut health: ResMut<LocalHealth>,
     mut air: ResMut<LocalAir>,
     mut flash: ResMut<FlashTimer>,
 ) {
-    for TickFrame(tick) in frames.read() {
+    for TickMessage(tick) in frames.read() {
         if let Some(self_state) = tick.self_state {
             if self_state.hp < health.0 - 0.01 && self_state.hp > 0.0 {
                 flash.0 = FLASH_SECS;
@@ -229,7 +231,6 @@ fn hotbar_slots(inventory: &LocalInventory) -> Vec<Option<ItemStack>> {
         .collect()
 }
 
-#[allow(clippy::type_complexity)]
 fn update_hotbar(
     mut commands: Commands,
     registry: Res<ClientRegistry>,
@@ -237,7 +238,7 @@ fn update_hotbar(
     inventory: Res<LocalInventory>,
     row: Query<Entity, With<HotbarRow>>,
     slots: Query<Entity, With<HotbarSlot>>,
-    mut shown: Local<Option<Vec<Option<ItemStack>>>>,
+    mut shown: Local<ShownHotbar>,
 ) {
     if !inventory.is_changed() && slots.iter().count() == HOTBAR_SLOTS {
         return;

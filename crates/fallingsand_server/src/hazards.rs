@@ -1,9 +1,9 @@
-use crate::systems::{Air, Burning, Health, Mode, PhysicsBody};
+use crate::systems::{Air, Burning, Health, Mode, PlayerActor};
 use crate::{MAX_AIR_SECS, MAX_HP, Registry, SimWorld};
 use bevy_ecs::prelude::*;
-use fallingsand_core::{CellPos, Fixed, MaterialRegistry, Phase, TICK_DT, TICK_RATE};
+use fallingsand_core::{CellPos, Fixed, MaterialRegistry, Phase, TICK_DT};
 use fallingsand_protocol::GameMode;
-use fallingsand_sim::physics::{Body, CellSource};
+use fallingsand_sim::physics::{Actor, CellSource};
 use rustc_hash::FxHashMap;
 
 pub const BURN_SECS: f32 = 4.0;
@@ -14,7 +14,7 @@ pub const CRUSH_THRESHOLD_DV: f32 = 120.0;
 pub const CRUSH_DAMAGE_PER_DV: f32 = 0.3;
 pub const REGEN_DELAY_SECS: f32 = 8.0;
 pub const REGEN_RATE: f32 = 2.0;
-const REGEN_DELAY_TICKS: u64 = (REGEN_DELAY_SECS * TICK_RATE as f32) as u64;
+const REGEN_DELAY_TICKS: u64 = fallingsand_core::ticks_from_secs(REGEN_DELAY_SECS);
 
 #[derive(Resource, Default)]
 pub struct CrushEvents(pub Vec<(Entity, f32)>);
@@ -31,7 +31,7 @@ pub fn sample_hazards<W: CellSource>(
     world: &W,
     registry: &MaterialRegistry,
     hot_mask: u32,
-    body: &Body,
+    body: &Actor,
 ) -> HazardSample {
     let mut sample = HazardSample::default();
     let x0 = (body.x - body.half_w).floor_cell() - 1;
@@ -73,7 +73,7 @@ pub fn apply_hazards(
     mut query: Query<(
         Entity,
         &Mode,
-        &PhysicsBody,
+        &PlayerActor,
         &mut Health,
         &mut Air,
         &mut Burning,

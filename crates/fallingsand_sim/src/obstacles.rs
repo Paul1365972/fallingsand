@@ -3,14 +3,14 @@ use fallingsand_core::{CellPos, Fixed, MaterialRegistry, Phase};
 use rustc_hash::FxHashSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct EntityBox {
+pub struct ActorAabb {
     pub x: Fixed,
     pub y: Fixed,
     pub half_w: Fixed,
     pub half_h: Fixed,
 }
 
-impl EntityBox {
+impl ActorAabb {
     pub fn contains_cell(&self, pos: CellPos) -> bool {
         let (cx, cy) = (Fixed::cell_center(pos.x), Fixed::cell_center(pos.y));
         (cx - self.x).abs() <= self.half_w && (cy - self.y).abs() <= self.half_h
@@ -19,7 +19,7 @@ impl EntityBox {
 
 #[derive(Default)]
 pub struct Obstacles {
-    pub entity_boxes: Vec<EntityBox>,
+    pub entity_boxes: Vec<ActorAabb>,
     entity_cells: FxHashSet<CellPos>,
 }
 
@@ -32,7 +32,7 @@ impl Obstacles {
         &mut self,
         world: &mut CellWorld,
         registry: &MaterialRegistry,
-        entities: &[EntityBox],
+        entities: &[ActorAabb],
     ) {
         let mut entity_cells = FxHashSet::default();
         for entity in entities {

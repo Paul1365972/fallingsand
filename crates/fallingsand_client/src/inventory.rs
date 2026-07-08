@@ -1,6 +1,6 @@
 use crate::camera::WORLD_LAYER;
 use crate::interpolation::{Interpolated, interpolate};
-use crate::net::{NetSet, SessionEnded, TickFrame};
+use crate::net::{NetSet, SessionEnded, TickMessage};
 use crate::{AppState, ClientItemRegistry, ClientRegistry};
 use bevy::camera::visibility::RenderLayers;
 use bevy::platform::collections::HashMap;
@@ -74,8 +74,8 @@ pub fn item_color(item_reg: &ItemRegistry, materials: &MaterialRegistry, item: I
     }
 }
 
-fn track_inventory(mut inventory: ResMut<LocalInventory>, mut frames: MessageReader<TickFrame>) {
-    for TickFrame(tick) in frames.read() {
+fn track_inventory(mut inventory: ResMut<LocalInventory>, mut frames: MessageReader<TickMessage>) {
+    for TickMessage(tick) in frames.read() {
         for &(index, stack) in &tick.inventory {
             let index = index as usize;
             if index >= inventory.slots.len() {
@@ -94,10 +94,10 @@ fn track_items(
     mut visuals: ResMut<DroppedVisuals>,
     item_reg: Res<ClientItemRegistry>,
     registry: Res<ClientRegistry>,
-    mut frames: MessageReader<TickFrame>,
+    mut frames: MessageReader<TickMessage>,
     mut query: Query<(&mut Interpolated, &mut Sprite)>,
 ) {
-    for TickFrame(tick) in frames.read() {
+    for TickMessage(tick) in frames.read() {
         let spawned = &tick.items.spawned;
         let moved = &tick.items.moved;
         let despawned = &tick.items.despawned;

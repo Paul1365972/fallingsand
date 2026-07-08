@@ -2,6 +2,8 @@
 
 A small custom module in `fallingsand_sim` — everything collides against the cell grid, so terrain changes never rebuild collision geometry. That coupling is why there's no general-purpose engine.
 
+**Axes:** y is up everywhere — falling is negative `vy`. Three separate gravities apply it: `GRID_GRAVITY` (cells) and `PlayerParams.gravity` (controller) are positive magnitudes applied downward, while `BODY_GRAVITY` (pixel bodies) is stored already-signed (negative). Buoyancy bearing samples the cells below and beside a body, never above.
+
 ## Entities & controller
 
 Entities (players, items, creatures) are kinematic AABB/capsule bodies, swept against solid cells, with material-aware drag and sinking. The controller is Celeste ported to cells/s and tuned server-side (coyote time, jump buffer, variable height, corner correction, step assists) plus Minecraft-flavored swimming (drag-limited swim, idle sink, treading bob, bank vault, wade drag). Dropped items reuse the same `move_body` sweep with gravity + ground friction and settle when at rest (idle-free); pickup/merge are strictly local (see [Inventory.md](Inventory.md)).

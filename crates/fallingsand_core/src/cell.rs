@@ -30,7 +30,7 @@ impl Cell {
             material,
             vx: 0,
             vy: 0,
-            shade_flags: shade << 4,
+            shade_flags: (shade & 0x0F) << 4,
             updated: 0,
         }
     }
@@ -40,7 +40,7 @@ impl Cell {
     }
 
     pub fn set_shade(&mut self, shade: u8) {
-        self.shade_flags = (self.shade_flags & 0x0F) | (shade << 4);
+        self.shade_flags = (self.shade_flags & 0x0F) | ((shade & 0x0F) << 4);
     }
 
     pub const fn vel(self) -> (i32, i32) {

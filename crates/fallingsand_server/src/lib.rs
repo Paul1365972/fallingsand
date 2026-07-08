@@ -158,7 +158,7 @@ impl Server {
                     format_version: persistence::WORLD_FORMAT_VERSION,
                     seed: config.world.seed,
                     name: config.world.name.clone(),
-                    age: DAY_UNITS / 2,
+                    world_age: DAY_UNITS / 2,
                     tick: 0,
                 };
                 if let Some(store) = &store {
@@ -205,7 +205,7 @@ impl Server {
         world.insert_resource(PlayerImpulses::default());
         world.insert_resource(commands::PendingCommands::default());
         world.insert_resource(hazards::CrushEvents::default());
-        world.insert_resource(WorldClock(Calendar::new(meta.age)));
+        world.insert_resource(WorldClock(Calendar::new(meta.world_age)));
         world.insert_resource(WorldInfo {
             seed,
             name: meta.name.clone(),

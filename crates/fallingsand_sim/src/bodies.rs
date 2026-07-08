@@ -1,5 +1,5 @@
-use crate::obstacles::EntityBox;
-use crate::physics::{FLUID_DRAG_LINEAR, FLUID_DRAG_QUAD, MAX_FLUID_DRAG};
+use crate::obstacles::ActorAabb;
+use crate::physics::{BOUNCE_MIN_SPEED, FLUID_DRAG_LINEAR, FLUID_DRAG_QUAD, MAX_FLUID_DRAG};
 use crate::world::CellWorld;
 use fallingsand_core::{
     Cell, CellPos, ChunkPos, Fixed, MaterialId, MaterialRegistry, Phase, TICK_DT,
@@ -17,7 +17,6 @@ const SETTLE_SPIN: f32 = 1.5;
 const SUPPORT_NORMAL_Y: f32 = 0.25;
 const CONTACT_KEEP_PER_SEC: f32 = 0.25;
 const BLOCKED_DAMPING: f32 = 0.5;
-const BOUNCE_MIN_SPEED: f32 = 30.0;
 const FRICTION: f32 = 0.4;
 const CONTACT_ITERATIONS: usize = 4;
 const PENETRATION_CORRECTION: f32 = 0.5;
@@ -38,8 +37,8 @@ fn quantized_trig(angle: f32) -> (f32, f32) {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct EntityDynamics {
-    pub bbox: EntityBox,
+pub struct ActorDynamics {
+    pub bbox: ActorAabb,
     pub vx: f32,
     pub vy: f32,
     pub inv_mass: f32,
@@ -501,7 +500,7 @@ struct Contact {
 fn obstructed(
     world: &CellWorld,
     registry: &MaterialRegistry,
-    entities: &[EntityDynamics],
+    entities: &[ActorDynamics],
     own: &FxHashSet<CellPos>,
     pos: CellPos,
 ) -> bool {
@@ -521,7 +520,7 @@ fn obstructed(
 fn find_contacts(
     world: &CellWorld,
     registry: &MaterialRegistry,
-    entities: &[EntityDynamics],
+    entities: &[ActorDynamics],
     bodies: &[PixelBody],
     index: usize,
 ) -> Vec<Contact> {
@@ -659,12 +658,12 @@ pub fn step_bodies(
     world: &mut CellWorld,
     registry: &MaterialRegistry,
     bodies: &mut [PixelBody],
-    entities: &[EntityDynamics],
+    entities: &[ActorDynamics],
     gravity: Fixed,
     simulated: &dyn Fn(ChunkPos) -> bool,
 ) -> Vec<(f32, f32)> {
     let mut entity_impulses = vec![(0.0, 0.0); entities.len()];
-    let entity_boxes: Vec<EntityBox> = entities.iter().map(|entity| entity.bbox).collect();
+    let entity_boxes: Vec<ActorAabb> = entities.iter().map(|entity| entity.bbox).collect();
 
     let mut order: Vec<usize> = (0..bodies.len()).collect();
     order.sort_unstable_by_key(|&index| {
@@ -803,7 +802,7 @@ fn step_substep(
     world: &CellWorld,
     registry: &MaterialRegistry,
     bodies: &mut [PixelBody],
-    entities: &[EntityDynamics],
+    entities: &[ActorDynamics],
     index: usize,
     damping: f32,
     substeps: u32,
@@ -979,7 +978,7 @@ fn apply_to_other(
 fn restamp(
     world: &mut CellWorld,
     registry: &MaterialRegistry,
-    entities: &[EntityBox],
+    entities: &[ActorAabb],
     body: &mut PixelBody,
     start_x: Fixed,
     start_y: Fixed,
@@ -1030,7 +1029,7 @@ fn restamp(
 fn plan_and_commit(
     world: &mut CellWorld,
     registry: &MaterialRegistry,
-    entities: &[EntityBox],
+    entities: &[ActorAabb],
     body: &mut PixelBody,
     new: Raster,
 ) -> Option<Vec<CellPos>> {
@@ -1161,20 +1160,13 @@ pub fn settle_body(world: &mut CellWorld, registry: &MaterialRegistry, body: &Pi
 fn relocation_spot(
     world: &CellWorld,
     registry: &MaterialRegistry,
-    entities: &[EntityBox],
+    entities: &[ActorAabb],
     claimed: &FxHashSet<CellPos>,
     exclude: &FxHashSet<CellPos>,
     from: CellPos,
 ) -> Option<CellPos> {
     for radius in 1..=RELOCATE_RADIUS {
-        let mut ring: Vec<(i32, i32)> = Vec::new();
-        for dy in -radius..=radius {
-            for dx in -radius..=radius {
-                if dx.abs().max(dy.abs()) == radius {
-                    ring.push((dx, dy));
-                }
-            }
-        }
+        let mut ring = crate::chebyshev_ring(radius);
         ring.sort_by_key(|&(dx, dy)| (-dy, dx.abs()));
         for (dx, dy) in ring {
             let pos = from.translated(dx, dy);
