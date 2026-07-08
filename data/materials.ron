@@ -18,7 +18,7 @@
             ],
             rigid_capable: true,
             hardness: 0.9,
-            restitution: 0.2,
+            restitution: 0.15,
             tags: ["dissolvable"],
         ),
         (
@@ -32,7 +32,7 @@
                 (105, 72, 48, 255),
             ],
             hardness: 0.08,
-            restitution: 0.05,
+            restitution: 0.0,
             tags: ["dissolvable"],
         ),
         (
@@ -46,7 +46,7 @@
                 (70, 130, 50, 255),
             ],
             hardness: 0.08,
-            restitution: 0.05,
+            restitution: 0.0,
             tags: ["burnable", "foliage", "dissolvable"],
         ),
         (
@@ -136,7 +136,7 @@
             ],
             rigid_capable: true,
             hardness: 0.35,
-            restitution: 0.45,
+            restitution: 0.3,
             tags: ["burnable", "woody", "dissolvable"],
         ),
         (
@@ -197,7 +197,7 @@
             ],
             rigid_capable: true,
             hardness: 0.5,
-            restitution: 0.25,
+            restitution: 0.1,
             tags: ["burnable", "dissolvable"],
         ),
         (
@@ -212,7 +212,7 @@
             ],
             rigid_capable: true,
             hardness: 1.4,
-            restitution: 0.15,
+            restitution: 0.1,
             tags: ["dissolvable"],
         ),
         (
@@ -258,7 +258,7 @@
             ],
             rigid_capable: true,
             hardness: 0.4,
-            restitution: 0.55,
+            restitution: 0.1,
             surface_grip: 0.05,
             tags: ["dissolvable"],
         ),
@@ -289,7 +289,7 @@
                 (142, 98, 80, 255),
             ],
             hardness: 0.3,
-            restitution: 0.05,
+            restitution: 0.0,
             tags: ["dissolvable"],
         ),
         (
@@ -303,7 +303,7 @@
                 (52, 94, 42, 255),
             ],
             hardness: 0.05,
-            restitution: 0.15,
+            restitution: 0.05,
             tags: ["burnable", "foliage", "dissolvable"],
         ),
         (
@@ -318,7 +318,7 @@
             ],
             rigid_capable: true,
             hardness: 0.03,
-            restitution: 0.3,
+            restitution: 0.05,
             tags: ["burnable", "foliage", "dissolvable"],
         ),
         (
@@ -333,7 +333,7 @@
             ],
             rigid_capable: true,
             hardness: 0.3,
-            restitution: 0.5,
+            restitution: 0.3,
             tags: ["burnable", "woody", "dissolvable"],
         ),
         (
@@ -362,7 +362,7 @@
             ],
             rigid_capable: true,
             hardness: 0.6,
-            restitution: 0.15,
+            restitution: 0.12,
             tags: ["dissolvable"],
         ),
         (
@@ -377,7 +377,7 @@
             ],
             rigid_capable: true,
             hardness: 2.5,
-            restitution: 0.2,
+            restitution: 0.15,
         ),
         (
             name: "basalt",
@@ -391,7 +391,7 @@
             ],
             rigid_capable: true,
             hardness: 3.5,
-            restitution: 0.25,
+            restitution: 0.15,
         ),
         (
             name: "crystal",
@@ -405,7 +405,7 @@
             ],
             rigid_capable: true,
             hardness: 1.8,
-            restitution: 0.5,
+            restitution: 0.15,
             tags: ["emissive", "dissolvable"],
         ),
         (
@@ -420,7 +420,7 @@
             ],
             rigid_capable: true,
             hardness: 1.1,
-            restitution: 0.25,
+            restitution: 0.15,
             tags: ["dissolvable"],
         ),
         (
@@ -435,7 +435,7 @@
             ],
             rigid_capable: true,
             hardness: 0.1,
-            restitution: 0.45,
+            restitution: 0.3,
             surface_bounce: 0.6,
             tags: ["burnable", "foliage", "dissolvable"],
         ),
@@ -451,7 +451,7 @@
             ],
             rigid_capable: true,
             hardness: 0.1,
-            restitution: 0.45,
+            restitution: 0.3,
             surface_bounce: 0.6,
             tags: ["burnable", "foliage", "dissolvable", "emissive"],
         ),
