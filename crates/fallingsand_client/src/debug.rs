@@ -39,7 +39,7 @@ struct F3ComboUsed(bool);
 struct RectFlash {
     pos: ChunkPos,
     rect: DirtyRect,
-    keep_alive: bool,
+    is_sim: bool,
     at: f32,
 }
 
@@ -242,17 +242,17 @@ fn track_rects(
     flashes.0.retain(|flash| now - flash.at < FLASH_SECS);
     for TickMessage(tick) in frames.read() {
         for entry in &tick.debug {
-            for (rect, keep_alive) in [(entry.change, false), (entry.keep_alive, true)] {
-                if rect.is_empty() {
+            for (rect, is_sim) in [(entry.change, false), (entry.sim, true)] {
+                if rect.is_empty() || (is_sim && entry.sim == entry.change) {
                     continue;
                 }
                 flashes
                     .0
-                    .retain(|flash| flash.pos != entry.pos || flash.keep_alive != keep_alive);
+                    .retain(|flash| flash.pos != entry.pos || flash.is_sim != is_sim);
                 flashes.0.push(RectFlash {
                     pos: entry.pos,
                     rect,
-                    keep_alive,
+                    is_sim,
                     at: now,
                 });
             }
@@ -315,7 +315,7 @@ fn draw_borders(
         let origin = Vec2::new(flash.pos.x as f32 * chunk, flash.pos.y as f32 * chunk);
         let corner = origin + Vec2::new(flash.rect.min_x as f32, flash.rect.min_y as f32);
         let size = Vec2::new(flash.rect.width() as f32, flash.rect.height() as f32);
-        let color = if flash.keep_alive {
+        let color = if flash.is_sim {
             Color::srgba(0.2, 0.9, 1.0, alpha)
         } else {
             Color::srgba(1.0, 0.9, 0.2, alpha)

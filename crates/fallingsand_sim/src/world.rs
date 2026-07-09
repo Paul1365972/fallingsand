@@ -85,7 +85,7 @@ impl CellWorld {
             return;
         };
         chunk.wake(self.tick as u8);
-        chunk.keep_bounds.mark(pos.offset());
+        chunk.sim.mark(pos.offset());
     }
 
     pub fn queue_edit(&mut self, edit: WorldEdit) {
@@ -128,7 +128,7 @@ impl CellWorld {
         let mut chunks = 0;
         let mut cells = 0;
         for chunk in self.chunks.values() {
-            let rect = chunk.sim_dirty();
+            let rect = chunk.sim_rect();
             if rect.is_empty() {
                 continue;
             }

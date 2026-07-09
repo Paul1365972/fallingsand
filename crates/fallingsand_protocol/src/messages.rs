@@ -125,7 +125,7 @@ pub struct PlayerState {
 pub struct ChunkDebugRects {
     pub pos: ChunkPos,
     pub change: DirtyRect,
-    pub keep_alive: DirtyRect,
+    pub sim: DirtyRect,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

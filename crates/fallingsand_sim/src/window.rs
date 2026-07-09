@@ -99,7 +99,7 @@ impl SimWindow {
             return;
         };
         chunk.wake((self.tick as u8).wrapping_sub(1));
-        chunk.keep_bounds.mark(pos.offset());
+        chunk.sim.mark(pos.offset());
     }
 
     pub fn swap(&mut self, a: CellPos, b: CellPos) {

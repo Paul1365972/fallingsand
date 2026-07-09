@@ -259,7 +259,7 @@ pub fn encode_region(region: &Region, extras: &RegionExtras) -> Vec<u8> {
         }
     }
     for chunk in region.chunks() {
-        let rect = chunk.sim_dirty();
+        let rect = chunk.sim_rect();
         raw.extend_from_slice(&[rect.min_x, rect.min_y, rect.max_x, rect.max_y]);
     }
     let cell_blob = lz4_flex::compress_prepend_size(&raw);
@@ -326,7 +326,7 @@ pub fn decode_region(blob: &[u8]) -> Result<(Region, RegionExtras), StoreError> 
     }
     let rects = raw[REGION_CELL_BYTES..].chunks_exact(RECT_BYTES);
     for (chunk, bytes) in region.chunks_mut().iter_mut().zip(rects) {
-        chunk.keep_bounds = decode_rect(bytes);
+        chunk.sim = decode_rect(bytes);
     }
     let extras = if extras_blob.is_empty() {
         RegionExtras::default()

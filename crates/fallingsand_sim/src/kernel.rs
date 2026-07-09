@@ -25,8 +25,8 @@ pub fn step_scoped(
             chunk.sleeping = true;
             continue;
         }
-        chunk.swap_bounds();
-        if chunk.old_bounds.is_empty() && chunk.old_keep_bounds.is_empty() {
+        chunk.swap_rects();
+        if chunk.prev_sim.is_empty() {
             chunk.sleeping = true;
         }
     }
@@ -50,7 +50,7 @@ fn run_phase(
     let map = world.chunk_map_mut();
     let mut blocks: FxHashSet<(i32, i32)> = FxHashSet::default();
     for (&pos, chunk) in map.iter() {
-        if chunk.sim_dirty().is_empty() || !simulate(pos) {
+        if chunk.sim_rect().is_empty() || !simulate(pos) {
             continue;
         }
         for dy in -1..=1 {
@@ -126,7 +126,7 @@ fn process_block(
             for dy in -1..=1 {
                 for dx in -1..=1 {
                     if let Some(neighbor) = window.chunk_at(sx + dx, sy + dy) {
-                        rect = rect.union(spill(neighbor.sim_dirty(), dx, dy));
+                        rect = rect.union(spill(neighbor.sim_rect(), dx, dy));
                     }
                 }
             }

@@ -317,7 +317,8 @@ impl WorldGenerator {
                     }
                 }
             }
-            chunk.bounds = DirtyRect::FULL;
+            chunk.change = DirtyRect::FULL;
+            chunk.sim = DirtyRect::FULL;
         }
 
         let stones = [

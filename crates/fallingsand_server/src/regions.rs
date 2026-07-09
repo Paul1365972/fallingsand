@@ -248,7 +248,7 @@ pub fn manage_regions(
         }
         'scan: for (_, chunk_pos) in pos.chunk_positions() {
             if let Some(chunk) = sim.0.chunk(chunk_pos)
-                && !chunk.dirty().is_empty()
+                && !chunk.change_rect().is_empty()
             {
                 state.dirty = true;
                 break 'scan;

@@ -965,14 +965,10 @@ fn build_tiles(
     for &pos in interest {
         let chunk = sim.chunk(pos).expect("interest chunks are loaded");
         if debug {
-            let change = chunk.dirty();
-            let keep_alive = chunk.keep_dirty();
-            if !change.is_empty() || !keep_alive.is_empty() {
-                debug_rects.push(ChunkDebugRects {
-                    pos,
-                    change,
-                    keep_alive,
-                });
+            let change = chunk.change_rect();
+            let sim = chunk.sim_rect();
+            if !sim.is_empty() {
+                debug_rects.push(ChunkDebugRects { pos, change, sim });
             }
         }
         if known.insert(pos) {
@@ -982,7 +978,7 @@ fn build_tiles(
             });
             continue;
         }
-        let rect = chunk.dirty();
+        let rect = chunk.change_rect();
         if rect.is_empty() {
             continue;
         }

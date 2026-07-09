@@ -114,10 +114,10 @@ impl DirtyRect {
 #[derive(Debug, Clone)]
 pub struct Chunk {
     cells: Box<[Cell; CHUNK_AREA]>,
-    pub bounds: DirtyRect,
-    pub old_bounds: DirtyRect,
-    pub keep_bounds: DirtyRect,
-    pub old_keep_bounds: DirtyRect,
+    pub change: DirtyRect,
+    pub prev_change: DirtyRect,
+    pub sim: DirtyRect,
+    pub prev_sim: DirtyRect,
     pub sleeping: bool,
 }
 
@@ -131,10 +131,10 @@ impl Chunk {
     pub fn new() -> Self {
         Self {
             cells: Box::new([Cell::AIR; CHUNK_AREA]),
-            bounds: DirtyRect::EMPTY,
-            old_bounds: DirtyRect::EMPTY,
-            keep_bounds: DirtyRect::EMPTY,
-            old_keep_bounds: DirtyRect::EMPTY,
+            change: DirtyRect::EMPTY,
+            prev_change: DirtyRect::EMPTY,
+            sim: DirtyRect::EMPTY,
+            prev_sim: DirtyRect::EMPTY,
             sleeping: true,
         }
     }
@@ -142,10 +142,10 @@ impl Chunk {
     pub fn filled(cell: Cell) -> Self {
         Self {
             cells: Box::new([cell; CHUNK_AREA]),
-            bounds: DirtyRect::FULL,
-            old_bounds: DirtyRect::EMPTY,
-            keep_bounds: DirtyRect::EMPTY,
-            old_keep_bounds: DirtyRect::EMPTY,
+            change: DirtyRect::FULL,
+            prev_change: DirtyRect::EMPTY,
+            sim: DirtyRect::FULL,
+            prev_sim: DirtyRect::EMPTY,
             sleeping: true,
         }
     }
@@ -163,7 +163,8 @@ impl Chunk {
     #[inline]
     pub fn set(&mut self, offset: CellOffset, cell: Cell) {
         self.cells[offset.index()] = cell;
-        self.bounds.mark(offset);
+        self.change.mark(offset);
+        self.sim.mark(offset);
     }
 
     pub fn cells(&self) -> &[Cell; CHUNK_AREA] {
@@ -174,23 +175,19 @@ impl Chunk {
         &mut self.cells
     }
 
-    pub fn swap_bounds(&mut self) {
-        self.old_bounds = self.bounds;
-        self.bounds = DirtyRect::EMPTY;
-        self.old_keep_bounds = self.keep_bounds;
-        self.keep_bounds = DirtyRect::EMPTY;
+    pub fn swap_rects(&mut self) {
+        self.prev_change = self.change;
+        self.change = DirtyRect::EMPTY;
+        self.prev_sim = self.sim;
+        self.sim = DirtyRect::EMPTY;
     }
 
-    pub fn dirty(&self) -> DirtyRect {
-        self.bounds.union(self.old_bounds)
+    pub fn change_rect(&self) -> DirtyRect {
+        self.change.union(self.prev_change)
     }
 
-    pub fn keep_dirty(&self) -> DirtyRect {
-        self.keep_bounds.union(self.old_keep_bounds)
-    }
-
-    pub fn sim_dirty(&self) -> DirtyRect {
-        self.dirty().union(self.keep_dirty())
+    pub fn sim_rect(&self) -> DirtyRect {
+        self.sim.union(self.prev_sim)
     }
 
     pub fn normalize_updated(&mut self, tick: u8) {

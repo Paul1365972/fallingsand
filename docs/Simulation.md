@@ -24,9 +24,9 @@ Leveling, spreading, and pressure all propagate as local waves over successive t
 
 ## Sleeping
 
-Each chunk tracks the dirty rect of cells changed last tick. Everything keys off it: the sim skips empty rects (**sleeping** — the biggest optimization), replication and rendering touch only the rect. A write to a sleeping chunk or its border wakes it.
+Each chunk tracks a **sim rect** of cells to re-simulate; the sim skips empty rects (**sleeping** — the biggest optimization). A write to a sleeping chunk or its border wakes it.
 
-A separate **keep-alive rect** marks cells that must re-simulate without having changed (clinging fire, pending decay, reactive pairs). The sim schedules from both; replication reads only the change rect, so keep-alives cost zero bandwidth. This is why a mostly-settled world of ~2000 active chunks stays inside the tick budget.
+The **change rect** (`change` ⊆ `sim`) holds cells whose value changed. A write marks both; a **keep-alive** mark (clinging fire, pending decay, reactive pairs) extends `sim` only. Scheduling reads `sim`; replication reads `change`, so keep-alives cost zero bandwidth — a mostly-settled world of ~2000 active chunks stays inside the tick budget.
 
 Cell particles (aspirational): cells knocked loose would fly ballistically as free particles and reinsert on impact. Not yet built — a future store must carry `Fixed` cells/s velocity, not the grid's `Q11.4` `i16` (whose ±2047 cells/s storage range, clamped to ±2000 in flow, is for in-grid movement).
 

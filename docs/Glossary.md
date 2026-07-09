@@ -11,7 +11,7 @@ Canonical names for the core domain vocabulary. One concept, one name.
 | **Region** | 8×8 chunks; unit of generation, storage, load/unload |
 | **CellPos / ChunkPos / RegionPos** | `i32` x,y coordinates at cell / chunk / region granularity |
 | **CellOffset / ChunkOffset** | `u8` in-parent index (cell-in-chunk, chunk-in-region) |
-| **bounds / keep_bounds** | per-chunk change rect (feeds replication + persistence) / keep-alive rect (feeds sim scheduling only) |
+| **sim / change** | per-chunk rects: `sim` (cells to re-sim next tick, feeds scheduling) ⊇ `change` (changed cells, feeds replication + persistence); double-buffered (`prev_`) |
 
 ## Numbers & units
 
