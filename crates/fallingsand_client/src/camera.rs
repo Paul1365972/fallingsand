@@ -6,7 +6,7 @@ use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{Hdr, RenderTarget, ScalingMode};
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::image::Image;
-use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
+use bevy::input::mouse::MouseWheel;
 use bevy::post_process::bloom::{Bloom, BloomPrefilter};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
@@ -173,16 +173,10 @@ fn zoom_input(
     mut projections: Query<&mut Projection, With<GameCamera>>,
 ) {
     let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
-    let scroll: f32 = wheel
-        .read()
-        .map(|event| match event.unit {
-            MouseScrollUnit::Line => event.y,
-            MouseScrollUnit::Pixel => event.y / 60.0,
-        })
-        .sum();
-    if ctrl && scroll != 0.0 {
+    let scroll: f32 = wheel.read().map(|event| event.y).sum();
+    if ctrl && scroll.abs() > 0.01 {
         let range = ZOOM_STEPS as f32;
-        control.scroll = (control.scroll - scroll).clamp(-range, range);
+        control.scroll = (control.scroll - scroll.signum()).clamp(-range, range);
         control.zoom = 2f32.powf(control.scroll.round() / range);
     }
     for mut projection in &mut projections {

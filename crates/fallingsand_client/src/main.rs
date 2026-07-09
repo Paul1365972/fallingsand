@@ -72,9 +72,8 @@ fn main() {
         RecipeRegistry::from_ron(RECIPES_RON, &item_registry)
             .expect("data/recipes.ron must be valid"),
     );
-    let connect_target = net::cli_connect_target();
     let world_name = net::cli_world_name();
-    let initial_state = if connect_target.is_some() || world_name.is_some() {
+    let initial_state = if world_name.is_some() {
         AppState::InGame
     } else {
         AppState::MainMenu
@@ -89,6 +88,7 @@ fn main() {
             .set(WindowPlugin {
                 primary_window: Some(Window {
                     title: "fallingsand".into(),
+                    fit_canvas_to_parent: true,
                     ..default()
                 }),
                 ..default()
@@ -99,7 +99,6 @@ fn main() {
     .insert_resource(ClientRegistry(registry))
     .insert_resource(ClientItemRegistry(item_registry))
     .insert_resource(ClientRecipes(recipes))
-    .insert_resource(net::Supervisor::new(connect_target))
     .insert_state(initial_state)
     .add_sub_state::<GameState>()
     .add_sub_state::<PauseState>()

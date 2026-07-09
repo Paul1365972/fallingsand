@@ -1,9 +1,9 @@
 # Deploy
 
 The dedicated binary (`fallingsand_server`) serves **WebTransport over UDP** (QUIC), default
-`0.0.0.0:4433`. On start it prints join URLs for both the web client (hosted build) and the native
-client (`--connect`). Saves live at `saves/dedicated/world.redb`; keep the working directory stable so
-cached certs and saves are reused.
+`0.0.0.0:4433`. On start it prints a web client URL (from `FALLINGSAND_WEB_CLIENT_URL`) that pre-fills
+the direct-connect menu's host field. Saves live at `saves/dedicated/world.redb`; keep the working
+directory stable so cached certs and saves are reused.
 
 ## TLS modes (picked at startup, in order)
 
@@ -14,8 +14,8 @@ cached certs and saves are reused.
    caching it under `saves/certs/<domain>/`. A background **DDNS** task refreshes the `A` record every
    5 minutes.
 3. **Self-signed fallback** — no cert/domain given. Generates a self-signed cert (SANs
-   `localhost`/`127.0.0.1`/bind IP, **13-day** validity) and prints its SHA-256 hash; clients pin it
-   via `?cert=<hash>` (web) or `--cert-hash <hash>` (native).
+   `localhost`/`127.0.0.1`/bind IP, **13-day** validity) and prints its SHA-256 hash; pin it via the
+   cert field in the direct-connect menu.
 
 The 13-day self-signed validity stays under WebTransport's ~14-day cap on
 `serverCertificateHashes`-pinned certs.

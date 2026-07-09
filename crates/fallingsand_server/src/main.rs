@@ -16,7 +16,6 @@ const DEFAULT_ADDR: &str = "0.0.0.0:4433";
 const CERT_VALIDITY_DAYS: i64 = 13;
 // cwd-relative; keep the working directory stable so cached ACME certs are reused
 const CERT_DIR: &str = "saves/certs";
-const WEB_CLIENT_URL: &str = "https://paul1365972.github.io/fallingsand";
 
 fn main() -> anyhow::Result<()> {
     let _ = dotenvy::dotenv();
@@ -46,6 +45,7 @@ fn main() -> anyhow::Result<()> {
     }
     let token = token.or_else(|| std::env::var("CLOUDFLARE_API_TOKEN").ok());
     let domain = domain.or_else(|| std::env::var("FALLINGSAND_DOMAIN").ok());
+    let web_client_url = std::env::var("FALLINGSAND_WEB_CLIENT_URL").ok();
 
     let materials = include_str!("../../../data/materials.ron");
     let reactions = include_str!("../../../data/reactions.ron");
@@ -126,16 +126,12 @@ fn main() -> anyhow::Result<()> {
     };
     info!("listening on {addr} (webtransport over udp)");
     println!();
-    match &cert_hash_hex {
-        Some(hash) => {
-            println!("  web:    {WEB_CLIENT_URL}/?server={target}&cert={hash}");
-            println!("  native: fallingsand --connect {target} --cert-hash {hash}");
-            println!("  certificate sha-256: {hash}");
-        }
-        None => {
-            println!("  web:    {WEB_CLIENT_URL}/?server={target}");
-            println!("  native: fallingsand --connect {target}");
-        }
+    if let Some(url) = &web_client_url {
+        println!("  web:  {url}/?server={target}");
+    }
+    println!("  host: {target}");
+    if let Some(hash) = &cert_hash_hex {
+        println!("  cert: {hash}");
     }
     println!();
 

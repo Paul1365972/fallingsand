@@ -175,25 +175,14 @@ pub fn cli_world_name() -> Option<String> {
     }
 }
 
-pub fn cli_connect_target() -> Option<ConnectTarget> {
-    #[cfg(not(target_family = "wasm"))]
-    {
-        let url = crate::identity::arg_value("--connect")?;
-        let cert_hash = crate::identity::arg_value("--cert-hash").and_then(|hex| {
-            let hash = parse_cert_hash(&hex);
-            if hash.is_none() {
-                error!("invalid --cert-hash, expected 64 hex chars");
-            }
-            hash
-        });
-        Some(ConnectTarget { url, cert_hash })
-    }
+pub fn default_server() -> String {
     #[cfg(all(target_family = "wasm", target_os = "unknown"))]
-    {
-        let url = crate::identity::query_param("server")?;
-        let cert_hash = crate::identity::query_param("cert").and_then(|hex| parse_cert_hash(&hex));
-        Some(ConnectTarget { url, cert_hash })
+    if let Some(server) = crate::identity::query_param("server") {
+        return server;
     }
+    option_env!("FALLINGSAND_SERVER")
+        .unwrap_or_default()
+        .to_string()
 }
 
 impl Plugin for NetPlugin {
@@ -234,7 +223,7 @@ fn open(world: &mut World) {
         #[cfg(not(target_family = "wasm"))]
         embedded::launch(world);
         #[cfg(all(target_family = "wasm", target_os = "unknown"))]
-        warn!("no ?server=host query parameter; not connecting");
+        warn!("no server configured; use the direct-connect menu");
     }
 }
 

@@ -217,7 +217,13 @@ fn spawn_menu(mut commands: Commands, settings: Res<crate::settings::Settings>) 
                     ..default()
                 })
                 .with_children(|column| {
-                    spawn_field(column, UrlField, "host[:port]", 320.0, "");
+                    spawn_field(
+                        column,
+                        UrlField,
+                        "host[:port]",
+                        320.0,
+                        &crate::net::default_server(),
+                    );
                     spawn_field(column, CertField, "cert sha256 (optional)", 320.0, "");
                     spawn_button(column, MenuButton::Connect, "Connect", 120.0, BUTTON_BG);
                 });
