@@ -6,6 +6,7 @@ mod hud;
 #[cfg(not(target_family = "wasm"))]
 mod icon;
 mod identity;
+mod input;
 mod interpolation;
 mod inventory;
 mod inventory_ui;
@@ -104,6 +105,7 @@ fn main() {
     .add_sub_state::<PauseState>()
     .add_plugins((
         net::NetPlugin,
+        input::InputPlugin,
         render::ChunkRenderPlugin,
         worldview::WorldViewPlugin,
         interpolation::InterpolationPlugin,

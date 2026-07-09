@@ -1,9 +1,10 @@
 use crate::ClientRegistry;
 use crate::camera::CameraControl;
+use crate::input::{InputHeld, LocalAction};
 use crate::inventory::{LocalInventory, SelectedSlot};
 use crate::net::{ServerMsg, ServerStats, Session, Supervisor, TickMessage};
 use crate::particles::Particle;
-use crate::player::{InputState, LocalPlayerState, PlayerNames};
+use crate::player::{LocalPlayerState, PlayerNames};
 use crate::render::ChunkVisuals;
 use crate::sky::{Sky, WorldTime};
 use crate::worldview::WorldView;
@@ -12,13 +13,13 @@ use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::render::view::window::screenshot::{Screenshot, save_to_disk};
 use fallingsand_core::{
-    CHUNK_AREA, CHUNK_SIZE, Cell, ChunkPos, DirtyRect, Phase, REGION_SIZE_CELLS, SEASON_DAYS,
+    CHUNK_AREA, CHUNK_SIZE, Cell, ChunkPos, DirtyRect, MAX_HP, Phase, REGION_SIZE_CELLS,
+    SEASON_DAYS,
 };
 use std::collections::VecDeque;
 
 pub struct DebugOverlayPlugin;
 
-const MAX_HP: f32 = 100.0;
 const BUDGET_MS: f32 = 1000.0 / 60.0;
 
 #[derive(Component)]
@@ -32,9 +33,6 @@ pub struct DebugVisible(pub bool);
 
 #[derive(Resource, Default)]
 pub struct BordersVisible(pub bool);
-
-#[derive(Resource, Default)]
-struct F3ComboUsed(bool);
 
 struct RectFlash {
     pos: ChunkPos,
@@ -101,7 +99,6 @@ impl Plugin for DebugOverlayPlugin {
         app.add_plugins(FrameTimeDiagnosticsPlugin::default())
             .insert_resource(DebugVisible(true))
             .init_resource::<BordersVisible>()
-            .init_resource::<F3ComboUsed>()
             .init_resource::<RectFlashes>()
             .init_resource::<StatWindows>()
             .add_systems(Startup, setup_overlay)
@@ -115,8 +112,11 @@ impl Plugin for DebugOverlayPlugin {
     }
 }
 
-fn screenshot(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>) {
-    if keys.just_pressed(KeyCode::F2) {
+fn screenshot(mut commands: Commands, mut actions: MessageReader<LocalAction>) {
+    for action in actions.read() {
+        if *action != LocalAction::Screenshot {
+            continue;
+        }
         let path = chrono::Local::now()
             .format("screenshot-%Y-%m-%d_%H-%M-%S.png")
             .to_string();
@@ -164,36 +164,31 @@ fn setup_overlay(mut commands: Commands) {
 }
 
 fn toggle_overlay(
-    keys: Res<ButtonInput<KeyCode>>,
+    mut actions: MessageReader<LocalAction>,
     mut visible: ResMut<DebugVisible>,
     mut borders: ResMut<BordersVisible>,
-    mut combo: ResMut<F3ComboUsed>,
     mode: Res<crate::player::LocalMode>,
-    session: Option<ResMut<Session>>,
+    mut session: Option<ResMut<Session>>,
 ) {
-    if keys.pressed(KeyCode::F3) && keys.just_pressed(KeyCode::KeyG) {
-        borders.0 = !borders.0;
-        combo.0 = true;
-    }
-    if keys.pressed(KeyCode::F3) && keys.just_pressed(KeyCode::KeyN) {
-        combo.0 = true;
-        if let Some(mut session) = session
-            && session.player.is_some()
-        {
-            let target = match mode.0 {
-                fallingsand_protocol::GameMode::Creative => "s",
-                fallingsand_protocol::GameMode::Survival => "c",
-            };
-            session.send(&fallingsand_protocol::ClientMessage::Chat {
-                text: format!("/gm {target}"),
-            });
+    for action in actions.read() {
+        match action {
+            LocalAction::ToggleDebugOverlay => visible.0 = !visible.0,
+            LocalAction::ToggleDebugBorders => borders.0 = !borders.0,
+            LocalAction::ToggleGameMode => {
+                if let Some(session) = session.as_mut()
+                    && session.player.is_some()
+                {
+                    let target = match mode.0 {
+                        fallingsand_protocol::GameMode::Creative => "s",
+                        fallingsand_protocol::GameMode::Survival => "c",
+                    };
+                    session.send(&fallingsand_protocol::ClientMessage::Chat {
+                        text: format!("/gm {target}"),
+                    });
+                }
+            }
+            _ => {}
         }
-    }
-    if keys.just_released(KeyCode::F3) {
-        if !combo.0 {
-            visible.0 = !visible.0;
-        }
-        combo.0 = false;
     }
 }
 
@@ -329,7 +324,7 @@ struct Overlay<'w, 's> {
     selected: Res<'w, SelectedSlot>,
     inventory: Res<'w, LocalInventory>,
     item_reg: Res<'w, crate::ClientItemRegistry>,
-    input: Res<'w, InputState>,
+    held: Res<'w, InputHeld>,
     registry: Res<'w, ClientRegistry>,
     world_time: Res<'w, WorldTime>,
     celestial: Res<'w, Sky>,
@@ -365,7 +360,7 @@ fn update_overlay(
     let view = &ctx.view;
     let visuals = &ctx.visuals;
     let names = &ctx.names;
-    let input = &ctx.input;
+    let held = &ctx.held;
     let registry = &ctx.registry;
     let world_time = &ctx.world_time;
     let player = &ctx.player;
@@ -420,7 +415,7 @@ fn update_overlay(
             ));
         }
         Some(crate::GameState::Playing) => {
-            let aim = input.aim;
+            let aim = held.0.aim;
             let chunk = aim.chunk();
             let off = aim.offset();
             let region = aim.region();

@@ -1,3 +1,4 @@
+use crate::input::LocalAction;
 use crate::net::{NetSet, ServerMsg, Session};
 use crate::{AppState, PauseState};
 use bevy::input_focus::{FocusCause, InputFocus};
@@ -45,9 +46,7 @@ impl Plugin for ChatPlugin {
             .add_systems(
                 Update,
                 (
-                    toggle_chat
-                        .after(crate::pause::toggle_pause)
-                        .run_if(in_state(PauseState::Running)),
+                    toggle_chat.run_if(in_state(PauseState::Running)),
                     (render_chat, fade_chat)
                         .chain()
                         .run_if(in_state(AppState::InGame)),
@@ -113,61 +112,62 @@ fn collect_chat(mut log: ResMut<ChatLog>, mut messages: MessageReader<ServerMsg>
 #[allow(clippy::too_many_arguments)]
 fn toggle_chat(
     mut commands: Commands,
-    keys: Res<ButtonInput<KeyCode>>,
+    mut actions: MessageReader<LocalAction>,
     mut open: ResMut<ChatOpen>,
     mut focus: ResMut<InputFocus>,
-    session: Option<ResMut<Session>>,
+    mut session: Option<ResMut<Session>>,
     input: Query<(Entity, &EditableText), With<ChatInput>>,
     root: Query<Entity, With<ChatRoot>>,
 ) {
-    if open.0 {
-        let submit = keys.just_pressed(KeyCode::Enter);
-        let cancel = keys.just_pressed(KeyCode::Escape);
-        if !submit && !cancel {
-            return;
-        }
-        if let Ok((entity, editable)) = input.single() {
-            if submit {
-                let text = editable.value().to_string();
-                let text = text.trim().to_string();
-                if !text.is_empty()
-                    && let Some(mut session) = session
-                {
-                    session.send(&ClientMessage::Chat { text });
+    for action in actions.read() {
+        match action {
+            LocalAction::SubmitChat | LocalAction::CancelChat if open.0 => {
+                if let Ok((entity, editable)) = input.single() {
+                    if *action == LocalAction::SubmitChat {
+                        let text = editable.value().to_string();
+                        let text = text.trim().to_string();
+                        if !text.is_empty()
+                            && let Some(session) = session.as_mut()
+                        {
+                            session.send(&ClientMessage::Chat { text });
+                        }
+                    }
+                    commands.entity(entity).despawn();
                 }
+                open.0 = false;
+                focus.clear();
             }
-            commands.entity(entity).despawn();
+            LocalAction::OpenChat if !open.0 => {
+                let Ok(root) = root.single() else {
+                    continue;
+                };
+                let mut field = Entity::PLACEHOLDER;
+                commands.entity(root).with_children(|parent| {
+                    field = parent
+                        .spawn((
+                            ChatInput,
+                            EditableText::new(""),
+                            TextFont {
+                                font_size: FontSize::Px(14.0),
+                                ..default()
+                            },
+                            TextColor(Color::WHITE),
+                            Node {
+                                width: px(360),
+                                height: px(22),
+                                padding: UiRect::axes(px(6), px(2)),
+                                overflow: Overflow::clip(),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.09, 0.1, 0.15, 0.9)),
+                        ))
+                        .id();
+                });
+                open.0 = true;
+                focus.set(field, FocusCause::Navigated);
+            }
+            _ => {}
         }
-        open.0 = false;
-        focus.clear();
-    } else if keys.just_pressed(KeyCode::Enter) {
-        let Ok(root) = root.single() else {
-            return;
-        };
-        let mut field = Entity::PLACEHOLDER;
-        commands.entity(root).with_children(|parent| {
-            field = parent
-                .spawn((
-                    ChatInput,
-                    EditableText::new(""),
-                    TextFont {
-                        font_size: FontSize::Px(14.0),
-                        ..default()
-                    },
-                    TextColor(Color::WHITE),
-                    Node {
-                        width: px(360),
-                        height: px(22),
-                        padding: UiRect::axes(px(6), px(2)),
-                        overflow: Overflow::clip(),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgba(0.09, 0.1, 0.15, 0.9)),
-                ))
-                .id();
-        });
-        open.0 = true;
-        focus.set(field, FocusCause::Navigated);
     }
 }
 

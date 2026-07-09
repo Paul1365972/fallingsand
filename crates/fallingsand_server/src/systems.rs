@@ -13,13 +13,13 @@ use crate::{
 };
 use bevy_ecs::prelude::*;
 use fallingsand_core::{
-    CellOffset, CellPos, Fixed, ItemId, ItemRegistry, ItemStack, MaterialId, MaterialRegistry,
-    Phase, TICK_DT,
+    CellOffset, CellPos, Fixed, HOTBAR_SLOTS, ItemId, ItemRegistry, ItemStack, MAX_BRUSH,
+    MaterialId, MaterialRegistry, Phase, TICK_DT,
 };
 use fallingsand_protocol::{
-    ChunkDebugRects, ChunkOp, ClientMessage, EntityId, GameMode, ItemDelta, ItemEntityState,
-    ItemMove, MAX_BRUSH, PROTOCOL_VERSION, PlayerId, PlayerState, SelfState, ServerMessage,
-    TickFrame, cells_to_wire, decode_message,
+    ChunkDebugRects, ChunkOp, ClientMessage, EntityId, GameMode, InputAction, InputState,
+    ItemDelta, ItemEntityState, ItemMove, PROTOCOL_VERSION, PlayerId, PlayerState, SelfState,
+    ServerMessage, TickFrame, cells_to_wire, decode_message,
 };
 use fallingsand_sim::ActorAabb;
 use fallingsand_sim::physics::{
@@ -31,11 +31,13 @@ use std::time::Instant;
 pub const PLAYER_HALF_W: Fixed = Fixed::from_f32(1.9);
 pub const PLAYER_HALF_H: Fixed = Fixed::from_f32(5.5);
 pub const PLAYER_MASS: f32 = 4.0 * PLAYER_HALF_W.to_f32() * PLAYER_HALF_H.to_f32();
-pub use crate::MAX_HP;
-pub use fallingsand_core::{BRUSH_RADIUS, REACH, SURVIVAL_REACH};
+use crate::MAX_HP;
+use fallingsand_core::{BRUSH_RADIUS, REACH, SURVIVAL_REACH};
 const CHAT_MAX_CHARS: usize = 240;
 const CHAT_RATE_SECS: f32 = 0.25;
 const CHAT_RATE_TICKS: u64 = fallingsand_core::ticks_from_secs(CHAT_RATE_SECS);
+const INPUT_HOLD_SECS: f32 = 0.5;
+const INPUT_HOLD_TICKS: u64 = fallingsand_core::ticks_from_secs(INPUT_HOLD_SECS);
 const PEAK_SIM_WINDOW_TICKS: u64 = 2 * crate::TICK_RATE as u64;
 
 #[derive(Component)]
@@ -137,11 +139,13 @@ pub fn drain_network(
     }
 
     let sessions = &mut *sessions;
+    let tick = sim.0.tick();
     let mut joined: Vec<(PlayerId, String)> = Vec::new();
     let mut left: Vec<PlayerId> = Vec::new();
     let mut chats: Vec<(PlayerId, String, String)> = Vec::new();
 
     for index in 0..sessions.sessions.len() {
+        let mut fresh_input = true;
         while let Some(bytes) = sessions.sessions[index].conn.poll() {
             let Ok(message) = decode_message::<ClientMessage>(&bytes) else {
                 tracing::warn!("closing connection: malformed message");
@@ -198,6 +202,10 @@ pub fn drain_network(
                             existing.id = player;
                             existing.name = name.clone();
                             existing.input = Default::default();
+                            existing.jump_pressed = false;
+                            existing.selected_slot = 0;
+                            existing.brush_radius = BRUSH_RADIUS;
+                            existing.last_input_tick = tick;
                             takeover = Some((
                                 entity,
                                 CellPos::new(body.0.x.floor_cell(), body.0.y.floor_cell()),
@@ -227,7 +235,11 @@ pub fn drain_network(
                                         uuid,
                                         name: name.clone(),
                                         input: Default::default(),
+                                        jump_pressed: false,
                                         flying: false,
+                                        selected_slot: 0,
+                                        brush_radius: BRUSH_RADIUS,
+                                        last_input_tick: tick,
                                     },
                                     PlayerActor(Actor::new(
                                         record.map(|r| r.x).unwrap_or(Fixed::from_cell(spawn.x)),
@@ -304,26 +316,38 @@ pub fn drain_network(
                     tracing::info!("{name} ({uuid}) joined as player {}", player.0);
                     joined.push((player, name));
                 }
-                ClientMessage::Input(input) => {
-                    if let Some(entity) = sessions.sessions[index].entity
-                        && let Ok((mut player, ..)) = players.get_mut(entity)
-                    {
-                        player.input = input;
-                    }
-                }
-                ClientMessage::ToggleFly => {
+                ClientMessage::Input(frame) => {
                     if let Some(entity) = sessions.sessions[index].entity
                         && let Ok((mut player, _, _, mode, ..)) = players.get_mut(entity)
-                        && mode.0 == GameMode::Creative
                     {
-                        player.flying = !player.flying;
-                    }
-                }
-                ClientMessage::Slot(action) => {
-                    if matches!(sessions.sessions[index].state, SessionState::Playing)
-                        && let Some(entity) = sessions.sessions[index].entity
-                    {
-                        slot_actions.0.push((entity, action));
+                        if fresh_input {
+                            player.input = frame.state;
+                            fresh_input = false;
+                        } else {
+                            player.input.merge_or(frame.state);
+                        }
+                        player.last_input_tick = tick;
+                        for action in frame.actions {
+                            match action {
+                                InputAction::Jump => player.jump_pressed = true,
+                                InputAction::ToggleFlight => {
+                                    if mode.0 == GameMode::Creative {
+                                        player.flying = !player.flying;
+                                    }
+                                }
+                                InputAction::SelectSlot(slot) => {
+                                    if (slot as usize) < HOTBAR_SLOTS {
+                                        player.selected_slot = slot;
+                                    }
+                                }
+                                InputAction::SetBrush(radius) => {
+                                    player.brush_radius = radius.min(MAX_BRUSH);
+                                }
+                                InputAction::Slot(action) => {
+                                    slot_actions.0.push((entity, action));
+                                }
+                            }
+                        }
                     }
                 }
                 ClientMessage::Chat { text } => {
@@ -334,7 +358,6 @@ pub fn drain_network(
                     let (Some(entity), Some(player)) = (session.entity, session.player) else {
                         continue;
                     };
-                    let tick = sim.0.tick();
                     if session.last_chat_tick != 0
                         && tick.saturating_sub(session.last_chat_tick) < CHAT_RATE_TICKS
                     {
@@ -358,6 +381,15 @@ pub fn drain_network(
                     sessions.sessions[index].conn.close("client goodbye");
                 }
             }
+        }
+    }
+
+    for (mut player, ..) in &mut players {
+        if tick.saturating_sub(player.last_input_tick) > INPUT_HOLD_TICKS {
+            player.input = InputState {
+                aim: player.input.aim,
+                ..Default::default()
+            };
         }
     }
 
@@ -443,7 +475,7 @@ pub fn apply_player_inputs(
     for (player, body, mode, mut dig, mut inventory) in &mut query {
         let input = &player.input;
         let survival = mode.0 == GameMode::Survival;
-        let radius = (input.brush_radius as i32).clamp(0, MAX_BRUSH as i32);
+        let radius = player.brush_radius.min(MAX_BRUSH) as i32;
         if !input.primary {
             dig.budget = 0.0;
         }
@@ -495,7 +527,7 @@ pub fn apply_player_inputs(
                 }
             }
         } else if input.secondary {
-            let slot = input.selected_slot as usize;
+            let slot = player.selected_slot as usize;
             if slot < fallingsand_core::HOTBAR_SLOTS
                 && let Some(stack) = inventory.inner.get(slot)
                 && let Some(material) = reg.try_get(stack.item).and_then(|def| def.place)
@@ -674,7 +706,7 @@ pub fn step_physics(
     mut crushes: ResMut<crate::hazards::CrushEvents>,
     mut query: Query<(
         Entity,
-        &Player,
+        &mut Player,
         &Mode,
         &mut PlayerActor,
         &mut Control,
@@ -684,7 +716,7 @@ pub fn step_physics(
     )>,
 ) {
     let params = PlayerParams::default();
-    for (entity, player, mode, mut body, mut control, mut health, mut air, mut burning) in
+    for (entity, mut player, mode, mut body, mut control, mut health, mut air, mut burning) in
         &mut query
     {
         if let Some((jx, jy)) = impulses.0.remove(&entity) {
@@ -703,6 +735,7 @@ pub fn step_physics(
             StepInput {
                 move_x: player.input.move_x,
                 jump: player.input.jump,
+                jump_pressed: std::mem::take(&mut player.jump_pressed),
                 down: player.input.down,
                 fly: player.flying && mode.0 == GameMode::Creative,
             },

@@ -3,7 +3,7 @@ use crate::net::{NetSet, TickMessage};
 use crate::player::LocalMode;
 use crate::{AppState, ClientItemRegistry, ClientRegistry, GameState};
 use bevy::prelude::*;
-use fallingsand_core::{HOTBAR_SLOTS, ItemStack, MAX_AIR_SECS};
+use fallingsand_core::{HOTBAR_SLOTS, ItemStack, MAX_AIR_SECS, MAX_HP};
 use fallingsand_protocol::GameMode;
 
 type ShownHotbar = Option<Vec<Option<ItemStack>>>;
@@ -133,7 +133,7 @@ fn spawn_hud(mut commands: Commands) {
             ));
             parent.spawn((
                 HealthLabel,
-                Text::new("100"),
+                Text::new(format!("{MAX_HP:.0}")),
                 TextFont {
                     font_size: FontSize::Px(10.0),
                     ..default()
@@ -342,7 +342,7 @@ fn update_health_bar(
         return;
     }
     for mut node in &mut fill {
-        node.width = percent(health.0.clamp(0.0, 100.0));
+        node.width = percent((health.0 / MAX_HP * 100.0).clamp(0.0, 100.0));
     }
     for mut text in &mut label {
         **text = format!("{:.0}", health.0.max(0.0));

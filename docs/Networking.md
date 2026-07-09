@@ -19,6 +19,13 @@ The frame bundles a delta per subsystem, each with its own change signal (no gen
   (hp, air, mode), each sent only when changed; debug rects only while subscribed.
 
 The client demultiplexes the frame once; no system re-scans a message union.
+
+Client→server input is one `InputFrame` per client fixed tick: held `InputState` (move, jump,
+down, primary, secondary, aim) plus ordered one-shot `InputAction`s (`Jump`, `ToggleFlight`,
+`SelectSlot`, `SetBrush`, `Slot(SlotAction)`). State is latest-wins, OR-merged when frames
+coalesce into one server tick; actions are never coalesced and are validated server-side. Held
+input decays to neutral after 0.5 s without frames. A new discrete input is a new `InputAction`
+variant, never a new message.
 A cell's wire state is 3 bytes (material + shade flags), dropping per-cell velocity and timing — the
 client renders from streamed positions and the server re-derives them each tick. Each `ChunkOp` cell
 payload is a Minecraft-style paletted container over that 3-byte state (cell count comes from context —

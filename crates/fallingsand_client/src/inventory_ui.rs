@@ -1,10 +1,10 @@
+use crate::input::{InputAccumulator, LocalAction, Modifiers, Pointer};
 use crate::inventory::{InventoryOpen, LocalInventory, item_color};
-use crate::net::Session;
 use crate::player::LocalMode;
 use crate::{ClientItemRegistry, ClientRegistry, GameState, PauseState};
 use bevy::prelude::*;
 use fallingsand_core::{HOTBAR_SLOTS, Inventory as CoreInventory, ItemId, ItemStack, MAIN_SLOTS};
-use fallingsand_protocol::{ClientMessage, GameMode, SlotAction};
+use fallingsand_protocol::{GameMode, InputAction, SlotAction};
 
 pub struct InventoryUiPlugin;
 
@@ -70,15 +70,12 @@ impl Plugin for InventoryUiPlugin {
     }
 }
 
-fn toggle_inventory(
-    keys: Res<ButtonInput<KeyCode>>,
-    chat_open: Res<crate::chat::ChatOpen>,
-    mut open: ResMut<InventoryOpen>,
-) {
-    if chat_open.0 || !keys.just_pressed(KeyCode::KeyE) {
-        return;
+fn toggle_inventory(mut actions: MessageReader<LocalAction>, mut open: ResMut<InventoryOpen>) {
+    for action in actions.read() {
+        if *action == LocalAction::ToggleInventory {
+            open.0 = !open.0;
+        }
     }
-    open.0 = !open.0;
 }
 
 fn manage_overlay(
@@ -440,26 +437,23 @@ fn spawn_slot(
 }
 
 fn handle_clicks(
-    buttons: Res<ButtonInput<MouseButton>>,
-    keys: Res<ButtonInput<KeyCode>>,
+    pointer: Res<Pointer>,
+    modifiers: Res<Modifiers>,
     open: Res<InventoryOpen>,
     inventory: Res<LocalInventory>,
     slots: Query<(&UiSlot, &Interaction)>,
     drop_zone: Query<&Interaction, With<DropZone>>,
-    session: Option<ResMut<Session>>,
+    mut acc: ResMut<InputAccumulator>,
 ) {
     if !open.0 {
         return;
     }
-    let left = buttons.just_pressed(MouseButton::Left);
-    let right = buttons.just_pressed(MouseButton::Right);
+    let left = pointer.primary_click;
+    let right = pointer.secondary_click;
     if !left && !right {
         return;
     }
-    let Some(mut session) = session else {
-        return;
-    };
-    let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+    let shift = modifiers.shift;
 
     let hovered = slots
         .iter()
@@ -491,7 +485,7 @@ fn handle_clicks(
                 SlotAction::CreativeGrab { item }
             }
         };
-        session.send(&ClientMessage::Slot(action));
+        acc.queue(InputAction::Slot(action));
         return;
     }
 
@@ -499,7 +493,7 @@ fn handle_clicks(
         .iter()
         .any(|interaction| !matches!(interaction, Interaction::None));
     if on_backdrop && inventory.cursor.is_some() {
-        session.send(&ClientMessage::Slot(SlotAction::DropCursor { all: left }));
+        acc.queue(InputAction::Slot(SlotAction::DropCursor { all: left }));
     }
 }
 

@@ -15,11 +15,13 @@ pub const fn ticks_from_secs(secs: f32) -> u64 {
     (secs * TICK_RATE as f32 + 0.5) as u64
 }
 pub const GRID_GRAVITY: f32 = 600.0;
+pub const MAX_HP: f32 = 100.0;
 pub const MAX_AIR_SECS: f32 = 12.0;
 pub const MOON_PHASES: u32 = 8;
 pub const REACH: f32 = 80.0;
 pub const SURVIVAL_REACH: f32 = 48.0;
-pub const BRUSH_RADIUS: i32 = 3;
+pub const BRUSH_RADIUS: u8 = 3;
+pub const MAX_BRUSH: u8 = 6;
 
 pub use calendar::{
     AGE_PER_SEC, AGE_PER_TICK, Calendar, DAY_UNITS, ECCENTRE_UNITS, SEASON_DAYS, SYNODIC_UNITS,

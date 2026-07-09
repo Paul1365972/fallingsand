@@ -1,3 +1,4 @@
+use crate::input::LocalAction;
 use crate::net::Session;
 use crate::player::PlayerVisual;
 use crate::{AppState, PauseState};
@@ -6,7 +7,6 @@ use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{Hdr, RenderTarget, ScalingMode};
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::image::Image;
-use bevy::input::mouse::MouseWheel;
 use bevy::post_process::bloom::{Bloom, BloomPrefilter};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
@@ -167,17 +167,16 @@ fn resize_world_target(
 }
 
 fn zoom_input(
-    keys: Res<ButtonInput<KeyCode>>,
-    mut wheel: MessageReader<MouseWheel>,
+    mut actions: MessageReader<LocalAction>,
     mut control: ResMut<CameraControl>,
     mut projections: Query<&mut Projection, With<GameCamera>>,
 ) {
-    let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
-    let scroll: f32 = wheel.read().map(|event| event.y).sum();
-    if ctrl && scroll.abs() > 0.01 {
-        let range = ZOOM_STEPS as f32;
-        control.scroll = (control.scroll - scroll.signum()).clamp(-range, range);
-        control.zoom = 2f32.powf(control.scroll.round() / range);
+    for action in actions.read() {
+        if let LocalAction::Zoom(scroll) = action {
+            let range = ZOOM_STEPS as f32;
+            control.scroll = (control.scroll - scroll.signum()).clamp(-range, range);
+            control.zoom = 2f32.powf(control.scroll.round() / range);
+        }
     }
     for mut projection in &mut projections {
         if let Projection::Orthographic(ortho) = &mut *projection {

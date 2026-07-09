@@ -77,6 +77,7 @@ impl Actor {
 pub struct StepInput {
     pub move_x: i8,
     pub jump: bool,
+    pub jump_pressed: bool,
     pub down: bool,
     pub fly: bool,
 }
@@ -85,7 +86,6 @@ pub struct StepInput {
 pub struct Controller {
     coyote: f32,
     buffer: f32,
-    jump_held: bool,
     var_jump_timer: f32,
     var_jump_speed: Fixed,
     max_fall: Fixed,
@@ -300,9 +300,7 @@ pub fn step_player<W: CellSource>(
 ) -> MoveResult {
     let jump_held = input.jump;
     let down_held = input.down;
-    let pressed = jump_held && !ctrl.jump_held;
-    ctrl.jump_held = jump_held;
-    ctrl.buffer = if pressed {
+    ctrl.buffer = if input.jump_pressed {
         BUFFER_SECS
     } else {
         (ctrl.buffer - TICK_DT).max(0.0)

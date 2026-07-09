@@ -1,11 +1,9 @@
-use crate::inventory::InventoryOpen;
-use crate::menu::{BUTTON_BG, BUTTON_HOVER, spawn_button};
-use crate::net::Session;
+use crate::input::LocalAction;
+use crate::menu::{BUTTON_BG, spawn_button};
 #[cfg(not(target_family = "wasm"))]
 use crate::net::embedded::EmbeddedServer;
 use crate::{AppState, PauseState};
 use bevy::prelude::*;
-use fallingsand_protocol::{ClientMessage, PlayerInput};
 
 pub struct PausePlugin;
 
@@ -24,10 +22,7 @@ enum PauseButton {
 impl Plugin for PausePlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Update, toggle_pause)
-            .add_systems(
-                OnEnter(PauseState::Paused),
-                (spawn_pause_menu, freeze_input),
-            )
+            .add_systems(OnEnter(PauseState::Paused), spawn_pause_menu)
             .add_systems(OnExit(PauseState::Paused), despawn_pause_menu)
             .add_systems(Update, handle_buttons.run_if(in_state(PauseState::Paused)));
         #[cfg(not(target_family = "wasm"))]
@@ -36,32 +31,22 @@ impl Plugin for PausePlugin {
     }
 }
 
-pub(crate) fn toggle_pause(
-    keys: Res<ButtonInput<KeyCode>>,
+fn toggle_pause(
+    mut actions: MessageReader<LocalAction>,
     state: Option<Res<State<PauseState>>>,
     next: Option<ResMut<NextState<PauseState>>>,
-    chat_open: Res<crate::chat::ChatOpen>,
-    mut inv_open: ResMut<InventoryOpen>,
 ) {
     let (Some(state), Some(mut next)) = (state, next) else {
         return;
     };
-    if chat_open.0 || !keys.just_pressed(KeyCode::Escape) {
-        return;
-    }
-    if inv_open.0 {
-        inv_open.0 = false;
-        return;
-    }
-    next.set(match state.get() {
-        PauseState::Running => PauseState::Paused,
-        PauseState::Paused => PauseState::Running,
-    });
-}
-
-fn freeze_input(session: Option<ResMut<Session>>) {
-    if let Some(mut session) = session {
-        session.send(&ClientMessage::Input(PlayerInput::default()));
+    for action in actions.read() {
+        if *action != LocalAction::TogglePause {
+            continue;
+        }
+        next.set(match state.get() {
+            PauseState::Running => PauseState::Paused,
+            PauseState::Paused => PauseState::Running,
+        });
     }
 }
 
@@ -137,33 +122,30 @@ fn spawn_pause_menu(
         });
 }
 
-type ChangedButton = (Changed<Interaction>, With<Button>);
-
 fn handle_buttons(
-    mut query: Query<(&Interaction, &PauseButton, &mut BackgroundColor), ChangedButton>,
+    query: Query<(&Interaction, &PauseButton), Changed<Interaction>>,
     mut next_pause: ResMut<NextState<PauseState>>,
     mut next_app: ResMut<NextState<AppState>>,
     mut exit: MessageWriter<AppExit>,
     #[cfg(not(target_family = "wasm"))] server: Option<Res<EmbeddedServer>>,
 ) {
-    for (interaction, button, mut background) in &mut query {
-        match interaction {
-            Interaction::Pressed => match button {
-                PauseButton::Resume => next_pause.set(PauseState::Running),
-                PauseButton::Save =>
-                {
-                    #[cfg(not(target_family = "wasm"))]
-                    if let Some(server) = &server {
-                        server.control.request_save();
-                    }
+    for (interaction, button) in &query {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        match button {
+            PauseButton::Resume => next_pause.set(PauseState::Running),
+            PauseButton::Save =>
+            {
+                #[cfg(not(target_family = "wasm"))]
+                if let Some(server) = &server {
+                    server.control.request_save();
                 }
-                PauseButton::QuitToMenu => next_app.set(AppState::MainMenu),
-                PauseButton::QuitGame => {
-                    exit.write(AppExit::Success);
-                }
-            },
-            Interaction::Hovered => *background = BackgroundColor(BUTTON_HOVER),
-            Interaction::None => *background = BackgroundColor(BUTTON_BG),
+            }
+            PauseButton::QuitToMenu => next_app.set(AppState::MainMenu),
+            PauseButton::QuitGame => {
+                exit.write(AppExit::Success);
+            }
         }
     }
 }

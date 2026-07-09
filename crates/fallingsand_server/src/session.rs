@@ -2,7 +2,7 @@ use bevy_ecs::prelude::*;
 use fallingsand_core::ChunkPos;
 use fallingsand_net::Connection;
 use fallingsand_protocol::{
-    EntityId, PlayerId, PlayerInput, PlayerUuid, SelfState, ServerMessage, encode_message,
+    EntityId, InputState, PlayerId, PlayerUuid, SelfState, ServerMessage, encode_message,
 };
 use rustc_hash::FxHashSet;
 
@@ -62,6 +62,10 @@ pub struct Player {
     pub id: PlayerId,
     pub uuid: PlayerUuid,
     pub name: String,
-    pub input: PlayerInput,
+    pub input: InputState,
+    pub jump_pressed: bool,
     pub flying: bool,
+    pub selected_slot: u8,
+    pub brush_radius: u8,
+    pub last_input_tick: u64,
 }

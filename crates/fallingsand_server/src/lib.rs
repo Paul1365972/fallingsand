@@ -26,8 +26,7 @@ pub use fallingsand_core::TICK_RATE;
 pub const TICK_DURATION: Duration = Duration::from_nanos(1_000_000_000 / TICK_RATE as u64);
 pub const INTEREST_RADIUS_X: i32 = 6;
 pub const INTEREST_RADIUS_Y: i32 = 4;
-pub const MAX_HP: f32 = 100.0;
-pub use fallingsand_core::MAX_AIR_SECS;
+pub use fallingsand_core::{MAX_AIR_SECS, MAX_HP};
 
 #[derive(Resource)]
 pub struct SimWorld(pub CellWorld);

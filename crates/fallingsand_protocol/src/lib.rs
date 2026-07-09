@@ -2,15 +2,15 @@ pub mod messages;
 pub mod wire;
 
 pub use messages::{
-    ChunkDebugRects, ChunkOp, ClientMessage, EntityId, GameMode, ItemDelta, ItemEntityState,
-    ItemMove, MAX_BRUSH, PlayerId, PlayerInput, PlayerState, PlayerUuid, SelfState, ServerMessage,
-    SlotAction, TickFrame,
+    ChunkDebugRects, ChunkOp, ClientMessage, EntityId, GameMode, InputAction, InputFrame,
+    InputState, ItemDelta, ItemEntityState, ItemMove, PlayerId, PlayerState, PlayerUuid, SelfState,
+    ServerMessage, SlotAction, TickFrame,
 };
 pub use wire::{
     CELL_WIRE_BYTES, WireError, cells_from_wire, cells_to_wire, decode_message, encode_message,
 };
 
-pub const PROTOCOL_VERSION: u16 = 23;
+pub const PROTOCOL_VERSION: u16 = 24;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct Stats {

@@ -4,7 +4,7 @@
 
 ## Tick order
 
-1. Drain network — sessions, inputs, chat, commands
+1. Drain network — sessions, input frames (state merged, actions folded in order, stale input decays), chat, commands
 2. Apply inputs → world edits: run chat commands, dig/place, slot actions + crafting
 3. Load/generate/unload regions per ticket changes, then rebuild the entity obstacle mask
 4. Step CA (4 phases, rayon), applying deferred world edits after the 4 phases

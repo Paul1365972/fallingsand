@@ -46,13 +46,8 @@ struct CertField;
 #[derive(Component)]
 struct PlayerNameField;
 
-#[cfg_attr(target_family = "wasm", allow(dead_code))]
 #[derive(Component)]
-struct FullscreenLabel;
-
-#[cfg_attr(target_family = "wasm", allow(dead_code))]
-#[derive(Component)]
-struct VsyncLabel;
+pub(crate) struct ButtonBase(pub Color);
 
 #[derive(Resource, Default)]
 struct WorldList(Vec<String>);
@@ -77,6 +72,7 @@ impl Plugin for MenuPlugin {
                 OnExit(AppState::MainMenu),
                 (commit_name, despawn_menu).chain(),
             )
+            .add_systems(Update, button_hover)
             .add_systems(
                 Update,
                 (handle_buttons, sync_world_rows).run_if(in_state(AppState::MainMenu)),
@@ -165,17 +161,19 @@ fn spawn_menu(mut commands: Commands, settings: Res<crate::settings::Settings>) 
                             ..default()
                         })
                         .with_children(|row| {
-                            spawn_toggle(
+                            spawn_button(
                                 row,
                                 MenuButton::ToggleFullscreen,
-                                FullscreenLabel,
-                                fullscreen_label(settings.fullscreen),
+                                &fullscreen_label(settings.fullscreen),
+                                160.0,
+                                BUTTON_BG,
                             );
-                            spawn_toggle(
+                            spawn_button(
                                 row,
                                 MenuButton::ToggleVsync,
-                                VsyncLabel,
-                                vsync_label(settings.vsync),
+                                &vsync_label(settings.vsync),
+                                160.0,
+                                BUTTON_BG,
                             );
                         });
                 });
@@ -302,47 +300,22 @@ fn vsync_label(on: bool) -> String {
 }
 
 #[cfg(not(target_family = "wasm"))]
-fn spawn_toggle(
-    parent: &mut ChildSpawnerCommands,
-    action: MenuButton,
-    marker: impl Component,
-    label: String,
-) {
-    parent
-        .spawn((
-            action,
-            Button,
-            Node {
-                width: px(160),
-                height: px(30),
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
-                ..default()
-            },
-            BackgroundColor(BUTTON_BG),
-        ))
-        .with_child((
-            marker,
-            Text::new(label),
-            TextFont {
-                font_size: FontSize::Px(15.0),
-                ..default()
-            },
-            TextColor(Color::WHITE),
-        ));
-}
-
-#[cfg(not(target_family = "wasm"))]
 fn refresh_toggle_labels(
     settings: Res<crate::settings::Settings>,
-    mut fullscreen: Query<&mut Text, (With<FullscreenLabel>, Without<VsyncLabel>)>,
-    mut vsync: Query<&mut Text, (With<VsyncLabel>, Without<FullscreenLabel>)>,
+    buttons: Query<(&MenuButton, &Children)>,
+    mut texts: Query<&mut Text>,
 ) {
-    for mut text in &mut fullscreen {
-        **text = fullscreen_label(settings.fullscreen);
-    }
-    for mut text in &mut vsync {
-        **text = vsync_label(settings.vsync);
+    for (button, children) in &buttons {
+        let label = match button {
+            MenuButton::ToggleFullscreen => fullscreen_label(settings.fullscreen),
+            MenuButton::ToggleVsync => vsync_label(settings.vsync),
+            _ => continue,
+        };
+        for &child in children {
+            if let Ok(mut text) = texts.get_mut(child) {
+                **text = label.clone();
+            }
+        }
     }
 }
 
@@ -364,6 +337,7 @@ pub(crate) fn spawn_button(
         .spawn((
             action,
             Button,
+            ButtonBase(background),
             Node {
                 width: px(width),
                 height: px(30),
@@ -383,6 +357,17 @@ pub(crate) fn spawn_button(
         ));
 }
 
+fn button_hover(
+    mut buttons: Query<(&Interaction, &ButtonBase, &mut BackgroundColor), Changed<Interaction>>,
+) {
+    for (interaction, base, mut background) in &mut buttons {
+        background.0 = match interaction {
+            Interaction::None => base.0,
+            Interaction::Hovered | Interaction::Pressed => BUTTON_HOVER,
+        };
+    }
+}
+
 fn sync_world_rows(
     mut commands: Commands,
     worlds: Res<WorldList>,
@@ -398,17 +383,15 @@ fn sync_world_rows(
     }
     commands.entity(*panel).with_children(|panel| {
         if worlds.0.is_empty() {
-            panel
-                .spawn((
-                    WorldRow,
-                    Text::new("no worlds yet"),
-                    TextFont {
-                        font_size: FontSize::Px(13.0),
-                        ..default()
-                    },
-                    TextColor(Color::srgba(0.7, 0.75, 0.8, 0.6)),
-                ))
-                .insert(Node::default());
+            panel.spawn((
+                WorldRow,
+                Text::new("no worlds yet"),
+                TextFont {
+                    font_size: FontSize::Px(13.0),
+                    ..default()
+                },
+                TextColor(Color::srgba(0.7, 0.75, 0.8, 0.6)),
+            ));
             return;
         }
         for name in &worlds.0 {
@@ -470,11 +453,9 @@ fn sanitize_world_name(raw: &str) -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
-type ChangedButton = (Changed<Interaction>, With<Button>);
-
 #[allow(clippy::too_many_arguments)]
 fn handle_buttons(
-    mut query: Query<(&Interaction, &MenuButton, &mut BackgroundColor), ChangedButton>,
+    query: Query<(&Interaction, &MenuButton), Changed<Interaction>>,
     name_field: Query<&EditableText, With<NameField>>,
     url_field: Query<&EditableText, With<UrlField>>,
     cert_field: Query<&EditableText, With<CertField>>,
@@ -486,63 +467,59 @@ fn handle_buttons(
     mut next_state: ResMut<NextState<AppState>>,
     mut exit: MessageWriter<AppExit>,
 ) {
-    for (interaction, button, mut background) in &mut query {
-        match interaction {
-            Interaction::Pressed => match button {
-                MenuButton::Play(name) => {
-                    selected.0 = name.clone();
-                    next_state.set(AppState::InGame);
+    for (interaction, button) in &query {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        match button {
+            MenuButton::Play(name) => {
+                selected.0 = name.clone();
+                next_state.set(AppState::InGame);
+            }
+            MenuButton::Create => {
+                let raw = name_field.single().map(|f| f.value().to_string());
+                let Some(name) = raw.ok().as_deref().and_then(sanitize_world_name) else {
+                    continue;
+                };
+                selected.0 = name;
+                next_state.set(AppState::InGame);
+            }
+            MenuButton::Delete(name) => {
+                if pending_delete.0.as_deref() == Some(name) {
+                    delete_world(name);
+                    pending_delete.0 = None;
+                    worlds.0 = list_worlds();
+                } else {
+                    pending_delete.0 = Some(name.clone());
                 }
-                MenuButton::Create => {
-                    let raw = name_field.single().map(|f| f.value().to_string());
-                    let Some(name) = raw.ok().as_deref().and_then(sanitize_world_name) else {
-                        continue;
-                    };
-                    selected.0 = name;
-                    next_state.set(AppState::InGame);
+            }
+            MenuButton::Connect => {
+                let url = url_field
+                    .single()
+                    .map(|f| f.value().to_string())
+                    .unwrap_or_default();
+                let url = url.trim().to_string();
+                if url.is_empty() {
+                    continue;
                 }
-                MenuButton::Delete(name) => {
-                    if pending_delete.0.as_deref() == Some(name) {
-                        delete_world(name);
-                        pending_delete.0 = None;
-                        worlds.0 = list_worlds();
-                    } else {
-                        pending_delete.0 = Some(name.clone());
-                    }
-                }
-                MenuButton::Connect => {
-                    let url = url_field
-                        .single()
-                        .map(|f| f.value().to_string())
-                        .unwrap_or_default();
-                    let url = url.trim().to_string();
-                    if url.is_empty() {
-                        continue;
-                    }
-                    let cert = cert_field
-                        .single()
-                        .map(|f| f.value().to_string())
-                        .unwrap_or_default();
-                    supervisor.target = Some(crate::net::ConnectTarget {
-                        url,
-                        cert_hash: crate::net::parse_cert_hash(cert.trim()),
-                    });
-                    next_state.set(AppState::InGame);
-                }
-                MenuButton::ToggleFullscreen => {
-                    settings.fullscreen = !settings.fullscreen;
-                }
-                MenuButton::ToggleVsync => {
-                    settings.vsync = !settings.vsync;
-                }
-                MenuButton::Quit => {
-                    exit.write(AppExit::Success);
-                }
-            },
-            Interaction::Hovered => *background = BackgroundColor(BUTTON_HOVER),
-            Interaction::None => {
-                let danger = matches!(button, MenuButton::Delete(name) if pending_delete.0.as_deref() == Some(name));
-                *background = BackgroundColor(if danger { DANGER_BG } else { BUTTON_BG });
+                let cert = cert_field
+                    .single()
+                    .map(|f| f.value().to_string())
+                    .unwrap_or_default();
+                supervisor.target = Some(crate::net::ConnectTarget {
+                    url,
+                    cert_hash: crate::net::parse_cert_hash(cert.trim()),
+                });
+                next_state.set(AppState::InGame);
+            }
+            MenuButton::ToggleFullscreen => {
+                settings.fullscreen = !settings.fullscreen;
+            }
+            MenuButton::ToggleVsync => {
+                settings.vsync = !settings.vsync;
+            }
+            MenuButton::Quit => {
+                exit.write(AppExit::Success);
             }
         }
     }

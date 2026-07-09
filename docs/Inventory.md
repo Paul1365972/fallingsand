@@ -20,15 +20,15 @@ Ops: `insert_first_fit` (fill matches then empties, returns overflow), `left_cli
 
 ## Dig / place (server `systems.rs`)
 
-- Selected hotbar slot is `PlayerInput.selected_slot`; brush size is `PlayerInput.brush_radius`
-  (0..=6, `[`/`]` or `-`/`=`; scroll cycles the hotbar). The server clamps `brush_radius` to
-  `MAX_BRUSH` and ignores a `selected_slot` outside the hotbar before use — slot eligibility is
+- Selected hotbar slot and brush size (0..=6, `[`/`]` or `-`/`=`; scroll cycles the hotbar) are
+  server-side per-player fields set via `InputAction::SelectSlot`/`SetBrush`. The server clamps
+  the brush to `MAX_BRUSH` and ignores a slot outside the hotbar — slot eligibility is
   server-authoritative.
 - Survival dig → `item_for_material` into the inventory; overflow spawns a dropped item at the cell.
 - Place reads the selected slot's `place` material and stamps it across the brush (survival decrements
   per cell).
 
-## Slot actions (`ClientMessage::Slot(SlotAction)` → `apply_slot_actions`)
+## Slot actions (`InputAction::Slot(SlotAction)` → `apply_slot_actions`)
 
 Server-authoritative and intent-based — the client resolves its keybinds to intents, no raw modifiers
 cross the wire: `LeftClick`/`RightClick` (cursor), `QuickMove` (hotbar↔main), `DropSlot`/`DropCursor`

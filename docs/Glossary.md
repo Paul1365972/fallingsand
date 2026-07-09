@@ -38,6 +38,7 @@ Canonical names for the core domain vocabulary. One concept, one name.
 | **TickFrame** | the one frame sent per server tick: `tick`, `world_age`, `chunks`, `players`, `items`, inventory/cursor/self/debug |
 | **ChunkOp** | per-chunk wire delta inside a `TickFrame`: `Load` / `Delta` / `Unload` |
 | **PlayerState** | wire snapshot of a player (pos, ducking, burning) |
+| **InputFrame** | per-client-tick input message: held `InputState` (latest-wins, merged) + ordered one-shot `InputAction`s (never lost) |
 | **PlayerId / PlayerUuid** | session player id / persistent account id |
 | **EntityId** | id for replicated non-player world entities (today: dropped items; reserved for creatures) |
 | **tick / world_age / age_ticks** | monotonic sim tick number / calendar clock (DAY_UNITS; YEAR_UNITS = 60 days, `season()`/`day_of_year()` are integer-math accessors) / a dropped item's lifetime |

@@ -55,21 +55,17 @@ impl GameMode {
     }
 }
 
-pub const MAX_BRUSH: u8 = 6;
-
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct PlayerInput {
+pub struct InputState {
     pub move_x: i8,
     pub jump: bool,
     pub down: bool,
     pub primary: bool,
     pub secondary: bool,
     pub aim: CellPos,
-    pub selected_slot: u8,
-    pub brush_radius: u8,
 }
 
-impl Default for PlayerInput {
+impl Default for InputState {
     fn default() -> Self {
         Self {
             move_x: 0,
@@ -78,10 +74,36 @@ impl Default for PlayerInput {
             primary: false,
             secondary: false,
             aim: CellPos::new(0, 0),
-            selected_slot: 0,
-            brush_radius: 3,
         }
     }
+}
+
+impl InputState {
+    pub fn merge_or(&mut self, next: Self) {
+        if next.move_x != 0 {
+            self.move_x = next.move_x;
+        }
+        self.jump |= next.jump;
+        self.down |= next.down;
+        self.primary |= next.primary;
+        self.secondary |= next.secondary;
+        self.aim = next.aim;
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum InputAction {
+    Jump,
+    ToggleFlight,
+    SelectSlot(u8),
+    SetBrush(u8),
+    Slot(SlotAction),
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct InputFrame {
+    pub state: InputState,
+    pub actions: Vec<InputAction>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -176,9 +198,7 @@ pub enum ClientMessage {
         uuid: PlayerUuid,
         name: String,
     },
-    Input(PlayerInput),
-    ToggleFly,
-    Slot(SlotAction),
+    Input(InputFrame),
     Chat {
         text: String,
     },

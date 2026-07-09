@@ -1,4 +1,5 @@
-use crate::menu::{BUTTON_BG, BUTTON_HOVER};
+use crate::input::LocalAction;
+use crate::menu::{BUTTON_BG, ButtonBase};
 use crate::net::{ConnPhase, Session, Supervisor};
 use crate::{AppState, GameState, PauseState};
 use bevy::prelude::*;
@@ -104,6 +105,7 @@ fn spawn_screen(mut commands: Commands) {
                 .spawn((
                     CancelButton,
                     Button,
+                    ButtonBase(BUTTON_BG),
                     Node {
                         width: px(160),
                         height: px(30),
@@ -132,67 +134,6 @@ fn despawn_screen(mut commands: Commands, query: Query<Entity, With<ScreenRoot>>
     }
 }
 
-type TitleQuery<'w, 's> = Query<
-    'w,
-    's,
-    (&'static mut Text, &'static mut TextColor),
-    (
-        With<TitleText>,
-        Without<DotsText>,
-        Without<DetailText>,
-        Without<ErrorText>,
-        Without<CancelLabel>,
-    ),
->;
-type DotsQuery<'w, 's> = Query<
-    'w,
-    's,
-    &'static mut Text,
-    (
-        With<DotsText>,
-        Without<TitleText>,
-        Without<DetailText>,
-        Without<ErrorText>,
-        Without<CancelLabel>,
-    ),
->;
-type DetailQuery<'w, 's> = Query<
-    'w,
-    's,
-    &'static mut Text,
-    (
-        With<DetailText>,
-        Without<TitleText>,
-        Without<DotsText>,
-        Without<ErrorText>,
-        Without<CancelLabel>,
-    ),
->;
-type ErrorQuery<'w, 's> = Query<
-    'w,
-    's,
-    &'static mut Text,
-    (
-        With<ErrorText>,
-        Without<TitleText>,
-        Without<DotsText>,
-        Without<DetailText>,
-        Without<CancelLabel>,
-    ),
->;
-type LabelQuery<'w, 's> = Query<
-    'w,
-    's,
-    &'static mut Text,
-    (
-        With<CancelLabel>,
-        Without<TitleText>,
-        Without<DotsText>,
-        Without<DetailText>,
-        Without<ErrorText>,
-    ),
->;
-
 fn set_text(text: &mut Text, value: String) {
     if **text != value {
         **text = value;
@@ -206,17 +147,16 @@ fn update_screen(
     game_state: Res<State<GameState>>,
     pause: Option<Res<State<PauseState>>>,
     time: Res<Time>,
-    mut root: Query<(&mut Visibility, &mut BackgroundColor), With<ScreenRoot>>,
-    mut title: TitleQuery,
-    mut dots: DotsQuery,
-    mut detail: DetailQuery,
-    mut error: ErrorQuery,
-    mut label: LabelQuery,
-    mut button: Query<&mut Visibility, (With<CancelButton>, Without<ScreenRoot>)>,
+    mut root: Single<(&mut Visibility, &mut BackgroundColor), With<ScreenRoot>>,
+    title: Single<Entity, With<TitleText>>,
+    dots: Single<Entity, With<DotsText>>,
+    detail: Single<Entity, With<DetailText>>,
+    error: Single<Entity, With<ErrorText>>,
+    label: Single<Entity, With<CancelLabel>>,
+    mut button: Single<&mut Visibility, (With<CancelButton>, Without<ScreenRoot>)>,
+    mut texts: Query<(&mut Text, &mut TextColor)>,
 ) {
-    let Ok((mut visibility, mut backdrop)) = root.single_mut() else {
-        return;
-    };
+    let (visibility, backdrop) = &mut *root;
     let connecting = *game_state.get() == GameState::Connecting;
     let paused = pause.is_some_and(|state| *state.get() == PauseState::Paused);
     let phase = supervisor.phase(session.as_deref(), paused);
@@ -262,7 +202,7 @@ fn update_screen(
     } else {
         match &phase {
             ConnPhase::Online => {
-                *visibility = Visibility::Hidden;
+                **visibility = Visibility::Hidden;
                 return;
             }
             ConnPhase::Connecting => (
@@ -299,17 +239,17 @@ fn update_screen(
             ),
         }
     };
-    *visibility = Visibility::Inherited;
+    **visibility = Visibility::Inherited;
     backdrop.0 = if connecting {
         Color::srgba(0.05, 0.06, 0.09, 1.0)
     } else {
         Color::srgba(0.02, 0.03, 0.06, alpha)
     };
-    if let Ok((mut text, mut color)) = title.single_mut() {
+    if let Ok((mut text, mut color)) = texts.get_mut(*title) {
         set_text(&mut text, title_str);
         color.0 = title_color;
     }
-    if let Ok(mut text) = dots.single_mut() {
+    if let Ok((mut text, _)) = texts.get_mut(*dots) {
         let count = if animate {
             1 + (time.elapsed_secs() * 2.0) as usize % 3
         } else {
@@ -317,10 +257,10 @@ fn update_screen(
         };
         set_text(&mut text, "● ".repeat(count).trim_end().to_string());
     }
-    if let Ok(mut text) = detail.single_mut() {
+    if let Ok((mut text, _)) = texts.get_mut(*detail) {
         set_text(&mut text, detail_str);
     }
-    if let Ok(mut text) = error.single_mut() {
+    if let Ok((mut text, _)) = texts.get_mut(*error) {
         let error_str = match (&phase, &supervisor.last_error) {
             (ConnPhase::Lost { .. }, _) | (_, None) => String::new(),
             (_, Some(err)) if connecting => format!("last error: {err}"),
@@ -328,35 +268,31 @@ fn update_screen(
         };
         set_text(&mut text, error_str);
     }
-    if let Ok(mut button_visibility) = button.single_mut() {
-        *button_visibility = if button_str.is_some() {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        };
-    }
-    if let (Ok(mut text), Some(button_str)) = (label.single_mut(), button_str) {
+    **button = if button_str.is_some() {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    };
+    if let (Ok((mut text, _)), Some(button_str)) = (texts.get_mut(*label), button_str) {
         set_text(&mut text, button_str.to_string());
     }
 }
 
-type ChangedCancel = (Changed<Interaction>, With<CancelButton>);
-
 fn handle_cancel(
-    mut buttons: Query<(&Interaction, &mut BackgroundColor), ChangedCancel>,
+    buttons: Query<&Interaction, (Changed<Interaction>, With<CancelButton>)>,
     mut next: ResMut<NextState<AppState>>,
 ) {
-    for (interaction, mut background) in &mut buttons {
-        match interaction {
-            Interaction::Pressed => next.set(AppState::MainMenu),
-            Interaction::Hovered => *background = BackgroundColor(BUTTON_HOVER),
-            Interaction::None => *background = BackgroundColor(BUTTON_BG),
+    for interaction in &buttons {
+        if *interaction == Interaction::Pressed {
+            next.set(AppState::MainMenu);
         }
     }
 }
 
-fn cancel_on_esc(keys: Res<ButtonInput<KeyCode>>, mut next: ResMut<NextState<AppState>>) {
-    if keys.just_pressed(KeyCode::Escape) {
-        next.set(AppState::MainMenu);
+fn cancel_on_esc(mut actions: MessageReader<LocalAction>, mut next: ResMut<NextState<AppState>>) {
+    for action in actions.read() {
+        if *action == LocalAction::CancelConnect {
+            next.set(AppState::MainMenu);
+        }
     }
 }

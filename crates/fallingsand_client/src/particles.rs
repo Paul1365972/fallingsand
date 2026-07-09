@@ -1,6 +1,7 @@
 use crate::camera::WORLD_LAYER;
+use crate::input::InputHeld;
 use crate::inventory::BrushRadius;
-use crate::player::{InputState, LocalMode, PlayerVisual, PlayerVisuals};
+use crate::player::{LocalMode, PlayerVisual, PlayerVisuals};
 use crate::worldview::WorldView;
 use crate::{AppState, ClientRegistry, GameState};
 use bevy::camera::visibility::RenderLayers;
@@ -41,9 +42,7 @@ impl Plugin for ParticlesPlugin {
 #[allow(clippy::too_many_arguments)]
 fn spawn_dig_spray(
     mut commands: Commands,
-    buttons: Res<ButtonInput<MouseButton>>,
-    chat_open: Res<crate::chat::ChatOpen>,
-    input: Res<InputState>,
+    held: Res<InputHeld>,
     mode: Res<LocalMode>,
     view: Res<WorldView>,
     registry: Res<ClientRegistry>,
@@ -53,7 +52,7 @@ fn spawn_dig_spray(
     brush: Res<BrushRadius>,
     mut rng: Local<Rng>,
 ) {
-    if chat_open.0 || !buttons.pressed(MouseButton::Left) {
+    if !held.0.primary {
         return;
     }
     let Some(id) = session.and_then(|session| session.player) else {
@@ -65,7 +64,7 @@ fn spawn_dig_spray(
     let Ok(player) = transforms.get(entity) else {
         return;
     };
-    let aim = Vec2::new(input.aim.x as f32, input.aim.y as f32);
+    let aim = Vec2::new(held.0.aim.x as f32, held.0.aim.y as f32);
     let reach = match mode.0 {
         GameMode::Survival => SURVIVAL_REACH,
         GameMode::Creative => REACH,
@@ -86,7 +85,7 @@ fn spawn_dig_spray(
         if ox * ox + oy * oy > radius * radius {
             continue;
         }
-        let pos = input.aim.translated(ox, oy);
+        let pos = held.0.aim.translated(ox, oy);
         let Some(cell) = view.get_cell(pos) else {
             continue;
         };

@@ -1,3 +1,4 @@
+use crate::input::LocalAction;
 use bevy::prelude::*;
 
 pub struct SettingsPlugin;
@@ -26,9 +27,11 @@ impl Plugin for SettingsPlugin {
     }
 }
 
-fn fullscreen_hotkey(keys: Res<ButtonInput<KeyCode>>, mut settings: ResMut<Settings>) {
-    if keys.just_pressed(KeyCode::F11) {
-        settings.fullscreen = !settings.fullscreen;
+fn fullscreen_hotkey(mut actions: MessageReader<LocalAction>, mut settings: ResMut<Settings>) {
+    for action in actions.read() {
+        if *action == LocalAction::ToggleFullscreen {
+            settings.fullscreen = !settings.fullscreen;
+        }
     }
 }
 

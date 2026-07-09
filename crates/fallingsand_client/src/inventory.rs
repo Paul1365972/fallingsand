@@ -5,7 +5,7 @@ use crate::{AppState, ClientItemRegistry, ClientRegistry};
 use bevy::camera::visibility::RenderLayers;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
-use fallingsand_core::{IconSpec, ItemId, ItemRegistry, ItemStack, MaterialRegistry};
+use fallingsand_core::{BRUSH_RADIUS, IconSpec, ItemId, ItemRegistry, ItemStack, MaterialRegistry};
 use fallingsand_protocol::EntityId;
 
 pub struct InventoryPlugin;
@@ -31,7 +31,7 @@ pub struct BrushRadius(pub u8);
 
 impl Default for BrushRadius {
     fn default() -> Self {
-        Self(3)
+        Self(BRUSH_RADIUS)
     }
 }
 
