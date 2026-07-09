@@ -19,8 +19,14 @@ The frame bundles a delta per subsystem, each with its own change signal (no gen
   (hp, air, mode), each sent only when changed; debug rects only while subscribed.
 
 The client demultiplexes the frame once; no system re-scans a message union.
-Cells pack to 3 bytes (material + shade flags), dropping per-cell velocity and timing — the client
-renders from streamed positions and the server re-derives them each tick. IDs: `PlayerId` (session),
+A cell's wire state is 3 bytes (material + shade flags), dropping per-cell velocity and timing — the
+client renders from streamed positions and the server re-derives them each tick. Each `ChunkOp` cell
+payload is a Minecraft-style paletted container over that 3-byte state (cell count comes from context —
+chunk area or delta rect): **uniform** (one entry, zero index bits), **paletted** (≤256 first-occurrence
+entries + `ceil(log2(n))`-bit LSB-first indices, no minimum width, no word padding), or **raw** 3-byte
+cells — the encoder picks whichever is smallest. Water costs ~5 bits/cell (materials × 16 random shade
+nibbles), of which the shade noise is the irreducible 4; frame-level lz4 then catches cross-chunk
+palette repetition. IDs: `PlayerId` (session),
 `EntityId` (replicated non-player entities; today only dropped items), `PlayerUuid` (account).
 `HelloAck` carries the server's protocol version; the client rejects the connection on a mismatch.
 `PROTOCOL_VERSION` gates content compatibility too — any change to `materials.ron`/`items.ron` bumps it.

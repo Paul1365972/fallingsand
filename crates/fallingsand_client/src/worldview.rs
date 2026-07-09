@@ -45,8 +45,8 @@ fn apply_updates(mut view: ResMut<WorldView>, mut frames: MessageReader<TickMess
         view.server_tick = view.server_tick.max(tick.tick);
         for op in &tick.chunks {
             match op {
-                ChunkOp::Load { pos, cells } => match cells_from_wire(cells) {
-                    Ok(decoded) if decoded.len() == CHUNK_AREA => {
+                ChunkOp::Load { pos, cells } => match cells_from_wire(cells, CHUNK_AREA) {
+                    Ok(decoded) => {
                         let mut buffer = Box::new([Cell::AIR; CHUNK_AREA]);
                         buffer.copy_from_slice(&decoded);
                         view.chunks.insert(
@@ -58,7 +58,7 @@ fn apply_updates(mut view: ResMut<WorldView>, mut frames: MessageReader<TickMess
                             },
                         );
                     }
-                    _ => error!("bad chunk load payload for {pos:?}"),
+                    Err(_) => error!("bad chunk load payload for {pos:?}"),
                 },
                 ChunkOp::Unload { pos } => {
                     view.chunks.remove(pos);
@@ -74,14 +74,11 @@ fn apply_updates(mut view: ResMut<WorldView>, mut frames: MessageReader<TickMess
                         error!("delta rect out of bounds for {pos:?}");
                         continue;
                     }
-                    let Ok(decoded) = cells_from_wire(cells) else {
+                    let count = (rect.width() * rect.height()) as usize;
+                    let Ok(decoded) = cells_from_wire(cells, count) else {
                         error!("bad delta payload for {pos:?}");
                         continue;
                     };
-                    if decoded.len() != (rect.width() * rect.height()) as usize {
-                        error!("delta size mismatch for {pos:?}");
-                        continue;
-                    }
                     apply_rect(chunk, *rect, &decoded);
                     if !chunk.dirty {
                         chunk.pending.push(*rect);

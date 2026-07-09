@@ -1,6 +1,7 @@
 use fallingsand_core::{Cell, MaterialId};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use std::collections::HashMap;
 
 pub const COMPRESSION_THRESHOLD: usize = 256;
 pub const CELL_WIRE_BYTES: usize = 3;
@@ -8,6 +9,11 @@ pub const MAX_DECOMPRESSED_LEN: usize = 64 * 1024 * 1024;
 
 const TAG_RAW: u8 = 0;
 const TAG_LZ4: u8 = 1;
+
+const CELLS_UNIFORM: u8 = 0;
+const CELLS_PALETTE: u8 = 1;
+const CELLS_RAW: u8 = 2;
+const MAX_PALETTE: usize = 256;
 
 #[derive(Debug, thiserror::Error)]
 pub enum WireError {
@@ -59,27 +65,144 @@ pub fn decode_message<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, WireError>
     }
 }
 
-pub fn cells_to_wire(cells: &[Cell]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(cells.len() * CELL_WIRE_BYTES);
-    for cell in cells {
-        out.extend_from_slice(&cell.material.0.to_le_bytes());
-        out.push(cell.shade_flags);
+fn cell_entry(cell: Cell) -> [u8; CELL_WIRE_BYTES] {
+    let material = cell.material.0.to_le_bytes();
+    [material[0], material[1], cell.shade_flags]
+}
+
+fn entry_cell(entry: &[u8]) -> Cell {
+    Cell {
+        material: MaterialId(u16::from_le_bytes([entry[0], entry[1]])),
+        vx: 0,
+        vy: 0,
+        shade_flags: entry[2],
+        updated: 0,
+    }
+}
+
+fn index_bits(palette_len: usize) -> u32 {
+    usize::BITS - (palette_len - 1).leading_zeros()
+}
+
+fn cells_to_wire_raw(cells: &[Cell]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(1 + cells.len() * CELL_WIRE_BYTES);
+    out.push(CELLS_RAW);
+    for &cell in cells {
+        out.extend_from_slice(&cell_entry(cell));
     }
     out
 }
 
-pub fn cells_from_wire(bytes: &[u8]) -> Result<Vec<Cell>, WireError> {
-    if !bytes.len().is_multiple_of(CELL_WIRE_BYTES) {
-        return Err(WireError::BadCellPayload(bytes.len()));
+pub fn cells_to_wire(cells: &[Cell]) -> Vec<u8> {
+    let mut palette: Vec<[u8; CELL_WIRE_BYTES]> = Vec::new();
+    let mut lookup: HashMap<u32, u8> = HashMap::new();
+    let mut indices: Vec<u8> = Vec::with_capacity(cells.len());
+    for &cell in cells {
+        let key = cell.material.0 as u32 | (cell.shade_flags as u32) << 16;
+        match lookup.entry(key) {
+            std::collections::hash_map::Entry::Occupied(entry) => indices.push(*entry.get()),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                if palette.len() == MAX_PALETTE {
+                    return cells_to_wire_raw(cells);
+                }
+                let index = palette.len() as u8;
+                entry.insert(index);
+                palette.push(cell_entry(cell));
+                indices.push(index);
+            }
+        }
     }
-    Ok(bytes
-        .chunks_exact(CELL_WIRE_BYTES)
-        .map(|raw| Cell {
-            material: MaterialId(u16::from_le_bytes([raw[0], raw[1]])),
-            vx: 0,
-            vy: 0,
-            shade_flags: raw[2],
-            updated: 0,
-        })
-        .collect())
+    if palette.len() <= 1 {
+        let mut out = Vec::with_capacity(1 + CELL_WIRE_BYTES);
+        out.push(CELLS_UNIFORM);
+        out.extend_from_slice(&palette.first().copied().unwrap_or_default());
+        return out;
+    }
+    let bits = index_bits(palette.len());
+    let packed_len = (cells.len() * bits as usize).div_ceil(8);
+    let paletted_len = 2 + palette.len() * CELL_WIRE_BYTES + packed_len;
+    if paletted_len > cells.len() * CELL_WIRE_BYTES {
+        return cells_to_wire_raw(cells);
+    }
+    let mut out = Vec::with_capacity(paletted_len);
+    out.push(CELLS_PALETTE);
+    out.push((palette.len() - 1) as u8);
+    for entry in &palette {
+        out.extend_from_slice(entry);
+    }
+    let mut acc: u32 = 0;
+    let mut filled: u32 = 0;
+    for &index in &indices {
+        acc |= (index as u32) << filled;
+        filled += bits;
+        while filled >= 8 {
+            out.push(acc as u8);
+            acc >>= 8;
+            filled -= 8;
+        }
+    }
+    if filled > 0 {
+        out.push(acc as u8);
+    }
+    out
+}
+
+pub fn cells_from_wire(bytes: &[u8], count: usize) -> Result<Vec<Cell>, WireError> {
+    let bad = || WireError::BadCellPayload(bytes.len());
+    let (&tag, payload) = bytes.split_first().ok_or(WireError::Empty)?;
+    match tag {
+        CELLS_UNIFORM => {
+            if payload.len() != CELL_WIRE_BYTES {
+                return Err(bad());
+            }
+            Ok(vec![entry_cell(payload); count])
+        }
+        CELLS_PALETTE => {
+            let (&len_minus_one, rest) = payload.split_first().ok_or_else(bad)?;
+            let palette_len = len_minus_one as usize + 1;
+            if palette_len < 2 {
+                return Err(bad());
+            }
+            let (palette_bytes, packed) = rest
+                .split_at_checked(palette_len * CELL_WIRE_BYTES)
+                .ok_or_else(bad)?;
+            let bits = index_bits(palette_len);
+            if packed.len() != (count * bits as usize).div_ceil(8) {
+                return Err(bad());
+            }
+            let palette: Vec<Cell> = palette_bytes
+                .chunks_exact(CELL_WIRE_BYTES)
+                .map(entry_cell)
+                .collect();
+            let mask = (1u32 << bits) - 1;
+            let mut cells = Vec::with_capacity(count);
+            let mut acc: u32 = 0;
+            let mut filled: u32 = 0;
+            let mut packed = packed.iter();
+            for _ in 0..count {
+                while filled < bits {
+                    acc |= (*packed.next().ok_or_else(bad)? as u32) << filled;
+                    filled += 8;
+                }
+                let index = (acc & mask) as usize;
+                acc >>= bits;
+                filled -= bits;
+                cells.push(*palette.get(index).ok_or_else(bad)?);
+            }
+            if acc != 0 {
+                return Err(bad());
+            }
+            Ok(cells)
+        }
+        CELLS_RAW => {
+            if payload.len() != count * CELL_WIRE_BYTES {
+                return Err(bad());
+            }
+            Ok(payload
+                .chunks_exact(CELL_WIRE_BYTES)
+                .map(entry_cell)
+                .collect())
+        }
+        _ => Err(bad()),
+    }
 }
