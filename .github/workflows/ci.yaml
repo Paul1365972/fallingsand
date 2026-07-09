@@ -7,7 +7,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Format
         run: cargo fmt --all --check
@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -42,7 +42,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -54,39 +54,52 @@ jobs:
         run: cargo test --workspace --locked
 
   build-native:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            client-bin: fallingsand
+            server-bin: fallingsand_server
+          - os: windows-latest
+            platform: windows
+            client-bin: fallingsand.exe
+            server-bin: fallingsand_server.exe
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
       - name: Install Bevy dependencies
+        if: matrix.platform == 'linux'
         run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libasound2-dev libudev-dev libwayland-dev
 
       - name: Build client and server
         run: cargo build --release --locked -p fallingsand_client -p fallingsand_server
 
       - name: Upload client
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: fallingsand-client-linux
-          path: target/release/fallingsand
+          name: fallingsand-client-${{ matrix.platform }}
+          path: target/release/${{ matrix.client-bin }}
           if-no-files-found: error
 
       - name: Upload server
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: fallingsand-server-linux
-          path: target/release/fallingsand_server
+          name: fallingsand-server-${{ matrix.platform }}
+          path: target/release/${{ matrix.server-bin }}
           if-no-files-found: error
 
   build-web:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -101,7 +114,7 @@ jobs:
         run: bevy build --locked --release -p fallingsand_client --yes web --bundle
 
       - name: Upload site
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: target/bevy_web/web-release/fallingsand
 
@@ -118,4 +131,4 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
