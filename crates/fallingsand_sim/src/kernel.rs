@@ -1,6 +1,6 @@
 use crate::obstacles::Obstacles;
 use crate::rules;
-use crate::window::{SimWindow, WINDOW_CHUNKS, WINDOW_SLOTS, spill};
+use crate::window::{SimWindow, WINDOW_CHUNKS, WINDOW_SLOTS};
 use crate::world::CellWorld;
 use fallingsand_core::{CHUNK_SIZE, CellPos, Chunk, ChunkPos, DirtyRect, MaterialRegistry};
 use rustc_hash::FxHashSet;
@@ -53,14 +53,9 @@ fn run_phase(
         if chunk.sim_rect().is_empty() || !simulate(pos) {
             continue;
         }
-        for dy in -1..=1 {
-            for dx in -1..=1 {
-                let neighbor = pos.translated(dx, dy);
-                let block = (neighbor.x >> 1, neighbor.y >> 1);
-                if (block.0 & 1) == px && (block.1 & 1) == py {
-                    blocks.insert(block);
-                }
-            }
+        let block = (pos.x >> 1, pos.y >> 1);
+        if (block.0 & 1) == px && (block.1 & 1) == py {
+            blocks.insert(block);
         }
     }
 
@@ -122,14 +117,9 @@ fn process_block(
             {
                 continue;
             }
-            let mut rect = DirtyRect::EMPTY;
-            for dy in -1..=1 {
-                for dx in -1..=1 {
-                    if let Some(neighbor) = window.chunk_at(sx + dx, sy + dy) {
-                        rect = rect.union(spill(neighbor.sim_rect(), dx, dy));
-                    }
-                }
-            }
+            let rect = window
+                .chunk_at(sx, sy)
+                .map_or(DirtyRect::EMPTY, |chunk| chunk.sim_rect());
             rects[oy as usize][ox as usize] = rect;
             if !rect.is_empty() {
                 window.wake_chunk(sx, sy);

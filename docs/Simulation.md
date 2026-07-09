@@ -20,13 +20,13 @@ Every cell carries a velocity (`vx`/`vy`, Q11.4 cells/second). Movement is that 
 - **Collide & redirect**: a blocked face reflects that velocity component by `restitution` (near-inelastic, so things settle). A cell that can't advance but can descend diagonally does so, converting blocked fall to sideways velocity scaled by `redirect_keep` — ledges and jets for liquids, the angle-of-repose slide for powders (gated per-grain by `repose` with RNG jitter, so piles are irregular and each powder stacks differently). A liquid that can't descend also spreads one cell across a level surface — no velocity gain, so it injects no energy — which is what collapses a liquid to a flat top instead of a powder-like pile.
 - **Settle**: velocity into a blocked face is killed and sub-threshold velocity snaps to zero, so a supported cell nets no change and its chunk sleeps.
 
-Leveling, spreading, and pressure all propagate as local waves over successive ticks — a dirty cell wakes its immediate neighbours via the change-rect spill, never a scan. **Condensation** still closes the loop: steam decays back to water so gas pockets resolve, no mass created or destroyed.
+Leveling, spreading, and pressure all propagate as local waves over successive ticks — a changed cell marks its 3×3 neighbourhood into the sim rect (across chunk borders), so its neighbours re-evaluate next tick, never a scan. **Condensation** still closes the loop: steam decays back to water so gas pockets resolve, no mass created or destroyed.
 
 ## Sleeping
 
-Each chunk tracks a **sim rect** of cells to re-simulate; the sim skips empty rects (**sleeping** — the biggest optimization). A write to a sleeping chunk or its border wakes it.
+Each chunk tracks a **sim rect** of cells to re-simulate; the sim skips empty rects (**sleeping** — the biggest optimization). A write to a sleeping chunk or its border wakes it. The sim rect is honest: it holds exactly the cells the kernel iterates next tick, so no dilation happens at point of use.
 
-The **change rect** (`change` ⊆ `sim`) holds cells whose value changed. A write marks both; a **keep-alive** mark (clinging fire, pending decay, reactive pairs) extends `sim` only. Scheduling reads `sim`; replication reads `change`, so keep-alives cost zero bandwidth — a mostly-settled world of ~2000 active chunks stays inside the tick budget.
+The **change rect** (`change` ⊆ `sim`) holds cells whose value changed. A write marks `change` tight and `sim` as that cell's 3×3 Moore neighbourhood (a change forces its neighbours to re-evaluate; border changes dilate into the neighbour chunk's `sim`). A **keep-alive** mark (clinging fire, pending decay, reactive pairs) extends `sim` by 1×1 only — the cell re-runs itself, its neighbours don't. Scheduling reads `sim`; replication reads `change`, so keep-alives cost zero bandwidth — a mostly-settled world of ~2000 active chunks stays inside the tick budget.
 
 Cell particles (aspirational): cells knocked loose would fly ballistically as free particles and reinsert on impact. Not yet built — a future store must carry `Fixed` cells/s velocity, not the grid's `Q11.4` `i16` (whose ±2047 cells/s storage range, clamped to ±2000 in flow, is for in-grid movement).
 

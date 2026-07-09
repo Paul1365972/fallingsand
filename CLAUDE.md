@@ -37,7 +37,7 @@ cargo run -p fallingsand_client --features dev
 
 - Dependency direction: `core ← sim ← {server, client}`, `core ← protocol ← {server, client}`.
 - Scheduling: 4-phase 2×2-chunk-block scheduling; workers get a 4×4-chunk `SimWindow`, disjoint per phase.
-- Rects: `sim` (feeds scheduling) ⊇ `change` (feeds replication/persistence); `set` marks both, `mark_keep` marks `sim` only. Double-buffered (`prev_*`, `swap_rects`). `window.mark` for "simulate again", `window.set` for real changes.
+- Rects: `sim` (feeds scheduling) ⊇ `change` (feeds replication/persistence); `set` marks `change` tight + `sim` as the changed cell's 3×3 Moore neighbourhood (across chunk borders), `mark_keep` marks `sim` 1×1 only. `sim` is honest — the exact cells simulated next tick, no read-time dilation. Double-buffered (`prev_*`, `swap_rects`). `window.mark` for "simulate again", `window.set` for real changes.
 - Randomness: tick-seeded, no RNG state, no iteration-order-dependent containers in sim paths.
 - Tuning units: constants are seconds-based, not per-tick.
 

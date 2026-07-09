@@ -1,4 +1,4 @@
-use fallingsand_core::{CHUNK_SIZE, Cell, CellPos, Chunk, ChunkPos, DirtyRect};
+use fallingsand_core::{CHUNK_SIZE, Cell, CellPos, Chunk, ChunkPos};
 
 pub const WINDOW_CHUNKS: i32 = 4;
 pub const WINDOW_SLOTS: usize = (WINDOW_CHUNKS * WINDOW_CHUNKS) as usize;
@@ -89,6 +89,29 @@ impl SimWindow {
         if old.is_body() && !cell.is_body() {
             self.damage.push(pos);
         }
+        self.mark_sim_border(pos);
+    }
+
+    fn mark_sim_border(&mut self, pos: CellPos) {
+        let off = pos.offset();
+        let last = (CHUNK_SIZE - 1) as u8;
+        if off.x != 0 && off.x != last && off.y != 0 && off.y != last {
+            return;
+        }
+        let home = pos.chunk();
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                let n = pos.translated(dx, dy);
+                if n.chunk() == home {
+                    continue;
+                }
+                if let Some(slot) = self.slot_of(n)
+                    && let Some(chunk) = self.slots[slot].as_mut()
+                {
+                    chunk.sim.mark(n.offset());
+                }
+            }
+        }
     }
 
     pub fn mark(&mut self, pos: CellPos) {
@@ -119,21 +142,5 @@ impl SimWindow {
         if let Some(chunk) = self.slots[idx].as_mut() {
             chunk.wake((self.tick as u8).wrapping_sub(1));
         }
-    }
-}
-
-pub(crate) fn spill(rect: DirtyRect, dx: i32, dy: i32) -> DirtyRect {
-    if rect.is_empty() {
-        return DirtyRect::EMPTY;
-    }
-    let size = CHUNK_SIZE as i32;
-    let min_x = (rect.min_x as i32 + dx * size - 1).max(0);
-    let min_y = (rect.min_y as i32 + dy * size - 1).max(0);
-    let max_x = (rect.max_x as i32 + dx * size + 1).min(size - 1);
-    let max_y = (rect.max_y as i32 + dy * size + 1).min(size - 1);
-    if min_x > max_x || min_y > max_y {
-        DirtyRect::EMPTY
-    } else {
-        DirtyRect::new(min_x as u8, min_y as u8, max_x as u8, max_y as u8)
     }
 }

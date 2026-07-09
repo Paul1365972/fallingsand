@@ -1,5 +1,5 @@
 use crate::edits::WorldEdit;
-use fallingsand_core::{Cell, CellPos, Chunk, ChunkPos, MaterialId};
+use fallingsand_core::{CHUNK_SIZE, Cell, CellPos, Chunk, ChunkPos, MaterialId};
 use fallingsand_rng::Hash;
 use rustc_hash::FxHashMap;
 
@@ -64,6 +64,7 @@ impl CellWorld {
         if old.is_body() && !cell.is_body() {
             self.damage.push(pos);
         }
+        self.mark_sim_border(pos);
     }
 
     pub(crate) fn set_cell_raw(&mut self, pos: CellPos, mut cell: Cell) {
@@ -73,6 +74,27 @@ impl CellWorld {
         chunk.wake(self.tick as u8);
         cell.updated = self.tick as u8;
         chunk.set(pos.offset(), cell);
+        self.mark_sim_border(pos);
+    }
+
+    fn mark_sim_border(&mut self, pos: CellPos) {
+        let off = pos.offset();
+        let last = (CHUNK_SIZE - 1) as u8;
+        if off.x != 0 && off.x != last && off.y != 0 && off.y != last {
+            return;
+        }
+        let home = pos.chunk();
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                let n = pos.translated(dx, dy);
+                if n.chunk() == home {
+                    continue;
+                }
+                if let Some(chunk) = self.chunks.get_mut(&n.chunk()) {
+                    chunk.sim.mark(n.offset());
+                }
+            }
+        }
     }
 
     pub fn place_material(&mut self, pos: CellPos, material: MaterialId) {
