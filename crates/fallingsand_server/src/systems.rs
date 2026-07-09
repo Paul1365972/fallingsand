@@ -625,7 +625,6 @@ fn cell_overlaps_body(pos: CellPos, body: &Actor) -> bool {
 
 pub fn build_obstacles(
     mut sim: ResMut<SimWorld>,
-    registry: Res<Registry>,
     mut obstacles: ResMut<SimObstacles>,
     query: Query<&PlayerActor>,
 ) {
@@ -638,7 +637,7 @@ pub fn build_obstacles(
             half_h: body.0.half_h,
         })
         .collect();
-    obstacles.0.rebuild(&mut sim.0, &registry.0, &boxes);
+    obstacles.0.rebuild(&mut sim.0, &boxes);
 }
 
 pub fn step_simulation(

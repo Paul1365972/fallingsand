@@ -1,5 +1,5 @@
 use crate::world::CellWorld;
-use fallingsand_core::{CellPos, Fixed, MaterialRegistry, Phase};
+use fallingsand_core::{CellPos, Fixed};
 use rustc_hash::FxHashSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,12 +28,7 @@ impl Obstacles {
         self.entity_cells.contains(&pos)
     }
 
-    pub fn rebuild(
-        &mut self,
-        world: &mut CellWorld,
-        registry: &MaterialRegistry,
-        entities: &[ActorAabb],
-    ) {
+    pub fn rebuild(&mut self, world: &mut CellWorld, entities: &[ActorAabb]) {
         let mut entity_cells = FxHashSet::default();
         for entity in entities {
             let x0 = (entity.x - entity.half_w).floor_cell();
@@ -49,7 +44,12 @@ impl Obstacles {
 
         for &pos in self.entity_cells.iter() {
             if !entity_cells.contains(&pos) {
-                wake_vacated(world, registry, pos);
+                wake_around(world, pos);
+            }
+        }
+        for &pos in entity_cells.iter() {
+            if !self.entity_cells.contains(&pos) {
+                wake_around(world, pos);
             }
         }
 
@@ -58,29 +58,10 @@ impl Obstacles {
     }
 }
 
-fn wake_vacated(world: &mut CellWorld, registry: &MaterialRegistry, pos: CellPos) {
-    let powder = powder_at(world, registry, pos)
-        || (-1..=1).any(|dx| powder_at(world, registry, pos.translated(dx, 1)));
-    let fluid = fluid_at(world, registry, pos)
-        || [(0, 1), (0, -1), (1, 0), (-1, 0)]
-            .iter()
-            .any(|&(dx, dy)| fluid_at(world, registry, pos.translated(dx, dy)));
-    if powder || fluid {
-        world.mark_keep(pos);
+fn wake_around(world: &mut CellWorld, pos: CellPos) {
+    for dy in -1..=1 {
+        for dx in -1..=1 {
+            world.mark_keep(pos.translated(dx, dy));
+        }
     }
-}
-
-fn powder_at(world: &CellWorld, registry: &MaterialRegistry, pos: CellPos) -> bool {
-    world
-        .get_cell(pos)
-        .is_some_and(|cell| registry.get(cell.material).phase == Phase::Powder)
-}
-
-fn fluid_at(world: &CellWorld, registry: &MaterialRegistry, pos: CellPos) -> bool {
-    world.get_cell(pos).is_some_and(|cell| {
-        matches!(
-            registry.get(cell.material).phase,
-            Phase::Liquid | Phase::Gas | Phase::Fire
-        )
-    })
 }
