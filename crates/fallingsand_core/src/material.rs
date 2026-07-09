@@ -110,10 +110,16 @@ pub struct ReactionFile {
     pub reactions: Vec<ReactionDef>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Product {
+    Material(MaterialId),
+    Burnout,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Reaction {
-    pub becomes: MaterialId,
-    pub other_becomes: MaterialId,
+    pub becomes: Product,
+    pub other_becomes: Product,
     pub chance: f32,
 }
 
@@ -316,18 +322,17 @@ impl MaterialRegistry {
         for def in &reaction_defs {
             let op_a = resolve(&def.a)?;
             let op_b = resolve(&def.b)?;
-            let becomes_a = match resolve(&def.a_becomes)? {
-                Operand::Name(id) => id,
-                Operand::Tag(_) => {
-                    return Err(RegistryError::UnknownMaterial(def.a_becomes.clone()));
+            let product = |becomes: &str| -> Result<Product, RegistryError> {
+                if becomes == "@burnout" {
+                    return Ok(Product::Burnout);
+                }
+                match resolve(becomes)? {
+                    Operand::Name(id) => Ok(Product::Material(id)),
+                    Operand::Tag(_) => Err(RegistryError::UnknownMaterial(becomes.to_string())),
                 }
             };
-            let becomes_b = match resolve(&def.b_becomes)? {
-                Operand::Name(id) => id,
-                Operand::Tag(_) => {
-                    return Err(RegistryError::UnknownMaterial(def.b_becomes.clone()));
-                }
-            };
+            let becomes_a = product(&def.a_becomes)?;
+            let becomes_b = product(&def.b_becomes)?;
             let specificity =
                 matches!(op_a, Operand::Name(_)) as u8 + matches!(op_b, Operand::Name(_)) as u8;
             for a in expand(&op_a) {

@@ -3,7 +3,7 @@
         (a: "lava", b: "water", a_becomes: "stone", b_becomes: "steam", rate: 97.0),
         (a: "lava", b: "[burnable]", a_becomes: "lava", b_becomes: "fire", rate: 1.2),
         (a: "water", b: "fire", a_becomes: "water", b_becomes: "steam", rate: 138.0),
-        (a: "water", b: "[ember]", a_becomes: "water", b_becomes: "ash", rate: 8.0),
+        (a: "water", b: "[ember]", a_becomes: "steam", b_becomes: "@burnout", rate: 8.0),
         (a: "acid", b: "[dissolvable]", a_becomes: "air", b_becomes: "air", rate: 0.8),
         (a: "snow", b: "fire", a_becomes: "water", b_becomes: "fire", rate: 3.0),
         (a: "snow", b: "lava", a_becomes: "steam", b_becomes: "lava", rate: 20.0),

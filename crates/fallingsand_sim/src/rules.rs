@@ -1,8 +1,8 @@
 use crate::obstacles::Obstacles;
 use crate::window::SimWindow;
 use fallingsand_core::{
-    Cell, CellPos, Dynamics, GRID_GRAVITY, MaterialId, MaterialRegistry, Phase, TICK_DT, TICK_RATE,
-    VEL_ONE, per_tick_chance,
+    Cell, CellPos, Dynamics, GRID_GRAVITY, MaterialId, MaterialRegistry, Phase, Product, TICK_DT,
+    TICK_RATE, VEL_ONE, per_tick_chance,
 };
 use fallingsand_rng::{Hash, Rng};
 use std::sync::LazyLock;
@@ -75,8 +75,11 @@ fn react(
             if factor > 0.0 && rng.draw().chance(reaction.chance * factor) {
                 note_structural(window, registry, pos, cell.material);
                 note_structural(window, registry, neighbor_pos, neighbor.material);
-                set_product(window, pos, reaction.becomes, rng, tick_byte);
-                set_product(window, neighbor_pos, reaction.other_becomes, rng, tick_byte);
+                let becomes = resolve_product(registry, reaction.becomes, cell.material, rng);
+                let other_becomes =
+                    resolve_product(registry, reaction.other_becomes, neighbor.material, rng);
+                set_product(window, pos, becomes, rng, tick_byte);
+                set_product(window, neighbor_pos, other_becomes, rng, tick_byte);
                 return true;
             }
         }
@@ -94,7 +97,7 @@ fn react(
             }
         }
     }
-    if let Some((chance, product)) = registry.decay(cell.material) {
+    if let Some((chance, _)) = registry.decay(cell.material) {
         let material = registry.get(cell.material);
         if material.phase == Phase::Fire && sustained(window, registry, pos, cell.material) {
             if rng.draw().chance(*FLICKER_CHANCE) {
@@ -108,10 +111,7 @@ fn react(
             return true;
         }
         if rng.draw().chance(chance) {
-            let out = match registry.residue(cell.material) {
-                Some((residue_chance, residue)) if rng.draw().chance(residue_chance) => residue,
-                _ => product,
-            };
+            let out = burnout_product(registry, cell.material, rng);
             set_product(window, pos, out, rng, tick_byte);
             return true;
         }
@@ -142,8 +142,11 @@ fn ignition_factor(
     registry: &MaterialRegistry,
     pos: CellPos,
     from: MaterialId,
-    to: MaterialId,
+    to: Product,
 ) -> f32 {
+    let Product::Material(to) = to else {
+        return 1.0;
+    };
     if registry.is_ember(to) && !registry.is_ember(from) && !oxygen_exposed(window, registry, pos) {
         registry.smoulder(to)
     } else {
@@ -173,6 +176,28 @@ fn sustained(
             .get(pos.translated(dx, dy))
             .is_some_and(|neighbor| registry.sustains(material, neighbor.material))
     })
+}
+
+fn resolve_product(
+    registry: &MaterialRegistry,
+    product: Product,
+    current: MaterialId,
+    rng: &mut Rng,
+) -> MaterialId {
+    match product {
+        Product::Material(id) => id,
+        Product::Burnout => burnout_product(registry, current, rng),
+    }
+}
+
+fn burnout_product(registry: &MaterialRegistry, material: MaterialId, rng: &mut Rng) -> MaterialId {
+    let decayed = registry
+        .decay(material)
+        .map_or(material, |(_, decayed)| decayed);
+    match registry.residue(material) {
+        Some((chance, residue)) if rng.draw().chance(chance) => residue,
+        _ => decayed,
+    }
 }
 
 fn set_product(

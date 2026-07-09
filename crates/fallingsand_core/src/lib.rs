@@ -32,7 +32,7 @@ pub use item::{
     MATERIAL_STACK_MAX, PLAYER_SLOTS, Recipe, RecipeRegistry,
 };
 pub use material::{
-    Dynamics, Material, MaterialId, MaterialRegistry, Phase, Reaction, ReactionDef,
+    Dynamics, Material, MaterialId, MaterialRegistry, Phase, Product, Reaction, ReactionDef,
     per_tick_chance, per_tick_keep,
 };
 pub use region::{REGION_AREA_CHUNKS, REGION_SIZE_CELLS, REGION_SIZE_CHUNKS, Region};
