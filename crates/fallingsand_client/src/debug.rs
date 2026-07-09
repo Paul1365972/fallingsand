@@ -40,13 +40,10 @@ struct RectFlash {
     pos: ChunkPos,
     rect: DirtyRect,
     is_sim: bool,
-    at: f32,
 }
 
 #[derive(Resource, Default)]
 struct RectFlashes(Vec<RectFlash>);
-
-const FLASH_SECS: f32 = 0.4;
 
 const STAT_WINDOW: f32 = 1.0;
 
@@ -228,7 +225,6 @@ fn sync_debug_stream(
 fn track_rects(
     mut flashes: ResMut<RectFlashes>,
     mut frames: MessageReader<TickMessage>,
-    time: Res<Time>,
     borders: Res<BordersVisible>,
 ) {
     if !borders.0 {
@@ -238,24 +234,20 @@ fn track_rects(
         }
         return;
     }
-    let now = time.elapsed_secs();
-    flashes.0.retain(|flash| now - flash.at < FLASH_SECS);
-    for TickMessage(tick) in frames.read() {
-        for entry in &tick.debug {
-            for (rect, is_sim) in [(entry.change, false), (entry.sim, true)] {
-                if rect.is_empty() || (is_sim && entry.sim == entry.change) {
-                    continue;
-                }
-                flashes
-                    .0
-                    .retain(|flash| flash.pos != entry.pos || flash.is_sim != is_sim);
-                flashes.0.push(RectFlash {
-                    pos: entry.pos,
-                    rect,
-                    is_sim,
-                    at: now,
-                });
+    let Some(TickMessage(tick)) = frames.read().last() else {
+        return;
+    };
+    flashes.0.clear();
+    for entry in &tick.debug {
+        for (rect, is_sim) in [(entry.change, false), (entry.sim, true)] {
+            if rect.is_empty() || (is_sim && entry.sim == entry.change) {
+                continue;
             }
+            flashes.0.push(RectFlash {
+                pos: entry.pos,
+                rect,
+                is_sim,
+            });
         }
     }
 }
@@ -264,7 +256,6 @@ fn draw_borders(
     borders: Res<BordersVisible>,
     flashes: Res<RectFlashes>,
     camera: Single<(&Camera, &GlobalTransform), With<crate::camera::SkyCamera>>,
-    time: Res<Time>,
     mut gizmos: Gizmos,
 ) {
     if !borders.0 {
@@ -309,16 +300,14 @@ fn draw_borders(
         y += chunk;
     }
 
-    let now = time.elapsed_secs();
     for flash in &flashes.0 {
-        let alpha = (1.0 - (now - flash.at) / FLASH_SECS).clamp(0.0, 1.0) * 0.8;
         let origin = Vec2::new(flash.pos.x as f32 * chunk, flash.pos.y as f32 * chunk);
         let corner = origin + Vec2::new(flash.rect.min_x as f32, flash.rect.min_y as f32);
         let size = Vec2::new(flash.rect.width() as f32, flash.rect.height() as f32);
         let color = if flash.is_sim {
-            Color::srgba(0.2, 0.9, 1.0, alpha)
+            Color::srgba(0.2, 0.9, 1.0, 0.8)
         } else {
-            Color::srgba(1.0, 0.9, 0.2, alpha)
+            Color::srgba(1.0, 0.9, 0.2, 0.8)
         };
         gizmos.rect_2d(
             Isometry2d::from_translation(corner + size / 2.0),
