@@ -227,6 +227,7 @@ pub fn drain_network(
                                         uuid,
                                         name: name.clone(),
                                         input: Default::default(),
+                                        flying: false,
                                     },
                                     PlayerActor(Actor::new(
                                         record.map(|r| r.x).unwrap_or(Fixed::from_cell(spawn.x)),
@@ -308,6 +309,14 @@ pub fn drain_network(
                         && let Ok((mut player, ..)) = players.get_mut(entity)
                     {
                         player.input = input;
+                    }
+                }
+                ClientMessage::ToggleFly => {
+                    if let Some(entity) = sessions.sessions[index].entity
+                        && let Ok((mut player, _, _, mode, ..)) = players.get_mut(entity)
+                        && mode.0 == GameMode::Creative
+                    {
+                        player.flying = !player.flying;
                     }
                 }
                 ClientMessage::Slot(action) => {
@@ -696,7 +705,7 @@ pub fn step_physics(
                 move_x: player.input.move_x,
                 jump: player.input.jump,
                 down: player.input.down,
-                fly: player.input.fly && mode.0 == GameMode::Creative,
+                fly: player.flying && mode.0 == GameMode::Creative,
             },
         );
         if !result.displaced.is_empty() {

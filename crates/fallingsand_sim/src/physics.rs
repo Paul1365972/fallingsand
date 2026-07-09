@@ -199,6 +199,7 @@ pub struct PlayerParams {
     pub run_reduce: Fixed,
     pub air_mult: Fixed,
     pub duck_friction: Fixed,
+    pub duck_run_mult: Fixed,
     pub gravity: Fixed,
     pub half_grav_threshold: Fixed,
     pub max_fall: Fixed,
@@ -223,6 +224,7 @@ impl Default for PlayerParams {
             run_reduce: Fixed::from_int(400),
             air_mult: Fixed::from_f32(0.65),
             duck_friction: Fixed::from_int(500),
+            duck_run_mult: Fixed::from_f32(0.4),
             gravity: Fixed::from_int(900),
             half_grav_threshold: Fixed::from_int(40),
             max_fall: Fixed::from_int(160),
@@ -394,11 +396,13 @@ fn normal_update<W: CellSource>(
         Fixed::ONE
     };
     if body.on_ground && ctrl.ducking {
-        body.vx = approach(
-            body.vx,
-            Fixed::ZERO,
-            params.duck_friction.mul(grip).per_tick(),
-        );
+        let target = params.max_run.mul(params.duck_run_mult).mul_int(move_x);
+        let rate = if move_x == 0 {
+            params.duck_friction
+        } else {
+            params.run_accel
+        };
+        body.vx = approach(body.vx, target, rate.mul(grip).per_tick());
     } else {
         let mult = if body.on_ground {
             grip

@@ -2,7 +2,7 @@ use crate::camera::WORLD_LAYER;
 use crate::interpolation::Interpolated;
 use crate::inventory::{BrushRadius, InventoryOpen, SelectedSlot};
 use crate::net::{NetSet, ServerMsg, Session, SessionEnded, TickMessage};
-use crate::{AppState, PauseState};
+use crate::{AppState, GameState, PauseState};
 use bevy::camera::visibility::RenderLayers;
 use bevy::input::mouse::MouseWheel;
 use bevy::platform::collections::HashMap;
@@ -38,7 +38,10 @@ pub struct PlayerNames(pub HashMap<PlayerId, String>);
 pub struct LocalMode(pub GameMode);
 
 #[derive(Resource, Default)]
-pub struct FlyToggle(pub bool);
+pub struct PointerBlocked {
+    primary: bool,
+    secondary: bool,
+}
 
 #[derive(Resource, Default)]
 pub struct InputState {
@@ -63,7 +66,7 @@ impl Plugin for PlayerPlugin {
             .init_resource::<InputState>()
             .init_resource::<LocalPlayerState>()
             .init_resource::<LocalMode>()
-            .init_resource::<FlyToggle>()
+            .init_resource::<PointerBlocked>()
             .insert_resource(Time::<Fixed>::from_hz(TICK_RATE as f64))
             .add_systems(
                 PreUpdate,
@@ -78,6 +81,7 @@ impl Plugin for PlayerPlugin {
             .add_systems(
                 Update,
                 (
+                    update_pointer_block.run_if(in_state(GameState::Playing)),
                     (select_slot, toggle_fly).run_if(in_state(PauseState::Running)),
                     update_nametags.run_if(resource_changed::<PlayerNames>),
                 ),
@@ -93,24 +97,51 @@ fn toggle_fly(
     inv_open: Res<InventoryOpen>,
     time: Res<Time>,
     mode: Res<LocalMode>,
-    mut fly: ResMut<FlyToggle>,
+    session: Option<ResMut<Session>>,
     mut last_tap: Local<f32>,
 ) {
-    if mode.0 != GameMode::Creative {
-        fly.0 = false;
+    let Some(mut session) = session else {
         return;
-    }
-    if chat_open.0 || inv_open.0 {
+    };
+    if mode.0 != GameMode::Creative || chat_open.0 || inv_open.0 {
         return;
     }
     if keys.just_pressed(KeyCode::Space) {
         let now = time.elapsed_secs();
         if now - *last_tap < DOUBLE_TAP_SECS {
-            fly.0 = !fly.0;
+            session.send(&ClientMessage::ToggleFly);
             *last_tap = 0.0;
         } else {
             *last_tap = now;
         }
+    }
+}
+
+fn update_pointer_block(
+    buttons: Res<ButtonInput<MouseButton>>,
+    pause: Option<Res<State<PauseState>>>,
+    chat_open: Res<crate::chat::ChatOpen>,
+    inv_open: Res<InventoryOpen>,
+    interactions: Query<&Interaction>,
+    mut blocked: ResMut<PointerBlocked>,
+) {
+    let paused = pause.is_some_and(|state| *state.get() == PauseState::Paused);
+    let over_ui = interactions
+        .iter()
+        .any(|interaction| !matches!(interaction, Interaction::None));
+    let suppress = paused || chat_open.0 || inv_open.0 || over_ui;
+
+    if buttons.just_pressed(MouseButton::Left) && suppress {
+        blocked.primary = true;
+    }
+    if !buttons.pressed(MouseButton::Left) {
+        blocked.primary = false;
+    }
+    if buttons.just_pressed(MouseButton::Right) && suppress {
+        blocked.secondary = true;
+    }
+    if !buttons.pressed(MouseButton::Right) {
+        blocked.secondary = false;
     }
 }
 
@@ -245,7 +276,6 @@ fn cleanup_players(
     mut names: ResMut<PlayerNames>,
     mut input: ResMut<InputState>,
     mut mode: ResMut<LocalMode>,
-    mut fly: ResMut<FlyToggle>,
     mut selected: ResMut<SelectedSlot>,
     mut local_state: ResMut<LocalPlayerState>,
 ) {
@@ -255,7 +285,6 @@ fn cleanup_players(
     names.0.clear();
     *input = InputState::default();
     *mode = LocalMode::default();
-    fly.0 = false;
     selected.0 = 0;
     *local_state = LocalPlayerState::default();
 }
@@ -324,7 +353,7 @@ fn send_input(
     brush: Res<BrushRadius>,
     chat_open: Res<crate::chat::ChatOpen>,
     inv_open: Res<InventoryOpen>,
-    fly: Res<FlyToggle>,
+    blocked: Res<PointerBlocked>,
     mut state: ResMut<InputState>,
     session: Option<ResMut<Session>>,
 ) {
@@ -341,7 +370,6 @@ fn send_input(
         aim: state.aim,
         selected_slot: selected.0 as u8,
         brush_radius: brush.0,
-        fly: fly.0,
         ..default()
     };
 
@@ -364,8 +392,8 @@ fn send_input(
             || keys.pressed(KeyCode::KeyW)
             || keys.pressed(KeyCode::ArrowUp),
         down: keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown),
-        primary: buttons.pressed(MouseButton::Left),
-        secondary: buttons.pressed(MouseButton::Right),
+        primary: buttons.pressed(MouseButton::Left) && !blocked.primary,
+        secondary: buttons.pressed(MouseButton::Right) && !blocked.secondary,
         ..base
     };
     session.send(&ClientMessage::Input(input));

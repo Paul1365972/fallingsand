@@ -62,7 +62,6 @@ pub struct PlayerInput {
     pub move_x: i8,
     pub jump: bool,
     pub down: bool,
-    pub fly: bool,
     pub primary: bool,
     pub secondary: bool,
     pub aim: CellPos,
@@ -76,7 +75,6 @@ impl Default for PlayerInput {
             move_x: 0,
             jump: false,
             down: false,
-            fly: false,
             primary: false,
             secondary: false,
             aim: CellPos::new(0, 0),
@@ -179,6 +177,7 @@ pub enum ClientMessage {
         name: String,
     },
     Input(PlayerInput),
+    ToggleFly,
     Slot(SlotAction),
     Chat {
         text: String,

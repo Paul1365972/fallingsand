@@ -40,6 +40,11 @@ const GAMEMODE: CommandSpec = CommandSpec {
             return Ok(Some(format!("already in {} mode", mode.label())));
         }
         current.0 = mode;
+        if mode != GameMode::Creative
+            && let Some(mut player) = world.get_mut::<crate::session::Player>(entity)
+        {
+            player.flying = false;
+        }
         Ok(Some(format!("game mode set to {}", mode.label())))
     },
 };

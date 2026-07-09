@@ -63,4 +63,5 @@ pub struct Player {
     pub uuid: PlayerUuid,
     pub name: String,
     pub input: PlayerInput,
+    pub flying: bool,
 }

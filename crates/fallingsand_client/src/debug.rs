@@ -331,7 +331,6 @@ struct Overlay<'w, 's> {
     item_reg: Res<'w, crate::ClientItemRegistry>,
     input: Res<'w, InputState>,
     registry: Res<'w, ClientRegistry>,
-    fly: Res<'w, crate::player::FlyToggle>,
     world_time: Res<'w, WorldTime>,
     celestial: Res<'w, Sky>,
     player: Res<'w, LocalPlayerState>,
@@ -368,7 +367,6 @@ fn update_overlay(
     let names = &ctx.names;
     let input = &ctx.input;
     let registry = &ctx.registry;
-    let fly = &ctx.fly;
     let world_time = &ctx.world_time;
     let player = &ctx.player;
     let camera = &ctx.camera;
@@ -462,18 +460,16 @@ fn update_overlay(
 
             if player.present {
                 let burning = if player.burning { " burning" } else { "" };
-                let fly = if fly.0 { ", fly" } else { "" };
                 left_lines.push(String::new());
                 left_lines.push(format!(
                     "hp {:>3.0}/{:.0} air {:>4.1}s{}",
                     player.hp, MAX_HP, player.air, burning
                 ));
                 left_lines.push(format!(
-                    "pos {:.1},{:.1} {}{}",
+                    "pos {:.1},{:.1} {}",
                     player.pos.x,
                     player.pos.y,
                     player.mode.label(),
-                    fly
                 ));
             }
 
