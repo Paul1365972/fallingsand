@@ -1,11 +1,12 @@
-use crate::inventory::{LocalInventory, SelectedSlot, item_color};
+use crate::inventory::{
+    LocalInventory, SelectedSlot, SlotChanged, SlotCount, SlotSwatch, apply_count, apply_swatch,
+};
 use crate::player::{LocalPlayerState, SelfDamaged};
 use crate::{AppState, ClientItemRegistry, ClientRegistry, GameState};
+use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
 use fallingsand_core::{HOTBAR_SLOTS, ItemStack, MAX_AIR_SECS, MAX_HP};
 use fallingsand_protocol::GameMode;
-
-type ShownHotbar = Option<Vec<Option<ItemStack>>>;
 
 pub struct HudPlugin;
 
@@ -16,9 +17,6 @@ const FLASH_MAX_ALPHA: f32 = 0.28;
 
 #[derive(Component)]
 struct HudRoot;
-
-#[derive(Component)]
-struct HotbarRow;
 
 #[derive(Component)]
 struct HealthFill;
@@ -38,9 +36,6 @@ struct DamageFlash;
 #[derive(Component)]
 struct HotbarSlot(usize);
 
-#[derive(Component)]
-struct HotbarIcon;
-
 #[derive(Resource, Default)]
 struct FlashTimer(f32);
 
@@ -52,13 +47,16 @@ impl Plugin for HudPlugin {
             .add_systems(
                 Update,
                 (
-                    update_hotbar,
                     highlight_hotbar,
                     update_health_bar,
                     update_air_bar,
                     update_flash,
                 )
                     .run_if(in_state(AppState::InGame)),
+            )
+            .add_systems(
+                Update,
+                sync_hotbar_slots.run_if(in_state(GameState::Playing)),
             );
     }
 }
@@ -77,16 +75,79 @@ fn spawn_hud(mut commands: Commands) {
             },
             Pickable::IGNORE,
         ))
-        .with_child((
-            HotbarRow,
-            Node {
-                flex_direction: FlexDirection::Row,
-                column_gap: px(4),
-                margin: UiRect::bottom(px(10)),
-                ..default()
-            },
-            Pickable::IGNORE,
-        ));
+        .with_children(|root| {
+            root.spawn((
+                Node {
+                    flex_direction: FlexDirection::Row,
+                    column_gap: px(4),
+                    margin: UiRect::bottom(px(10)),
+                    ..default()
+                },
+                Pickable::IGNORE,
+            ))
+            .with_children(|row| {
+                for index in 0..HOTBAR_SLOTS {
+                    row.spawn((
+                        HotbarSlot(index),
+                        Node {
+                            width: px(SLOT_SIZE),
+                            height: px(SLOT_SIZE),
+                            border: UiRect::all(px(2)),
+                            padding: UiRect::all(px(3)),
+                            flex_direction: FlexDirection::Column,
+                            align_items: AlignItems::FlexStart,
+                            justify_content: JustifyContent::SpaceBetween,
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.06, 0.07, 0.10, 0.85)),
+                        BorderColor::all(Color::srgba(0.0, 0.0, 0.0, 0.6)),
+                    ))
+                    .with_children(|slot| {
+                        slot.spawn((
+                            Text::new(format!("{}", index + 1)),
+                            TextFont {
+                                font_size: FontSize::Px(10.0),
+                                ..default()
+                            },
+                            TextColor(Color::srgba(1.0, 1.0, 1.0, 0.6)),
+                            GlobalZIndex(1),
+                            Pickable::IGNORE,
+                        ));
+                        slot.spawn((
+                            SlotSwatch,
+                            Node {
+                                position_type: PositionType::Absolute,
+                                left: px(9),
+                                top: px(9),
+                                width: px(SLOT_SIZE - 18.0),
+                                height: px(SLOT_SIZE - 18.0),
+                                display: Display::None,
+                                ..default()
+                            },
+                            BackgroundColor(Color::NONE),
+                            Pickable::IGNORE,
+                        ));
+                        slot.spawn((
+                            SlotCount,
+                            Text::new(""),
+                            TextFont {
+                                font_size: FontSize::Px(11.0),
+                                ..default()
+                            },
+                            TextColor(Color::srgba(1.0, 1.0, 1.0, 0.95)),
+                            Node {
+                                position_type: PositionType::Absolute,
+                                right: px(3),
+                                bottom: px(1),
+                                ..default()
+                            },
+                            GlobalZIndex(2),
+                            Pickable::IGNORE,
+                        ));
+                    });
+                }
+            });
+        });
 
     commands
         .spawn((
@@ -189,111 +250,38 @@ fn despawn_hud(
     flash.0 = 0.0;
 }
 
-fn hotbar_slots(inventory: &LocalInventory) -> Vec<Option<ItemStack>> {
-    (0..HOTBAR_SLOTS)
-        .map(|i| inventory.slots.get(i).copied().flatten())
-        .collect()
-}
-
-fn update_hotbar(
-    mut commands: Commands,
+#[allow(clippy::too_many_arguments)]
+fn sync_hotbar_slots(
+    mut slot_changes: MessageReader<SlotChanged>,
+    added: Query<Entity, Added<HotbarSlot>>,
+    inventory: Res<LocalInventory>,
     registry: Res<ClientRegistry>,
     item_reg: Res<ClientItemRegistry>,
-    inventory: Res<LocalInventory>,
-    row: Query<Entity, With<HotbarRow>>,
-    slots: Query<Entity, With<HotbarSlot>>,
-    mut shown: Local<ShownHotbar>,
+    slots: Query<&HotbarSlot>,
+    mut swatches: Query<(&ChildOf, &mut Node, &mut BackgroundColor), With<SlotSwatch>>,
+    mut counts: Query<(&ChildOf, &mut Text), With<SlotCount>>,
 ) {
-    if !inventory.is_changed() && slots.iter().count() == HOTBAR_SLOTS {
+    if slot_changes.is_empty() && added.is_empty() {
         return;
     }
-    let hot = hotbar_slots(&inventory);
-    if shown.as_ref() == Some(&hot) && slots.iter().count() == HOTBAR_SLOTS {
-        return;
-    }
-    let Ok(row) = row.single() else {
-        *shown = None;
-        return;
-    };
-    *shown = Some(hot.clone());
-    for slot in &slots {
-        commands.entity(slot).despawn();
-    }
-    commands.entity(row).with_children(|parent| {
-        for (index, stack) in hot.iter().enumerate() {
-            parent
-                .spawn((
-                    HotbarSlot(index),
-                    Node {
-                        width: px(SLOT_SIZE),
-                        height: px(SLOT_SIZE),
-                        border: UiRect::all(px(2)),
-                        padding: UiRect::all(px(3)),
-                        flex_direction: FlexDirection::Column,
-                        align_items: AlignItems::FlexStart,
-                        justify_content: JustifyContent::SpaceBetween,
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgba(0.06, 0.07, 0.10, 0.85)),
-                    BorderColor::all(Color::srgba(0.0, 0.0, 0.0, 0.6)),
-                ))
-                .with_children(|slot| {
-                    slot.spawn((
-                        Text::new(format!("{}", index + 1)),
-                        TextFont {
-                            font_size: FontSize::Px(10.0),
-                            ..default()
-                        },
-                        TextColor(Color::srgba(1.0, 1.0, 1.0, 0.6)),
-                        GlobalZIndex(1),
-                        Pickable::IGNORE,
-                    ));
-                    if let Some(item) = stack {
-                        let color = item_color(&item_reg.0, &registry.0, item.item);
-                        slot.spawn((
-                            HotbarIcon,
-                            Node {
-                                position_type: PositionType::Absolute,
-                                left: px(9),
-                                top: px(9),
-                                width: px(SLOT_SIZE - 18.0),
-                                height: px(SLOT_SIZE - 18.0),
-                                ..default()
-                            },
-                            BackgroundColor(Color::srgba_u8(
-                                color[0], color[1], color[2], color[3],
-                            )),
-                            Pickable::IGNORE,
-                        ));
-                        if item.count > 1 {
-                            slot.spawn((
-                                Text::new(format_count(item.count)),
-                                TextFont {
-                                    font_size: FontSize::Px(11.0),
-                                    ..default()
-                                },
-                                TextColor(Color::srgba(1.0, 1.0, 1.0, 0.95)),
-                                Node {
-                                    position_type: PositionType::Absolute,
-                                    right: px(3),
-                                    bottom: px(1),
-                                    ..default()
-                                },
-                                GlobalZIndex(2),
-                                Pickable::IGNORE,
-                            ));
-                        }
-                    }
-                });
-        }
-    });
-}
+    let changed: HashSet<usize> = slot_changes.read().map(|change| change.0).collect();
+    let added: HashSet<Entity> = added.iter().collect();
 
-pub fn format_count(count: u32) -> String {
-    if count >= 100_000 {
-        format!("{}k", count / 1000)
-    } else {
-        format!("{count}")
+    let stack_for = |entity: Entity| -> Option<Option<ItemStack>> {
+        let slot = slots.get(entity).ok()?;
+        (added.contains(&entity) || changed.contains(&slot.0))
+            .then(|| inventory.slots.get(slot.0).copied().flatten())
+    };
+
+    for (child_of, mut node, mut color) in &mut swatches {
+        if let Some(stack) = stack_for(child_of.parent()) {
+            apply_swatch(stack, &item_reg.0, &registry.0, &mut node, &mut color);
+        }
+    }
+    for (child_of, mut text) in &mut counts {
+        if let Some(stack) = stack_for(child_of.parent()) {
+            apply_count(stack, &mut text);
+        }
     }
 }
 

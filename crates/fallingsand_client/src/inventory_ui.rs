@@ -1,7 +1,11 @@
 use crate::input::{InputAccumulator, LocalAction, Modifiers, Pointer};
-use crate::inventory::{InventoryOpen, LocalInventory, item_color};
+use crate::inventory::{
+    InventoryOpen, LocalInventory, SlotChanged, SlotCount, SlotSwatch, TrashChanged, apply_count,
+    apply_swatch, format_count, item_color,
+};
 use crate::player::LocalPlayerState;
 use crate::{ClientItemRegistry, ClientRegistry, GameState, PauseState};
+use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
 use fallingsand_core::{HOTBAR_SLOTS, Inventory as CoreInventory, ItemId, ItemStack, MAIN_SLOTS};
 use fallingsand_protocol::{GameMode, InputAction, SlotAction};
@@ -26,6 +30,9 @@ struct Tooltip;
 #[derive(Component)]
 struct TooltipText;
 
+#[derive(Component)]
+struct CraftName;
+
 #[derive(Clone, Copy, PartialEq)]
 enum SlotRegion {
     Player,
@@ -40,28 +47,27 @@ struct UiSlot {
     index: usize,
 }
 
-#[derive(Default, PartialEq)]
-struct OverlaySig {
-    mode: GameMode,
-    slots: Vec<Option<ItemStack>>,
-    cursor: Option<ItemStack>,
-    trash: Option<ItemStack>,
-    craftable: Vec<bool>,
-}
-
 impl Plugin for InventoryUiPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            (
-                toggle_inventory,
-                manage_overlay,
-                rebuild_overlay,
-                handle_clicks,
-                update_cursor_follow,
-                update_tooltip,
-            )
+            (toggle_inventory, manage_overlay)
                 .chain()
+                .run_if(in_state(GameState::Playing))
+                .run_if(in_state(PauseState::Running)),
+        )
+        .add_systems(
+            Update,
+            (build_side_panel, sync_overlay_slots, sync_craftable)
+                .chain()
+                .after(manage_overlay)
+                .run_if(in_state(GameState::Playing)),
+        )
+        .add_systems(
+            Update,
+            (handle_clicks, update_cursor_follow, update_tooltip)
+                .chain()
+                .after(manage_overlay)
                 .run_if(in_state(GameState::Playing))
                 .run_if(in_state(PauseState::Running)),
         )
@@ -115,8 +121,36 @@ fn spawn_overlay(commands: &mut Commands) {
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
             GlobalZIndex(30),
         ))
-        .with_child((PlayerPanel, panel_node()))
-        .with_child((SidePanel, panel_node()));
+        .with_children(|overlay| {
+            overlay.spawn(panel_node()).with_children(|panel| {
+                panel.spawn(label_node("Inventory"));
+                for row in 0..(MAIN_SLOTS / 9) {
+                    panel.spawn(row_node()).with_children(|r| {
+                        for col in 0..9 {
+                            spawn_slot(r, SlotRegion::Player, HOTBAR_SLOTS + row * 9 + col);
+                        }
+                    });
+                }
+                panel.spawn(Node {
+                    height: px(6),
+                    ..default()
+                });
+                panel.spawn(row_node()).with_children(|r| {
+                    for index in 0..HOTBAR_SLOTS {
+                        spawn_slot(r, SlotRegion::Player, index);
+                    }
+                });
+                panel.spawn(Node {
+                    height: px(6),
+                    ..default()
+                });
+                panel.spawn(label_node("Trash"));
+                panel.spawn(row_node()).with_children(|r| {
+                    spawn_slot(r, SlotRegion::Trash, 0);
+                });
+            });
+            overlay.spawn((SidePanel, panel_node()));
+        });
 
     commands.spawn((
         OverlayRoot,
@@ -176,9 +210,6 @@ fn spawn_overlay(commands: &mut Commands) {
 }
 
 #[derive(Component)]
-struct PlayerPanel;
-
-#[derive(Component)]
 struct SidePanel;
 
 fn panel_node() -> Node {
@@ -190,124 +221,54 @@ fn panel_node() -> Node {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn rebuild_overlay(
+fn craft_colors(ok: bool) -> (Color, Color) {
+    if ok {
+        (Color::srgba(0.12, 0.16, 0.12, 0.9), Color::WHITE)
+    } else {
+        (
+            Color::srgba(0.10, 0.10, 0.12, 0.7),
+            Color::srgba(0.6, 0.6, 0.6, 1.0),
+        )
+    }
+}
+
+fn build_side_panel(
     mut commands: Commands,
-    open: Res<InventoryOpen>,
+    state: Res<LocalPlayerState>,
     registry: Res<ClientRegistry>,
     item_reg: Res<ClientItemRegistry>,
     recipes: Res<crate::ClientRecipes>,
-    inventory: Res<LocalInventory>,
-    state: Res<LocalPlayerState>,
-    player_panel: Query<Entity, With<PlayerPanel>>,
-    side_panel: Query<Entity, With<SidePanel>>,
-    mut sig: Local<Option<OverlaySig>>,
+    panels: Query<Entity, With<SidePanel>>,
+    mut shown_mode: Local<Option<GameMode>>,
 ) {
-    if !open.0 {
-        *sig = None;
-        return;
-    }
-    if let Some(sig) = sig.as_ref()
-        && !inventory.is_changed()
-        && sig.mode == state.mode
-    {
-        return;
-    }
-    let core = CoreInventory {
-        slots: inventory.slots.clone(),
-    };
-    let craftable: Vec<bool> = recipes
-        .0
-        .recipes()
-        .iter()
-        .map(|recipe| recipes.0.can_craft(recipe, &core))
-        .collect();
-    let next = OverlaySig {
-        mode: state.mode,
-        slots: inventory.slots.clone(),
-        cursor: inventory.cursor,
-        trash: inventory.trash,
-        craftable: craftable.clone(),
-    };
-    if sig.as_ref() == Some(&next) {
-        return;
-    }
-    let (Ok(player_panel), Ok(side_panel)) = (player_panel.single(), side_panel.single()) else {
+    let Ok(panel) = panels.single() else {
+        *shown_mode = None;
         return;
     };
-    *sig = Some(next);
-
-    commands.entity(player_panel).despawn_related::<Children>();
-    commands.entity(side_panel).despawn_related::<Children>();
+    if *shown_mode == Some(state.mode) {
+        return;
+    }
+    *shown_mode = Some(state.mode);
 
     let materials = &registry.0;
     let items = &item_reg.0;
 
-    commands.entity(player_panel).with_children(|panel| {
-        panel.spawn(label_node("Inventory"));
-        for row in 0..(MAIN_SLOTS / 9) {
-            panel.spawn(row_node()).with_children(|r| {
-                for col in 0..9 {
-                    let index = HOTBAR_SLOTS + row * 9 + col;
-                    spawn_slot(
-                        r,
-                        SlotRegion::Player,
-                        index,
-                        inventory.slots.get(index).copied().flatten(),
-                        items,
-                        materials,
-                    );
-                }
-            });
-        }
-        panel.spawn(Node {
-            height: px(6),
-            ..default()
-        });
-        panel.spawn(row_node()).with_children(|r| {
-            for index in 0..HOTBAR_SLOTS {
-                spawn_slot(
-                    r,
-                    SlotRegion::Player,
-                    index,
-                    inventory.slots.get(index).copied().flatten(),
-                    items,
-                    materials,
-                );
-            }
-        });
-        panel.spawn(Node {
-            height: px(6),
-            ..default()
-        });
-        panel.spawn(label_node("Trash"));
-        panel.spawn(row_node()).with_children(|r| {
-            spawn_slot(r, SlotRegion::Trash, 0, inventory.trash, items, materials);
-        });
-    });
-
-    commands.entity(side_panel).with_children(|panel| {
+    commands.entity(panel).despawn_related::<Children>();
+    commands.entity(panel).with_children(|panel| {
         if state.mode == GameMode::Creative {
             panel.spawn(label_node("Items"));
             let all: Vec<ItemId> = items.iter().map(|(id, _)| id).collect();
             for chunk in all.chunks(9) {
                 panel.spawn(row_node()).with_children(|r| {
                     for &id in chunk {
-                        spawn_slot(
-                            r,
-                            SlotRegion::Palette(id),
-                            0,
-                            Some(ItemStack::new(id, 1)),
-                            items,
-                            materials,
-                        );
+                        spawn_slot(r, SlotRegion::Palette(id), 0);
                     }
                 });
             }
         } else {
             panel.spawn(label_node("Crafting"));
             for (i, recipe) in recipes.0.recipes().iter().enumerate() {
-                let ok = craftable.get(i).copied().unwrap_or(false);
+                let (background, text_color) = craft_colors(false);
                 panel
                     .spawn((
                         UiSlot {
@@ -322,11 +283,7 @@ fn rebuild_overlay(
                             padding: UiRect::all(px(3)),
                             ..default()
                         },
-                        BackgroundColor(if ok {
-                            Color::srgba(0.12, 0.16, 0.12, 0.9)
-                        } else {
-                            Color::srgba(0.10, 0.10, 0.12, 0.7)
-                        }),
+                        BackgroundColor(background),
                     ))
                     .with_children(|entry| {
                         let color = item_color(items, materials, recipe.output.0);
@@ -346,22 +303,116 @@ fn rebuild_overlay(
                             .map(|d| d.display.clone())
                             .unwrap_or_default();
                         entry.spawn((
+                            CraftName,
                             Text::new(format!("{} x{}", name, recipe.output.1)),
                             TextFont {
                                 font_size: FontSize::Px(12.0),
                                 ..default()
                             },
-                            TextColor(if ok {
-                                Color::WHITE
-                            } else {
-                                Color::srgba(0.6, 0.6, 0.6, 1.0)
-                            }),
+                            TextColor(text_color),
                             Pickable::IGNORE,
                         ));
                     });
             }
         }
     });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn sync_overlay_slots(
+    mut slot_changes: MessageReader<SlotChanged>,
+    mut trash_changes: MessageReader<TrashChanged>,
+    added: Query<Entity, Added<UiSlot>>,
+    inventory: Res<LocalInventory>,
+    registry: Res<ClientRegistry>,
+    item_reg: Res<ClientItemRegistry>,
+    slots: Query<&UiSlot>,
+    mut swatches: Query<(&ChildOf, &mut Node, &mut BackgroundColor), With<SlotSwatch>>,
+    mut counts: Query<(&ChildOf, &mut Text), With<SlotCount>>,
+) {
+    if slot_changes.is_empty() && trash_changes.is_empty() && added.is_empty() {
+        return;
+    }
+    let changed: HashSet<usize> = slot_changes.read().map(|change| change.0).collect();
+    let trash_changed = !trash_changes.is_empty();
+    trash_changes.clear();
+    let added: HashSet<Entity> = added.iter().collect();
+
+    let stack_for = |entity: Entity| -> Option<Option<ItemStack>> {
+        let slot = slots.get(entity).ok()?;
+        let fresh = added.contains(&entity);
+        match slot.region {
+            SlotRegion::Player if fresh || changed.contains(&slot.index) => {
+                Some(inventory.slots.get(slot.index).copied().flatten())
+            }
+            SlotRegion::Trash if fresh || trash_changed => Some(inventory.trash),
+            SlotRegion::Palette(id) if fresh => Some(Some(ItemStack::new(id, 1))),
+            _ => None,
+        }
+    };
+
+    for (child_of, mut node, mut color) in &mut swatches {
+        if let Some(stack) = stack_for(child_of.parent()) {
+            apply_swatch(stack, &item_reg.0, &registry.0, &mut node, &mut color);
+        }
+    }
+    for (child_of, mut text) in &mut counts {
+        if let Some(stack) = stack_for(child_of.parent()) {
+            apply_count(stack, &mut text);
+        }
+    }
+}
+
+fn sync_craftable(
+    mut slot_changes: MessageReader<SlotChanged>,
+    added: Query<(), Added<UiSlot>>,
+    inventory: Res<LocalInventory>,
+    recipes: Res<crate::ClientRecipes>,
+    slots: Query<&UiSlot>,
+    mut rows: Query<(&UiSlot, &mut BackgroundColor)>,
+    mut names: Query<(&ChildOf, &mut TextColor), With<CraftName>>,
+) {
+    let dirty = !slot_changes.is_empty();
+    slot_changes.clear();
+    if !dirty && added.is_empty() {
+        return;
+    }
+    if names.is_empty() {
+        return;
+    }
+    let core = CoreInventory {
+        slots: inventory.slots.clone(),
+    };
+    let craftable: Vec<bool> = recipes
+        .0
+        .recipes()
+        .iter()
+        .map(|recipe| recipes.0.can_craft(recipe, &core))
+        .collect();
+
+    for (slot, mut background) in &mut rows {
+        let SlotRegion::Craft(i) = slot.region else {
+            continue;
+        };
+        let ok = craftable.get(i as usize).copied().unwrap_or(false);
+        let (target, _) = craft_colors(ok);
+        if background.0 != target {
+            background.0 = target;
+        }
+    }
+    for (child_of, mut color) in &mut names {
+        let Ok(slot) = slots.get(child_of.parent()) else {
+            continue;
+        };
+        let SlotRegion::Craft(i) = slot.region else {
+            continue;
+        };
+        let ok = craftable.get(i as usize).copied().unwrap_or(false);
+        let (_, target) = craft_colors(ok);
+        if color.0 != target {
+            color.0 = target;
+        }
+    }
 }
 
 fn label_node(text: &str) -> impl Bundle {
@@ -388,14 +439,7 @@ fn row_node() -> Node {
     }
 }
 
-fn spawn_slot(
-    parent: &mut ChildSpawnerCommands,
-    region: SlotRegion,
-    index: usize,
-    stack: Option<ItemStack>,
-    items: &fallingsand_core::ItemRegistry,
-    materials: &fallingsand_core::MaterialRegistry,
-) {
+fn spawn_slot(parent: &mut ChildSpawnerCommands, region: SlotRegion, index: usize) {
     parent
         .spawn((
             UiSlot { region, index },
@@ -414,38 +458,36 @@ fn spawn_slot(
             }),
         ))
         .with_children(|slot| {
-            if let Some(item) = stack {
-                let color = item_color(items, materials, item.item);
-                slot.spawn((
-                    Node {
-                        position_type: PositionType::Absolute,
-                        left: px(6),
-                        top: px(6),
-                        width: px(SLOT - 12.0),
-                        height: px(SLOT - 12.0),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgba_u8(color[0], color[1], color[2], color[3])),
-                    Pickable::IGNORE,
-                ));
-                if item.count > 1 {
-                    slot.spawn((
-                        Text::new(crate::hud::format_count(item.count)),
-                        TextFont {
-                            font_size: FontSize::Px(11.0),
-                            ..default()
-                        },
-                        TextColor(Color::WHITE),
-                        Node {
-                            position_type: PositionType::Absolute,
-                            right: px(2),
-                            bottom: px(0),
-                            ..default()
-                        },
-                        Pickable::IGNORE,
-                    ));
-                }
-            }
+            slot.spawn((
+                SlotSwatch,
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: px(6),
+                    top: px(6),
+                    width: px(SLOT - 12.0),
+                    height: px(SLOT - 12.0),
+                    display: Display::None,
+                    ..default()
+                },
+                BackgroundColor(Color::NONE),
+                Pickable::IGNORE,
+            ));
+            slot.spawn((
+                SlotCount,
+                Text::new(""),
+                TextFont {
+                    font_size: FontSize::Px(11.0),
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                Node {
+                    position_type: PositionType::Absolute,
+                    right: px(2),
+                    bottom: px(0),
+                    ..default()
+                },
+                Pickable::IGNORE,
+            ));
         });
 }
 
@@ -528,7 +570,7 @@ fn update_cursor_follow(
             *color = BackgroundColor(Color::srgba_u8(c[0], c[1], c[2], c[3]));
             if let Ok(mut text) = count.single_mut() {
                 **text = if stack.count > 1 {
-                    crate::hud::format_count(stack.count)
+                    format_count(stack.count)
                 } else {
                     String::new()
                 };
