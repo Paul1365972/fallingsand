@@ -126,13 +126,13 @@ impl Plugin for CameraPlugin {
     }
 }
 
+fn base_scale(window_px: UVec2) -> u32 {
+    ((window_px.x as f32 / VIRTUAL_WIDTH).round() as u32).max(1)
+}
+
 fn pixel_scale(window_px: UVec2, zoom_index: i32) -> (u32, UVec2) {
-    let k_base = ((window_px.x as f32 / VIRTUAL_WIDTH).round() as u32).max(1);
-    let k = match zoom_index {
-        i32::MIN..=-1 => (k_base / 2).max(1),
-        0 => k_base,
-        1.. => k_base * 2,
-    };
+    let base = base_scale(window_px);
+    let k = (base as i32 + zoom_index).clamp((base / 2).max(1) as i32, (base * 2) as i32) as u32;
     let native = UVec2::new(
         (window_px.x.div_ceil(k) + 2).next_multiple_of(2),
         (window_px.y.div_ceil(k) + 2).next_multiple_of(2),
@@ -253,7 +253,7 @@ fn camera_input(
     for action in actions.read() {
         match action {
             LocalAction::Zoom(scroll) => {
-                control.zoom_index = (control.zoom_index + scroll.signum() as i32).clamp(-1, 1);
+                control.zoom_index += scroll.signum() as i32;
             }
             LocalAction::CycleRenderMode => {
                 *mode = match *mode {
@@ -271,7 +271,7 @@ fn camera_input(
 #[allow(clippy::type_complexity)]
 fn update_pixel_scale(
     window: Single<&Window>,
-    control: Res<CameraControl>,
+    mut control: ResMut<CameraControl>,
     mut state: ResMut<CameraState>,
     mut images: ResMut<Assets<Image>>,
     world_target: Res<WorldTarget>,
@@ -290,6 +290,10 @@ fn update_pixel_scale(
         window.physical_height().max(1),
     );
     let (k, native) = pixel_scale(window_px, control.zoom_index);
+    let clamped_index = k as i32 - base_scale(window_px) as i32;
+    if control.zoom_index != clamped_index {
+        control.zoom_index = clamped_index;
+    }
     if state.k == k && state.native == native && state.window_px == window_px {
         return;
     }

@@ -82,6 +82,8 @@ pub(super) fn draw_borders(
     let half = state.view_cells() / 2.0;
     let min = state.pos - half;
     let max = state.pos + half;
+    let k = state.k as f32;
+    let to_px = |world: Vec2| (world - state.pos) * k;
 
     let chunk = CHUNK_SIZE as f32;
     let region = REGION_SIZE_CELLS as f32;
@@ -95,7 +97,11 @@ pub(super) fn draw_borders(
         } else {
             chunk_color
         };
-        gizmos.line_2d(Vec2::new(x, min.y), Vec2::new(x, max.y), color);
+        gizmos.line_2d(
+            to_px(Vec2::new(x, min.y)),
+            to_px(Vec2::new(x, max.y)),
+            color,
+        );
         x += chunk;
     }
     let mut y = (min.y / chunk).floor() * chunk;
@@ -105,7 +111,11 @@ pub(super) fn draw_borders(
         } else {
             chunk_color
         };
-        gizmos.line_2d(Vec2::new(min.x, y), Vec2::new(max.x, y), color);
+        gizmos.line_2d(
+            to_px(Vec2::new(min.x, y)),
+            to_px(Vec2::new(max.x, y)),
+            color,
+        );
         y += chunk;
     }
 
@@ -119,8 +129,8 @@ pub(super) fn draw_borders(
             Color::srgba(1.0, 0.9, 0.2, 0.8)
         };
         gizmos.rect_2d(
-            Isometry2d::from_translation(corner + size / 2.0),
-            size,
+            Isometry2d::from_translation(to_px(corner + size / 2.0)),
+            size * k,
             color,
         );
     }

@@ -2,7 +2,7 @@ mod borders;
 mod stats;
 
 use crate::ClientRegistry;
-use crate::camera::{CameraState, RenderMode, WORLD_LAYER};
+use crate::camera::{CameraState, RenderMode};
 use crate::input::{InputHeld, LocalAction};
 use crate::inventory::{LocalInventory, SelectedSlot};
 use crate::net::{ServerStats, Session, Supervisor};
@@ -11,7 +11,6 @@ use crate::player::{LocalPlayerState, PlayerNames};
 use crate::render::ChunkVisuals;
 use crate::sky::{Sky, WorldTime};
 use crate::worldview::WorldView;
-use bevy::camera::visibility::RenderLayers;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -36,13 +35,6 @@ struct DebugVisible(bool);
 impl Plugin for DebugOverlayPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(FrameTimeDiagnosticsPlugin::default())
-            .insert_gizmo_config(
-                DefaultGizmoConfigGroup,
-                GizmoConfig {
-                    render_layers: RenderLayers::layer(WORLD_LAYER),
-                    ..default()
-                },
-            )
             .insert_resource(DebugVisible(true))
             .init_resource::<BordersVisible>()
             .init_resource::<RectFlashes>()
