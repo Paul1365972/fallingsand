@@ -1,7 +1,7 @@
 mod movement;
 mod player;
 
-pub use movement::{Blocked, MoveResult, move_body};
+pub use movement::{Blocked, MoveResult};
 pub use player::{Controller, PlayerParams, step_player};
 
 use crate::world::CellWorld;

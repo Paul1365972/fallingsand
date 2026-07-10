@@ -4,10 +4,6 @@ use crate::world::CellWorld;
 use fallingsand_core::{CHUNK_SIZE, CellPos, Chunk, ChunkPos, DirtyRect, MaterialRegistry};
 use rustc_hash::FxHashSet;
 
-pub fn step(world: &mut CellWorld, registry: &MaterialRegistry) {
-    step_scoped(world, registry, &|_| true);
-}
-
 pub fn step_scoped(
     world: &mut CellWorld,
     registry: &MaterialRegistry,

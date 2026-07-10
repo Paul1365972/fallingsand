@@ -32,7 +32,7 @@ cargo fmt --all
 
 ## Architecture
 
-- Dependency direction: `core ← sim ← {server, client}`, `core ← protocol ← {server, client}`.
+- Dependency direction: `core ← sim ← server`, `core ← protocol ← {server, client}`; the client reaches the sim only through the embedded server.
 - Scheduling: 4-phase 2×2-chunk-block scheduling; workers get a 4×4-chunk `SimWindow`, disjoint per phase.
 - Rects: `sim` (feeds scheduling) ⊇ `change` (feeds replication/persistence); `set` (real change) marks `change` tight + `sim` as the 3×3 Moore neighbourhood (across chunk borders), `mark` (simulate again) marks `sim` 1×1 only. `sim` is honest — the exact cells simulated next tick, no read-time dilation. Double-buffered (`prev_*`).
 - Randomness: tick-seeded, no RNG state, no iteration-order-dependent containers in sim paths.
