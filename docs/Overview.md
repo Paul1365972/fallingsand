@@ -31,3 +31,4 @@ Co-op survival for ~10 players in one persistent, infinite world: gather, build,
 - [Deploy.md](Deploy.md) — dedicated-server networking, DNS/TLS automation
 - [Glossary.md](Glossary.md) — canonical names for core types and units
 - [References.md](References.md) — prior art
+- [skysim.html](skysim.html) — browser sky/calendar simulator mirroring `core/celestial.rs`: live render, time controls, eclipse scanner with `/time` jumps

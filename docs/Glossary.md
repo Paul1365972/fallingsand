@@ -40,7 +40,7 @@ Canonical names for the core domain vocabulary. One concept, one name.
 | **PlayerState** | wire snapshot of a player (pos, ducking, burning) |
 | **PlayerId / PlayerUuid** | session player id / persistent account id |
 | **EntityId** | id for replicated non-player world entities (today: dropped items; reserved for creatures) |
-| **tick / world_age / age_ticks** | monotonic sim tick number / calendar clock (DAY_UNITS) / a dropped item's lifetime |
+| **tick / world_age / age_ticks** | monotonic sim tick number / calendar clock (DAY_UNITS; YEAR_UNITS = 60 days, `season()`/`day_of_year()` are integer-math accessors) / a dropped item's lifetime |
 
 ## Sim internals
 

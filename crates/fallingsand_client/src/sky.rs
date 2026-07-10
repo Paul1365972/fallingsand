@@ -12,7 +12,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderType};
 use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dPlugin};
-use fallingsand_core::celestial::{MOON_DISC, UMBRA_RADIUS};
+use fallingsand_core::celestial::SHADE_DISC_RADIUS;
 use fallingsand_core::{Calendar, CelestialState, CellPos, smoothstep};
 
 pub struct SkyPlugin;
@@ -29,10 +29,10 @@ const LIGHT_SCAN_INTERVAL: f32 = 0.1;
 const HORIZON_FRAC: f32 = 0.22;
 const ORBIT_RADIUS: f32 = 133.0;
 
-const MOON_DISC_FRAC: f32 = 0.90;
 const SUN_SIZE: f32 = 48.0;
 const MOON_SIZE: f32 = 28.0;
 const STAR_TEX_SIZE: f32 = 512.0;
+const SIDEREAL_SCROLL_TILES: f32 = 1.0;
 
 #[derive(Resource, Default, Clone, Copy)]
 pub struct WorldTime {
@@ -49,7 +49,7 @@ impl WorldTime {
 #[derive(Resource, Default, Clone, Copy)]
 pub struct Sky {
     pub state: CelestialState,
-    pub star_alpha: f32,
+    pub star_visibility: f32,
     pub synced: bool,
 }
 
@@ -153,9 +153,10 @@ impl Material2d for MoonMaterial {
 pub struct StarfieldParams {
     pub tiling: f32,
     pub aspect: f32,
-    pub star_alpha: f32,
+    pub star_visibility: f32,
     pub horizon: f32,
     pub time: f32,
+    pub scroll: f32,
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
@@ -381,15 +382,17 @@ fn update_orbits(
 
     let sun_position = Vec2::from(celestial.sun_position) * radius;
     let moon_position = Vec2::from(celestial.moon_position) * radius;
+    let shade_position = Vec2::from(celestial.shade_position) * radius;
     let sun_altitude = celestial.sun_altitude;
     let solar_occlusion = celestial.solar_occlusion;
 
-    let world_to_moon_uv = 2.0 / MOON_SIZE;
-    let umbra = (-sun_position - moon_position) * world_to_moon_uv;
-    let umbra_radius = UMBRA_RADIUS * MOON_DISC_FRAC / MOON_DISC;
+    let moon_size = MOON_SIZE * celestial.moon_radius_scale;
+    let world_to_moon_uv = 2.0 / moon_size;
+    let umbra = (shade_position - moon_position) * world_to_moon_uv;
+    let umbra_radius = SHADE_DISC_RADIUS * radius * world_to_moon_uv;
 
     sky.state = celestial;
-    sky.star_alpha = 1.0 - smoothstep(0.02, 0.45, celestial.light);
+    sky.star_visibility = celestial.star_visibility;
     sky.synced = true;
 
     if let Ok((mut transform, mut visibility)) = sun_q.single_mut() {
@@ -404,7 +407,7 @@ fn update_orbits(
 
     if let Ok((mut transform, mut visibility)) = moon_q.single_mut() {
         transform.translation = (moon_position + center).extend(-49.0);
-        transform.scale = Vec3::new(MOON_SIZE, MOON_SIZE, 1.0);
+        transform.scale = Vec3::new(moon_size, moon_size, 1.0);
         *visibility = Visibility::Inherited;
     }
     if let Some(mut material) = moon_mats.get_mut(&assets.moon) {
@@ -492,7 +495,7 @@ fn fit_fullscreen_quads(
             Visibility::Hidden
         };
     }
-    let stars_on = sky.synced && sky.star_alpha > 0.001;
+    let stars_on = sky.synced && sky.star_visibility > 0.001;
     for (mut transform, mut visibility) in &mut star_q {
         transform.scale = Vec3::new(size.x, size.y, 1.0);
         *visibility = if stars_on {
@@ -512,9 +515,10 @@ fn fit_fullscreen_quads(
     if let Some(mut material) = star_mats.get_mut(&assets.starfield) {
         material.params.tiling = (view_size(&window, 1.0).x * 1.1 / STAR_TEX_SIZE).max(0.05);
         material.params.aspect = (window.width() / window.height().max(1.0)).max(0.1);
-        material.params.star_alpha = sky.star_alpha;
+        material.params.star_visibility = sky.star_visibility;
         material.params.horizon = horizon_uv;
         material.params.time = real.elapsed_secs();
+        material.params.scroll = -sky.state.sidereal * SIDEREAL_SCROLL_TILES;
     }
     if let Some(mut material) = horizon_mats.get_mut(&assets.horizon) {
         let day_haze = Vec3::new(0.72, 0.82, 0.96);

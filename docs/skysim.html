@@ -1,0 +1,700 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fallingsand · sky simulator</title>
+<style>
+  :root {
+    --bg: #0b0e14;
+    --panel: #12161f;
+    --panel2: #171c27;
+    --line: #262d3b;
+    --text: #cfd6e4;
+    --dim: #7d8698;
+    --amber: #f0b445;
+    --blue: #6ea8fe;
+    --red: #e06c5f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.45 system-ui, "Segoe UI", sans-serif;
+  }
+  header {
+    display: flex; align-items: baseline; gap: 12px;
+    padding: 14px 20px 10px;
+  }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; letter-spacing: .02em; }
+  header .sub { color: var(--dim); font-size: 12.5px; }
+  main {
+    display: grid; grid-template-columns: minmax(0, 1fr) 340px;
+    gap: 14px; padding: 0 20px 20px; max-width: 1340px; margin: 0 auto;
+  }
+  .col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; overflow: hidden;
+  }
+  .card h2 {
+    font-size: 11.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--dim); margin: 0; padding: 9px 12px 7px; border-bottom: 1px solid var(--line);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  canvas { display: block; width: 100%; }
+  #skyCanvas { aspect-ratio: 16 / 9; cursor: crosshair; }
+  #yearCanvas { height: 96px; cursor: pointer; }
+  #dayCanvas { height: 34px; cursor: pointer; }
+  .controls {
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    padding: 10px 12px;
+  }
+  button, select, input {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 5px 10px; font: inherit; font-size: 13px;
+  }
+  button { cursor: pointer; }
+  button:hover { border-color: #3a4356; }
+  button.primary { background: #23304a; border-color: #33507e; }
+  input[type=number], input[type=text] { width: 90px; font-variant-numeric: tabular-nums; }
+  .spacer { flex: 1; }
+  .stats {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 0;
+    font-variant-numeric: tabular-nums;
+  }
+  .stat { padding: 7px 12px; border-bottom: 1px solid var(--line); }
+  .stat:nth-child(odd) { border-right: 1px solid var(--line); }
+  .stat .k { color: var(--dim); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
+  .stat .v { font-size: 14.5px; margin-top: 1px; }
+  .stat .v small { color: var(--dim); font-size: 11.5px; }
+  .banner {
+    padding: 8px 12px; font-size: 13px; border-bottom: 1px solid var(--line);
+    display: none; background: #1d1420; color: #f2c1a0;
+  }
+  .banner.on { display: block; }
+  #events { max-height: 430px; overflow-y: auto; }
+  .ev {
+    display: grid; grid-template-columns: 34px 1fr auto; gap: 8px; align-items: center;
+    padding: 8px 12px; border-bottom: 1px solid var(--line); cursor: pointer;
+  }
+  .ev:hover { background: var(--panel2); }
+  .ev .glyph { font-size: 19px; text-align: center; }
+  .ev .what { font-size: 13.5px; }
+  .ev .meta { color: var(--dim); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+  .ev .when { text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; color: var(--dim); }
+  .ev .when b { display: block; color: var(--text); font-weight: 600; font-size: 12.5px; }
+  .tag { display: inline-block; border-radius: 4px; padding: 0 5px; font-size: 10.5px; margin-left: 5px; vertical-align: 1px; }
+  .tag.total { background: #3a2330; color: #ff9d8a; }
+  .tag.annular { background: #3a3323; color: #ffd98a; }
+  .tag.partial { background: #232c3a; color: #9ec1ff; }
+  .tag.hidden { background: #20242e; color: var(--dim); }
+  .tag.super { background: #2a2338; color: #cfa8ff; }
+  .knobs { padding: 8px 12px; display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; align-items: center; font-size: 12.5px; }
+  .knobs label { color: var(--dim); }
+  .knobs input { width: 84px; padding: 3px 8px; font-size: 12.5px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .foot { padding: 8px 12px; color: var(--dim); font-size: 11.5px; }
+  code { background: var(--panel2); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>fallingsand · sky simulator</h1>
+  <span class="sub">great-wheel cosmology, mirrors <code>core/celestial.rs</code> + <code>core/calendar.rs</code></span>
+</header>
+<main>
+  <div class="col">
+    <div class="card">
+      <canvas id="skyCanvas"></canvas>
+      <div class="controls">
+        <button id="btnBackDay" title="−1 day">⏮ day</button>
+        <button id="btnBackHour" title="−1 hour">−1 h</button>
+        <button id="btnPlay" class="primary">Pause</button>
+        <button id="btnFwdHour" title="+1 hour">+1 h</button>
+        <button id="btnFwdDay" title="+1 day">day ⏭</button>
+        <select id="speed">
+          <option value="1">game speed ×1</option>
+          <option value="6">×6</option>
+          <option value="30" selected>×30</option>
+          <option value="120">×120</option>
+          <option value="720">×720</option>
+        </select>
+        <span class="spacer"></span>
+        <label class="sub">jump day</label>
+        <input id="jumpDay" type="number" min="0" step="0.1" value="0">
+        <button id="btnJump">Go</button>
+      </div>
+      <canvas id="dayCanvas" title="time of day — click to scrub"></canvas>
+    </div>
+    <div class="card">
+      <h2>year · daylight &amp; events <span id="yearLabel" style="text-transform:none"></span></h2>
+      <canvas id="yearCanvas" title="click to jump"></canvas>
+    </div>
+    <div class="card">
+      <h2>world</h2>
+      <div class="knobs">
+        <label>age offset (ms units, set at world creation)</label>
+        <input id="offset" type="text" value="0">
+        <label>in-game jump for this moment</label>
+        <code id="timeCmd">/time 0.000</code>
+      </div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="card">
+      <h2>now</h2>
+      <div class="banner" id="eclipseBanner"></div>
+      <div class="stats" id="stats"></div>
+    </div>
+    <div class="card">
+      <h2>upcoming eclipses <button id="btnRescan" style="font-size:11px;padding:2px 8px">rescan</button></h2>
+      <div id="events"></div>
+      <div class="foot">scans 3 years ahead · click an event to jump 3 h before its peak · magnitudes are occlusion/shadow at peak</div>
+    </div>
+  </div>
+</main>
+<script>
+"use strict";
+
+const DAY = 86400000n;
+const YEAR_DAYS = 60n;
+const YEAR = YEAR_DAYS * DAY;
+const SEASON_DAYS = 15n;
+const SYNODIC = 643n * DAY / 100n;
+const ECCENTRE = 4652n * DAY / 1000n;
+const ANOMALISTIC = 587n * DAY / 100n;
+const SYNODIC_EPOCH = 29n * SYNODIC / 100n;
+const ECCENTRE_EPOCH = 61n * ECCENTRE / 100n;
+const ANOMALISTIC_EPOCH = 43n * ANOMALISTIC / 100n;
+const AGE_PER_SEC = 288000;
+
+const TAU = Math.PI * 2;
+const SUN_DISC_RADIUS = 0.090;
+const MOON_DISC_RADIUS = 0.096;
+const SHADE_DISC_RADIUS = 0.125;
+const SHADE_TRACK = 1.06;
+const TRACK_FLATTEN = 0.62;
+const HUB_AMPLITUDE = 0.30;
+const MOON_ECCENTRE = 0.48;
+const MOON_BREATH = 0.2;
+const MOON_LIGHT_MAX = 0.5;
+const SKYGLOW = 0.03;
+const STARS_BEGIN = -0.0175;
+const STARS_FULL = -0.2756;
+const MOON_STAR_WASH = 0.6;
+const MAX_DARKNESS = 0.82;
+
+const SEASONS = ["spring", "summer", "autumn", "winter"];
+const PHASES = ["new moon", "waxing crescent", "first quarter", "waxing gibbous",
+                "full moon", "waning gibbous", "last quarter", "waning crescent"];
+
+const clamp = (x, a, b) => Math.min(Math.max(x, a), b);
+const smoothstep = (e0, e1, x) => { const t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
+const lerp = (a, b, t) => a + (b - a) * t;
+const lerp3 = (a, b, t) => [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
+const frac = (age, units, epoch) => Number((age + epoch) % units) / Number(units);
+
+function calendar(age) {
+  const dayFrac = Number(age % DAY) / Number(DAY);
+  return {
+    day: Number(age / DAY),
+    dayOfYear: Number((age % YEAR) / DAY),
+    minuteOfDay: Number((age % DAY) / 60000n),
+    dayFrac,
+    yearFrac: Number(age % YEAR) / Number(YEAR),
+    synodic: frac(age, SYNODIC, SYNODIC_EPOCH),
+    eccentre: frac(age, ECCENTRE, ECCENTRE_EPOCH),
+    anomalistic: frac(age, ANOMALISTIC, ANOMALISTIC_EPOCH),
+  };
+}
+
+function coveredFraction(sunR, moonR, d) {
+  if (d >= sunR + moonR) return 0;
+  const sunArea = Math.PI * sunR * sunR;
+  if (d <= Math.abs(sunR - moonR)) {
+    const inner = Math.min(sunR, moonR);
+    return Math.PI * inner * inner / sunArea;
+  }
+  const a = sunR * sunR, b = moonR * moonR;
+  const x = (d * d + a - b) / (2 * d);
+  const y = d - x;
+  const lens = a * Math.acos(clamp(x / sunR, -1, 1)) - x * Math.sqrt(Math.max(a - x * x, 0))
+    + b * Math.acos(clamp(y / moonR, -1, 1)) - y * Math.sqrt(Math.max(b - y * y, 0));
+  return clamp(lens / sunArea, 0, 1);
+}
+
+function celestial(age) {
+  const c = calendar(age);
+  const hub = HUB_AMPLITUDE * Math.sin(c.yearFrac * TAU);
+  const hour = (c.dayFrac - 0.5) * TAU;
+  const sunPos = [Math.sin(hour), hub + TRACK_FLATTEN * Math.cos(hour)];
+  const sunAlt = clamp(sunPos[1], -1, 1);
+  const shadePos = [-SHADE_TRACK * Math.sin(hour), hub - SHADE_TRACK * TRACK_FLATTEN * Math.cos(hour)];
+
+  const anomaly = c.anomalistic * TAU;
+  const moonScale = 1 + MOON_BREATH * Math.cos(anomaly);
+  const trueElong = c.synodic * TAU + MOON_BREATH * Math.sin(anomaly);
+  const rail = 1 + MOON_ECCENTRE * Math.cos(c.eccentre * TAU);
+  const hourM = hour - trueElong;
+  const moonPos = [
+    rail * Math.sin(hourM),
+    hub + rail * TRACK_FLATTEN * Math.cos(hourM),
+  ];
+  const moonAlt = moonPos[1];
+  const moonR = MOON_DISC_RADIUS * moonScale;
+
+  const toSunX = sunPos[0] - moonPos[0];
+  const toSunY = sunPos[1] - moonPos[1];
+  const toSunLen = Math.hypot(toSunX, toSunY);
+  const occ = coveredFraction(SUN_DISC_RADIUS, moonR, toSunLen);
+  const sunDir = toSunLen > 1e-6 ? [toSunX / toSunLen, toSunY / toSunLen] : [0, 0];
+
+  const shadeDist = Math.hypot(shadePos[0] - moonPos[0], shadePos[1] - moonPos[1]);
+  const shadow = coveredFraction(moonR, SHADE_DISC_RADIUS, shadeDist);
+
+  const illum = (1 - Math.cos(trueElong)) / 2;
+  const daylight = smoothstep(-0.12, 0.10, sunPos[1]);
+  const sunlight = daylight * (1 - occ);
+  const moonUp = smoothstep(-0.10, 0.10, moonAlt);
+  const moonlight = illum * moonUp * (1 - shadow) * MOON_LIGHT_MAX * moonScale * moonScale;
+  const light = clamp(Math.max(sunlight, moonlight + SKYGLOW), 0, 1);
+
+  const starVis = Math.max(
+    (1 - smoothstep(STARS_FULL, STARS_BEGIN, sunPos[1])) * (1 - MOON_STAR_WASH * moonlight),
+    1 - smoothstep(0.08, 0.30, light));
+  const sidereal = (c.dayFrac + c.yearFrac) % 1;
+
+  return { cal: c, sunPos, moonPos, shadePos, sunAlt, moonAlt, sunDir, illum, occ, shadow,
+           moonScale, moonR, daylight, moonlight, light, starVis, sidereal, sep: toSunLen };
+}
+
+function skyColor(light, sunAlt, occ) {
+  const night = [0.015, 0.025, 0.055], day = [0.40, 0.60, 0.86], horizon = [0.85, 0.45, 0.28];
+  const base = lerp3(night, day, light);
+  const band = Math.pow(1 - Math.abs(sunAlt), 3);
+  let rgb = lerp3(base, horizon, band * (1 - occ) * 0.6);
+  if (occ > 0) {
+    const grey = (rgb[0] + rgb[1] + rgb[2]) / 3;
+    rgb = lerp3(rgb, [grey, grey, grey], occ * 0.4);
+  }
+  return rgb;
+}
+
+function hazeColor(s) {
+  const dayHaze = [0.72, 0.82, 0.96], nightHaze = [0.08, 0.11, 0.20], warm = [0.98, 0.6, 0.38];
+  const base = lerp3(nightHaze, dayHaze, s.light);
+  const band = Math.pow(1 - Math.abs(s.sunAlt), 2);
+  return lerp3(base, warm, band * (1 - s.occ) * 0.7);
+}
+
+const css = rgb => `rgb(${rgb.map(v => Math.round(clamp(v, 0, 1) * 255)).join(",")})`;
+const cssA = (rgb, a) => `rgba(${rgb.map(v => Math.round(clamp(v, 0, 1) * 255)).join(",")},${a.toFixed(3)})`;
+
+let age = DAY / 2n;
+let playing = true;
+let speed = 30;
+let lastFrame = performance.now();
+
+const skyCanvas = document.getElementById("skyCanvas");
+const dayCanvas = document.getElementById("dayCanvas");
+const yearCanvas = document.getElementById("yearCanvas");
+const sctx = skyCanvas.getContext("2d");
+const dctx = dayCanvas.getContext("2d");
+const yctx = yearCanvas.getContext("2d");
+
+function fitCanvas(cv) {
+  const dpr = window.devicePixelRatio || 1;
+  const r = cv.getBoundingClientRect();
+  if (cv.width !== Math.round(r.width * dpr) || cv.height !== Math.round(r.height * dpr)) {
+    cv.width = Math.round(r.width * dpr);
+    cv.height = Math.round(r.height * dpr);
+  }
+  return dpr;
+}
+
+function hash(i, salt) {
+  let x = (i * 374761393 + salt * 668265263) >>> 0;
+  x = (x ^ (x >>> 13)) >>> 0;
+  x = (x * 1274126177) >>> 0;
+  return ((x ^ (x >>> 16)) >>> 0) / 4294967296;
+}
+
+const STARS = [];
+for (let i = 0; i < 900; i++) {
+  STARS.push({
+    x: hash(i, 1), y: hash(i, 2), mag: hash(i, 3),
+    rate: 1 + 2.5 * hash(i, 4), phase: hash(i, 5) * TAU,
+    hue: hash(i, 6),
+  });
+}
+
+const CRATERS = [];
+for (let i = 0; i < 9; i++) {
+  const a = hash(i, 11) * TAU, r = 0.15 + 0.72 * Math.sqrt(hash(i, 12));
+  CRATERS.push({ x: Math.cos(a) * r, y: Math.sin(a) * r, r: 0.09 + 0.16 * hash(i, 13), d: 0.10 + 0.14 * hash(i, 14) });
+}
+
+function drawMoon(ctx, cx, cy, radiusPx, s, sky) {
+  const n = Math.max(16, Math.ceil(radiusPx * 2)) | 0;
+  const img = ctx.createImageData(n, n);
+  const d = img.data;
+  const sd = s.sunDir;
+  const ux = (s.shadePos[0] - s.moonPos[0]) / s.moonR;
+  const uy = (s.shadePos[1] - s.moonPos[1]) / s.moonR;
+  const ur = SHADE_DISC_RADIUS / s.moonR;
+  const albedo = [0.86, 0.85, 0.80];
+  const TEXELS = 28;
+  const snap = v => (Math.floor((v * 0.5 + 0.5) * TEXELS) + 0.5) / TEXELS * 2 - 1;
+  for (let py = 0; py < n; py++) {
+    for (let px = 0; px < n; px++) {
+      const x = snap((px + 0.5) / n * 2 - 1);
+      const y = snap(-((py + 0.5) / n * 2 - 1));
+      const r = Math.hypot(x, y);
+      const idx = (py * n + px) * 4;
+      if (r > 1) { d[idx + 3] = 0; continue; }
+      let a = [albedo[0], albedo[1], albedo[2]];
+      for (const c of CRATERS) {
+        if (Math.hypot(x - c.x, y - c.y) < c.r) { a = [a[0] - c.d, a[1] - c.d, a[2] - c.d]; }
+      }
+      const along = x * sd[0] + y * sd[1];
+      const perp = -x * sd[1] + y * sd[0];
+      const hw = Math.sqrt(Math.max(1 - perp * perp, 0));
+      const term = (1 - 2 * s.illum) * hw;
+      const tw = 2 / TEXELS;
+      const lit = smoothstep(-0.5 * tw, 0.5 * tw, along - term);
+      const ud = Math.hypot(x - ux, y - uy);
+      const shade = 1 - smoothstep(-0.5 * tw, 0.5 * tw, ud - ur);
+      const pen = 1 - smoothstep(ur, ur + 1.2, ud);
+      const core = smoothstep(0.1, 1.2, ur - ud);
+      const luma = (a[0] + a[1] + a[2]) / 3;
+      const bloodCol = lerp3([0.62, 0.20, 0.07], [0.26, 0.045, 0.035], core).map(v => v * (0.5 + 1.2 * luma));
+      let litCol = a.map(v => v * (1 - 0.5 * pen));
+      litCol = lerp3(litCol, bloodCol, shade);
+      const nightCol = a.map(v => v * 0.14);
+      let col = lerp3(nightCol, litCol, lit);
+      const wash = s.daylight * 0.9 * (1 - 0.75 * shade);
+      col = [col[0] + sky[0] * wash, col[1] + sky[1] * wash, col[2] + sky[2] * wash];
+      d[idx] = clamp(col[0], 0, 1) * 255;
+      d[idx + 1] = clamp(col[1], 0, 1) * 255;
+      d[idx + 2] = clamp(col[2], 0, 1) * 255;
+      d[idx + 3] = 255;
+    }
+  }
+  const off = new OffscreenCanvas(n, n);
+  off.getContext("2d").putImageData(img, 0, 0);
+  ctx.drawImage(off, cx - n / 2, cy - n / 2);
+}
+
+function drawSky() {
+  const dpr = fitCanvas(skyCanvas);
+  const W = skyCanvas.width, H = skyCanvas.height;
+  const s = celestial(age);
+  const sky = skyColor(s.light, s.sunAlt, s.occ);
+  const haze = hazeColor(s);
+  const horizonY = H * 0.66;
+  const R = H * 0.55;
+  const cx = W / 2;
+  const px = p => [cx + p[0] * R, horizonY - p[1] * R];
+
+  const zenith = sky.map(v => v * 0.72);
+  const g = sctx.createLinearGradient(0, 0, 0, horizonY);
+  g.addColorStop(0, css(zenith));
+  g.addColorStop(1, css(sky));
+  sctx.fillStyle = g;
+  sctx.fillRect(0, 0, W, horizonY + 1);
+
+  const scrollW = R * 512 / 133;
+  const time = performance.now() / 1000;
+  for (const st of STARS) {
+    const sx = ((st.x * scrollW - s.sidereal * scrollW) % scrollW + scrollW) % scrollW;
+    if (sx > W) continue;
+    const sy = st.y * horizonY;
+    const vis = clamp((s.starVis - st.mag * 0.85) / 0.12, 0, 1);
+    if (vis <= 0) continue;
+    const flick = 1 - 0.55 * Math.pow(0.5 + 0.5 * Math.sin(time * st.rate + st.phase), 2);
+    const above = 1 - smoothstep(horizonY - 26 * dpr, horizonY, sy);
+    const alpha = vis * flick * above;
+    if (alpha <= 0.01) continue;
+    const tint = st.hue < 0.2 ? [1, 0.86, 0.7] : st.hue > 0.8 ? [0.75, 0.85, 1] : [0.95, 0.97, 1];
+    const size = (st.mag < 0.12 ? 1.9 : st.mag < 0.45 ? 1.3 : 1.0) * dpr;
+    sctx.fillStyle = cssA(tint, alpha);
+    sctx.fillRect(sx - size / 2, sy - size / 2, size, size);
+  }
+
+  const [sunX, sunY] = px(s.sunPos);
+  const sunR = SUN_DISC_RADIUS * R;
+  const redness = 1 - smoothstep(0.0, 0.35, s.sunAlt);
+  const warmCore = lerp3([1, 0.97, 0.88], [1, 0.62, 0.34], redness);
+  const halo = sctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, sunR * 3.6);
+  const haloA = 0.32 * (1 - s.occ) + 2.6 * s.occ * s.occ * 0.35;
+  halo.addColorStop(0, cssA([1, 0.95, 0.85], clamp(haloA, 0, 1)));
+  halo.addColorStop(1, cssA([1, 0.95, 0.85], 0));
+  sctx.fillStyle = halo;
+  sctx.fillRect(sunX - sunR * 5, sunY - sunR * 5, sunR * 10, sunR * 10);
+  const core = sctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, sunR);
+  core.addColorStop(0, css([1, 1, 0.97]));
+  core.addColorStop(0.75, css(warmCore));
+  core.addColorStop(1, cssA(warmCore, 0.85));
+  sctx.fillStyle = core;
+  sctx.beginPath();
+  sctx.arc(sunX, sunY, sunR, 0, TAU);
+  sctx.fill();
+
+  const [moonX, moonY] = px(s.moonPos);
+  drawMoon(sctx, moonX, moonY, s.moonR * R, s, sky);
+
+  const hazeH = H * 0.16;
+  const hg = sctx.createLinearGradient(0, horizonY - hazeH, 0, horizonY);
+  const intensity = 0.25 + 0.6 * s.light;
+  hg.addColorStop(0, cssA(haze, 0));
+  hg.addColorStop(1, cssA(haze, clamp(intensity, 0, 1)));
+  sctx.fillStyle = hg;
+  sctx.fillRect(0, horizonY - hazeH, W, hazeH);
+
+  const groundLit = lerp3([0.012, 0.014, 0.03], [0.16, 0.15, 0.13], s.light * (1 - MAX_DARKNESS * (1 - s.light)));
+  sctx.fillStyle = css(groundLit);
+  sctx.fillRect(0, horizonY, W, H - horizonY);
+
+  return s;
+}
+
+function drawDayStrip(s) {
+  const dpr = fitCanvas(dayCanvas);
+  const W = dayCanvas.width, H = dayCanvas.height;
+  const dayStart = age / DAY * DAY;
+  for (let x = 0; x < W; x += 2) {
+    const f = x / W;
+    const a = dayStart + BigInt(Math.round(f * Number(DAY)));
+    const cs = celestial(a);
+    dctx.fillStyle = css(skyColor(cs.light, cs.sunAlt, cs.occ));
+    dctx.fillRect(x, 0, 2, H);
+  }
+  const cx = Number(age % DAY) / Number(DAY) * W;
+  dctx.fillStyle = "rgba(255,255,255,0.9)";
+  dctx.fillRect(cx - dpr, 0, 2 * dpr, H);
+  dctx.fillStyle = "rgba(255,255,255,0.55)";
+  dctx.font = `${10 * dpr}px system-ui`;
+  for (let h = 0; h < 24; h += 6) {
+    dctx.fillRect(h / 24 * W, H - 4 * dpr, dpr, 4 * dpr);
+    dctx.fillText(`${String(h).padStart(2, "0")}:00`, h / 24 * W + 3 * dpr, H - 4 * dpr);
+  }
+}
+
+let yearCache = null;
+function drawYearStrip() {
+  const dpr = fitCanvas(yearCanvas);
+  const W = yearCanvas.width, H = yearCanvas.height;
+  const yearStart = age / YEAR * YEAR;
+  if (!yearCache || yearCache.W !== W || yearCache.start !== yearStart) {
+    const off = new OffscreenCanvas(W, H);
+    const octx = off.getContext("2d");
+    const cols = Math.floor(W / 2);
+    for (let i = 0; i < cols; i++) {
+      const dayIdx = BigInt(Math.floor(i / cols * Number(YEAR_DAYS)));
+      for (let j = 0; j < H; j += 2) {
+        const tod = j / H;
+        const a = yearStart + dayIdx * DAY + BigInt(Math.round(tod * Number(DAY)));
+        const cs = celestial(a);
+        const rgb = skyColor(cs.light, cs.sunAlt, 0);
+        octx.fillStyle = css(rgb);
+        octx.fillRect(i * 2, j, 2, 2);
+      }
+    }
+    octx.fillStyle = "rgba(255,255,255,0.25)";
+    for (let q = 1; q < 4; q++) octx.fillRect(q / 4 * W, 0, dpr, H);
+    octx.font = `${10 * dpr}px system-ui`;
+    octx.fillStyle = "rgba(255,255,255,0.6)";
+    SEASONS.forEach((n, i) => octx.fillText(n, (i / 4 + 0.008) * W, 11 * dpr));
+    yearCache = { W, start: yearStart, img: off };
+  }
+  yctx.drawImage(yearCache.img, 0, 0);
+  for (const ev of events) {
+    if (ev.peak < yearStart || ev.peak >= yearStart + YEAR) continue;
+    const x = Number(ev.peak - yearStart) / Number(YEAR) * W;
+    yctx.fillStyle = ev.kind === "solar" ? "rgba(255,170,60,0.95)" : "rgba(230,110,95,0.95)";
+    yctx.beginPath();
+    yctx.moveTo(x, 0);
+    yctx.lineTo(x - 4 * dpr, -8 * dpr + 8 * dpr);
+    yctx.arc(x, 5 * dpr, 3.2 * dpr, 0, TAU);
+    yctx.fill();
+  }
+  const cx = Number(age - yearStart) / Number(YEAR) * W;
+  yctx.fillStyle = "rgba(255,255,255,0.9)";
+  yctx.fillRect(cx - dpr, 0, 2 * dpr, H);
+  document.getElementById("yearLabel").textContent = `year ${age / YEAR}`;
+}
+
+let events = [];
+function classify(kind, peakState) {
+  const s = peakState;
+  if (kind === "solar") {
+    const central = s.sep <= Math.abs(s.moonR - SUN_DISC_RADIUS);
+    if (central) return s.moonR < SUN_DISC_RADIUS ? "annular" : "total";
+    return "partial";
+  }
+  return s.shadow >= 0.98 ? "total" : "partial";
+}
+
+function scanEvents(from, years) {
+  const out = [];
+  const step = 120000n;
+  const end = from + BigInt(years) * YEAR;
+  let solar = null, lunar = null;
+  for (let a = from; a < end; a += step) {
+    const s = celestial(a);
+    for (const [kind, val, alt] of [["solar", s.occ, s.sunAlt], ["lunar", s.shadow, s.moonAlt]]) {
+      let open = kind === "solar" ? solar : lunar;
+      if (open === null && val > 0.02) {
+        open = { kind, start: a, peak: a, mag: val, state: s, alt };
+      } else if (open !== null && val > open.mag) {
+        open.peak = a; open.mag = val; open.state = s; open.alt = alt;
+      } else if (open !== null && val <= 0.0) {
+        open.cls = classify(kind, open.state);
+        out.push(open);
+        open = null;
+      }
+      if (kind === "solar") solar = open; else lunar = open;
+    }
+  }
+  return out;
+}
+
+const GLYPHS = { solar: "☀", lunar: "🌕" };
+function renderEvents() {
+  const box = document.getElementById("events");
+  box.innerHTML = "";
+  const now = age;
+  for (const ev of events) {
+    if (ev.peak < now) continue;
+    const c = calendar(ev.peak);
+    const inDays = Number(ev.peak - now) / Number(DAY);
+    const visible = ev.alt > 0.02;
+    const row = document.createElement("div");
+    row.className = "ev";
+    const magPct = Math.round(ev.mag * 100);
+    row.innerHTML = `
+      <div class="glyph">${ev.kind === "solar" ? (ev.cls === "annular" ? "◍" : "◑") : "🌒"}</div>
+      <div>
+        <div class="what">${ev.kind} eclipse<span class="tag ${ev.cls}">${ev.cls}</span>${visible ? "" : '<span class="tag hidden">below horizon</span>'}</div>
+        <div class="meta">mag ${magPct}% · ${SEASONS[Math.floor(c.dayOfYear / Number(SEASON_DAYS))]} · /time ${(Number(ev.peak) / Number(DAY)).toFixed(3)}</div>
+      </div>
+      <div class="when"><b>day ${c.day} ${String(Math.floor(c.minuteOfDay / 60)).padStart(2, "0")}:${String(c.minuteOfDay % 60).padStart(2, "0")}</b>in ${inDays.toFixed(1)} d</div>`;
+    row.onclick = () => { age = ev.peak - 3n * DAY / 24n; yearCache = null; renderAll(true); };
+    box.appendChild(row);
+  }
+  if (!box.children.length) box.innerHTML = '<div class="foot">no eclipses in scan range</div>';
+}
+
+function rescan() {
+  events = scanEvents(age, 3);
+  renderEvents();
+}
+
+const fmt = (v, digits = 1) => v.toFixed(digits);
+function renderStats(s) {
+  const c = s.cal;
+  const season = SEASONS[Math.floor(c.dayOfYear / Number(SEASON_DAYS))];
+  const phase = PHASES[Math.round(c.synodic * 8) % 8];
+  const height = y => `${y >= 0 ? "+" : ""}${fmt(y, 2)}`;
+  const dist = s.moonScale;
+  const supermoon = dist > 1.15 && s.illum > 0.9;
+  const rows = [
+    ["day", `${c.day} <small>${String(Math.floor(c.minuteOfDay / 60)).padStart(2, "0")}:${String(c.minuteOfDay % 60).padStart(2, "0")}</small>`],
+    ["season", `${season} <small>${c.dayOfYear % Number(SEASON_DAYS) + 1}/${SEASON_DAYS}</small>`],
+    ["sun height", height(s.sunPos[1])],
+    ["moon height", height(s.moonAlt)],
+    ["moon", `${phase} <small>${Math.round(s.illum * 100)}%</small>`],
+    ["moon size", `${fmt(dist * 100, 0)}%${supermoon ? ' <span class="tag super">supermoon</span>' : ""}`],
+    ["light", `${Math.round(s.light * 100)}%`],
+    ["stars", `${Math.round(s.starVis * 100)}%`],
+  ];
+  document.getElementById("stats").innerHTML =
+    rows.map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+
+  const banner = document.getElementById("eclipseBanner");
+  if (s.occ > 0.02) {
+    const cls = classify("solar", s);
+    banner.textContent = `☀ solar eclipse in progress — ${cls}, occlusion ${Math.round(s.occ * 100)}%`;
+    banner.className = "banner on";
+  } else if (s.shadow > 0.02) {
+    const cls = classify("lunar", s);
+    banner.textContent = `🌒 lunar eclipse in progress — ${cls}, shadow ${Math.round(s.shadow * 100)}%`;
+    banner.className = "banner on";
+  } else {
+    banner.className = "banner";
+  }
+  document.getElementById("timeCmd").textContent = `/time ${(Number(age) / Number(DAY)).toFixed(3)}`;
+}
+
+function renderAll(full = false) {
+  const s = drawSky();
+  drawDayStrip(s);
+  drawYearStrip();
+  renderStats(s);
+  if (full) renderEvents();
+}
+
+function tick(now) {
+  const dt = Math.min((now - lastFrame) / 1000, 0.25);
+  lastFrame = now;
+  if (playing) {
+    age += BigInt(Math.round(dt * AGE_PER_SEC * speed));
+    if (events.length && age > events[events.length - 1].peak) rescan();
+  }
+  renderAll();
+  requestAnimationFrame(tick);
+}
+
+document.getElementById("btnPlay").onclick = e => {
+  playing = !playing;
+  e.target.textContent = playing ? "Pause" : "Play";
+};
+document.getElementById("speed").onchange = e => { speed = Number(e.target.value); };
+document.getElementById("btnFwdHour").onclick = () => { age += DAY / 24n; renderEvents(); };
+document.getElementById("btnBackHour").onclick = () => { age = age > DAY / 24n ? age - DAY / 24n : 0n; renderEvents(); };
+document.getElementById("btnFwdDay").onclick = () => { age += DAY; yearCache = null; renderEvents(); };
+document.getElementById("btnBackDay").onclick = () => { age = age > DAY ? age - DAY : 0n; yearCache = null; renderEvents(); };
+document.getElementById("btnJump").onclick = () => {
+  const v = Number(document.getElementById("jumpDay").value);
+  if (Number.isFinite(v) && v >= 0) { age = BigInt(Math.round(v * Number(DAY))); yearCache = null; rescan(); }
+};
+document.getElementById("btnRescan").onclick = rescan;
+document.getElementById("offset").onchange = e => {
+  try {
+    age = BigInt(e.target.value.trim() || "0") + DAY / 2n;
+    yearCache = null;
+    rescan();
+  } catch { e.target.value = "0"; }
+};
+let dayDrag = false;
+const dayScrub = e => {
+  const r = dayCanvas.getBoundingClientRect();
+  const f = clamp((e.clientX - r.left) / r.width, 0, 1);
+  age = age / DAY * DAY + BigInt(Math.round(f * Number(DAY)));
+};
+dayCanvas.addEventListener("pointerdown", e => {
+  dayDrag = true;
+  dayCanvas.setPointerCapture(e.pointerId);
+  dayScrub(e);
+});
+dayCanvas.addEventListener("pointermove", e => { if (dayDrag) dayScrub(e); });
+dayCanvas.addEventListener("pointerup", () => { dayDrag = false; renderEvents(); });
+yearCanvas.onclick = e => {
+  const r = yearCanvas.getBoundingClientRect();
+  const fx = clamp((e.clientX - r.left) / r.width, 0, 0.9999);
+  const fy = clamp((e.clientY - r.top) / r.height, 0, 0.9999);
+  const yearStart = age / YEAR * YEAR;
+  age = yearStart + BigInt(Math.round(fx * Number(YEAR_DAYS) * Number(DAY)));
+  age = age / DAY * DAY + BigInt(Math.round(fy * Number(DAY)));
+  renderEvents();
+};
+skyCanvas.onclick = () => {
+  playing = !playing;
+  document.getElementById("btnPlay").textContent = playing ? "Pause" : "Play";
+};
+
+rescan();
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>

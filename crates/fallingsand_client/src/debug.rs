@@ -12,7 +12,7 @@ use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::render::view::window::screenshot::{Screenshot, save_to_disk};
 use fallingsand_core::{
-    CHUNK_AREA, CHUNK_SIZE, Cell, ChunkPos, DirtyRect, Phase, REGION_SIZE_CELLS,
+    CHUNK_AREA, CHUNK_SIZE, Cell, ChunkPos, DirtyRect, Phase, REGION_SIZE_CELLS, SEASON_DAYS,
 };
 use std::collections::VecDeque;
 
@@ -450,8 +450,11 @@ fn update_overlay(
             };
             left_lines.push(String::new());
             left_lines.push(format!(
-                "day {} {:02}:{:02} {}{}",
+                "day {} {} {}/{} {:02}:{:02} {}{}",
                 world_time.calendar.day(),
+                world_time.calendar.season().label(),
+                world_time.calendar.day_of_year() as u64 % SEASON_DAYS + 1,
+                SEASON_DAYS,
                 minute_of_day / 60,
                 minute_of_day % 60,
                 moon_name(world_time.moon_phase()),
