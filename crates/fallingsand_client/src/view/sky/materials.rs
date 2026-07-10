@@ -100,12 +100,13 @@ impl Material2d for MoonMaterial {
 
 #[derive(ShaderType, Debug, Clone, Default)]
 pub struct StarfieldParams {
-    pub tiling: f32,
-    pub aspect: f32,
+    pub center: Vec2,
+    pub native_size: Vec2,
+    pub scroll: Vec2,
+    pub world_scale: f32,
     pub star_visibility: f32,
     pub horizon: f32,
     pub time: f32,
-    pub scroll: f32,
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]

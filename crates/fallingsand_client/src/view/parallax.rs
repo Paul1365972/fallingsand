@@ -8,7 +8,6 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderType};
 use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d};
-use fallingsand_core::smoothstep;
 
 const WALL_COLOR: Vec3 = Vec3::new(0.060, 0.052, 0.048);
 const FAR_BASE: f32 = 14.0;
@@ -151,10 +150,6 @@ pub fn setup_parallax(
     commands.insert_resource(ParallaxAssets { wall, far, near });
 }
 
-fn altitude_fade(pos_y: f32) -> f32 {
-    (1.0 - smoothstep(350.0, 900.0, pos_y)) * (1.0 - smoothstep(60.0, 220.0, -pos_y))
-}
-
 pub fn sync_parallax(
     sky: Res<Sky>,
     state: Res<CameraState>,
@@ -194,7 +189,6 @@ pub fn sync_parallax(
     let sky_linear = Vec3::new(linear.red, linear.green, linear.blue);
     let deep = Vec3::new(0.04, 0.05, 0.09);
     let dim = 1.0 - (1.0 - sky.state.light) * 0.85;
-    let fade = altitude_fade(state.pos.y);
 
     for (handle, ratio, mix) in [
         (&assets.far, FAR_RATIO, 0.35),
@@ -202,7 +196,7 @@ pub fn sync_parallax(
     ] {
         if let Some(mut material) = silhouette_mats.get_mut(handle) {
             let rgb = sky_linear.lerp(deep, mix) * dim;
-            material.params.color = rgb.extend(fade);
+            material.params.color = rgb.extend(1.0);
             let (snapped, _) = state.layer(ratio);
             material.params.snapped_cam = snapped.as_vec2();
             material.params.native_size = native;

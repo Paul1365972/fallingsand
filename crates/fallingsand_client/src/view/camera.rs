@@ -18,20 +18,29 @@ use bevy::ui::IsDefaultUiCamera;
 pub const VIRTUAL_WIDTH: f32 = 424.0;
 
 pub const WORLD_LAYER: usize = 1;
-pub const SKY_LAYER: usize = 2;
-pub const FAR_LAYER: usize = 3;
-pub const NEAR_LAYER: usize = 4;
-pub const WALL_LAYER: usize = 5;
+pub const STAR_LAYER: usize = 2;
+pub const SKY_LAYER: usize = 3;
+pub const FAR_LAYER: usize = 4;
+pub const NEAR_LAYER: usize = 5;
+pub const WALL_LAYER: usize = 6;
 
 pub const L_WORLD: usize = 0;
-pub const L_SKY: usize = 1;
-pub const L_FAR: usize = 2;
-pub const L_NEAR: usize = 3;
-pub const L_WALL: usize = 4;
+pub const L_STAR: usize = 1;
+pub const L_SKY: usize = 2;
+pub const L_FAR: usize = 3;
+pub const L_NEAR: usize = 4;
+pub const L_WALL: usize = 5;
 
 pub const FAR_RATIO: Vec2 = Vec2::new(0.88, 0.92);
 pub const NEAR_RATIO: Vec2 = Vec2::new(0.72, 0.80);
 pub const WALL_RATIO: Vec2 = Vec2::splat(0.15);
+
+pub const STAR_WORLD_TILE: f32 = 512.0;
+const STAR_DRIFT: f32 = -0.35;
+
+pub fn star_scroll(elapsed: f32) -> Vec2 {
+    Vec2::new((elapsed * STAR_DRIFT).rem_euclid(STAR_WORLD_TILE), 0.0)
+}
 
 pub struct LayerDef {
     pub render_layer: usize,
@@ -39,15 +48,25 @@ pub struct LayerDef {
     pub z: f32,
     pub follow: bool,
     pub lit: bool,
+    pub drift: bool,
 }
 
-pub const LAYERS: [LayerDef; 5] = [
+pub const LAYERS: [LayerDef; 6] = [
     LayerDef {
         render_layer: WORLD_LAYER,
         ratio: Vec2::ZERO,
         z: 0.0,
         follow: true,
         lit: true,
+        drift: false,
+    },
+    LayerDef {
+        render_layer: STAR_LAYER,
+        ratio: Vec2::ONE,
+        z: -46.0,
+        follow: false,
+        lit: false,
+        drift: true,
     },
     LayerDef {
         render_layer: SKY_LAYER,
@@ -55,6 +74,7 @@ pub const LAYERS: [LayerDef; 5] = [
         z: -44.0,
         follow: false,
         lit: false,
+        drift: false,
     },
     LayerDef {
         render_layer: FAR_LAYER,
@@ -62,6 +82,7 @@ pub const LAYERS: [LayerDef; 5] = [
         z: -40.0,
         follow: false,
         lit: false,
+        drift: false,
     },
     LayerDef {
         render_layer: NEAR_LAYER,
@@ -69,6 +90,7 @@ pub const LAYERS: [LayerDef; 5] = [
         z: -38.0,
         follow: false,
         lit: false,
+        drift: false,
     },
     LayerDef {
         render_layer: WALL_LAYER,
@@ -76,6 +98,7 @@ pub const LAYERS: [LayerDef; 5] = [
         z: -20.0,
         follow: false,
         lit: false,
+        drift: false,
     },
 ];
 
@@ -92,15 +115,16 @@ pub struct LayerCamera(pub usize);
 pub struct LayerQuad {
     pub ratio: Vec2,
     pub z: f32,
+    pub drift: bool,
 }
 
 #[derive(Resource)]
-pub struct LayerTargets(pub [Handle<Image>; 5]);
+pub struct LayerTargets(pub [Handle<Image>; 6]);
 
 #[derive(Resource)]
 pub struct LayerAssets {
     pub lighting: Handle<LightingMaterial>,
-    upscale: [Option<Handle<UpscaleMaterial>>; 5],
+    upscale: [Option<Handle<UpscaleMaterial>>; 6],
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
@@ -237,7 +261,7 @@ pub fn setup_camera(
         ..default()
     });
 
-    let targets: [Handle<Image>; 5] = std::array::from_fn(|_| native_target(&mut images, native));
+    let targets: [Handle<Image>; 6] = std::array::from_fn(|_| native_target(&mut images, native));
 
     for (i, def) in LAYERS.iter().enumerate() {
         let mut camera = commands.spawn((
@@ -279,13 +303,14 @@ pub fn setup_camera(
         params: LightingParams::default(),
         world: targets[L_WORLD].clone(),
     });
-    let mut upscale: [Option<Handle<UpscaleMaterial>>; 5] = Default::default();
+    let mut upscale: [Option<Handle<UpscaleMaterial>>; 6] = Default::default();
     commands.entity(composite).with_children(|parent| {
         for (i, def) in LAYERS.iter().enumerate() {
             let mut quad = parent.spawn((
                 LayerQuad {
                     ratio: def.ratio,
                     z: def.z,
+                    drift: def.drift,
                 },
                 Mesh2d(quad.clone()),
                 Transform::from_xyz(0.0, 0.0, def.z),
@@ -348,9 +373,16 @@ pub fn sync_camera(
     let size = (state.native * state.k).as_vec2();
     for (quad, mut transform) in &mut quads {
         let (_, remainder_px) = state.layer(quad.ratio);
+        let drift_px = if quad.drift {
+            let scroll = star_scroll(time.elapsed_secs());
+            (scroll - scroll.floor()) * state.k as f32
+        } else {
+            Vec2::ZERO
+        };
+        let raw = remainder_px + drift_px;
         let offset = match game.0.view_prefs.render_mode {
-            RenderMode::PixelPerfect => -remainder_px.round(),
-            RenderMode::Smooth => -remainder_px,
+            RenderMode::PixelPerfect => -raw.round(),
+            RenderMode::Smooth => -raw,
             RenderMode::Retro => Vec2::ZERO,
         };
         transform.translation = offset.extend(quad.z);

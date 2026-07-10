@@ -6,7 +6,10 @@ pub use materials::{HorizonMaterial, MoonMaterial, StarfieldMaterial, SunMateria
 pub use materials::{LightingMaterial, LightingParams};
 
 use super::Game;
-use super::camera::{CameraState, L_SKY, LayerCamera, SKY_LAYER, layer_camera};
+use super::camera::{
+    CameraState, L_SKY, L_STAR, LayerCamera, SKY_LAYER, STAR_LAYER, STAR_WORLD_TILE, layer_camera,
+    star_scroll,
+};
 use bevy::camera::visibility::RenderLayers;
 use bevy::image::{
     ImageAddressMode, ImageFilterMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor,
@@ -23,8 +26,6 @@ const ORBIT_RADIUS: f32 = 133.0;
 
 const SUN_SIZE: f32 = 48.0;
 const MOON_SIZE: f32 = 28.0;
-const STAR_TEX_SIZE: f32 = 512.0;
-const SIDEREAL_SCROLL_TILES: f32 = 1.0;
 
 const DEFAULT_CLEAR: Color = Color::srgb(0.08, 0.09, 0.13);
 
@@ -82,7 +83,10 @@ pub fn setup_sky(
     asset_server: Res<AssetServer>,
     cameras: Query<(Entity, &LayerCamera)>,
 ) {
-    let Some(sky_camera) = layer_camera(&cameras, L_SKY) else {
+    let (Some(sky_camera), Some(star_camera)) = (
+        layer_camera(&cameras, L_SKY),
+        layer_camera(&cameras, L_STAR),
+    ) else {
         return;
     };
     let quad = meshes.add(Rectangle::default());
@@ -111,15 +115,17 @@ pub fn setup_sky(
     });
     let horizon = horizon_mats.add(HorizonMaterial::default());
 
-    commands.entity(sky_camera).with_children(|parent| {
+    commands.entity(star_camera).with_children(|parent| {
         parent.spawn((
             StarfieldQuad,
             Mesh2d(quad.clone()),
             MeshMaterial2d(starfield.clone()),
-            Transform::from_xyz(0.0, 0.0, -60.0),
-            RenderLayers::layer(SKY_LAYER),
+            Transform::from_xyz(0.0, 0.0, 0.0),
+            RenderLayers::layer(STAR_LAYER),
             Visibility::Hidden,
         ));
+    });
+    commands.entity(sky_camera).with_children(|parent| {
         parent.spawn((
             HorizonQuad,
             Mesh2d(quad.clone()),
@@ -190,11 +196,12 @@ pub fn sync_sky(
     let synced = clock.is_some_and(|clock| clock.synced);
     sky.synced = synced;
 
+    let radius = ORBIT_RADIUS;
+    let center = Vec2::new(0.0, -HORIZON_FRAC * radius);
+
     if synced {
         let calendar = clock.unwrap().calendar;
         let celestial = calendar.celestial();
-        let radius = ORBIT_RADIUS;
-        let center = Vec2::new(0.0, -HORIZON_FRAC * radius);
 
         let sun_position = Vec2::from(celestial.sun_position) * radius;
         let moon_position = Vec2::from(celestial.moon_position) * radius;
@@ -202,7 +209,7 @@ pub fn sync_sky(
         let sun_altitude = celestial.sun_altitude;
         let solar_occlusion = celestial.solar_occlusion;
 
-        let moon_size = MOON_SIZE * celestial.moon_radius_scale;
+        let moon_size = (MOON_SIZE * celestial.moon_radius_scale).round().max(1.0);
         let world_to_moon_uv = 2.0 / moon_size;
         let umbra = (shade_position - moon_position) * world_to_moon_uv;
         let umbra_radius = SHADE_DISC_RADIUS * radius * world_to_moon_uv;
@@ -211,7 +218,7 @@ pub fn sync_sky(
         sky.star_visibility = celestial.star_visibility;
 
         if let Ok((mut transform, mut visibility)) = quads.p0().single_mut() {
-            transform.translation = (sun_position + center).extend(-50.0);
+            transform.translation = (sun_position + center).round().extend(-50.0);
             transform.scale = Vec3::new(SUN_SIZE, SUN_SIZE, 1.0);
             *visibility = Visibility::Inherited;
         }
@@ -221,7 +228,7 @@ pub fn sync_sky(
         }
 
         if let Ok((mut transform, mut visibility)) = quads.p1().single_mut() {
-            transform.translation = (moon_position + center).extend(-49.0);
+            transform.translation = (moon_position + center).round().extend(-49.0);
             transform.scale = Vec3::new(moon_size, moon_size, 1.0);
             *visibility = Visibility::Inherited;
         }
@@ -273,12 +280,13 @@ pub fn sync_sky(
         };
     }
     if let Some(mut material) = star_mats.get_mut(&assets.starfield) {
-        material.params.tiling = (native.x / STAR_TEX_SIZE).max(0.05);
-        material.params.aspect = (native.x / native.y).max(0.1);
+        material.params.center = center;
+        material.params.native_size = native;
+        material.params.scroll = star_scroll(real.elapsed_secs()).floor();
+        material.params.world_scale = STAR_WORLD_TILE;
         material.params.star_visibility = sky.star_visibility;
         material.params.horizon = horizon_uv;
         material.params.time = real.elapsed_secs();
-        material.params.scroll = -sky.state.sidereal * SIDEREAL_SCROLL_TILES;
     }
     if let Some(mut material) = horizon_mats.get_mut(&assets.horizon) {
         let day_haze = Vec3::new(0.72, 0.82, 0.96);
