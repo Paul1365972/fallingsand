@@ -20,7 +20,7 @@ pub struct PixelBodies {
 
 impl PixelBodies {
     pub fn body_at_mut(&mut self, pos: CellPos) -> Option<&mut PixelBody> {
-        self.bodies.iter_mut().find(|body| body.raster.covers(pos))
+        self.bodies.iter_mut().find(|body| body.covers(pos))
     }
 }
 
@@ -147,8 +147,8 @@ fn transfer_standing_weight(world: &CellWorld, bodies: &mut PixelBodies, dynamic
             continue;
         }
         let rx = (Fixed::cell_center(pos.x) - body.x).to_f32();
-        body.vy = body.vy.add_f32(share * body.inv_mass);
-        body.spin += rx * share * body.inv_inertia;
+        body.vy = body.vy.add_f32(share * body.inv_mass());
+        body.spin += rx * share * body.inv_inertia();
         body.rest_secs = 0.0;
         body.asleep = false;
     }

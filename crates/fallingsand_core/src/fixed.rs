@@ -24,10 +24,6 @@ impl Fixed {
     pub const HALF: Fixed = Fixed(SCALE / 2);
     pub const SUBUNIT: Fixed = Fixed(1);
 
-    pub const fn from_raw(raw: i32) -> Fixed {
-        Fixed(raw)
-    }
-
     pub const fn raw(self) -> i32 {
         self.0
     }

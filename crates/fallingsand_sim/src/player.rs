@@ -2,6 +2,7 @@ use crate::bodies::{Raster, commit_stamp};
 use crate::physics::Footprint;
 use crate::world::CellWorld;
 use fallingsand_core::{Cell, CellPos, MaterialId, MaterialRegistry};
+use rustc_hash::FxHashSet;
 
 pub const PLAYER_COLS: usize = 3;
 pub const STAND_ROWS: usize = 9;
@@ -36,9 +37,29 @@ const DUCK_PATTERN: [[u8; PLAYER_COLS]; DUCK_ROWS] = [
 
 #[derive(Debug, Default)]
 pub struct PlayerStamp {
-    pub raster: Option<Raster>,
-    pub ducked: bool,
-    pub facing_left: bool,
+    pub(crate) raster: Option<Raster>,
+    pub(crate) ducked: bool,
+    pub(crate) facing_left: bool,
+}
+
+impl PlayerStamp {
+    pub fn is_stamped(&self) -> bool {
+        self.raster.is_some()
+    }
+
+    pub fn facing_left(&self) -> bool {
+        self.facing_left
+    }
+
+    pub fn own_cells(&self) -> Option<&FxHashSet<CellPos>> {
+        self.raster.as_ref().map(|raster| &raster.set)
+    }
+
+    pub fn covers(&self, pos: CellPos) -> bool {
+        self.raster
+            .as_ref()
+            .is_some_and(|raster| raster.covers(pos))
+    }
 }
 
 fn shade_for(local: u16, ducked: bool, facing_left: bool) -> u8 {

@@ -46,7 +46,7 @@ pub fn replicate(
                 cy: body.0.y.floor_cell(),
                 ducking: control.0.ducking(),
                 burning: burning.active(),
-                facing_left: raster.0.facing_left,
+                facing_left: raster.0.facing_left(),
             },
         )
         .collect();

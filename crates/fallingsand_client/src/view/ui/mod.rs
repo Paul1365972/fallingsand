@@ -9,9 +9,25 @@ pub mod pause;
 use super::io::Btn;
 use bevy::prelude::*;
 use bevy::text::TextCursorStyle;
+use fallingsand_core::{IconSpec, ItemId, ItemRegistry, MaterialRegistry};
 
 pub const BUTTON_BG: Color = Color::srgb(0.14, 0.16, 0.22);
 pub const BUTTON_HOVER: Color = Color::srgb(0.22, 0.25, 0.33);
+
+pub fn item_color(item_reg: &ItemRegistry, materials: &MaterialRegistry, item: ItemId) -> [u8; 4] {
+    match item_reg.try_get(item).map(|def| def.icon) {
+        Some(IconSpec::MaterialSwatch(material)) => materials.get(material).colors[0],
+        _ => [180, 180, 190, 255],
+    }
+}
+
+pub fn format_count(count: u32) -> String {
+    if count >= 100_000 {
+        format!("{}k", count / 1000)
+    } else {
+        format!("{count}")
+    }
+}
 
 pub fn field_cursor_style() -> TextCursorStyle {
     TextCursorStyle {

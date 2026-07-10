@@ -109,6 +109,7 @@ pub(crate) struct Biome {
 }
 
 pub struct Band {
+    #[allow(dead_code)]
     pub name: &'static str,
     pub floor: Option<i32>,
     pub stone: MaterialId,

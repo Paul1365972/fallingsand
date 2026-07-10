@@ -7,13 +7,13 @@ struct Shared {
     closed: Mutex<Option<String>>,
 }
 
-pub struct MemoryConnection {
+pub(crate) struct MemoryConnection {
     tx: Sender<Vec<u8>>,
     rx: Mutex<Receiver<Vec<u8>>>,
     shared: Arc<Shared>,
 }
 
-pub fn memory_pair() -> (MemoryConnection, MemoryConnection) {
+pub(crate) fn memory_pair() -> (MemoryConnection, MemoryConnection) {
     let (ab_tx, ab_rx) = channel();
     let (ba_tx, ba_rx) = channel();
     let shared = Arc::new(Shared::default());
@@ -85,10 +85,10 @@ pub fn memory_listener() -> (MemoryListener, MemoryDialer) {
 }
 
 impl MemoryDialer {
-    pub fn connect(&self) -> Option<MemoryConnection> {
+    pub fn connect(&self) -> Option<Box<dyn Connection>> {
         let (client, server) = memory_pair();
         self.listener.send(server).ok()?;
-        Some(client)
+        Some(Box::new(client))
     }
 }
 

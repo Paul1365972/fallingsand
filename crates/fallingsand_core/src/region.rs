@@ -24,11 +24,6 @@ impl Region {
     }
 
     #[inline]
-    pub fn chunk(&self, offset: ChunkOffset) -> &Chunk {
-        &self.chunks[offset.index()]
-    }
-
-    #[inline]
     pub fn chunk_mut(&mut self, offset: ChunkOffset) -> &mut Chunk {
         &mut self.chunks[offset.index()]
     }

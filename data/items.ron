@@ -23,14 +23,12 @@
             display: "Wooden Pickaxe",
             stack_max: 1,
             icon: Some(Material("planks")),
-            tags: ["tool"],
         ),
         (
             name: "stone_pickaxe",
             display: "Stone Pickaxe",
             stack_max: 1,
             icon: Some(Material("stone")),
-            tags: ["tool"],
         ),
     ],
 )

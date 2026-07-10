@@ -18,7 +18,7 @@ pub struct WtConnection {
 }
 
 impl WtConnection {
-    pub fn new(
+    pub(crate) fn new(
         runtime: &tokio::runtime::Handle,
         session: web_transport_quinn::Session,
         send_stream: web_transport_quinn::SendStream,

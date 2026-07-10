@@ -5,8 +5,28 @@ use std::collections::HashMap;
 
 pub struct ViewChunk {
     pub cells: Box<[Cell; CHUNK_AREA]>,
-    pub dirty: bool,
-    pub pending: Vec<DirtyRect>,
+    dirty: bool,
+    pending: Vec<DirtyRect>,
+}
+
+impl ViewChunk {
+    pub fn take_full(&mut self) -> bool {
+        if self.dirty {
+            self.dirty = false;
+            self.pending.clear();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn take_pending(&mut self) -> Vec<DirtyRect> {
+        std::mem::take(&mut self.pending)
+    }
+
+    pub fn mark_full(&mut self) {
+        self.dirty = true;
+    }
 }
 
 #[derive(Default)]

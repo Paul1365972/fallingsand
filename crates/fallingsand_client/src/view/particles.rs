@@ -1,6 +1,6 @@
 use super::Game;
 use super::camera::WORLD_LAYER;
-use crate::game::players::{PLAYER_DUCK_SIZE, PLAYER_SIZE};
+use super::{PLAYER_DUCK_SIZE, PLAYER_SIZE};
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 use fallingsand_core::{Phase, REACH, SURVIVAL_REACH};
@@ -31,7 +31,7 @@ pub fn spawn_particles(
     let Some(ingame) = game.0.playing() else {
         return;
     };
-    if ingame.paused {
+    if ingame.paused() {
         return;
     }
 

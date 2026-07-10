@@ -34,13 +34,13 @@ pub struct ActorDynamics {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct Raster {
-    pub cells: Vec<(CellPos, u16)>,
-    pub set: FxHashSet<CellPos>,
+pub(crate) struct Raster {
+    pub(crate) cells: Vec<(CellPos, u16)>,
+    pub(crate) set: FxHashSet<CellPos>,
 }
 
 impl Raster {
-    pub fn covers(&self, pos: CellPos) -> bool {
+    pub(crate) fn covers(&self, pos: CellPos) -> bool {
         self.set.contains(&pos)
     }
 }
@@ -48,22 +48,22 @@ impl Raster {
 #[derive(Debug, Clone)]
 pub struct PixelBody {
     pub id: u32,
-    pub width: u8,
-    pub height: u8,
-    pub cells: Vec<Cell>,
-    pub perimeter: Vec<(u8, u8)>,
-    pub com_local: (f32, f32),
+    pub(crate) width: u8,
+    pub(crate) height: u8,
+    pub(crate) cells: Vec<Cell>,
+    pub(crate) perimeter: Vec<(u8, u8)>,
+    pub(crate) com_local: (f32, f32),
     pub x: Fixed,
     pub y: Fixed,
     pub vx: Fixed,
     pub vy: Fixed,
     pub angle: f32,
     pub spin: f32,
-    pub inv_mass: f32,
-    pub inv_inertia: f32,
+    pub(crate) inv_mass: f32,
+    pub(crate) inv_inertia: f32,
     pub restitution: f32,
     pub rest_secs: f32,
-    pub raster: Raster,
+    pub(crate) raster: Raster,
     pub frozen: bool,
     pub asleep: bool,
 }
@@ -79,6 +79,26 @@ pub fn wake_covering(bodies: &mut [PixelBody], pos: CellPos) {
 }
 
 impl PixelBody {
+    pub fn width(&self) -> u8 {
+        self.width
+    }
+
+    pub fn height(&self) -> u8 {
+        self.height
+    }
+
+    pub fn inv_mass(&self) -> f32 {
+        self.inv_mass
+    }
+
+    pub fn inv_inertia(&self) -> f32 {
+        self.inv_inertia
+    }
+
+    pub fn covers(&self, pos: CellPos) -> bool {
+        self.raster.covers(pos)
+    }
+
     fn offset_with(&self, sin: f32, cos: f32, lx: f32, ly: f32) -> (f32, f32) {
         let (dx, dy) = (lx - self.com_local.0, ly - self.com_local.1);
         (dx * cos - dy * sin, dx * sin + dy * cos)
@@ -177,6 +197,18 @@ pub(crate) fn commit_stamp(
     Some(vacated)
 }
 
+fn chebyshev_ring(radius: i32) -> Vec<(i32, i32)> {
+    let mut ring = Vec::new();
+    for dy in -radius..=radius {
+        for dx in -radius..=radius {
+            if dx.abs().max(dy.abs()) == radius {
+                ring.push((dx, dy));
+            }
+        }
+    }
+    ring
+}
+
 fn relocation_spot(
     world: &CellWorld,
     registry: &MaterialRegistry,
@@ -186,7 +218,7 @@ fn relocation_spot(
     from: CellPos,
 ) -> Option<CellPos> {
     for radius in 1..=RELOCATE_RADIUS {
-        let mut ring = crate::chebyshev_ring(radius);
+        let mut ring = chebyshev_ring(radius);
         ring.sort_by_key(|&(dx, dy)| (-dy, dx.abs()));
         for (dx, dy) in ring {
             let pos = from.translated(dx, dy);

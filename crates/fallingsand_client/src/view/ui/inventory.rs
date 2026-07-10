@@ -1,4 +1,5 @@
-use crate::game::inventory::{SlotRegion, format_count, item_color};
+use super::{format_count, item_color};
+use crate::game::inventory::SlotRegion;
 use crate::game::{ClientGame, InGame};
 use crate::view::Game;
 use bevy::platform::collections::HashSet;
@@ -256,7 +257,7 @@ fn craftable_flags(game: &ClientGame, ingame: &InGame) -> Vec<bool> {
     recipes
         .recipes()
         .iter()
-        .map(|recipe| recipes.can_craft(recipe, &ingame.inventory.store))
+        .map(|recipe| recipes.can_craft(recipe, ingame.inventory.store()))
         .collect()
 }
 

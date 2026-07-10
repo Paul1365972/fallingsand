@@ -96,7 +96,7 @@ pub fn per_tick_chance(rate: f32) -> f32 {
     1.0 - (-rate * crate::TICK_DT).exp()
 }
 
-pub fn per_tick_keep(rate: f32) -> f32 {
+pub(crate) fn per_tick_keep(rate: f32) -> f32 {
     (-rate * crate::TICK_DT).exp()
 }
 

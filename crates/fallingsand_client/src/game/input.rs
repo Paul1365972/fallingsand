@@ -212,7 +212,7 @@ fn global_hotkeys(game: &mut ClientGame, io: &IoFrame, ctrl: bool) {
         game.input.f3_combo = true;
         if let Flow::InGame(ingame) = &mut game.flow
             && let Some(session) = ingame.net.session.as_mut()
-            && session.player.is_some()
+            && session.player().is_some()
         {
             let target = match ingame.you.mode {
                 GameMode::Creative => "s",

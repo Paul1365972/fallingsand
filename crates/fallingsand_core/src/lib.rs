@@ -23,10 +23,7 @@ pub const SURVIVAL_REACH: f32 = 48.0;
 pub const BRUSH_RADIUS: u8 = 3;
 pub const MAX_BRUSH: u8 = 6;
 
-pub use calendar::{
-    AGE_PER_SEC, AGE_PER_TICK, Calendar, DAY_UNITS, ECCENTRE_UNITS, SEASON_DAYS, SYNODIC_UNITS,
-    Season, YEAR_DAYS, YEAR_UNITS,
-};
+pub use calendar::{Calendar, DAY_UNITS, SEASON_DAYS, Season};
 pub use celestial::{CelestialState, smoothstep};
 pub use cell::{Cell, VEL_ONE};
 pub use chunk::{CHUNK_AREA, CHUNK_SIZE, Chunk, DirtyRect};
@@ -38,6 +35,6 @@ pub use item::{
 };
 pub use material::{
     Dynamics, Material, MaterialId, MaterialRegistry, Phase, Product, Reaction, ReactionDef,
-    per_tick_chance, per_tick_keep,
+    per_tick_chance,
 };
 pub use region::{REGION_AREA_CHUNKS, REGION_SIZE_CELLS, REGION_SIZE_CHUNKS, Region};

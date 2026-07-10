@@ -75,13 +75,6 @@ impl DirtyRect {
         }
     }
 
-    pub const fn contains(self, offset: CellOffset) -> bool {
-        offset.x >= self.min_x
-            && offset.x <= self.max_x
-            && offset.y >= self.min_y
-            && offset.y <= self.max_y
-    }
-
     pub const fn width(self) -> u32 {
         if self.is_empty() {
             0
@@ -96,26 +89,6 @@ impl DirtyRect {
         } else {
             (self.max_y - self.min_y) as u32 + 1
         }
-    }
-
-    pub const fn expanded(self, n: u8) -> Self {
-        if self.is_empty() {
-            return self;
-        }
-        Self {
-            min_x: self.min_x.saturating_sub(n),
-            min_y: self.min_y.saturating_sub(n),
-            max_x: min_u8(self.max_x.saturating_add(n), (CHUNK_SIZE - 1) as u8),
-            max_y: min_u8(self.max_y.saturating_add(n), (CHUNK_SIZE - 1) as u8),
-        }
-    }
-
-    pub const fn touches_border(self) -> bool {
-        !self.is_empty()
-            && (self.min_x == 0
-                || self.min_y == 0
-                || self.max_x == (CHUNK_SIZE - 1) as u8
-                || self.max_y == (CHUNK_SIZE - 1) as u8)
     }
 }
 
@@ -142,17 +115,6 @@ impl Chunk {
             change: DirtyRect::EMPTY,
             prev_change: DirtyRect::EMPTY,
             sim: DirtyRect::EMPTY,
-            prev_sim: DirtyRect::EMPTY,
-            sleeping: true,
-        }
-    }
-
-    pub fn filled(cell: Cell) -> Self {
-        Self {
-            cells: Box::new([cell; CHUNK_AREA]),
-            change: DirtyRect::FULL,
-            prev_change: DirtyRect::EMPTY,
-            sim: DirtyRect::FULL,
             prev_sim: DirtyRect::EMPTY,
             sleeping: true,
         }

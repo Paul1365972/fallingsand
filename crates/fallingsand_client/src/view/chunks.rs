@@ -212,9 +212,7 @@ pub fn sync_chunks(
         return;
     };
     for (&pos, chunk) in ingame.world.chunks.iter_mut() {
-        if chunk.dirty {
-            chunk.dirty = false;
-            chunk.pending.clear();
+        if chunk.take_full() {
             visuals.uploads += 1;
             visuals.upload_bytes += CHUNK_AREA * 4;
 
@@ -261,17 +259,18 @@ pub fn sync_chunks(
             continue;
         }
 
-        if chunk.pending.is_empty() {
+        let pending = chunk.take_pending();
+        if pending.is_empty() {
             continue;
         }
         let image = match visuals.chunk_entities.get(&pos) {
             Some((_, image)) => image.id(),
             None => {
-                chunk.dirty = true;
+                chunk.mark_full();
                 continue;
             }
         };
-        for rect in chunk.pending.drain(..) {
+        for rect in pending {
             let data = pack_rect(&chunk.cells, rect);
             visuals.uploads += 1;
             visuals.upload_bytes += data.len();

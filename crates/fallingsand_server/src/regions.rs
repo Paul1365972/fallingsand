@@ -136,7 +136,7 @@ fn collect_dirty_saves(sim: &CellWorld, regions: &mut RegionMap) -> Vec<(RegionP
 }
 
 fn body_overlaps_region(body: &PixelBody, pos: RegionPos) -> bool {
-    let radius = ((body.width as f32).hypot(body.height as f32) + 1.0).ceil() as i32;
+    let radius = ((body.width() as f32).hypot(body.height() as f32) + 1.0).ceil() as i32;
     let base = pos.base_chunk().base_cell();
     let (cx, cy) = (body.x.floor_cell(), body.y.floor_cell());
     cx + radius > base.x
@@ -340,7 +340,7 @@ pub fn save_everything(world: &mut bevy_ecs::world::World, final_save: bool) {
                 for body in bodies.bodies.drain(..) {
                     settle_body(&mut sim.0, &registry, &body);
                     let radius =
-                        ((body.width as f32).hypot(body.height as f32) + 1.0).ceil() as i32;
+                        ((body.width() as f32).hypot(body.height() as f32) + 1.0).ceil() as i32;
                     let (cx, cy) = (body.x.floor_cell(), body.y.floor_cell());
                     let min = CellPos::new(cx - radius, cy - radius).region();
                     let max = CellPos::new(cx + radius + 1, cy + radius + 1).region();

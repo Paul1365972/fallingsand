@@ -143,7 +143,7 @@ pub enum Phase {
 pub struct InGame {
     pub net: Net,
     pub phase: Phase,
-    pub paused: bool,
+    paused: bool,
     pub world: WorldView,
     pub players: Players,
     pub you: SelfState,
@@ -167,6 +167,10 @@ impl InGame {
             clock: WorldClock::default(),
             debug: DebugState::default(),
         }
+    }
+
+    pub fn paused(&self) -> bool {
+        self.paused
     }
 
     pub fn set_paused(&mut self, paused: bool, input: &mut InputCore) {

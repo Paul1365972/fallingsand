@@ -101,13 +101,6 @@ impl ChunkPos {
             y: self.y << CHUNK_BITS,
         }
     }
-
-    pub const fn cell(self, offset: CellOffset) -> CellPos {
-        CellPos {
-            x: (self.x << CHUNK_BITS) | offset.x as i32,
-            y: (self.y << CHUNK_BITS) | offset.y as i32,
-        }
-    }
 }
 
 impl RegionPos {
@@ -139,13 +132,6 @@ impl RegionPos {
     pub const fn zorder_key(self) -> u64 {
         interleave(self.x as u32) | (interleave(self.y as u32) << 1)
     }
-
-    pub const fn from_zorder_key(key: u64) -> Self {
-        Self {
-            x: deinterleave(key) as i32,
-            y: deinterleave(key >> 1) as i32,
-        }
-    }
 }
 
 const fn interleave(v: u32) -> u64 {
@@ -156,16 +142,6 @@ const fn interleave(v: u32) -> u64 {
     x = (x | (x << 2)) & 0x3333_3333_3333_3333;
     x = (x | (x << 1)) & 0x5555_5555_5555_5555;
     x
-}
-
-const fn deinterleave(v: u64) -> u32 {
-    let mut x = v & 0x5555_5555_5555_5555;
-    x = (x | (x >> 1)) & 0x3333_3333_3333_3333;
-    x = (x | (x >> 2)) & 0x0F0F_0F0F_0F0F_0F0F;
-    x = (x | (x >> 4)) & 0x00FF_00FF_00FF_00FF;
-    x = (x | (x >> 8)) & 0x0000_FFFF_0000_FFFF;
-    x = (x | (x >> 16)) & 0x0000_0000_FFFF_FFFF;
-    x as u32
 }
 
 impl CellOffset {

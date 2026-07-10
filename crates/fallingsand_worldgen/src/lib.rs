@@ -1,11 +1,11 @@
-pub mod biomes;
-pub mod caves;
-pub mod features;
-pub mod noise;
-pub mod ores;
-pub mod structures;
-pub mod terrain;
-pub mod water;
+mod biomes;
+mod caves;
+mod features;
+mod noise;
+mod ores;
+mod structures;
+mod terrain;
+mod water;
 
 use biomes::{
     BEACH_DEPTH, BEACH_RANGE, Band, Beach, MAX_OVERHANG, MOSS_CHANCE, MOSS_MAX_DEPTH,
@@ -223,10 +223,6 @@ impl WorldGenerator {
             def,
             palette,
         })
-    }
-
-    pub const fn seed(&self) -> u64 {
-        self.seed
     }
 
     pub fn surface_height(&self, x: i32) -> i32 {

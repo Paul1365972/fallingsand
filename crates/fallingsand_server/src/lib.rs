@@ -26,40 +26,40 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-pub use fallingsand_core::TICK_RATE;
-pub const TICK_DURATION: Duration = Duration::from_nanos(1_000_000_000 / TICK_RATE as u64);
-pub const INTEREST_RADIUS_X: i32 = 6;
-pub const INTEREST_RADIUS_Y: i32 = 4;
-pub use fallingsand_core::{MAX_AIR_SECS, MAX_HP};
+pub(crate) use fallingsand_core::TICK_RATE;
+pub(crate) const TICK_DURATION: Duration = Duration::from_nanos(1_000_000_000 / TICK_RATE as u64);
+pub(crate) const INTEREST_RADIUS_X: i32 = 6;
+pub(crate) const INTEREST_RADIUS_Y: i32 = 4;
+pub(crate) use fallingsand_core::{MAX_AIR_SECS, MAX_HP};
 
 #[derive(Resource)]
-pub struct SimWorld(pub CellWorld);
+pub(crate) struct SimWorld(pub(crate) CellWorld);
 
 #[derive(Resource, Clone, Copy)]
-pub struct Flesh(pub fallingsand_core::MaterialId);
+pub(crate) struct Flesh(pub(crate) fallingsand_core::MaterialId);
 
 #[derive(Resource, Default)]
-pub struct PlayerImpulses(pub rustc_hash::FxHashMap<Entity, (f32, f32)>);
+pub(crate) struct PlayerImpulses(pub(crate) rustc_hash::FxHashMap<Entity, (f32, f32)>);
 
 #[derive(Resource, Clone)]
-pub struct Registry(pub Arc<MaterialRegistry>);
+pub(crate) struct Registry(pub(crate) Arc<MaterialRegistry>);
 
 #[derive(Resource)]
-pub struct NetListener(pub Box<dyn Listener>);
+pub(crate) struct NetListener(pub(crate) Box<dyn Listener>);
 
 #[derive(Resource, Clone, Copy)]
-pub struct SpawnPoint(pub CellPos);
+pub(crate) struct SpawnPoint(pub(crate) CellPos);
 
 #[derive(Resource, Default, Clone, Copy)]
-pub struct WorldClock(pub Calendar);
+pub(crate) struct WorldClock(pub(crate) Calendar);
 
 #[derive(Resource, Clone)]
-pub struct WorldInfo {
-    pub seed: u64,
-    pub name: String,
+pub(crate) struct WorldInfo {
+    pub(crate) seed: u64,
+    pub(crate) name: String,
 }
 
-pub use fallingsand_protocol::Stats;
+pub(crate) use fallingsand_protocol::Stats;
 
 #[derive(Resource, Default, Debug, Clone, Copy)]
 pub struct TickStats(pub Stats);
@@ -116,11 +116,11 @@ impl ServerControl {
         self.save.store(true, Ordering::Relaxed);
     }
 
-    pub fn stop_requested(&self) -> bool {
+    pub(crate) fn stop_requested(&self) -> bool {
         self.stop.load(Ordering::Relaxed)
     }
 
-    pub fn paused(&self) -> bool {
+    pub(crate) fn paused(&self) -> bool {
         self.paused.load(Ordering::Relaxed)
     }
 
@@ -251,18 +251,18 @@ impl Server {
         })
     }
 
-    pub fn tick(&mut self) {
+    pub(crate) fn tick(&mut self) {
         self.schedule.run(&mut self.world);
         if let Some(sink) = &self.stats_sink {
             *sink.lock().unwrap() = *self.world.resource::<TickStats>();
         }
     }
 
-    pub fn stats(&self) -> TickStats {
+    pub(crate) fn stats(&self) -> TickStats {
         *self.world.resource::<TickStats>()
     }
 
-    pub fn save_all(&mut self, final_save: bool) {
+    pub(crate) fn save_all(&mut self, final_save: bool) {
         regions::save_everything(&mut self.world, final_save);
     }
 
@@ -299,7 +299,7 @@ impl Server {
     }
 }
 
-pub struct StepTimer {
+pub(crate) struct StepTimer {
     period: Duration,
     last_time: Instant,
     last_period: Duration,
@@ -307,7 +307,7 @@ pub struct StepTimer {
 }
 
 impl StepTimer {
-    pub fn new(period: Duration) -> Self {
+    pub(crate) fn new(period: Duration) -> Self {
         Self {
             period,
             last_time: Instant::now(),
@@ -316,16 +316,16 @@ impl StepTimer {
         }
     }
 
-    pub fn tps(&self) -> f32 {
+    pub(crate) fn tps(&self) -> f32 {
         let secs = self.last_period.as_secs_f32();
         if secs > 0.0 { 1.0 / secs } else { 0.0 }
     }
 
-    pub fn slew_ms(&self) -> u32 {
+    pub(crate) fn slew_ms(&self) -> u32 {
         self.behind.as_millis() as u32
     }
 
-    pub fn sleep(&mut self) {
+    pub(crate) fn sleep(&mut self) {
         let passed = self.last_time.elapsed();
         if passed > self.period {
             self.behind += passed - self.period;

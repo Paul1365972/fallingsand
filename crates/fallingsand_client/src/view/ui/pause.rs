@@ -11,7 +11,7 @@ pub fn sync_pause(mut commands: Commands, game: Res<Game>, roots: Query<Entity, 
     let should_exist = game
         .0
         .ingame()
-        .is_some_and(|ingame| ingame.phase == Phase::Playing && ingame.paused);
+        .is_some_and(|ingame| ingame.phase == Phase::Playing && ingame.paused());
     let exists = !roots.is_empty();
     if should_exist && !exists {
         let singleplayer = game

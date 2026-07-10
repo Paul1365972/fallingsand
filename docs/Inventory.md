@@ -6,7 +6,7 @@ Item-centric inventory over the material sim. Items are the resource; materials 
 
 - `ItemId(u16)` (0 = none). `ItemStack { item, count: u32 }` — 8-byte `Copy`.
 - `ItemRegistry` from `data/items.ron` + one auto-generated material item per non-empty material (`"mat:<name>"`, `stack_max = 10_000`, swatch icon, `place = id`).
-- `ItemDef`: category, `stack_max`, icon (`MaterialSwatch` or atlas index), tags, optional `place` (material id). Named data items aren't placeable; tools are `stack_max = 1` stubs (no durability/use in v1).
+- `ItemDef`: category, `stack_max`, icon (`MaterialSwatch` or atlas index), optional `place` (material id). Named data items aren't placeable; tools are `stack_max = 1` stubs (no durability/use in v1).
 - `RecipeRegistry` from `data/recipes.ron` — shapeless, count-based (`inputs → output`).
 
 ## Slots

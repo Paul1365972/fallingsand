@@ -3,8 +3,6 @@ use bevy::math::Vec2;
 use fallingsand_protocol::{GameMode, PlayerId, TickFrame};
 use std::collections::HashMap;
 
-pub const PLAYER_SIZE: Vec2 = Vec2::new(3.0, 9.0);
-pub const PLAYER_DUCK_SIZE: Vec2 = Vec2::new(3.0, 5.0);
 const DAMAGE_FLASH_SECS: f32 = 0.35;
 
 pub struct RemotePlayer {

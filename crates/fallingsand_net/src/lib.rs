@@ -9,12 +9,12 @@ pub mod wt_native;
 #[cfg(all(feature = "wt-wasm", target_family = "wasm", target_os = "unknown"))]
 pub mod wt_wasm;
 
-pub use memory::{MemoryConnection, MemoryDialer, MemoryListener, memory_listener, memory_pair};
+pub use memory::{MemoryDialer, MemoryListener, memory_listener};
 
 pub const DEFAULT_PORT: u16 = 4433;
 
 #[cfg(any(feature = "wt-native", feature = "wt-wasm"))]
-pub fn normalize_server_url(input: &str) -> Result<url::Url, url::ParseError> {
+pub(crate) fn normalize_server_url(input: &str) -> Result<url::Url, url::ParseError> {
     let input = input.trim();
     let with_scheme = if input.contains("://") {
         input.to_string()

@@ -1,8 +1,5 @@
 use super::Changes;
-use fallingsand_core::{
-    BRUSH_RADIUS, IconSpec, Inventory as CoreInventory, ItemId, ItemRegistry, ItemStack,
-    MaterialRegistry,
-};
+use fallingsand_core::{BRUSH_RADIUS, Inventory as CoreInventory, ItemId, ItemStack};
 use fallingsand_protocol::{SlotAction, TickFrame};
 
 #[derive(Clone, Copy, PartialEq)]
@@ -14,7 +11,7 @@ pub enum SlotRegion {
 }
 
 pub struct Inventory {
-    pub store: CoreInventory,
+    store: CoreInventory,
     pub cursor: Option<ItemStack>,
     pub trash: Option<ItemStack>,
     pub selected: usize,
@@ -38,6 +35,10 @@ impl Default for Inventory {
 impl Inventory {
     pub fn slot(&self, index: usize) -> Option<ItemStack> {
         self.store.slots.get(index).copied().flatten()
+    }
+
+    pub fn store(&self) -> &CoreInventory {
+        &self.store
     }
 
     pub(super) fn apply(&mut self, tick: &TickFrame, changes: &mut Changes) {
@@ -84,20 +85,5 @@ pub(super) fn slot_action(region: SlotRegion, right: bool, shift: bool) -> Optio
         SlotRegion::Trash => (!right).then_some(SlotAction::Trash),
         SlotRegion::Craft(recipe) => (!right).then_some(SlotAction::Craft { recipe, all: shift }),
         SlotRegion::Palette(item) => (!right).then_some(SlotAction::CreativeGrab { item }),
-    }
-}
-
-pub fn item_color(item_reg: &ItemRegistry, materials: &MaterialRegistry, item: ItemId) -> [u8; 4] {
-    match item_reg.try_get(item).map(|def| def.icon) {
-        Some(IconSpec::MaterialSwatch(material)) => materials.get(material).colors[0],
-        _ => [180, 180, 190, 255],
-    }
-}
-
-pub fn format_count(count: u32) -> String {
-    if count >= 100_000 {
-        format!("{}k", count / 1000)
-    } else {
-        format!("{count}")
     }
 }

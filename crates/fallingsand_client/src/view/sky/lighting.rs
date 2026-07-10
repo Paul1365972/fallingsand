@@ -124,7 +124,7 @@ pub fn apply_lighting(
             .net
             .session
             .as_ref()
-            .and_then(|session| session.player);
+            .and_then(|session| session.player());
         for (&player, remote) in &ingame.players.roster {
             if Some(player) == local {
                 continue;

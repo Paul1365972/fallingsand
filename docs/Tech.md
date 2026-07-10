@@ -11,7 +11,7 @@ fallingsand_server    # Authoritative server: library + dedicated binary
 fallingsand_client    # Plain-Rust game core + bevy IO shell (game/ vs view/); builds native + WASM
 ```
 
-Direction: `core ← sim ← server`, `core ← protocol ← {server, client}`; the client reaches the sim only through the embedded server. `fallingsand_rng` is a dependency-free leaf (splitmix64) used by `core`, `sim`, and `worldgen`.
+Direction: `core ← sim ← server`, `core ← protocol ← {server, client}`; the client reaches the sim only through the embedded server. `fallingsand_rng` is a dependency-free leaf (splitmix64) used by `sim` and `worldgen`.
 
 - **Client stays WASM-clean** — the browser build is join-only, so rayon, storage, and the embedded server compile out for wasm. CI builds the client for `wasm32-unknown-unknown`.
 - Only the client depends on Bevy; only the server depends on redb.

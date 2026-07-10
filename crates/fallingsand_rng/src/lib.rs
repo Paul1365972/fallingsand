@@ -1,14 +1,14 @@
 const GOLDEN: u64 = 0x9e37_79b9_7f4a_7c15;
 
 #[inline]
-pub const fn mix(mut z: u64) -> u64 {
+pub(crate) const fn mix(mut z: u64) -> u64 {
     z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
     z ^ (z >> 31)
 }
 
 #[inline]
-pub const fn pack(x: i32, y: i32) -> u64 {
+pub(crate) const fn pack(x: i32, y: i32) -> u64 {
     ((x as u32 as u64) << 32) | y as u32 as u64
 }
 
@@ -109,11 +109,6 @@ impl Default for Hash {
 pub struct Rng(u64);
 
 impl Rng {
-    #[inline]
-    pub const fn new(seed: u64) -> Self {
-        Rng(seed)
-    }
-
     #[inline]
     pub fn draw(&mut self) -> Hash {
         self.0 = self.0.wrapping_add(GOLDEN);

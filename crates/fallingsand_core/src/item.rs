@@ -39,14 +39,7 @@ pub struct ItemDef {
     pub display: String,
     pub stack_max: u32,
     pub icon: IconSpec,
-    pub tags: Vec<String>,
     pub place: Option<MaterialId>,
-}
-
-impl ItemDef {
-    pub fn has_tag(&self, tag: &str) -> bool {
-        self.tags.iter().any(|t| t == tag)
-    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -60,8 +53,6 @@ struct ItemEntry {
     name: String,
     display: String,
     stack_max: u32,
-    #[serde(default)]
-    tags: Vec<String>,
     #[serde(default)]
     icon: Option<IconEntry>,
 }
@@ -114,7 +105,6 @@ impl ItemRegistry {
             display: "None".into(),
             stack_max: 0,
             icon: IconSpec::MaterialSwatch(MaterialId::AIR),
-            tags: Vec::new(),
             place: None,
         });
 
@@ -136,7 +126,6 @@ impl ItemRegistry {
                 display: entry.display,
                 stack_max: entry.stack_max.max(1),
                 icon,
-                tags: entry.tags,
                 place: None,
                 name: entry.name,
             };
@@ -158,7 +147,6 @@ impl ItemRegistry {
                 display: pretty_name(&material.name),
                 stack_max: MATERIAL_STACK_MAX,
                 icon: IconSpec::MaterialSwatch(id),
-                tags: Vec::new(),
                 place: Some(id),
                 name: name.clone(),
             };

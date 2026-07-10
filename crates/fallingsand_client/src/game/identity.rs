@@ -14,14 +14,15 @@ pub fn load_or_create() -> Identity {
     }
 }
 
-pub fn update_name(raw: &str) -> Option<Identity> {
-    let name = valid_name(raw.to_string())?;
+pub fn update_name(raw: &str) {
+    let Some(name) = valid_name(raw.to_string()) else {
+        return;
+    };
     let mut identity = stored_identity();
     if identity.name != name {
         identity.name = name;
         store(&identity);
     }
-    Some(identity)
 }
 
 fn stored_identity() -> Identity {

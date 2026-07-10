@@ -61,7 +61,7 @@ pub fn step_physics(
             continue;
         };
 
-        if raster.0.raster.is_none() {
+        if !raster.0.is_stamped() {
             spawn_stamp(
                 &mut sim.0,
                 &registry.0,
@@ -70,7 +70,7 @@ pub fn step_physics(
                 &mut body.0,
                 &mut control.0,
             );
-            if raster.0.raster.is_none() {
+            if !raster.0.is_stamped() {
                 continue;
             }
         }
@@ -86,7 +86,7 @@ pub fn step_physics(
         let snapshot = body.0;
         let was_ducking = control.0.ducking();
         let result = {
-            let own = raster.0.raster.as_ref().map(|r| &r.set);
+            let own = raster.0.own_cells();
             step_player(
                 &sim.0,
                 &registry.0,
@@ -106,7 +106,7 @@ pub fn step_physics(
         let facing_left = match player.input.move_x {
             x if x < 0 => true,
             x if x > 0 => false,
-            _ => raster.0.facing_left,
+            _ => raster.0.facing_left(),
         };
         commit_pose(
             &mut sim.0,
@@ -137,9 +137,9 @@ pub fn step_physics(
                     }
                     let rx = (Fixed::cell_center(blocked.pos.x) - pixel_body.x).to_f32();
                     let ry = (Fixed::cell_center(blocked.pos.y) - pixel_body.y).to_f32();
-                    pixel_body.vx = pixel_body.vx.add_f32(jx * pixel_body.inv_mass);
-                    pixel_body.vy = pixel_body.vy.add_f32(jy * pixel_body.inv_mass);
-                    pixel_body.spin += (rx * jy - ry * jx) * pixel_body.inv_inertia;
+                    pixel_body.vx = pixel_body.vx.add_f32(jx * pixel_body.inv_mass());
+                    pixel_body.vy = pixel_body.vy.add_f32(jy * pixel_body.inv_mass());
+                    pixel_body.spin += (rx * jy - ry * jx) * pixel_body.inv_inertia();
                     pixel_body.rest_secs = 0.0;
                     pixel_body.asleep = false;
                 }
@@ -164,14 +164,9 @@ pub fn step_physics(
 
     impulses.0.clear();
     for (pos, jx, jy) in shoves {
-        let target = query.iter().find_map(|(entity, _, _, _, raster, ..)| {
-            raster
-                .0
-                .raster
-                .as_ref()
-                .is_some_and(|r| r.covers(pos))
-                .then_some(entity)
-        });
+        let target = query
+            .iter()
+            .find_map(|(entity, _, _, _, raster, ..)| raster.0.covers(pos).then_some(entity));
         if let Some(target) = target {
             let entry = impulses.0.entry(target).or_insert((0.0, 0.0));
             entry.0 += jx;
@@ -218,8 +213,7 @@ fn commit_pose(
             _ => {}
         }
         if attempt != 0 {
-            let own = stamp.raster.as_ref().map(|r| &r.set);
-            body.on_ground = grounded(sim, registry, body, own);
+            body.on_ground = grounded(sim, registry, body, stamp.own_cells());
         }
         wake_neighbours(sim, bodies, stamp, &vacated);
         return;
@@ -228,8 +222,7 @@ fn commit_pose(
     body.vx = Fixed::ZERO;
     body.vy = Fixed::ZERO;
     control.set_ducking(was_ducking);
-    let own = stamp.raster.as_ref().map(|r| &r.set);
-    body.on_ground = grounded(sim, registry, body, own);
+    body.on_ground = grounded(sim, registry, body, stamp.own_cells());
 }
 
 fn wake_neighbours(
@@ -242,7 +235,7 @@ fn wake_neighbours(
     for &pos in vacated {
         for (dx, dy) in NEIGHBORS {
             let neighbor = pos.translated(dx, dy);
-            if stamp.raster.as_ref().is_some_and(|r| r.covers(neighbor)) {
+            if stamp.covers(neighbor) {
                 continue;
             }
             if sim.get_cell(neighbor).is_some_and(|cell| cell.is_body()) {

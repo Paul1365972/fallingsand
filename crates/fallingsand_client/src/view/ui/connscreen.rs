@@ -60,7 +60,7 @@ pub fn sync_connscreen(
     let phase = ingame
         .net
         .supervisor
-        .phase(ingame.net.session.as_ref(), ingame.paused);
+        .phase(ingame.net.session.as_ref(), ingame.paused());
     let server = ingame
         .net
         .supervisor

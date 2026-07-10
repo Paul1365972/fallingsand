@@ -4,7 +4,7 @@ use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 
 const COMPRESSION_THRESHOLD: usize = 256;
-pub const CELL_WIRE_BYTES: usize = 3;
+const CELL_WIRE_BYTES: usize = 3;
 const MAX_DECOMPRESSED_LEN: usize = 64 * 1024 * 1024;
 
 const TAG_RAW: u8 = 0;

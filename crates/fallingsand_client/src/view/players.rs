@@ -1,6 +1,6 @@
 use super::Game;
+use super::PLAYER_SIZE;
 use super::camera::CameraState;
-use crate::game::players::PLAYER_SIZE;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
@@ -22,7 +22,7 @@ pub fn sync_nametags(
     mut tags: Query<(&NameTag, &mut Text2d, &mut Transform, &mut Visibility)>,
 ) {
     let ingame = game.0.ingame();
-    let local = ingame.and_then(|ingame| ingame.net.session.as_ref()?.player);
+    let local = ingame.and_then(|ingame| ingame.net.session.as_ref()?.player());
 
     visuals.0.retain(|player, entity| {
         let live = ingame.is_some_and(|ingame| ingame.players.roster.contains_key(player))

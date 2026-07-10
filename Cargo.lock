@@ -2587,8 +2587,6 @@ dependencies = [
 name = "fallingsand_core"
 version = "0.2.0"
 dependencies = [
- "fallingsand_rng",
- "postcard",
  "ron",
  "serde",
  "thiserror 2.0.18",

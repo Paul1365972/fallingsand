@@ -19,7 +19,7 @@ fn retry_delay(attempt: u32) -> f32 {
 
 pub struct Session {
     conn: Box<dyn Connection>,
-    pub player: Option<PlayerId>,
+    player: Option<PlayerId>,
     pub rx_bytes: u64,
     pub rx_per_sec: u64,
     since_rx: f32,
@@ -51,6 +51,10 @@ impl Session {
 
     pub fn send(&mut self, message: &ClientMessage) {
         self.conn.send(encode_message(message));
+    }
+
+    pub fn player(&self) -> Option<PlayerId> {
+        self.player
     }
 
     fn status(&self) -> ConnectionStatus {
@@ -551,8 +555,7 @@ mod embedded {
             })
             .expect("spawn embedded server thread");
 
-        let conn = dialer.connect().expect("connect to embedded server");
-        let session = Session::new(Box::new(conn));
+        let session = Session::new(dialer.connect().expect("connect to embedded server"));
         let server = EmbeddedServer {
             control,
             thread: Some(thread),
