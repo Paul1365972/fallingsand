@@ -1,16 +1,18 @@
 use crate::camera::{
-    CameraControl, SkyCamera, VIRTUAL_HEIGHT, VIRTUAL_WIDTH, WorldCamera, WorldTarget,
+    CameraSet, CameraState, CompositeCamera, LayerQuad, SKY_LAYER, SkyLayerCamera, SkyTarget,
+    WorldTarget,
 };
 use crate::net::{NetSet, Session, TickMessage};
 use crate::player::{PlayerVisual, PlayerVisuals};
 use crate::worldview::WorldView;
 use crate::{AppState, ClientRegistry, GameState};
+use bevy::camera::visibility::RenderLayers;
 use bevy::image::{
     ImageAddressMode, ImageFilterMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor,
 };
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderType};
-use bevy::shader::ShaderRef;
+use bevy::shader::{Shader, ShaderRef};
 use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dPlugin};
 use fallingsand_core::celestial::SHADE_DISC_RADIUS;
 use fallingsand_core::{Calendar, CelestialState, CellPos, smoothstep};
@@ -59,11 +61,34 @@ impl Sky {
     }
 }
 
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LightSet;
+
+#[derive(Resource, Default)]
+pub struct ActiveLights {
+    pub lights: Vec<Vec4>,
+    pub darkness: f32,
+}
+
+impl ActiveLights {
+    pub fn write(&self, params: &mut LightingParams) {
+        params.darkness = self.darkness;
+        params.light_count = self.lights.len().min(MAX_LIGHTS) as u32;
+        let mut array = [Vec4::ZERO; MAX_LIGHTS];
+        for (slot, light) in array.iter_mut().zip(self.lights.iter()) {
+            *slot = *light;
+        }
+        params.lights = array;
+    }
+}
+
 #[derive(ShaderType, Debug, Clone)]
 pub struct LightingParams {
     pub lights: [Vec4; MAX_LIGHTS],
     pub darkness: f32,
     pub light_count: u32,
+    pub snapped_cam: Vec2,
+    pub native_size: Vec2,
 }
 
 impl Default for LightingParams {
@@ -72,6 +97,8 @@ impl Default for LightingParams {
             lights: [Vec4::ZERO; MAX_LIGHTS],
             darkness: 0.0,
             light_count: 0,
+            snapped_cam: Vec2::ZERO,
+            native_size: Vec2::ONE,
         }
     }
 }
@@ -88,6 +115,23 @@ pub struct LightingMaterial {
 impl Material2d for LightingMaterial {
     fn fragment_shader() -> ShaderRef {
         "shaders/lighting.wgsl".into()
+    }
+
+    fn alpha_mode(&self) -> AlphaMode2d {
+        AlphaMode2d::Blend
+    }
+}
+
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
+pub struct SkyCompositeMaterial {
+    #[texture(0)]
+    #[sampler(1)]
+    pub texture: Handle<Image>,
+}
+
+impl Material2d for SkyCompositeMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/sky_composite.wgsl".into()
     }
 
     fn alpha_mode(&self) -> AlphaMode2d {
@@ -210,18 +254,17 @@ struct SkyAssets {
     horizon: Handle<HorizonMaterial>,
 }
 
+#[derive(Resource)]
+struct SharedShaders(#[allow(dead_code)] Vec<Handle<Shader>>);
+
 #[derive(Resource, Default)]
 struct EmissiveLights(Vec<Vec4>);
 
-fn view_size(window: &Window, zoom: f32) -> Vec2 {
-    let width = window.width().max(1.0);
-    let height = window.height().max(1.0);
-    let per_pixel = (VIRTUAL_WIDTH / width).max(VIRTUAL_HEIGHT / height) * zoom;
-    Vec2::new(width, height) * per_pixel
-}
-
 #[derive(Component)]
 struct LitWorldQuad;
+
+#[derive(Component)]
+struct SkyQuad;
 
 #[derive(Component)]
 struct StarfieldQuad;
@@ -238,6 +281,7 @@ struct MoonVisual;
 impl Plugin for SkyPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(Material2dPlugin::<LightingMaterial>::default())
+            .add_plugins(Material2dPlugin::<SkyCompositeMaterial>::default())
             .add_plugins(Material2dPlugin::<SunMaterial>::default())
             .add_plugins(Material2dPlugin::<MoonMaterial>::default())
             .add_plugins(Material2dPlugin::<StarfieldMaterial>::default())
@@ -245,6 +289,8 @@ impl Plugin for SkyPlugin {
             .init_resource::<WorldTime>()
             .init_resource::<Sky>()
             .init_resource::<EmissiveLights>()
+            .init_resource::<ActiveLights>()
+            .add_systems(Startup, load_shared_shaders)
             .add_systems(PostStartup, setup_sky)
             .add_systems(
                 PreUpdate,
@@ -255,15 +301,24 @@ impl Plugin for SkyPlugin {
                 (
                     update_orbits,
                     update_sky_tint,
-                    fit_fullscreen_quads,
+                    fit_sky_quads,
                     scan_emissive,
+                    collect_lights.in_set(LightSet),
                     apply_lighting,
                 )
                     .chain()
+                    .after(CameraSet::Derive)
                     .run_if(in_state(GameState::Playing)),
             )
             .add_systems(OnExit(AppState::InGame), reset_sky);
     }
+}
+
+fn load_shared_shaders(mut commands: Commands, asset_server: Res<AssetServer>) {
+    commands.insert_resource(SharedShaders(vec![
+        asset_server.load("shaders/layer_common.wgsl"),
+        asset_server.load("shaders/light_common.wgsl"),
+    ]));
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -271,18 +326,24 @@ fn setup_sky(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut lighting_mats: ResMut<Assets<LightingMaterial>>,
+    mut sky_composite_mats: ResMut<Assets<SkyCompositeMaterial>>,
     mut sun_mats: ResMut<Assets<SunMaterial>>,
     mut moon_mats: ResMut<Assets<MoonMaterial>>,
     mut star_mats: ResMut<Assets<StarfieldMaterial>>,
     mut horizon_mats: ResMut<Assets<HorizonMaterial>>,
     asset_server: Res<AssetServer>,
     world_target: Res<WorldTarget>,
-    camera: Single<Entity, With<SkyCamera>>,
+    sky_target: Res<SkyTarget>,
+    composite: Single<Entity, With<CompositeCamera>>,
+    sky_camera: Single<Entity, With<SkyLayerCamera>>,
 ) {
     let quad = meshes.add(Rectangle::default());
     let lighting = lighting_mats.add(LightingMaterial {
         params: LightingParams::default(),
         world: world_target.0.clone(),
+    });
+    let sky_composite = sky_composite_mats.add(SkyCompositeMaterial {
+        texture: sky_target.0.clone(),
     });
     let sun = sun_mats.add(SunMaterial {
         params: SunParams::default(),
@@ -309,12 +370,13 @@ fn setup_sky(
     });
     let horizon = horizon_mats.add(HorizonMaterial::default());
 
-    commands.entity(*camera).with_children(|parent| {
+    commands.entity(*sky_camera).with_children(|parent| {
         parent.spawn((
             StarfieldQuad,
             Mesh2d(quad.clone()),
             MeshMaterial2d(starfield.clone()),
             Transform::from_xyz(0.0, 0.0, -60.0),
+            RenderLayers::layer(SKY_LAYER),
             Visibility::Hidden,
         ));
         parent.spawn((
@@ -322,6 +384,7 @@ fn setup_sky(
             Mesh2d(quad.clone()),
             MeshMaterial2d(horizon.clone()),
             Transform::from_xyz(0.0, 0.0, -45.0),
+            RenderLayers::layer(SKY_LAYER),
             Visibility::Hidden,
         ));
         parent.spawn((
@@ -329,15 +392,34 @@ fn setup_sky(
             Mesh2d(quad.clone()),
             MeshMaterial2d(sun.clone()),
             Transform::from_xyz(0.0, -1000.0, -50.0),
+            RenderLayers::layer(SKY_LAYER),
         ));
         parent.spawn((
             MoonVisual,
             Mesh2d(quad.clone()),
             MeshMaterial2d(moon.clone()),
             Transform::from_xyz(0.0, -1000.0, -49.0),
+            RenderLayers::layer(SKY_LAYER),
+        ));
+    });
+
+    commands.entity(*composite).with_children(|parent| {
+        parent.spawn((
+            SkyQuad,
+            LayerQuad {
+                ratio: Vec2::ONE,
+                z: -44.0,
+            },
+            Mesh2d(quad.clone()),
+            MeshMaterial2d(sky_composite),
+            Transform::from_xyz(0.0, 0.0, -44.0),
         ));
         parent.spawn((
             LitWorldQuad,
+            LayerQuad {
+                ratio: Vec2::ZERO,
+                z: 0.0,
+            },
             Mesh2d(quad),
             MeshMaterial2d(lighting.clone()),
             Transform::from_xyz(0.0, 0.0, 0.0),
@@ -421,7 +503,7 @@ fn update_orbits(
     }
 }
 
-fn sky_color(light: f32, sun_alt: f32, solar_occ: f32) -> Vec3 {
+pub fn sky_color(light: f32, sun_alt: f32, solar_occ: f32) -> Vec3 {
     let night = Vec3::new(0.015, 0.025, 0.055);
     let day = Vec3::new(0.40, 0.60, 0.86);
     let horizon = Vec3::new(0.85, 0.45, 0.28);
@@ -450,16 +532,15 @@ fn update_sky_tint(sky: Res<Sky>, mut clear: ResMut<ClearColor>) {
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
-fn fit_fullscreen_quads(
+fn fit_sky_quads(
     sky: Res<Sky>,
     real: Res<Time>,
-    window: Single<&Window>,
-    control: Res<CameraControl>,
+    state: Res<CameraState>,
     assets: Res<SkyAssets>,
     mut star_mats: ResMut<Assets<StarfieldMaterial>>,
     mut horizon_mats: ResMut<Assets<HorizonMaterial>>,
     mut world_q: Query<
-        (&mut Transform, &mut Visibility),
+        &mut Visibility,
         (
             With<LitWorldQuad>,
             Without<StarfieldQuad>,
@@ -483,11 +564,9 @@ fn fit_fullscreen_quads(
         ),
     >,
 ) {
-    let view = view_size(&window, control.zoom);
-    let size = view * 1.1;
-    let horizon_uv = 0.5 + HORIZON_FRAC * ORBIT_RADIUS / view.y;
-    for (mut transform, mut visibility) in &mut world_q {
-        transform.scale = Vec3::new(view.x, view.y, 1.0);
+    let native = state.native.as_vec2();
+    let horizon_uv = 0.5 + HORIZON_FRAC * ORBIT_RADIUS / native.y;
+    for mut visibility in &mut world_q {
         *visibility = if sky.synced {
             Visibility::Inherited
         } else {
@@ -496,7 +575,7 @@ fn fit_fullscreen_quads(
     }
     let stars_on = sky.synced && sky.star_visibility > 0.001;
     for (mut transform, mut visibility) in &mut star_q {
-        transform.scale = Vec3::new(size.x, size.y, 1.0);
+        transform.scale = Vec3::new(native.x, native.y, 1.0);
         *visibility = if stars_on {
             Visibility::Inherited
         } else {
@@ -504,7 +583,7 @@ fn fit_fullscreen_quads(
         };
     }
     for (mut transform, mut visibility) in &mut horizon_q {
-        transform.scale = Vec3::new(size.x, size.y, 1.0);
+        transform.scale = Vec3::new(native.x, native.y, 1.0);
         *visibility = if sky.synced {
             Visibility::Inherited
         } else {
@@ -512,8 +591,8 @@ fn fit_fullscreen_quads(
         };
     }
     if let Some(mut material) = star_mats.get_mut(&assets.starfield) {
-        material.params.tiling = (view_size(&window, 1.0).x * 1.1 / STAR_TEX_SIZE).max(0.05);
-        material.params.aspect = (window.width() / window.height().max(1.0)).max(0.1);
+        material.params.tiling = (native.x / STAR_TEX_SIZE).max(0.05);
+        material.params.aspect = (native.x / native.y).max(0.1);
         material.params.star_visibility = sky.star_visibility;
         material.params.horizon = horizon_uv;
         material.params.time = real.elapsed_secs();
@@ -532,15 +611,12 @@ fn fit_fullscreen_quads(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn scan_emissive(
     sky: Res<Sky>,
     real: Res<Time>,
     registry: Res<ClientRegistry>,
     view: Res<WorldView>,
-    window: Single<&Window>,
-    control: Res<CameraControl>,
-    camera: Single<&Transform, With<WorldCamera>>,
+    state: Res<CameraState>,
     mut emissive_lights: ResMut<EmissiveLights>,
     mut cooldown: Local<f32>,
 ) {
@@ -557,8 +633,8 @@ fn scan_emissive(
     }
 
     let mut lights: Vec<Vec4> = Vec::new();
-    let center = camera.translation.truncate();
-    let half = view_size(&window, control.zoom) / 2.0 + 32.0;
+    let center = state.pos;
+    let half = state.view_cells() / 2.0 + 32.0;
     let emissive = registry.0.tag_mask("emissive");
     let min_x =
         ((center.x - half.x) as i32).div_euclid(EMISSIVE_SCAN_STRIDE) * EMISSIVE_SCAN_STRIDE;
@@ -596,32 +672,26 @@ fn scan_emissive(
     emissive_lights.0 = lights;
 }
 
-fn apply_lighting(
+fn collect_lights(
     sky: Res<Sky>,
-    assets: Res<SkyAssets>,
-    mut materials: ResMut<Assets<LightingMaterial>>,
     emissive_lights: Res<EmissiveLights>,
     session: Option<Res<Session>>,
     visuals: Res<PlayerVisuals>,
     players: Query<(&Transform, &PlayerVisual)>,
+    mut active: ResMut<ActiveLights>,
 ) {
-    let Some(mut material) = materials.get_mut(&assets.lighting) else {
-        return;
-    };
-    let darkness = if sky.synced { sky.darkness() } else { 0.0 };
-    material.params.darkness = darkness;
-    if darkness <= 0.001 {
-        material.params.light_count = 0;
+    active.darkness = if sky.synced { sky.darkness() } else { 0.0 };
+    active.lights.clear();
+    if active.darkness <= 0.001 {
         return;
     }
 
-    let mut lights: Vec<Vec4> = Vec::new();
     let local = session.and_then(|session| session.player);
     if let Some(id) = local
         && let Some(&entity) = visuals.0.get(&id)
         && let Ok((transform, _)) = players.get(entity)
     {
-        lights.push(Vec4::new(
+        active.lights.push(Vec4::new(
             transform.translation.x,
             transform.translation.y,
             PLAYER_LIGHT_RADIUS,
@@ -629,8 +699,8 @@ fn apply_lighting(
         ));
     }
     for (transform, visual) in &players {
-        if visual.burning && lights.len() < MAX_LIGHTS {
-            lights.push(Vec4::new(
+        if visual.burning && active.lights.len() < MAX_LIGHTS {
+            active.lights.push(Vec4::new(
                 transform.translation.x,
                 transform.translation.y,
                 BURNING_LIGHT_RADIUS,
@@ -639,18 +709,26 @@ fn apply_lighting(
         }
     }
     for light in &emissive_lights.0 {
-        if lights.len() >= MAX_LIGHTS {
+        if active.lights.len() >= MAX_LIGHTS {
             break;
         }
-        lights.push(*light);
+        active.lights.push(*light);
     }
+}
 
-    material.params.light_count = lights.len().min(MAX_LIGHTS) as u32;
-    let mut array = [Vec4::ZERO; MAX_LIGHTS];
-    for (slot, light) in array.iter_mut().zip(lights.iter()) {
-        *slot = *light;
-    }
-    material.params.lights = array;
+fn apply_lighting(
+    state: Res<CameraState>,
+    active: Res<ActiveLights>,
+    assets: Res<SkyAssets>,
+    mut materials: ResMut<Assets<LightingMaterial>>,
+) {
+    let Some(mut material) = materials.get_mut(&assets.lighting) else {
+        return;
+    };
+    active.write(&mut material.params);
+    let (snapped, _) = state.layer(Vec2::ZERO);
+    material.params.snapped_cam = snapped.as_vec2();
+    material.params.native_size = state.native.as_vec2();
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -659,6 +737,7 @@ fn reset_sky(
     mut sky: ResMut<Sky>,
     mut clear: ResMut<ClearColor>,
     mut emissive_lights: ResMut<EmissiveLights>,
+    mut active: ResMut<ActiveLights>,
     assets: Option<Res<SkyAssets>>,
     mut lighting_mats: ResMut<Assets<LightingMaterial>>,
     mut sun_mats: ResMut<Assets<SunMaterial>>,
@@ -670,6 +749,7 @@ fn reset_sky(
     *sky = Sky::default();
     clear.0 = Color::srgb(0.08, 0.09, 0.13);
     emissive_lights.0.clear();
+    *active = ActiveLights::default();
     if let Some(assets) = assets {
         if let Some(mut material) = lighting_mats.get_mut(&assets.lighting) {
             material.params = LightingParams::default();

@@ -1,4 +1,4 @@
-use crate::camera::SkyCamera;
+use crate::camera::CameraState;
 use crate::chat::ChatOpen;
 use crate::inventory::{BrushRadius, InventoryOpen, SelectedSlot};
 use crate::net::{NetSet, ServerMsg, Session, SessionEnded};
@@ -28,6 +28,7 @@ const SCREENSHOT_KEY: KeyCode = KeyCode::F2;
 const DEBUG_KEY: KeyCode = KeyCode::F3;
 const DEBUG_BORDERS_KEY: KeyCode = KeyCode::KeyG;
 const DEBUG_GAMEMODE_KEY: KeyCode = KeyCode::KeyN;
+const DEBUG_RENDERMODE_KEY: KeyCode = KeyCode::KeyR;
 const FULLSCREEN_KEY: KeyCode = KeyCode::F11;
 const SLOT_KEYS: [KeyCode; 9] = [
     KeyCode::Digit1,
@@ -66,6 +67,7 @@ pub enum LocalAction {
     ToggleDebugOverlay,
     ToggleDebugBorders,
     ToggleGameMode,
+    CycleRenderMode,
     Screenshot,
     ToggleFullscreen,
     Zoom(f32),
@@ -156,13 +158,8 @@ fn resolve_context(
     }
 }
 
-fn cursor_cell(
-    window: &Window,
-    camera: &Camera,
-    camera_transform: &GlobalTransform,
-) -> Option<CellPos> {
-    let cursor = window.cursor_position()?;
-    let world = camera.viewport_to_world_2d(camera_transform, cursor).ok()?;
+fn cursor_cell(window: &Window, state: &CameraState) -> Option<CellPos> {
+    let world = crate::camera::cursor_to_world(window, state)?;
     Some(CellPos::new(world.x.floor() as i32, world.y.floor() as i32))
 }
 
@@ -172,7 +169,7 @@ fn sample(
     buttons: Res<ButtonInput<MouseButton>>,
     mut wheel: MessageReader<MouseWheel>,
     window: Option<Single<&Window>>,
-    camera: Option<Single<(&Camera, &GlobalTransform), With<SkyCamera>>>,
+    camera_state: Res<CameraState>,
     interactions: Query<&Interaction>,
     context: Res<InputContext>,
     player: Res<LocalPlayerState>,
@@ -191,11 +188,10 @@ fn sample(
     pointer.secondary_click = buttons.just_pressed(SECONDARY_BUTTON);
 
     let mut aim = acc.latched.aim;
-    if let (Some(window), Some(camera)) = (&window, &camera) {
-        let (camera, camera_transform) = **camera;
-        if let Some(cell) = cursor_cell(window, camera, camera_transform) {
-            aim = cell;
-        }
+    if let Some(window) = &window
+        && let Some(cell) = cursor_cell(window, &camera_state)
+    {
+        aim = cell;
     }
 
     let gameplay = *context == InputContext::Gameplay;
@@ -234,6 +230,10 @@ fn sample(
     if keys.pressed(DEBUG_KEY) && keys.just_pressed(DEBUG_GAMEMODE_KEY) {
         acc.f3_combo = true;
         actions.write(LocalAction::ToggleGameMode);
+    }
+    if keys.pressed(DEBUG_KEY) && keys.just_pressed(DEBUG_RENDERMODE_KEY) {
+        acc.f3_combo = true;
+        actions.write(LocalAction::CycleRenderMode);
     }
     if keys.just_released(DEBUG_KEY) {
         if !acc.f3_combo {

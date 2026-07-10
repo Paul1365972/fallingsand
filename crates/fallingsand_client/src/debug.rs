@@ -1,5 +1,5 @@
 use crate::ClientRegistry;
-use crate::camera::CameraControl;
+use crate::camera::{CameraState, RenderMode, WORLD_LAYER};
 use crate::input::{InputHeld, LocalAction};
 use crate::inventory::{LocalInventory, SelectedSlot};
 use crate::net::{ServerMsg, ServerStats, Session, Supervisor, TickMessage};
@@ -8,6 +8,7 @@ use crate::player::{LocalPlayerState, PlayerNames};
 use crate::render::ChunkVisuals;
 use crate::sky::{Sky, WorldTime};
 use crate::worldview::WorldView;
+use bevy::camera::visibility::RenderLayers;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -97,6 +98,13 @@ struct StatWindows {
 impl Plugin for DebugOverlayPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(FrameTimeDiagnosticsPlugin::default())
+            .insert_gizmo_config(
+                DefaultGizmoConfigGroup,
+                GizmoConfig {
+                    render_layers: RenderLayers::layer(WORLD_LAYER),
+                    ..default()
+                },
+            )
             .insert_resource(DebugVisible(true))
             .init_resource::<BordersVisible>()
             .init_resource::<RectFlashes>()
@@ -250,24 +258,15 @@ fn track_rects(
 fn draw_borders(
     borders: Res<BordersVisible>,
     flashes: Res<RectFlashes>,
-    camera: Single<(&Camera, &GlobalTransform), With<crate::camera::SkyCamera>>,
+    state: Res<CameraState>,
     mut gizmos: Gizmos,
 ) {
     if !borders.0 {
         return;
     }
-    let (camera, camera_transform) = *camera;
-    let Some(viewport) = camera.logical_viewport_size() else {
-        return;
-    };
-    let (Ok(a), Ok(b)) = (
-        camera.viewport_to_world_2d(camera_transform, Vec2::ZERO),
-        camera.viewport_to_world_2d(camera_transform, viewport),
-    ) else {
-        return;
-    };
-    let min = a.min(b);
-    let max = a.max(b);
+    let half = state.view_cells() / 2.0;
+    let min = state.pos - half;
+    let max = state.pos + half;
 
     let chunk = CHUNK_SIZE as f32;
     let region = REGION_SIZE_CELLS as f32;
@@ -329,7 +328,8 @@ struct Overlay<'w, 's> {
     world_time: Res<'w, WorldTime>,
     celestial: Res<'w, Sky>,
     player: Res<'w, LocalPlayerState>,
-    camera: Res<'w, CameraControl>,
+    camera: Res<'w, CameraState>,
+    render_mode: Res<'w, RenderMode>,
     particles: Query<'w, 's, (), With<Particle>>,
 }
 
@@ -551,10 +551,11 @@ fn update_overlay(
             }
             right_lines.push(net);
             right_lines.push(format!(
-                "uploads {:>4.0}/s ({}/s) | zoom {:>5.2}x",
+                "uploads {:>4.0}/s ({}/s) | {}px/cell {}",
                 windows.uploads.rate(now, visuals.uploads as f32),
                 human_bytes(windows.upload_bytes.rate(now, visuals.upload_bytes as f32) as u64),
-                camera.zoom
+                camera.k,
+                ctx.render_mode.label()
             ));
 
             let particle_count = ctx.particles.iter().count();

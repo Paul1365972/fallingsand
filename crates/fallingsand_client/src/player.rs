@@ -1,16 +1,18 @@
 use crate::AppState;
-use crate::camera::WORLD_LAYER;
+use crate::camera::{CameraSet, CameraState, WORLD_LAYER};
 use crate::inventory::SelectedSlot;
 use crate::net::{NetSet, ServerMsg, Session, SessionEnded, TickMessage};
 use bevy::camera::visibility::RenderLayers;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
+use bevy::sprite::Anchor;
 use fallingsand_protocol::{GameMode, PlayerId, ServerMessage};
 
 pub struct PlayerPlugin;
 
 pub const PLAYER_SIZE: Vec2 = Vec2::new(3.0, 9.0);
 pub const PLAYER_DUCK_SIZE: Vec2 = Vec2::new(3.0, 5.0);
+const NAMETAG_RISE: f32 = 3.0;
 
 #[derive(Component)]
 pub struct PlayerVisual {
@@ -55,7 +57,10 @@ impl Plugin for PlayerPlugin {
             )
             .add_systems(
                 Update,
-                update_nametags.run_if(resource_changed::<PlayerNames>),
+                (
+                    update_nametags.run_if(resource_changed::<PlayerNames>),
+                    position_nametags.after(CameraSet::Derive),
+                ),
             )
             .add_systems(Update, cleanup_players.run_if(on_message::<SessionEnded>))
             .add_systems(OnExit(AppState::InGame), cleanup_players);
@@ -139,16 +144,17 @@ fn apply_players(
                     .id();
                 if !is_local {
                     let name = names.0.get(&state.player).cloned().unwrap_or_default();
-                    commands.entity(entity).with_child((
+                    commands.spawn((
                         NameTag(state.player),
                         Text2d::new(name),
                         TextFont {
-                            font_size: FontSize::Px(24.0),
+                            font_size: FontSize::Px(16.0),
                             ..default()
                         },
                         TextColor(Color::srgba(0.92, 0.95, 1.0, 0.9)),
-                        Transform::from_xyz(0.0, PLAYER_SIZE.y / 2.0 + 5.0, 1.0)
-                            .with_scale(Vec3::splat(0.25)),
+                        Anchor::BOTTOM_CENTER,
+                        Transform::from_xyz(0.0, 0.0, 20.0),
+                        Visibility::Hidden,
                     ));
                 }
                 visuals.0.insert(state.player, entity);
@@ -174,14 +180,45 @@ fn apply_self_state(
     }
 }
 
+#[allow(clippy::type_complexity)]
+fn position_nametags(
+    mut commands: Commands,
+    state: Res<CameraState>,
+    visuals: Res<PlayerVisuals>,
+    players: Query<&Transform, With<PlayerVisual>>,
+    mut tags: Query<
+        (Entity, &NameTag, &mut Transform, &mut Visibility),
+        (Without<PlayerVisual>, With<Text2d>),
+    >,
+) {
+    for (entity, tag, mut transform, mut visibility) in &mut tags {
+        let Some(&player) = visuals.0.get(&tag.0) else {
+            commands.entity(entity).despawn();
+            continue;
+        };
+        let Ok(player_transform) = players.get(player) else {
+            continue;
+        };
+        let world = player_transform.translation.truncate()
+            + Vec2::new(0.0, PLAYER_SIZE.y / 2.0 + NAMETAG_RISE);
+        let px = ((world - state.pos) * state.k as f32).round();
+        transform.translation = Vec3::new(px.x, px.y, 20.0);
+        *visibility = Visibility::Inherited;
+    }
+}
+
 fn cleanup_players(
     mut commands: Commands,
     mut visuals: ResMut<PlayerVisuals>,
     mut names: ResMut<PlayerNames>,
     mut selected: ResMut<SelectedSlot>,
     mut local_state: ResMut<LocalPlayerState>,
+    tags: Query<Entity, With<NameTag>>,
 ) {
     for (_, entity) in visuals.0.drain() {
+        commands.entity(entity).despawn();
+    }
+    for entity in &tags {
         commands.entity(entity).despawn();
     }
     names.0.clear();

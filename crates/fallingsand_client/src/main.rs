@@ -11,6 +11,7 @@ mod inventory;
 mod inventory_ui;
 mod menu;
 mod net;
+mod parallax;
 mod particles;
 mod pause;
 mod player;
@@ -118,6 +119,7 @@ fn main() {
         chat::ChatPlugin,
         particles::ParticlesPlugin,
         sky::SkyPlugin,
+        parallax::ParallaxPlugin,
         connscreen::ConnScreenPlugin,
         settings::SettingsPlugin,
         inventory::InventoryPlugin,
