@@ -18,7 +18,19 @@ fallingsand_core = { workspace = true }
 fallingsand_rng = { workspace = true }
 fallingsand_protocol = { workspace = true }
 fallingsand_net = { workspace = true }
-bevy = { workspace = true, features = ["2d", "ui", "default_font", "multi_threaded", "png"] }
+bevy = { workspace = true, features = [
+    "default_platform",
+    "2d_bevy_render",
+    "bevy_ui_render",
+    "bevy_ui_widgets",
+    "ui_picking",
+    "system_clipboard",
+    "bevy_asset",
+    "bevy_log",
+    "async_executor",
+    "reflect_auto_register",
+    "png",
+] }
 chrono = "0.4"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
@@ -30,7 +42,21 @@ winit = { version = "0.30", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
-bevy = { workspace = true, features = ["2d", "ui", "default_font", "web", "webgpu", "png"] }
+bevy = { workspace = true, features = [
+    "default_platform",
+    "2d_bevy_render",
+    "bevy_ui_render",
+    "bevy_ui_widgets",
+    "ui_picking",
+    "system_clipboard",
+    "bevy_asset",
+    "bevy_log",
+    "async_executor",
+    "reflect_auto_register",
+    "web",
+    "webgpu",
+    "png",
+] }
 fallingsand_net = { workspace = true, features = ["wt-wasm"] }
 getrandom = { version = "0.3", features = ["wasm_js"] }
 web-sys = { version = "0.3", features = ["Window", "Location", "Storage"] }
