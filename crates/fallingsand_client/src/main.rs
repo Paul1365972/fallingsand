@@ -22,7 +22,6 @@ fn render_error_policy(
 ) -> RenderErrorPolicy {
     match error.ty {
         ErrorType::DeviceLost => RenderErrorPolicy::Recover(default()),
-        ErrorType::Validation => RenderErrorPolicy::Ignore,
         _ => {
             main_world.write_message(AppExit::error());
             RenderErrorPolicy::StopRendering
