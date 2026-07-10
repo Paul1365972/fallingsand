@@ -127,6 +127,7 @@ fn spawn_chat_input(parent: &mut ChildSpawnerCommands) -> Entity {
         .spawn((
             ChatInput,
             EditableText::new(""),
+            super::field_cursor_style(),
             TextFont {
                 font_size: FontSize::Px(14.0),
                 ..default()

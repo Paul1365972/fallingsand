@@ -309,6 +309,7 @@ fn spawn_field(
             row.spawn((
                 marker,
                 EditableText::new(initial),
+                super::field_cursor_style(),
                 TextFont {
                     font_size: FontSize::Px(16.0),
                     ..default()

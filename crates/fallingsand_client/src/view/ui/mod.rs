@@ -8,9 +8,19 @@ pub mod pause;
 
 use super::io::Btn;
 use bevy::prelude::*;
+use bevy::text::TextCursorStyle;
 
 pub const BUTTON_BG: Color = Color::srgb(0.14, 0.16, 0.22);
 pub const BUTTON_HOVER: Color = Color::srgb(0.22, 0.25, 0.33);
+
+pub fn field_cursor_style() -> TextCursorStyle {
+    TextCursorStyle {
+        color: Color::srgb(0.9, 0.8, 0.5),
+        selection_color: Color::srgba(0.3, 0.45, 0.75, 0.7),
+        unfocused_selection_color: Color::srgba(0.3, 0.45, 0.75, 0.35),
+        selected_text_color: None,
+    }
+}
 
 #[derive(Component)]
 pub struct ButtonBase(pub Color);
