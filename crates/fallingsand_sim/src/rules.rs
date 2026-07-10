@@ -1,4 +1,3 @@
-use crate::obstacles::Obstacles;
 use crate::window::SimWindow;
 use fallingsand_core::{
     Cell, CellPos, Dynamics, GRID_GRAVITY, MaterialId, MaterialRegistry, Phase, Product, TICK_DT,
@@ -22,7 +21,6 @@ static GRAVITY_DV: LazyLock<i32> =
 pub(crate) fn update_cell(
     window: &mut SimWindow,
     registry: &MaterialRegistry,
-    obstacles: &Obstacles,
     pos: CellPos,
     tick: u64,
     tick_byte: u8,
@@ -43,7 +41,7 @@ pub(crate) fn update_cell(
     match material.phase {
         Phase::Empty | Phase::Solid => {}
         Phase::Powder | Phase::Liquid | Phase::Gas | Phase::Fire => {
-            update_dynamic(window, registry, obstacles, pos, cell, &mut rng, tick_byte)
+            update_dynamic(window, registry, pos, cell, &mut rng, tick_byte)
         }
     }
 }
@@ -261,15 +259,10 @@ fn neighbor_mean_vel(
 fn can_enter(
     window: &SimWindow,
     registry: &MaterialRegistry,
-    obstacles: &Obstacles,
     density: f32,
-    is_powder: bool,
     dir: (i32, i32),
     target: CellPos,
 ) -> bool {
-    if is_powder && obstacles.occupied(target) {
-        return false;
-    }
     let Some(cell) = window.get(target) else {
         return false;
     };
@@ -302,7 +295,6 @@ fn reflect(v: i32, restitution: f32) -> i32 {
 fn update_dynamic(
     window: &mut SimWindow,
     registry: &MaterialRegistry,
-    obstacles: &Obstacles,
     pos: CellPos,
     cell: Cell,
     rng: &mut Rng,
@@ -353,15 +345,7 @@ fn update_dynamic(
     }
 
     let below = pos.translated(0, -1);
-    let supported = !can_enter(
-        window,
-        registry,
-        obstacles,
-        density,
-        is_powder,
-        (0, -1),
-        below,
-    );
+    let supported = !can_enter(window, registry, density, (0, -1), below);
     if supported {
         vx = (vx as f32 * dynamics.friction_keep).round() as i32;
     }
@@ -398,15 +382,7 @@ fn update_dynamic(
         };
         if step_x {
             let next = cur.translated(sx, 0);
-            if can_enter(
-                window,
-                registry,
-                obstacles,
-                density,
-                is_powder,
-                (sx, 0),
-                next,
-            ) {
+            if can_enter(window, registry, density, (sx, 0), next) {
                 window.swap(cur, next);
                 cur = next;
                 moved = true;
@@ -417,15 +393,7 @@ fn update_dynamic(
             }
         } else {
             let next = cur.translated(0, sy);
-            if can_enter(
-                window,
-                registry,
-                obstacles,
-                density,
-                is_powder,
-                (0, sy),
-                next,
-            ) {
+            if can_enter(window, registry, density, (0, sy), next) {
                 window.swap(cur, next);
                 cur = next;
                 moved = true;
@@ -438,18 +406,9 @@ fn update_dynamic(
 
     let gdir = if sinks { -1 } else { 1 };
     let ahead = cur.translated(0, gdir);
-    if !can_enter(
-        window,
-        registry,
-        obstacles,
-        density,
-        is_powder,
-        (0, gdir),
-        ahead,
-    ) {
+    if !can_enter(window, registry, density, (0, gdir), ahead) {
         moved |= redirect(
-            window, registry, obstacles, &mut cur, density, is_powder, gdir, &mut vx, vy, dynamics,
-            rng,
+            window, registry, &mut cur, density, is_powder, gdir, &mut vx, vy, dynamics, rng,
         );
     }
 
@@ -460,17 +419,7 @@ fn update_dynamic(
     for (dx, dy) in NEIGHBORS {
         let into = if dx != 0 { vx * dx > 0 } else { vy * dy > 0 };
         let target = cur.translated(dx, dy);
-        if into
-            && !can_enter(
-                window,
-                registry,
-                obstacles,
-                density,
-                is_powder,
-                (dx, dy),
-                target,
-            )
-        {
+        if into && !can_enter(window, registry, density, (dx, dy), target) {
             if dx != 0 {
                 vx = reflect(vx, dynamics.restitution);
             } else {
@@ -481,9 +430,7 @@ fn update_dynamic(
     let settled = !can_enter(
         window,
         registry,
-        obstacles,
         density,
-        is_powder,
         (0, gdir),
         cur.translated(0, gdir),
     );
@@ -515,7 +462,6 @@ fn update_dynamic(
 fn redirect(
     window: &mut SimWindow,
     registry: &MaterialRegistry,
-    obstacles: &Obstacles,
     cur: &mut CellPos,
     density: f32,
     is_powder: bool,
@@ -540,27 +486,11 @@ fn redirect(
     let can_flow = dynamics.flow_chance >= 1.0 || rng.draw().chance(dynamics.flow_chance);
     for side in [prefer, -prefer] {
         let beside = cur.translated(side, 0);
-        if !can_enter(
-            window,
-            registry,
-            obstacles,
-            density,
-            is_powder,
-            (side, 0),
-            beside,
-        ) {
+        if !can_enter(window, registry, density, (side, 0), beside) {
             continue;
         }
         let diag = cur.translated(side, vdir);
-        let diag_open = can_enter(
-            window,
-            registry,
-            obstacles,
-            density,
-            is_powder,
-            (side, vdir),
-            diag,
-        );
+        let diag_open = can_enter(window, registry, density, (side, vdir), diag);
         if is_powder {
             if diag_open && rng.draw().chance(dynamics.slide_chance) {
                 *vx += side * gain;

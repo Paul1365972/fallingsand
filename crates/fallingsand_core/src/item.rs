@@ -147,9 +147,10 @@ impl ItemRegistry {
             items.push(def);
         }
 
+        let player_mask = materials.tag_mask("player");
         let mut mat_to_item = vec![ItemId::NONE; materials.len()];
         for (id, material) in materials.iter() {
-            if material.phase == crate::Phase::Empty {
+            if material.phase == crate::Phase::Empty || materials.has_tag(id, player_mask) {
                 continue;
             }
             let name = format!("mat:{}", material.name);

@@ -23,12 +23,12 @@ cargo fmt --all
 - Velocity is per-cell and dissipative: every cell carries a velocity, bled by drag, contact friction, and restitution (0 ≤ e < 1) so motion always terminates and settles. Momentum is not strictly conserved across exchanges — feel and locality win over bookkeeping.
 - One cell, one owner: double occupancy by terrain, rigid bodies, or entities is an architecture bug, not a tuning problem.
 - Universality: every matter-affecting system handles all matter kinds — grid cells, powders/fluids, rigid bodies, entities — or explicitly flags the gap (a fallen tree must burn).
-- Server-authoritative: clients send raw input and render interpolated state — no client prediction, no client-side gameplay logic.
+- Server-authoritative: clients send raw input and render replicated state — no client prediction, no client-side gameplay logic.
 - Idle cost: a settled world costs ~nothing — no per-tick work, no permanently-awake chunks, server or client.
 - Locality & speed of light: every update reads and writes only its immediate neighborhood and never beyond its window (= 64) — no sweeps, no action at a distance; longer-range effects propagate as local waves over ticks or go through the `WorldEdit` queue.
 - Determinism: same seed + inputs → same world on one machine.
 - Suspend/resume: sleep, unload, and reload preserve pending activity — in-flight processes don't freeze in time.
-- Body rasterization: body flag ⇔ exactly one live body's raster covers the cell; public cell writes only produce unflagged cells.
+- Body rasterization: body flag ⇔ exactly one live body's or player's raster covers the cell; public cell writes only produce unflagged cells. The player is a grid resident — its cells are as real as any terrain.
 
 ## Architecture
 

@@ -1,23 +1,22 @@
 use crate::inventory::{Inventory, ItemReg};
 use crate::player::{DigState, Mode, Player, PlayerActor};
-use crate::{Registry, SimObstacles, SimWorld};
+use crate::{Registry, SimWorld};
 use bevy_ecs::prelude::*;
 use fallingsand_core::{
     CellPos, Fixed, ItemId, ItemRegistry, ItemStack, MAX_BRUSH, MaterialId, MaterialRegistry,
     Phase, REACH, SURVIVAL_REACH, TICK_DT,
 };
 use fallingsand_protocol::GameMode;
-use fallingsand_sim::physics::Actor;
 
 pub fn apply_player_inputs(
     mut sim: ResMut<SimWorld>,
     registry: Res<Registry>,
     item_reg: Res<ItemReg>,
-    obstacles: Res<SimObstacles>,
     mut bodies: ResMut<crate::bodies::PixelBodies>,
     mut query: Query<(&Player, &PlayerActor, &Mode, &mut DigState, &mut Inventory)>,
 ) {
     let reg = &item_reg.0;
+    let player_mask = registry.0.tag_mask("player");
     for (player, body, mode, mut dig, mut inventory) in &mut query {
         let input = &player.input;
         let survival = mode.0 == GameMode::Survival;
@@ -51,6 +50,9 @@ pub fn apply_player_inputs(
                     let Some(cell) = sim.0.get_cell(pos) else {
                         continue;
                     };
+                    if registry.0.has_tag(cell.material, player_mask) {
+                        continue;
+                    }
                     if registry.0.get(cell.material).phase != Phase::Empty {
                         sim.0.place_material(pos, MaterialId::AIR);
                         dug = true;
@@ -72,10 +74,7 @@ pub fn apply_player_inputs(
                     let Some(cell) = sim.0.get_cell(pos) else {
                         continue;
                     };
-                    if !cell.is_air()
-                        || cell_overlaps_body(pos, &body.0)
-                        || obstacles.0.occupied(pos)
-                    {
+                    if !cell.is_air() {
                         continue;
                     }
                     sim.0.place_material(pos, material);
@@ -129,13 +128,15 @@ pub fn survival_dig(
     aim: CellPos,
     radius: i32,
 ) -> bool {
+    let player_mask = registry.tag_mask("player");
     let mut candidates: Vec<(i32, i32, i32)> = brush_cells(aim, radius)
         .filter(|&(_, pos)| {
             world.get_cell(pos).is_some_and(|cell| {
-                matches!(
-                    registry.get(cell.material).phase,
-                    Phase::Solid | Phase::Powder
-                )
+                !registry.has_tag(cell.material, player_mask)
+                    && matches!(
+                        registry.get(cell.material).phase,
+                        Phase::Solid | Phase::Powder
+                    )
             })
         })
         .map(|(dist_sq, pos)| (dist_sq, pos.y, pos.x))
@@ -176,11 +177,4 @@ pub fn survival_dig(
         dug = true;
     }
     dug
-}
-
-fn cell_overlaps_body(pos: CellPos, body: &Actor) -> bool {
-    let cx = Fixed::cell_center(pos.x);
-    let cy = Fixed::cell_center(pos.y);
-    (cx - body.x).abs() < body.half_w + Fixed::HALF
-        && (cy - body.y).abs() < body.half_h + Fixed::HALF
 }

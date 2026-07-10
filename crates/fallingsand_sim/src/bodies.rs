@@ -1,5 +1,6 @@
-use crate::obstacles::ActorAabb;
-use crate::physics::{BOUNCE_MIN_SPEED, FLUID_DRAG_LINEAR, FLUID_DRAG_QUAD, MAX_FLUID_DRAG};
+use crate::physics::{
+    ActorAabb, BOUNCE_MIN_SPEED, FLUID_DRAG_LINEAR, FLUID_DRAG_QUAD, MAX_FLUID_DRAG,
+};
 use crate::world::CellWorld;
 use fallingsand_core::{
     Cell, CellPos, ChunkPos, Fixed, MaterialId, MaterialRegistry, Phase, TICK_DT,
@@ -560,8 +561,29 @@ fn find_contacts(
                         }
                     }
                     None => {
-                        surface = registry.get(cell.material).restitution;
-                        Other::Terrain
+                        let player = entities
+                            .iter()
+                            .position(|entity| entity.bbox.contains_cell(pos));
+                        match player {
+                            Some(entity_index) => {
+                                let entity = &entities[entity_index];
+                                let depth_x = entity.bbox.half_w.to_f32() + 0.5
+                                    - (wx - entity.bbox.x).to_f32().abs();
+                                let depth_y = entity.bbox.half_h.to_f32() + 0.5
+                                    - (wy - entity.bbox.y).to_f32().abs();
+                                depth = depth_x.min(depth_y).clamp(0.5, 4.0);
+                                Other::Entity {
+                                    index: entity_index,
+                                    inv_mass: entity.inv_mass,
+                                    vx: entity.vx,
+                                    vy: entity.vy,
+                                }
+                            }
+                            None => {
+                                surface = registry.get(cell.material).restitution;
+                                Other::Terrain
+                            }
+                        }
                     }
                 }
             }
@@ -1026,16 +1048,17 @@ fn restamp(
     Vec::new()
 }
 
-fn plan_and_commit(
+pub(crate) fn commit_stamp(
     world: &mut CellWorld,
     registry: &MaterialRegistry,
     entities: &[ActorAabb],
-    body: &mut PixelBody,
-    new: Raster,
+    old: &Raster,
+    new: &Raster,
+    cell_for: &dyn Fn(u16) -> Cell,
 ) -> Option<Vec<CellPos>> {
     let mut displaced: Vec<(CellPos, Cell)> = Vec::new();
     for &(pos, _) in &new.cells {
-        if body.raster.covers(pos) {
+        if old.covers(pos) {
             continue;
         }
         let cell = world.get_cell(pos)?;
@@ -1052,8 +1075,7 @@ fn plan_and_commit(
         }
     }
 
-    let mut vacated: Vec<CellPos> = body
-        .raster
+    let mut vacated: Vec<CellPos> = old
         .set
         .iter()
         .filter(|pos| !new.set.contains(pos))
@@ -1085,10 +1107,24 @@ fn plan_and_commit(
         world.set_cell_raw(pos, cell);
     }
     for &(pos, local) in &new.cells {
+        world.set_cell_raw(pos, cell_for(local));
+    }
+    Some(vacated)
+}
+
+fn plan_and_commit(
+    world: &mut CellWorld,
+    registry: &MaterialRegistry,
+    entities: &[ActorAabb],
+    body: &mut PixelBody,
+    new: Raster,
+) -> Option<Vec<CellPos>> {
+    let cell_for = |local: u16| {
         let mut cell = body.cells[local as usize];
         cell.set_body(true);
-        world.set_cell_raw(pos, cell);
-    }
+        cell
+    };
+    let vacated = commit_stamp(world, registry, entities, &body.raster, &new, &cell_for)?;
     body.raster = new;
     Some(vacated)
 }

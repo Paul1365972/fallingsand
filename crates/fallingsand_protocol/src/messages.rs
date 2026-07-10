@@ -1,4 +1,4 @@
-use fallingsand_core::{CellPos, ChunkPos, DirtyRect, Fixed, ItemId, ItemStack};
+use fallingsand_core::{CellPos, ChunkPos, DirtyRect, ItemId, ItemStack};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -113,13 +113,14 @@ pub enum SlotAction {
     CreativeGrab { item: ItemId },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlayerState {
     pub player: PlayerId,
-    pub x: Fixed,
-    pub y: Fixed,
+    pub cx: i32,
+    pub cy: i32,
     pub ducking: bool,
     pub burning: bool,
+    pub facing_left: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

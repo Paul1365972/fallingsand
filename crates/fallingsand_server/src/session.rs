@@ -3,7 +3,7 @@ use crate::inventory::{Inventory, ItemReg, SlotActions};
 use crate::persistence::player_slots_from_record;
 use crate::player::{
     Air, Burning, Control, DigState, Health, Mode, PLAYER_HALF_H, PLAYER_HALF_W, Player,
-    PlayerActor, player_record,
+    PlayerActor, PlayerRaster, player_record,
 };
 use crate::regions::Store;
 use crate::{MAX_AIR_SECS, MAX_HP, NetListener, SimWorld, SpawnPoint};
@@ -89,8 +89,9 @@ pub fn drain_network(
         &Burning,
         &mut Inventory,
     )>,
+    mut rasters: Query<&mut PlayerRaster>,
     item_reg: Res<ItemReg>,
-    sim: Res<SimWorld>,
+    mut sim: ResMut<SimWorld>,
     spawn_point: Res<SpawnPoint>,
     store: Res<Store>,
 ) {
@@ -103,6 +104,7 @@ pub fn drain_network(
     let mut joined: Vec<(PlayerId, String)> = Vec::new();
     let mut left: Vec<PlayerId> = Vec::new();
     let mut chats: Vec<(PlayerId, String, String)> = Vec::new();
+    let mut despawned: Vec<Entity> = Vec::new();
 
     for index in 0..sessions.sessions.len() {
         let mut fresh_input = true;
@@ -148,6 +150,7 @@ pub fn drain_network(
                             if let Some(entity) = other.entity.take()
                                 && let Some(superseded) = taken_entity.replace(entity)
                             {
+                                despawned.push(superseded);
                                 commands.entity(superseded).despawn();
                             }
                             if let Some(old) = other.player.take() {
@@ -171,6 +174,7 @@ pub fn drain_network(
                                 CellPos::new(body.0.x.floor_cell(), body.0.y.floor_cell()),
                             ));
                         } else {
+                            despawned.push(entity);
                             commands.entity(entity).despawn();
                         }
                     }
@@ -207,6 +211,7 @@ pub fn drain_network(
                                         PLAYER_HALF_W,
                                         PLAYER_HALF_H,
                                     )),
+                                    PlayerRaster::default(),
                                     Control::default(),
                                     Health {
                                         hp: record
@@ -386,6 +391,7 @@ pub fn drain_network(
                         ));
                     }
                 }
+                despawned.push(entity);
                 commands.entity(entity).despawn();
             }
             if let Some(player) = session.player {
@@ -396,6 +402,11 @@ pub fn drain_network(
             true
         }
     });
+    for entity in despawned {
+        if let Ok(mut raster) = rasters.get_mut(entity) {
+            fallingsand_sim::player::unstamp_player(&mut sim.0, &mut raster.0);
+        }
+    }
     if let Some(store) = store.0.as_ref()
         && let Err(err) = store.save_players(&records)
     {

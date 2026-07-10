@@ -7,7 +7,6 @@ mod hud;
 mod icon;
 mod identity;
 mod input;
-mod interpolation;
 mod inventory;
 mod inventory_ui;
 mod menu;
@@ -108,7 +107,6 @@ fn main() {
         input::InputPlugin,
         render::ChunkRenderPlugin,
         worldview::WorldViewPlugin,
-        interpolation::InterpolationPlugin,
         player::PlayerPlugin,
         camera::CameraPlugin,
         debug::DebugOverlayPlugin,

@@ -1,7 +1,7 @@
 use crate::player::{Air, Burning, Health, Mode, PlayerActor};
 use crate::{MAX_AIR_SECS, MAX_HP, Registry, SimWorld};
 use bevy_ecs::prelude::*;
-use fallingsand_core::{CellPos, Fixed, MaterialRegistry, Phase, TICK_DT};
+use fallingsand_core::{CellPos, MaterialRegistry, Phase, TICK_DT};
 use fallingsand_protocol::GameMode;
 use fallingsand_sim::physics::{Actor, CellSource};
 use rustc_hash::FxHashMap;
@@ -34,26 +34,26 @@ pub fn sample_hazards<W: CellSource>(
     body: &Actor,
 ) -> HazardSample {
     let mut sample = HazardSample::default();
-    let x0 = (body.x - body.half_w).floor_cell() - 1;
-    let y0 = (body.y - body.half_h).floor_cell() - 1;
-    let x1 = (body.x + body.half_w).max_cell() + 1;
-    let y1 = (body.y + body.half_h).max_cell() + 1;
-    for y in y0..=y1 {
-        for x in x0..=x1 {
-            let Some(cell) = world.cell_at(CellPos::new(x, y)) else {
-                continue;
-            };
-            let material = registry.get(cell.material);
-            sample.contact_dps = sample.contact_dps.max(material.contact_damage);
-            let hot = registry.has_tag(cell.material, hot_mask);
-            sample.hot |= hot;
-            sample.extinguish |= material.phase == Phase::Liquid && !hot;
-        }
+    let fp = body.footprint();
+    let mut probe = |pos: CellPos| {
+        let Some(cell) = world.cell_at(pos) else {
+            return;
+        };
+        let material = registry.get(cell.material);
+        sample.contact_dps = sample.contact_dps.max(material.contact_damage);
+        let hot = registry.has_tag(cell.material, hot_mask);
+        sample.hot |= hot;
+        sample.extinguish |= material.phase == Phase::Liquid && !hot;
+    };
+    for y in fp.y0 - 1..=fp.y1 + 1 {
+        probe(CellPos::new(fp.x0 - 1, y));
+        probe(CellPos::new(fp.x1 + 1, y));
     }
-    let head = CellPos::new(
-        body.x.floor_cell(),
-        (body.y + body.half_h - Fixed::HALF).floor_cell(),
-    );
+    for x in fp.x0..=fp.x1 {
+        probe(CellPos::new(x, fp.y0 - 1));
+        probe(CellPos::new(x, fp.y1 + 1));
+    }
+    let head = CellPos::new(body.x.floor_cell(), fp.y1 + 1);
     sample.head_submerged = matches!(
         world.cell_at(head),
         Some(cell) if registry.get(cell.material).phase == Phase::Liquid

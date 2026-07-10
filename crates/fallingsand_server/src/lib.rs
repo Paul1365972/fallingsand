@@ -35,8 +35,8 @@ pub use fallingsand_core::{MAX_AIR_SECS, MAX_HP};
 #[derive(Resource)]
 pub struct SimWorld(pub CellWorld);
 
-#[derive(Resource, Default)]
-pub struct SimObstacles(pub fallingsand_sim::Obstacles);
+#[derive(Resource, Clone, Copy)]
+pub struct Flesh(pub fallingsand_core::MaterialId);
 
 #[derive(Resource, Default)]
 pub struct PlayerImpulses(pub rustc_hash::FxHashMap<Entity, (f32, f32)>);
@@ -185,10 +185,17 @@ impl Server {
         let spawn_x = 0;
         let spawn = CellPos::new(spawn_x, generator.surface_height(spawn_x) + 12);
 
+        let flesh = Flesh(
+            config
+                .registry
+                .id_of("flesh")
+                .expect("flesh material missing from registry"),
+        );
         let mut cell_world = CellWorld::new();
         cell_world.set_tick(meta.tick);
         let mut world = World::new();
         world.insert_resource(SimWorld(cell_world));
+        world.insert_resource(flesh);
         world.insert_resource(Registry(config.registry));
         world.insert_resource(inventory::ItemReg(item_registry));
         world.insert_resource(inventory::Recipes(recipes));
@@ -203,7 +210,6 @@ impl Server {
         world.insert_resource(regions::ChunkTickets::default());
         world.insert_resource(SpawnPoint(spawn));
         world.insert_resource(bodies::PixelBodies::default());
-        world.insert_resource(SimObstacles::default());
         world.insert_resource(PlayerImpulses::default());
         world.insert_resource(commands::PendingCommands::default());
         world.insert_resource(hazards::CrushEvents::default());
@@ -223,12 +229,10 @@ impl Server {
                     inventory::apply_slot_actions,
                     regions::compute_tickets,
                     regions::manage_regions,
-                    sim::build_obstacles,
                     sim::step_simulation,
                 )
                     .chain(),
                 (
-                    physics::push_players,
                     physics::step_physics,
                     bodies::step_bodies,
                     hazards::apply_hazards,

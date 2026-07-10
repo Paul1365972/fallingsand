@@ -84,10 +84,13 @@ pub fn wanted_regions(tickets: &ChunkTickets) -> FxHashSet<RegionPos> {
         .collect()
 }
 
-fn strip_body_flags(region: &mut Region) {
+fn strip_player_remnants(region: &mut Region, registry: &fallingsand_core::MaterialRegistry) {
+    let player_mask = registry.tag_mask("player");
     for chunk in region.chunks_mut().iter_mut() {
         for cell in chunk.cells_mut().iter_mut() {
-            if cell.is_body() {
+            if registry.has_tag(cell.material, player_mask) {
+                *cell = fallingsand_core::Cell::AIR;
+            } else if cell.is_body() {
                 cell.set_body(false);
             }
         }
@@ -177,7 +180,7 @@ pub fn manage_regions(
         });
         let region = match loaded {
             Some(mut region) => {
-                strip_body_flags(&mut region);
+                strip_player_remnants(&mut region, &registry.0);
                 region
             }
             None => generator.0.generate_region(pos),

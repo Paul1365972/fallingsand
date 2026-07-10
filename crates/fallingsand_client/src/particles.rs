@@ -117,7 +117,7 @@ fn spawn_dig_spray(
 fn spawn_flames(
     mut commands: Commands,
     time: Res<Time>,
-    query: Query<(&Transform, &Sprite, &PlayerVisual)>,
+    query: Query<(&Transform, &PlayerVisual)>,
     mut accumulator: Local<f32>,
     mut rng: Local<Rng>,
 ) {
@@ -126,11 +126,15 @@ fn spawn_flames(
         return;
     }
     *accumulator = 0.0;
-    for (transform, sprite, visual) in &query {
+    for (transform, visual) in &query {
         if !visual.burning {
             continue;
         }
-        let size = sprite.custom_size.unwrap_or(Vec2::splat(4.0));
+        let size = if visual.ducking {
+            crate::player::PLAYER_DUCK_SIZE
+        } else {
+            crate::player::PLAYER_SIZE
+        };
         for _ in 0..2 {
             let offset = Vec2::new(
                 (rng.draw().unit() - 0.5) * size.x,

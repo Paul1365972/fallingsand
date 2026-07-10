@@ -4,10 +4,11 @@ use crate::{MAX_AIR_SECS, MAX_HP};
 use bevy_ecs::prelude::*;
 use fallingsand_core::{Fixed, ItemRegistry};
 use fallingsand_protocol::{GameMode, InputState, PlayerId, PlayerUuid};
+use fallingsand_sim::PlayerStamp;
 use fallingsand_sim::physics::{Actor, Controller};
 
-pub const PLAYER_HALF_W: Fixed = Fixed::from_f32(1.9);
-pub const PLAYER_HALF_H: Fixed = Fixed::from_f32(5.5);
+pub const PLAYER_HALF_W: Fixed = Fixed::from_f32(fallingsand_sim::player::PLAYER_COLS as f32 * 0.5);
+pub const PLAYER_HALF_H: Fixed = Fixed::from_f32(fallingsand_sim::player::STAND_ROWS as f32 * 0.5);
 pub const PLAYER_MASS: f32 = 4.0 * PLAYER_HALF_W.to_f32() * PLAYER_HALF_H.to_f32();
 
 #[derive(Component)]
@@ -25,6 +26,9 @@ pub struct Player {
 
 #[derive(Component)]
 pub struct PlayerActor(pub Actor);
+
+#[derive(Component, Default)]
+pub struct PlayerRaster(pub PlayerStamp);
 
 #[derive(Component, Default)]
 pub struct Control(pub Controller);

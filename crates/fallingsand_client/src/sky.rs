@@ -260,7 +260,6 @@ impl Plugin for SkyPlugin {
                     apply_lighting,
                 )
                     .chain()
-                    .after(crate::interpolation::interpolate)
                     .run_if(in_state(GameState::Playing)),
             )
             .add_systems(OnExit(AppState::InGame), reset_sky);

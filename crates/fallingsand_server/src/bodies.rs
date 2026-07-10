@@ -73,12 +73,7 @@ pub fn step_bodies(
         players.push(entity);
         grounded.push(body.0.on_ground);
         entities.push(ActorDynamics {
-            bbox: ActorAabb {
-                x: body.0.x,
-                y: body.0.y,
-                half_w: body.0.half_w,
-                half_h: body.0.half_h,
-            },
+            bbox: ActorAabb::from_footprint(body.0.footprint()),
             vx: body.0.vx.to_f32(),
             vy: body.0.vy.to_f32(),
             inv_mass: 1.0 / PLAYER_MASS,

@@ -14,6 +14,8 @@ Cell velocity is Q11.4 `i16` cells/s (clamped in-flow to ±2000 = `VEL_MAX`), si
 
 `data/materials.ron` defines each material; `data/reactions.ron` defines pairwise reactions (tag operands + per-second rate, e.g. `fire + [woody] → fire + burning_wood`). A product of `@burnout` resolves to the reacting cell's own burnout — its `residue_into` at `residue_chance`, else its decay product — so one tag rule can end many materials each on their own terms. The kernel switches on **phase + properties**, never material identity — a new powder is a data edit, zero engine code. The server hashes the registry to detect client mismatch. `data/items.ron` (+ auto-generated material items) and `data/recipes.ron` layer the item model on top; see [Inventory.md](Inventory.md).
 
+`flesh` is the player's body material: Solid, slightly denser than water, `player`-tagged — inert (no reactions reference it), undiggable (both dig paths skip the tag), never auto-itemized, and voided on region load as a crash artifact. Its 16-shade palette is the pixel-person pattern authored in `sim::player`.
+
 ### Field units
 
 All tunables are **seconds-based**, converted per-tick at registry build (see Tuning units in [Simulation.md](Simulation.md)):

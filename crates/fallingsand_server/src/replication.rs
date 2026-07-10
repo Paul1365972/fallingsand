@@ -1,5 +1,5 @@
 use crate::inventory::Inventory;
-use crate::player::{Air, Burning, Control, Health, Mode, Player, PlayerActor};
+use crate::player::{Air, Burning, Control, Health, Mode, Player, PlayerActor, PlayerRaster};
 use crate::session::{SessionState, Sessions};
 use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y, SimWorld, TickStats};
 use bevy_ecs::prelude::*;
@@ -25,6 +25,7 @@ pub fn replicate(
     query: Query<(
         &Player,
         &PlayerActor,
+        &PlayerRaster,
         &Control,
         &Health,
         &Mode,
@@ -38,13 +39,16 @@ pub fn replicate(
 
     let mut all_players: Vec<PlayerState> = query
         .iter()
-        .map(|(player, body, control, _, _, burning, _)| PlayerState {
-            player: player.id,
-            x: body.0.x,
-            y: body.0.y,
-            ducking: control.0.ducking(),
-            burning: burning.active(),
-        })
+        .map(
+            |(player, body, raster, control, _, _, burning, _)| PlayerState {
+                player: player.id,
+                cx: body.0.x.floor_cell(),
+                cy: body.0.y.floor_cell(),
+                ducking: control.0.ducking(),
+                burning: burning.active(),
+                facing_left: raster.0.facing_left,
+            },
+        )
         .collect();
     all_players.sort_unstable_by_key(|state| state.player.0);
     let changed_players: Vec<PlayerState> = all_players
@@ -64,7 +68,7 @@ pub fn replicate(
         let Some(entity) = session.entity else {
             continue;
         };
-        let Ok((_, body, _, health, mode, _, air)) = query.get(entity) else {
+        let Ok((_, body, _, _, health, mode, _, air)) = query.get(entity) else {
             continue;
         };
 

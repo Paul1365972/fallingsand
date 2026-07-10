@@ -1,6 +1,6 @@
-use crate::obstacles::Obstacles;
 use crate::world::CellWorld;
 use fallingsand_core::{Cell, CellPos, Fixed, MaterialRegistry, Phase, TICK_DT, VEL_ONE};
+use rustc_hash::FxHashSet;
 
 pub const BOUNCE_MIN_SPEED: f32 = 30.0;
 const LAUNCH_MIN_SPEED: Fixed = Fixed::from_int(80);
@@ -23,14 +23,8 @@ const BANK_VAULT_MIN_SUBMERSION: f32 = 0.2;
 const BANK_VAULT_MAX_SUBMERSION: f32 = 0.95;
 const BANK_VAULT_MAX_SINK: Fixed = Fixed::from_int(20);
 const BANK_PROBE_CELLS: i32 = 3;
-const WADE_UP_CELLS: usize = 4;
-const WADE_SIDE_CELLS: usize = 2;
-const WADE_DAMP: Fixed = Fixed::from_f32(0.7);
-const GROUND_PROBE: Fixed = Fixed::SUBUNIT;
 const CLIMB_COST: Fixed = Fixed::HALF;
 const CLIMB_DRAIN: Fixed = Fixed::HALF;
-const MAX_DISPLACED: usize = 16;
-const SCATTER_RADIUS: i32 = 6;
 
 pub trait CellSource {
     fn cell_at(&self, pos: CellPos) -> Option<Cell>;
@@ -71,6 +65,69 @@ impl Actor {
     pub fn cell(&self) -> CellPos {
         CellPos::new(self.x.floor_cell(), self.y.floor_cell())
     }
+
+    pub fn footprint(&self) -> Footprint {
+        footprint_at(self.x, self.y, self.half_w, self.half_h)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Footprint {
+    pub x0: i32,
+    pub y0: i32,
+    pub x1: i32,
+    pub y1: i32,
+}
+
+impl Footprint {
+    pub fn contains(&self, pos: CellPos) -> bool {
+        pos.x >= self.x0 && pos.x <= self.x1 && pos.y >= self.y0 && pos.y <= self.y1
+    }
+}
+
+pub fn footprint_at(cx: Fixed, cy: Fixed, half_w: Fixed, half_h: Fixed) -> Footprint {
+    let w = half_w.mul_int(2).round_int().max(1);
+    let h = half_h.mul_int(2).round_int().max(1);
+    let x0 = cx.floor_cell() - w / 2;
+    let y0 = cy.floor_cell() - h / 2;
+    Footprint {
+        x0,
+        y0,
+        x1: x0 + w - 1,
+        y1: y0 + h - 1,
+    }
+}
+
+pub type OwnCells<'a> = Option<&'a FxHashSet<CellPos>>;
+
+fn own_covers(own: OwnCells, pos: CellPos) -> bool {
+    own.is_some_and(|set| set.contains(&pos))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ActorAabb {
+    pub x: Fixed,
+    pub y: Fixed,
+    pub half_w: Fixed,
+    pub half_h: Fixed,
+}
+
+impl ActorAabb {
+    pub fn contains_cell(&self, pos: CellPos) -> bool {
+        let (cx, cy) = (Fixed::cell_center(pos.x), Fixed::cell_center(pos.y));
+        (cx - self.x).abs() <= self.half_w && (cy - self.y).abs() <= self.half_h
+    }
+
+    pub fn from_footprint(fp: Footprint) -> Self {
+        let half_w = Fixed::from_int(fp.x1 - fp.x0 + 1).mul(Fixed::HALF);
+        let half_h = Fixed::from_int(fp.y1 - fp.y0 + 1).mul(Fixed::HALF);
+        Self {
+            x: Fixed::from_cell(fp.x0) + half_w,
+            y: Fixed::from_cell(fp.y0) + half_h,
+            half_w,
+            half_h,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -96,6 +153,10 @@ impl Controller {
     pub fn ducking(&self) -> bool {
         self.ducking
     }
+
+    pub fn set_ducking(&mut self, ducking: bool) {
+        self.ducking = ducking;
+    }
 }
 
 pub fn cell_blocks<W: CellSource>(world: &W, registry: &MaterialRegistry, pos: CellPos) -> bool {
@@ -115,33 +176,53 @@ pub fn cell_liquid<W: CellSource>(world: &W, registry: &MaterialRegistry, pos: C
     }
 }
 
-fn cell_bounds(cx: Fixed, cy: Fixed, half_w: Fixed, half_h: Fixed) -> (i32, i32, i32, i32) {
-    (
-        (cx - half_w).floor_cell(),
-        (cy - half_h).floor_cell(),
-        (cx + half_w).max_cell(),
-        (cy + half_h).max_cell(),
-    )
-}
-
 fn rect_blocked<W: CellSource>(
     world: &W,
     registry: &MaterialRegistry,
     body: &Actor,
     cx: Fixed,
     cy: Fixed,
+    own: OwnCells,
 ) -> bool {
-    let cur = cell_bounds(body.x, body.y, body.half_w, body.half_h);
-    let (x0, y0, x1, y1) = cell_bounds(cx, cy, body.half_w, body.half_h);
-    for y in y0..=y1 {
-        for x in x0..=x1 {
-            let overlapped = x >= cur.0 && x <= cur.2 && y >= cur.1 && y <= cur.3;
-            if !overlapped && cell_blocks(world, registry, CellPos::new(x, y)) {
+    let cur = body.footprint();
+    let next = footprint_at(cx, cy, body.half_w, body.half_h);
+    for y in next.y0..=next.y1 {
+        for x in next.x0..=next.x1 {
+            let pos = CellPos::new(x, y);
+            if cur.contains(pos) || own_covers(own, pos) {
+                continue;
+            }
+            if cell_blocks(world, registry, pos) {
                 return true;
             }
         }
     }
     false
+}
+
+fn supported_at<W: CellSource>(
+    world: &W,
+    registry: &MaterialRegistry,
+    body: &Actor,
+    cx: Fixed,
+    cy: Fixed,
+    own: OwnCells,
+) -> bool {
+    let next = footprint_at(cx, cy, body.half_w, body.half_h);
+    let row = next.y0 - 1;
+    (next.x0..=next.x1).any(|x| {
+        let pos = CellPos::new(x, row);
+        !own_covers(own, pos) && cell_blocks(world, registry, pos)
+    })
+}
+
+pub fn grounded<W: CellSource>(
+    world: &W,
+    registry: &MaterialRegistry,
+    body: &Actor,
+    own: OwnCells,
+) -> bool {
+    body.vy <= Fixed::ZERO && supported_at(world, registry, body, body.x, body.y, own)
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -157,14 +238,14 @@ pub fn body_submersion<W: CellSource>(
     registry: &MaterialRegistry,
     body: &Actor,
 ) -> Submersion {
-    let (x0, y0, x1, y1) = cell_bounds(body.x, body.y, body.half_w, body.half_h);
+    let fp = body.footprint();
     let mut total = 0u32;
     let mut liquid = 0u32;
     let mut density_sum = 0.0f32;
     let mut flow_x = 0i64;
     let mut flow_y = 0i64;
-    for y in y0..=y1 {
-        for x in x0..=x1 {
+    for y in fp.y0..=fp.y1 {
+        for x in fp.x0..=fp.x1 {
             total += 1;
             let Some(cell) = world.cell_at(CellPos::new(x, y)) else {
                 continue;
@@ -178,6 +259,51 @@ pub fn body_submersion<W: CellSource>(
                 flow_y += cvy as i64;
             }
         }
+    }
+    if liquid == 0 {
+        return Submersion::default();
+    }
+    let per_cell = 1.0 / liquid as f32;
+    let to_per_sec = 1.0 / VEL_ONE as f32;
+    Submersion {
+        fraction: liquid as f32 / total as f32,
+        liquid_density: density_sum / liquid as f32,
+        flow_vx: flow_x as f32 * per_cell * to_per_sec,
+        flow_vy: flow_y as f32 * per_cell * to_per_sec,
+    }
+}
+
+pub fn ring_submersion<W: CellSource>(
+    world: &W,
+    registry: &MaterialRegistry,
+    body: &Actor,
+) -> Submersion {
+    let fp = body.footprint();
+    let mut total = 0u32;
+    let mut liquid = 0u32;
+    let mut density_sum = 0.0f32;
+    let mut flow_x = 0i64;
+    let mut flow_y = 0i64;
+    let mut sample = |pos: CellPos| {
+        total += 1;
+        let Some(cell) = world.cell_at(pos) else {
+            return;
+        };
+        let material = registry.get(cell.material);
+        if material.phase == Phase::Liquid {
+            liquid += 1;
+            density_sum += material.density;
+            let (cvx, cvy) = cell.vel();
+            flow_x += cvx as i64;
+            flow_y += cvy as i64;
+        }
+    };
+    for y in fp.y0..=fp.y1 {
+        sample(CellPos::new(fp.x0 - 1, y));
+        sample(CellPos::new(fp.x1 + 1, y));
+    }
+    for x in fp.x0..=fp.x1 {
+        sample(CellPos::new(x, fp.y0 - 1));
     }
     if liquid == 0 {
         return Submersion::default();
@@ -232,8 +358,8 @@ impl Default for PlayerParams {
             fast_max_accel: Fixed::from_int(300),
             jump_speed: Fixed::from_int(105),
             jump_h_boost: Fixed::from_int(40),
-            stand_half_h: Fixed::from_f32(5.5),
-            duck_half_h: Fixed::from_int(3),
+            stand_half_h: Fixed::from_f32(crate::player::STAND_ROWS as f32 * 0.5),
+            duck_half_h: Fixed::from_f32(crate::player::DUCK_ROWS as f32 * 0.5),
             swim_thrust: Fixed::from_int(600),
             density: 1050.0,
             wade_run_mult: Fixed::from_f32(0.7),
@@ -270,11 +396,11 @@ fn solids_bounce<W: CellSource>(world: &W, registry: &MaterialRegistry, solids: 
 }
 
 fn ground_grip<W: CellSource>(world: &W, registry: &MaterialRegistry, body: &Actor) -> f32 {
-    let (x0, _, x1, _) = cell_bounds(body.x, body.y, body.half_w, body.half_h);
-    let feet = (body.y - body.half_h - GROUND_PROBE).floor_cell();
+    let fp = body.footprint();
+    let feet = fp.y0 - 1;
     let mut grip = 0.0f32;
     let mut found = false;
-    for x in x0..=x1 {
+    for x in fp.x0..=fp.x1 {
         if let Some(cell) = world.cell_at(CellPos::new(x, feet)) {
             let material = registry.get(cell.material);
             if matches!(material.phase, Phase::Solid | Phase::Powder) {
@@ -297,6 +423,7 @@ pub fn step_player<W: CellSource>(
     body: &mut Actor,
     ctrl: &mut Controller,
     input: StepInput,
+    own: OwnCells,
 ) -> MoveResult {
     let jump_held = input.jump;
     let down_held = input.down;
@@ -313,7 +440,7 @@ pub fn step_player<W: CellSource>(
     ctrl.var_jump_timer = (ctrl.var_jump_timer - TICK_DT).max(0.0);
 
     let move_x = input.move_x.clamp(-1, 1) as i32;
-    let submersion = body_submersion(world, registry, body);
+    let submersion = ring_submersion(world, registry, body);
     if input.fly {
         fly_update(
             world, registry, params, body, ctrl, move_x, jump_held, down_held,
@@ -324,7 +451,7 @@ pub fn step_player<W: CellSource>(
         );
     }
 
-    let result = move_body(world, registry, body, submersion.fraction);
+    let result = move_body(world, registry, body, submersion.fraction, own);
     if result.hit_ceiling && ctrl.var_jump_timer < CEILING_VAR_JUMP_GRACE {
         ctrl.var_jump_timer = 0.0;
     }
@@ -496,16 +623,16 @@ fn bank_ahead<W: CellSource>(
     body: &Actor,
     move_x: i32,
 ) -> bool {
-    let (x0, y0, x1, y1) = cell_bounds(body.x, body.y, body.half_w, body.half_h);
+    let fp = body.footprint();
     let dirs: &[i32] = match move_x {
         1 => &[1],
         -1 => &[-1],
         _ => &[-1, 1],
     };
     for &dir in dirs {
-        let edge = if dir > 0 { x1 } else { x0 };
+        let edge = if dir > 0 { fp.x1 } else { fp.x0 };
         for off in 1..=BANK_PROBE_CELLS {
-            for y in y0..=y1 {
+            for y in fp.y0..=fp.y1 {
                 if cell_blocks(world, registry, CellPos::new(edge + dir * off, y)) {
                     return true;
                 }
@@ -543,12 +670,12 @@ fn can_unduck<W: CellSource>(
     body: &Actor,
 ) -> bool {
     let stand_cy = body.y - body.half_h + params.stand_half_h;
-    let cur = cell_bounds(body.x, body.y, body.half_w, body.half_h);
-    let (x0, y0, x1, y1) = cell_bounds(body.x, stand_cy, body.half_w, params.stand_half_h);
-    for y in y0..=y1 {
-        for x in x0..=x1 {
-            let overlapped = x >= cur.0 && x <= cur.2 && y >= cur.1 && y <= cur.3;
-            if !overlapped && cell_blocks(world, registry, CellPos::new(x, y)) {
+    let cur = body.footprint();
+    let next = footprint_at(body.x, stand_cy, body.half_w, params.stand_half_h);
+    for y in next.y0..=next.y1 {
+        for x in next.x0..=next.x1 {
+            let pos = CellPos::new(x, y);
+            if !cur.contains(pos) && cell_blocks(world, registry, pos) {
                 return false;
             }
         }
@@ -565,7 +692,6 @@ pub struct Blocked {
 
 #[derive(Debug, Default)]
 pub struct MoveResult {
-    pub displaced: Vec<CellPos>,
     pub blocked: Vec<Blocked>,
     pub hit_ceiling: bool,
 }
@@ -589,62 +715,25 @@ impl MoveResult {
 struct Blockage {
     solid: bool,
     solids: Vec<CellPos>,
-    powder: Vec<CellPos>,
 }
 
 impl Blockage {
     fn free(&self) -> bool {
-        !self.solid && self.powder.is_empty()
+        !self.solid
     }
 
     fn step_top(&self) -> Option<i32> {
-        if self.solid && self.solids.is_empty() {
-            return None;
-        }
-        self.solids
-            .iter()
-            .chain(self.powder.iter())
-            .map(|pos| pos.y)
-            .max()
+        self.solids.iter().map(|pos| pos.y).max()
     }
 
     fn near_col(&self, dir: i32) -> Option<i32> {
-        let cols = self
-            .solids
-            .iter()
-            .chain(self.powder.iter())
-            .map(|pos| pos.x);
+        let cols = self.solids.iter().map(|pos| pos.x);
         if dir > 0 { cols.min() } else { cols.max() }
     }
 
     fn near_row(&self, dir: i32) -> Option<i32> {
-        let rows = self
-            .solids
-            .iter()
-            .chain(self.powder.iter())
-            .map(|pos| pos.y);
+        let rows = self.solids.iter().map(|pos| pos.y);
         if dir > 0 { rows.min() } else { rows.max() }
-    }
-
-    fn wadeable(&self, limit: usize, displaced: &[CellPos]) -> bool {
-        !self.solid
-            && !self.powder.is_empty()
-            && self.powder.len() <= limit
-            && displaced.len() + self.powder.len() <= MAX_DISPLACED
-    }
-
-    fn wade(self, displaced: &mut Vec<CellPos>) -> Fixed {
-        let mut damp = Fixed::ONE;
-        for _ in 0..self.powder.len() {
-            damp = damp.mul(WADE_DAMP);
-        }
-        displaced.extend(self.powder);
-        damp
-    }
-
-    fn dig(self, displaced: &mut Vec<CellPos>) {
-        let budget = MAX_DISPLACED.saturating_sub(displaced.len());
-        displaced.extend(self.powder.into_iter().take(budget));
     }
 }
 
@@ -654,33 +743,30 @@ fn passage<W: CellSource>(
     body: &Actor,
     cx: Fixed,
     cy: Fixed,
-    displaced: &[CellPos],
+    own: OwnCells,
 ) -> Blockage {
-    let cur = cell_bounds(body.x, body.y, body.half_w, body.half_h);
-    let (x0, y0, x1, y1) = cell_bounds(cx, cy, body.half_w, body.half_h);
+    let cur = body.footprint();
+    let next = footprint_at(cx, cy, body.half_w, body.half_h);
     let mut blockage = Blockage {
         solid: false,
         solids: Vec::new(),
-        powder: Vec::new(),
     };
-    for y in y0..=y1 {
-        for x in x0..=x1 {
+    for y in next.y0..=next.y1 {
+        for x in next.x0..=next.x1 {
             let pos = CellPos::new(x, y);
-            let overlapped = x >= cur.0 && x <= cur.2 && y >= cur.1 && y <= cur.3;
             let Some(cell) = world.cell_at(pos) else {
                 blockage.solid = true;
                 continue;
             };
-            if overlapped {
+            if cur.contains(pos) || own_covers(own, pos) {
                 continue;
             }
-            match registry.get(cell.material).phase {
-                Phase::Solid => {
-                    blockage.solid = true;
-                    blockage.solids.push(pos);
-                }
-                Phase::Powder if !displaced.contains(&pos) => blockage.powder.push(pos),
-                _ => {}
+            if matches!(
+                registry.get(cell.material).phase,
+                Phase::Solid | Phase::Powder
+            ) {
+                blockage.solid = true;
+                blockage.solids.push(pos);
             }
         }
     }
@@ -692,15 +778,18 @@ fn try_step_up<W: CellSource>(
     registry: &MaterialRegistry,
     body: &mut Actor,
     blockage: &Blockage,
+    own: OwnCells,
 ) -> bool {
     let Some(step_top) = blockage.step_top() else {
         return false;
     };
-    let rise_needed = Fixed::from_cell(step_top + 1) - (body.y - body.half_h);
+    let fp = body.footprint();
+    let down = body.y.floor_cell() - fp.y0;
+    let rise_needed = Fixed::from_cell(step_top + 1 + down) - body.y;
     if rise_needed <= Fixed::ZERO || rise_needed > Fixed::from_int(STEP_UP_CELLS) {
         return false;
     }
-    if rect_blocked(world, registry, body, body.x, body.y + rise_needed) {
+    if rect_blocked(world, registry, body, body.x, body.y + rise_needed, own) {
         return false;
     }
     body.y += rise_needed;
@@ -716,7 +805,7 @@ fn corner_correct<W: CellSource>(
     registry: &MaterialRegistry,
     body: &Actor,
     next_y: Fixed,
-    displaced: &[CellPos],
+    own: OwnCells,
 ) -> Option<Fixed> {
     let mut sides: Vec<i32> = Vec::new();
     if body.vx <= Fixed::ZERO {
@@ -728,7 +817,7 @@ fn corner_correct<W: CellSource>(
     for side in sides {
         for off in 1..=UPWARD_CORNER_CORRECTION {
             let cand_x = body.x + Fixed::from_int(side * off);
-            if passage(world, registry, body, cand_x, next_y, displaced).free() {
+            if passage(world, registry, body, cand_x, next_y, own).free() {
                 return Some(cand_x);
             }
         }
@@ -741,10 +830,15 @@ pub fn move_body<W: CellSource>(
     registry: &MaterialRegistry,
     body: &mut Actor,
     submersion: f32,
+    own: OwnCells,
 ) -> MoveResult {
     let mut result = MoveResult::default();
     let was_grounded = body.on_ground;
     body.on_ground = false;
+    let w = body.half_w.mul_int(2).round_int().max(1);
+    let h = body.half_h.mul_int(2).round_int().max(1);
+    let (w_left, w_right) = (w / 2, w - 1 - w / 2);
+    let (h_down, h_up) = (h / 2, h - 1 - h / 2);
     let mut remaining_x = body.vx.per_tick();
     let remaining_y = body.vy.per_tick();
 
@@ -763,18 +857,18 @@ pub fn move_body<W: CellSource>(
     let mut climbed = false;
     if remaining_x != Fixed::ZERO {
         let dir = if remaining_x > Fixed::ZERO { 1i32 } else { -1 };
-        let mut target = body.x + remaining_x;
+        let target = body.x + remaining_x;
         let mut col = if dir > 0 {
-            (body.x + body.half_w).max_cell()
+            body.x.floor_cell() + w_right
         } else {
-            (body.x - body.half_w).floor_cell()
+            body.x.floor_cell() - w_left
         };
         loop {
             let next_col = col + dir;
             let next_x = if dir > 0 {
-                Fixed::from_cell(next_col) + Fixed::SUBUNIT - body.half_w
+                Fixed::from_cell(next_col - w_right)
             } else {
-                Fixed::from_cell(next_col + 1) - Fixed::SUBUNIT + body.half_w
+                Fixed::from_cell(next_col + w_left + 1) - Fixed::SUBUNIT
             };
             let overshoots = if dir > 0 {
                 next_x >= target
@@ -782,12 +876,12 @@ pub fn move_body<W: CellSource>(
                 next_x <= target
             };
             if overshoots {
-                let blockage = passage(world, registry, body, target, body.y, &result.displaced);
+                let blockage = passage(world, registry, body, target, body.y, own);
                 if blockage.free() {
                     body.x = target;
                     break;
                 }
-                if try_step_up(world, registry, body, &blockage) {
+                if try_step_up(world, registry, body, &blockage, own) {
                     climbed = true;
                     continue;
                 }
@@ -797,34 +891,25 @@ pub fn move_body<W: CellSource>(
                 body.vx = after;
                 break;
             }
-            let blockage = passage(world, registry, body, next_x, body.y, &result.displaced);
+            let blockage = passage(world, registry, body, next_x, body.y, own);
             if blockage.free() {
                 body.x = next_x;
                 col = next_col;
                 continue;
             }
-            if try_step_up(world, registry, body, &blockage) {
+            if try_step_up(world, registry, body, &blockage, own) {
                 climbed = true;
-                continue;
-            }
-            if blockage.wadeable(WADE_SIDE_CELLS, &result.displaced) {
-                let damp = blockage.wade(&mut result.displaced);
-                body.x = next_x;
-                col = next_col;
-                body.vx = body.vx.mul(damp);
-                target = body.x + (target - body.x).mul(damp);
                 continue;
             }
             let e = solids_bounce(world, registry, &blockage.solids);
             let after = resolve_axis(body.vx, e);
             result.record_blocked(&blockage.solids, (body.vx - after).to_f32(), 0.0);
             let snap = blockage.near_col(dir);
-            blockage.dig(&mut result.displaced);
             body.x = match snap {
-                Some(near) if dir > 0 => Fixed::from_cell(near) - body.half_w,
-                Some(near) => Fixed::from_cell(near + 1) + body.half_w,
-                None if dir > 0 => Fixed::from_cell(next_col) - body.half_w,
-                None => Fixed::from_cell(next_col + 1) + body.half_w,
+                Some(near) if dir > 0 => Fixed::from_cell(near - w_right) - Fixed::SUBUNIT,
+                Some(near) => Fixed::from_cell(near + 1 + w_left),
+                None if dir > 0 => Fixed::from_cell(next_col - w_right) - Fixed::SUBUNIT,
+                None => Fixed::from_cell(next_col + 1 + w_left),
             };
             body.vx = after;
             break;
@@ -838,14 +923,14 @@ pub fn move_body<W: CellSource>(
     if was_grounded
         && body.vy <= Fixed::ZERO
         && submersion < SNAP_DOWN_MAX_SUBMERSION
-        && !rect_blocked(world, registry, body, body.x, body.y - GROUND_PROBE)
+        && !supported_at(world, registry, body, body.x, body.y, own)
     {
-        for down in 1..=STEP_DOWN_CELLS {
-            let next_y = body.y - Fixed::from_int(down);
-            if rect_blocked(world, registry, body, body.x, next_y) {
+        for step in 1..=STEP_DOWN_CELLS {
+            let next_y = body.y - Fixed::from_int(step);
+            if rect_blocked(world, registry, body, body.x, next_y, own) {
                 break;
             }
-            if rect_blocked(world, registry, body, body.x, next_y - GROUND_PROBE) {
+            if supported_at(world, registry, body, body.x, next_y, own) {
                 body.y = next_y;
                 body.on_ground = true;
                 break;
@@ -855,18 +940,18 @@ pub fn move_body<W: CellSource>(
 
     if remaining_y != Fixed::ZERO {
         let dir = if remaining_y > Fixed::ZERO { 1i32 } else { -1 };
-        let mut target = body.y + remaining_y;
+        let target = body.y + remaining_y;
         let mut row = if dir > 0 {
-            (body.y + body.half_h).max_cell()
+            body.y.floor_cell() + h_up
         } else {
-            (body.y - body.half_h).floor_cell()
+            body.y.floor_cell() - h_down
         };
         loop {
             let next_row = row + dir;
             let next_y = if dir > 0 {
-                Fixed::from_cell(next_row) + Fixed::SUBUNIT - body.half_h
+                Fixed::from_cell(next_row - h_up)
             } else {
-                Fixed::from_cell(next_row + 1) - Fixed::SUBUNIT + body.half_h
+                Fixed::from_cell(next_row + h_down + 1) - Fixed::SUBUNIT
             };
             let overshoots = if dir > 0 {
                 next_y >= target
@@ -874,7 +959,7 @@ pub fn move_body<W: CellSource>(
                 next_y <= target
             };
             if overshoots {
-                let blockage = passage(world, registry, body, body.x, target, &result.displaced);
+                let blockage = passage(world, registry, body, body.x, target, own);
                 if blockage.free() {
                     body.y = target;
                 } else {
@@ -888,21 +973,13 @@ pub fn move_body<W: CellSource>(
                 }
                 break;
             }
-            let blockage = passage(world, registry, body, body.x, next_y, &result.displaced);
+            let blockage = passage(world, registry, body, body.x, next_y, own);
             if blockage.free() {
                 body.y = next_y;
                 row = next_row;
-            } else if dir > 0 && blockage.wadeable(WADE_UP_CELLS, &result.displaced) {
-                let damp = blockage.wade(&mut result.displaced);
-                body.y = next_y;
-                row = next_row;
-                body.vy = body.vy.mul(damp);
-                target = body.y + (target - body.y).mul(damp);
             } else {
                 if dir > 0 {
-                    if let Some(corrected_x) =
-                        corner_correct(world, registry, body, next_y, &result.displaced)
-                    {
+                    if let Some(corrected_x) = corner_correct(world, registry, body, next_y, own) {
                         body.x = corrected_x;
                         body.y = next_y;
                         row = next_row;
@@ -914,10 +991,10 @@ pub fn move_body<W: CellSource>(
                 let after = resolve_axis(body.vy, e);
                 result.record_blocked(&blockage.solids, 0.0, (body.vy - after).to_f32());
                 body.y = match blockage.near_row(dir) {
-                    Some(near) if dir > 0 => Fixed::from_cell(near) - body.half_h,
-                    Some(near) => Fixed::from_cell(near + 1) + body.half_h,
-                    None if dir > 0 => Fixed::from_cell(next_row) - body.half_h,
-                    None => Fixed::from_cell(next_row + 1) + body.half_h,
+                    Some(near) if dir > 0 => Fixed::from_cell(near - h_up) - Fixed::SUBUNIT,
+                    Some(near) => Fixed::from_cell(near + 1 + h_down),
+                    None if dir > 0 => Fixed::from_cell(next_row - h_up) - Fixed::SUBUNIT,
+                    None => Fixed::from_cell(next_row + 1 + h_down),
                 };
                 if dir < 0 && after <= Fixed::ZERO {
                     body.on_ground = true;
@@ -930,63 +1007,9 @@ pub fn move_body<W: CellSource>(
 
     if body.vy <= Fixed::ZERO
         && !body.on_ground
-        && rect_blocked(world, registry, body, body.x, body.y - GROUND_PROBE)
+        && supported_at(world, registry, body, body.x, body.y, own)
     {
         body.on_ground = true;
     }
     result
-}
-
-pub fn scatter_powder(
-    world: &mut CellWorld,
-    registry: &MaterialRegistry,
-    obstacles: &Obstacles,
-    body: &Actor,
-    cells: &[CellPos],
-) {
-    let dir = if body.vx > Fixed::ONE {
-        1
-    } else if body.vx < -Fixed::ONE {
-        -1
-    } else {
-        0
-    };
-    for &pos in cells {
-        let Some(cell) = world.get_cell(pos) else {
-            continue;
-        };
-        if registry.get(cell.material).phase != Phase::Powder {
-            continue;
-        }
-        let mut destination: Option<CellPos> = None;
-        'search: for radius in 1..=SCATTER_RADIUS {
-            let mut ring = crate::chebyshev_ring(radius);
-            ring.sort_by_key(|&(dx, dy)| (dir * dx, dy, dx));
-            for (dx, dy) in ring {
-                let target = pos.translated(dx, dy);
-                if obstacles.occupied(target) {
-                    continue;
-                }
-                let (tx, ty) = (Fixed::cell_center(target.x), Fixed::cell_center(target.y));
-                if (tx - body.x).abs() < body.half_w + Fixed::HALF
-                    && (ty - body.y).abs() < body.half_h + Fixed::HALF
-                {
-                    continue;
-                }
-                let empty = world
-                    .get_cell(target)
-                    .is_some_and(|c| registry.get(c.material).phase == Phase::Empty);
-                if empty {
-                    destination = Some(target);
-                    break 'search;
-                }
-            }
-        }
-        if let Some(target) = destination {
-            world.set_cell(pos, Cell::AIR);
-            world.set_cell(target, cell);
-        } else {
-            world.mark_keep(pos);
-        }
-    }
 }

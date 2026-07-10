@@ -4,11 +4,11 @@
 
 ## Tick order
 
-1. Drain network — sessions, input frames (state merged, actions folded in order, stale input decays), chat, commands
+1. Drain network — sessions, input frames (state merged, actions folded in order, stale input decays), chat, commands; departing players unstamp their raster
 2. Apply inputs → world edits: run chat commands, dig/place, slot actions + crafting
-3. Load/generate/unload regions per ticket changes, then rebuild the entity obstacle mask
+3. Load/generate/unload regions per ticket changes
 4. Step CA (4 phases, rayon), applying deferred world edits after the 4 phases
-5. Step physics: players (push-apart, then controller), then the serial bodies pass (damage → island registration → dynamics + re-stamp → sleep)
+5. Step physics: players in `PlayerId` order (controller sweep, then raster stamp — so later players see earlier stamps), then the serial bodies pass (damage → island registration → dynamics + re-stamp → sleep)
 6. Game logic: health, hazards, crush; advance the world clock
 7. Build and send one `TickFrame` per session (chunks, players, inventory, self-state, `tick`+`world_age`)
 8. Periodic persistence flush + autosave
@@ -23,6 +23,6 @@ Each ticket source (player, spawn anchor, …) projects onto chunks as `Active` 
 
 redb, server-side only: `regions` (z-order → lz4 blob, versioned), `players`, `meta`. Written only when dirty, through transactions. Each blob carries a format version (`REGION_FORMAT_VERSION`, `WORLD_FORMAT_VERSION`); there are no migrations — a version mismatch is rejected (pre-release worlds are deleted and regenerated).
 
-- Pixel bodies persist as their grid cells (not separately); unload settles them (motion lost), load strips leftover flags — a crash degrades in-flight bodies to plain terrain.
+- Pixel bodies persist as their grid cells (not separately); unload settles them (motion lost), load strips leftover flags — a crash degrades in-flight bodies to plain terrain. Player flesh cells saved mid-play are voided on load (a crash leaves a hole that refills), and the player record keeps its `Fixed` pose.
 - Each chunk saves a **resume rect** (union of change + keep-alive) restored as a keep-alive on load, so in-flight processes continue after reload at zero replication cost.
 - Player inventories are per-slot in the player record (plus cursor and trash). See [Inventory.md](Inventory.md).

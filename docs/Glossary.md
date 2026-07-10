@@ -26,10 +26,12 @@ Canonical names for the core domain vocabulary. One concept, one name.
 
 | Term | Meaning |
 |------|---------|
-| **Actor** | kinematic AABB controller (`sim::physics::Actor`): players (creatures later) — pos, velocity, half-extents, `on_ground` |
+| **Actor** | kinematic controller (`sim::physics::Actor`): players (creatures later) — `Fixed` accumulator pose, velocity, half-extents, `on_ground`; observable pose is its integer `Footprint` |
+| **Footprint** | floor-anchored integer cell rect of an actor — pure function of `(floor(x), floor(y), extents)`; collision, raster, wire, hazards all read it |
 | **PixelBody** | rigid body made of cells (pose + angle + spin + mass + raster); the only "Body" |
+| **PlayerRaster / flesh** | the player's stamped grid presence: a `PlayerStamp` (rect raster + duck + facing) of body-flagged inert `flesh` cells |
 | **PlayerActor** | server ECS component wrapping an `Actor` |
-| **ActorAabb / ActorDynamics** | actor collision proxies handed to the sim and the pixel-body pass |
+| **ActorAabb / ActorDynamics** | actor collision proxies handed to the pixel-body pass |
 
 ## Protocol & ids
 
@@ -37,7 +39,7 @@ Canonical names for the core domain vocabulary. One concept, one name.
 |------|---------|
 | **TickFrame** | the one frame sent per server tick: `tick`, `world_age`, `chunks`, `players`, inventory/cursor/trash/self/debug |
 | **ChunkOp** | per-chunk wire delta inside a `TickFrame`: `Load` / `Delta` / `Unload` |
-| **PlayerState** | wire snapshot of a player (pos, ducking, burning) |
+| **PlayerState** | wire snapshot of a player (integer cell pose, ducking, burning, facing) — anchor only; the body rides chunk deltas |
 | **InputFrame** | per-client-tick input message: held `InputState` (latest-wins, merged) + ordered one-shot `InputAction`s (never lost) |
 | **PlayerId / PlayerUuid** | session player id / persistent account id |
 | **tick / world_age** | monotonic sim tick number / calendar clock (DAY_UNITS; YEAR_UNITS = 60 days, `season()`/`day_of_year()` are integer-math accessors) |

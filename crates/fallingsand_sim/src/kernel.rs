@@ -1,18 +1,16 @@
-use crate::obstacles::Obstacles;
 use crate::rules;
 use crate::window::{SimWindow, WINDOW_CHUNKS, WINDOW_SLOTS};
 use crate::world::CellWorld;
 use fallingsand_core::{CHUNK_SIZE, CellPos, Chunk, ChunkPos, DirtyRect, MaterialRegistry};
 use rustc_hash::FxHashSet;
 
-pub fn step(world: &mut CellWorld, registry: &MaterialRegistry, obstacles: &Obstacles) {
-    step_scoped(world, registry, obstacles, &|_| true);
+pub fn step(world: &mut CellWorld, registry: &MaterialRegistry) {
+    step_scoped(world, registry, &|_| true);
 }
 
 pub fn step_scoped(
     world: &mut CellWorld,
     registry: &MaterialRegistry,
-    obstacles: &Obstacles,
     simulate: &(dyn Fn(ChunkPos) -> bool + Sync),
 ) {
     world.advance_tick();
@@ -31,7 +29,7 @@ pub fn step_scoped(
         }
     }
     for phase in 0..4 {
-        run_phase(world, registry, obstacles, phase, tick, simulate);
+        run_phase(world, registry, phase, tick, simulate);
     }
     world.apply_edits();
 }
@@ -39,7 +37,6 @@ pub fn step_scoped(
 fn run_phase(
     world: &mut CellWorld,
     registry: &MaterialRegistry,
-    obstacles: &Obstacles,
     phase: u32,
     tick: u64,
     simulate: &(dyn Fn(ChunkPos) -> bool + Sync),
@@ -76,11 +73,11 @@ fn run_phase(
         use rayon::prelude::*;
         windows
             .par_iter_mut()
-            .for_each(|window| process_block(window, registry, obstacles, tick, simulate));
+            .for_each(|window| process_block(window, registry, tick, simulate));
     }
     #[cfg(not(feature = "parallel"))]
     for window in windows.iter_mut() {
-        process_block(window, registry, obstacles, tick, simulate);
+        process_block(window, registry, tick, simulate);
     }
 
     let mut structural: Vec<CellPos> = Vec::new();
@@ -104,7 +101,6 @@ fn run_phase(
 fn process_block(
     window: &mut SimWindow,
     registry: &MaterialRegistry,
-    obstacles: &Obstacles,
     tick: u64,
     simulate: &(dyn Fn(ChunkPos) -> bool + Sync),
 ) {
@@ -144,7 +140,7 @@ fn process_block(
             for i in 0..=(end - start) {
                 let lx = if reverse { end - i } else { start + i };
                 let pos = CellPos::new(origin_cell.x + ox as i32 * size + lx, origin_cell.y + gy);
-                rules::update_cell(window, registry, obstacles, pos, tick, tick_byte);
+                rules::update_cell(window, registry, pos, tick, tick_byte);
             }
         }
     }

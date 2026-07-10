@@ -61,6 +61,10 @@ impl Fixed {
         self.0 >> FRAC_BITS
     }
 
+    pub const fn round_int(self) -> i32 {
+        round_div(self.0 as i64, SCALE as i64) as i32
+    }
+
     pub const fn max_cell(self) -> i32 {
         (self.0 - 1) >> FRAC_BITS
     }

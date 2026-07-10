@@ -1,6 +1,5 @@
 use crate::AppState;
 use crate::camera::WORLD_LAYER;
-use crate::interpolation::Interpolated;
 use crate::inventory::SelectedSlot;
 use crate::net::{NetSet, ServerMsg, Session, SessionEnded, TickMessage};
 use bevy::camera::visibility::RenderLayers;
@@ -10,14 +9,14 @@ use fallingsand_protocol::{GameMode, PlayerId, ServerMessage};
 
 pub struct PlayerPlugin;
 
-pub const PLAYER_SIZE: Vec2 = Vec2::new(3.8, 11.0);
-pub const PLAYER_DUCK_SIZE: Vec2 = Vec2::new(3.8, 6.0);
-const SNAP_DISTANCE: f32 = 64.0;
+pub const PLAYER_SIZE: Vec2 = Vec2::new(3.0, 9.0);
+pub const PLAYER_DUCK_SIZE: Vec2 = Vec2::new(3.0, 5.0);
 
 #[derive(Component)]
 pub struct PlayerVisual {
     pub id: PlayerId,
     pub burning: bool,
+    pub ducking: bool,
 }
 
 #[derive(Component)]
@@ -99,7 +98,7 @@ fn apply_players(
     mut commands: Commands,
     mut visuals: ResMut<PlayerVisuals>,
     mut frames: MessageReader<TickMessage>,
-    mut query: Query<(&mut Interpolated, &mut Sprite, &mut PlayerVisual)>,
+    mut query: Query<(&mut Transform, &mut PlayerVisual)>,
     session: Option<Res<Session>>,
     names: Res<PlayerNames>,
     mut local_state: ResMut<LocalPlayerState>,
@@ -107,45 +106,34 @@ fn apply_players(
     let local = session.and_then(|session| session.player);
     for TickMessage(tick) in frames.read() {
         for state in &tick.players {
+            let target = Vec2::new(state.cx as f32 + 0.5, state.cy as f32 + 0.5);
             if local == Some(state.player) {
-                local_state.pos = Vec2::new(state.x.to_f32(), state.y.to_f32());
+                local_state.pos = target;
                 local_state.burning = state.burning;
                 local_state.present = true;
             }
-            let target = Vec2::new(state.x.to_f32(), state.y.to_f32());
-            let size = if state.ducking {
-                PLAYER_DUCK_SIZE
-            } else {
-                PLAYER_SIZE
-            };
             if let Some(&entity) = visuals.0.get(&state.player) {
-                if let Ok((mut visual, mut sprite, mut marker)) = query.get_mut(entity) {
-                    let snap = visual.target_position().distance_squared(target)
-                        > SNAP_DISTANCE * SNAP_DISTANCE;
-                    visual.record(target, 0.0, snap);
-                    if sprite.custom_size != Some(size) {
-                        sprite.custom_size = Some(size);
-                    }
+                if let Ok((mut transform, mut marker)) = query.get_mut(entity) {
+                    transform.translation.x = target.x;
+                    transform.translation.y = target.y;
                     if marker.burning != state.burning {
                         marker.burning = state.burning;
+                    }
+                    if marker.ducking != state.ducking {
+                        marker.ducking = state.ducking;
                     }
                 }
             } else {
                 let is_local = local == Some(state.player);
-                let color = if is_local {
-                    Color::srgb(0.95, 0.75, 0.35)
-                } else {
-                    Color::srgb(0.55, 0.8, 0.95)
-                };
                 let entity = commands
                     .spawn((
                         PlayerVisual {
                             id: state.player,
                             burning: state.burning,
+                            ducking: state.ducking,
                         },
-                        Interpolated::snapped(target, 0.0),
-                        Sprite::from_color(color, size),
                         Transform::from_xyz(target.x, target.y, 10.0),
+                        Visibility::default(),
                         RenderLayers::layer(WORLD_LAYER),
                     ))
                     .id();

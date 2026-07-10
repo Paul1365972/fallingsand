@@ -9,7 +9,7 @@ pub use wire::{
     CELL_WIRE_BYTES, WireError, cells_from_wire, cells_to_wire, decode_message, encode_message,
 };
 
-pub const PROTOCOL_VERSION: u16 = 25;
+pub const PROTOCOL_VERSION: u16 = 26;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct Stats {
