@@ -1,6 +1,5 @@
 use crate::inventory::{LocalInventory, SelectedSlot, item_color};
-use crate::net::{NetSet, TickMessage};
-use crate::player::LocalMode;
+use crate::player::{LocalPlayerState, SelfDamaged};
 use crate::{AppState, ClientItemRegistry, ClientRegistry, GameState};
 use bevy::prelude::*;
 use fallingsand_core::{HOTBAR_SLOTS, ItemStack, MAX_AIR_SECS, MAX_HP};
@@ -43,27 +42,13 @@ struct HotbarSlot(usize);
 struct HotbarIcon;
 
 #[derive(Resource, Default)]
-pub struct LocalHealth(pub f32);
-
-#[derive(Resource, Default)]
-pub struct LocalAir(pub f32);
-
-#[derive(Resource, Default)]
 struct FlashTimer(f32);
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<LocalHealth>()
-            .init_resource::<LocalAir>()
-            .init_resource::<FlashTimer>()
+        app.init_resource::<FlashTimer>()
             .add_systems(OnEnter(GameState::Playing), spawn_hud)
             .add_systems(OnExit(GameState::Playing), despawn_hud)
-            .add_systems(
-                PreUpdate,
-                track_vitals
-                    .after(NetSet)
-                    .run_if(in_state(AppState::InGame)),
-            )
             .add_systems(
                 Update,
                 (
@@ -196,33 +181,12 @@ fn spawn_hud(mut commands: Commands) {
 fn despawn_hud(
     mut commands: Commands,
     query: Query<Entity, With<HudRoot>>,
-    mut health: ResMut<LocalHealth>,
-    mut air: ResMut<LocalAir>,
     mut flash: ResMut<FlashTimer>,
 ) {
     for entity in &query {
         commands.entity(entity).despawn();
     }
-    health.0 = 0.0;
-    air.0 = 0.0;
     flash.0 = 0.0;
-}
-
-fn track_vitals(
-    mut frames: MessageReader<TickMessage>,
-    mut health: ResMut<LocalHealth>,
-    mut air: ResMut<LocalAir>,
-    mut flash: ResMut<FlashTimer>,
-) {
-    for TickMessage(tick) in frames.read() {
-        if let Some(self_state) = tick.self_state {
-            if self_state.hp < health.0 - 0.01 && self_state.hp > 0.0 {
-                flash.0 = FLASH_SECS;
-            }
-            health.0 = self_state.hp;
-            air.0 = self_state.air;
-        }
-    }
 }
 
 fn hotbar_slots(inventory: &LocalInventory) -> Vec<Option<ItemStack>> {
@@ -334,44 +298,53 @@ pub fn format_count(count: u32) -> String {
 }
 
 fn update_health_bar(
-    health: Res<LocalHealth>,
+    state: Res<LocalPlayerState>,
     mut fill: Query<&mut Node, With<HealthFill>>,
     mut label: Query<&mut Text, With<HealthLabel>>,
 ) {
-    if !health.is_changed() {
-        return;
-    }
+    let width = percent((state.hp / MAX_HP * 100.0).clamp(0.0, 100.0));
     for mut node in &mut fill {
-        node.width = percent((health.0 / MAX_HP * 100.0).clamp(0.0, 100.0));
+        if node.width != width {
+            node.width = width;
+        }
     }
+    let value = format!("{:.0}", state.hp.max(0.0));
     for mut text in &mut label {
-        **text = format!("{:.0}", health.0.max(0.0));
+        if **text != value {
+            **text = value.clone();
+        }
     }
 }
 
 fn update_air_bar(
-    air: Res<LocalAir>,
-    mode: Res<LocalMode>,
+    state: Res<LocalPlayerState>,
     mut bar: Query<&mut Node, (With<AirBar>, Without<AirFill>)>,
     mut fill: Query<&mut Node, With<AirFill>>,
 ) {
-    if !air.is_changed() && !mode.is_changed() {
-        return;
-    }
-    let show = mode.0 == GameMode::Survival && air.0 < MAX_AIR_SECS - 0.05;
+    let show = state.mode == GameMode::Survival && state.air < MAX_AIR_SECS - 0.05;
+    let display = if show { Display::Flex } else { Display::None };
     for mut node in &mut bar {
-        node.display = if show { Display::Flex } else { Display::None };
+        if node.display != display {
+            node.display = display;
+        }
     }
+    let width = percent((state.air / MAX_AIR_SECS * 100.0).clamp(0.0, 100.0));
     for mut node in &mut fill {
-        node.width = percent((air.0 / MAX_AIR_SECS * 100.0).clamp(0.0, 100.0));
+        if node.width != width {
+            node.width = width;
+        }
     }
 }
 
 fn update_flash(
     time: Res<Time>,
+    mut damaged: MessageReader<SelfDamaged>,
     mut flash: ResMut<FlashTimer>,
     mut overlay: Query<&mut BackgroundColor, With<DamageFlash>>,
 ) {
+    for _ in damaged.read() {
+        flash.0 = FLASH_SECS;
+    }
     if flash.0 <= 0.0 {
         return;
     }
@@ -387,10 +360,13 @@ fn highlight_hotbar(
     mut slots: Query<(&HotbarSlot, &mut BorderColor)>,
 ) {
     for (slot, mut border) in &mut slots {
-        *border = if slot.0 == selected.0 {
+        let target = if slot.0 == selected.0 {
             BorderColor::all(Color::srgb(1.0, 0.9, 0.4))
         } else {
             BorderColor::all(Color::srgba(0.0, 0.0, 0.0, 0.6))
         };
+        if *border != target {
+            *border = target;
+        }
     }
 }

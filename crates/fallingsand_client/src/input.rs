@@ -2,7 +2,7 @@ use crate::camera::SkyCamera;
 use crate::chat::ChatOpen;
 use crate::inventory::{BrushRadius, InventoryOpen, SelectedSlot};
 use crate::net::{NetSet, ServerMsg, Session, SessionEnded};
-use crate::player::LocalMode;
+use crate::player::LocalPlayerState;
 use crate::{AppState, GameState, PauseState};
 use bevy::input::InputSystems;
 use bevy::input::mouse::MouseWheel;
@@ -175,7 +175,7 @@ fn sample(
     camera: Option<Single<(&Camera, &GlobalTransform), With<SkyCamera>>>,
     interactions: Query<&Interaction>,
     context: Res<InputContext>,
-    mode: Res<LocalMode>,
+    player: Res<LocalPlayerState>,
     time: Res<Time>,
     mut selected: ResMut<SelectedSlot>,
     mut brush: ResMut<BrushRadius>,
@@ -301,7 +301,7 @@ fn sample(
         }
         if keys.just_pressed(FLY_TAP_KEY) {
             let now = time.elapsed_secs();
-            if mode.0 == GameMode::Creative && now - acc.last_fly_tap < DOUBLE_TAP_SECS {
+            if player.mode == GameMode::Creative && now - acc.last_fly_tap < DOUBLE_TAP_SECS {
                 acc.queue(InputAction::ToggleFlight);
                 acc.last_fly_tap = 0.0;
             } else {

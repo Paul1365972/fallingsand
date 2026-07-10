@@ -29,9 +29,6 @@ pub struct PlayerVisuals(pub HashMap<PlayerId, Entity>);
 #[derive(Resource, Default)]
 pub struct PlayerNames(pub HashMap<PlayerId, String>);
 
-#[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
-pub struct LocalMode(pub GameMode);
-
 #[derive(Resource, Default, Clone, Copy)]
 pub struct LocalPlayerState {
     pub present: bool,
@@ -39,16 +36,18 @@ pub struct LocalPlayerState {
     pub hp: f32,
     pub air: f32,
     pub burning: bool,
-    pub ducking: bool,
     pub mode: GameMode,
 }
+
+#[derive(Message)]
+pub struct SelfDamaged;
 
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PlayerVisuals>()
             .init_resource::<PlayerNames>()
             .init_resource::<LocalPlayerState>()
-            .init_resource::<LocalMode>()
+            .add_message::<SelfDamaged>()
             .add_systems(
                 PreUpdate,
                 (track_names, apply_players, apply_self_state)
@@ -111,7 +110,6 @@ fn apply_players(
             if local == Some(state.player) {
                 local_state.pos = Vec2::new(state.x.to_f32(), state.y.to_f32());
                 local_state.burning = state.burning;
-                local_state.ducking = state.ducking;
                 local_state.present = true;
             }
             let target = Vec2::new(state.x.to_f32(), state.y.to_f32());
@@ -173,13 +171,13 @@ fn apply_players(
 
 fn apply_self_state(
     mut frames: MessageReader<TickMessage>,
-    mut mode: ResMut<LocalMode>,
     mut local_state: ResMut<LocalPlayerState>,
+    mut damaged: MessageWriter<SelfDamaged>,
 ) {
     for TickMessage(tick) in frames.read() {
         if let Some(self_state) = tick.self_state {
-            if mode.0 != self_state.mode {
-                mode.0 = self_state.mode;
+            if self_state.hp < local_state.hp - 0.01 && self_state.hp > 0.0 {
+                damaged.write(SelfDamaged);
             }
             local_state.hp = self_state.hp;
             local_state.air = self_state.air;
@@ -192,7 +190,6 @@ fn cleanup_players(
     mut commands: Commands,
     mut visuals: ResMut<PlayerVisuals>,
     mut names: ResMut<PlayerNames>,
-    mut mode: ResMut<LocalMode>,
     mut selected: ResMut<SelectedSlot>,
     mut local_state: ResMut<LocalPlayerState>,
 ) {
@@ -200,7 +197,6 @@ fn cleanup_players(
         commands.entity(entity).despawn();
     }
     names.0.clear();
-    *mode = LocalMode::default();
     selected.0 = 0;
     *local_state = LocalPlayerState::default();
 }

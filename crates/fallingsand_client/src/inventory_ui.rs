@@ -1,6 +1,6 @@
 use crate::input::{InputAccumulator, LocalAction, Modifiers, Pointer};
 use crate::inventory::{InventoryOpen, LocalInventory, item_color};
-use crate::player::LocalMode;
+use crate::player::LocalPlayerState;
 use crate::{ClientItemRegistry, ClientRegistry, GameState, PauseState};
 use bevy::prelude::*;
 use fallingsand_core::{HOTBAR_SLOTS, Inventory as CoreInventory, ItemId, ItemStack, MAIN_SLOTS};
@@ -201,7 +201,7 @@ fn rebuild_overlay(
     item_reg: Res<ClientItemRegistry>,
     recipes: Res<crate::ClientRecipes>,
     inventory: Res<LocalInventory>,
-    mode: Res<LocalMode>,
+    state: Res<LocalPlayerState>,
     player_panel: Query<Entity, With<PlayerPanel>>,
     side_panel: Query<Entity, With<SidePanel>>,
     mut sig: Local<Option<OverlaySig>>,
@@ -210,7 +210,10 @@ fn rebuild_overlay(
         *sig = None;
         return;
     }
-    if sig.is_some() && !inventory.is_changed() && !mode.is_changed() {
+    if let Some(sig) = sig.as_ref()
+        && !inventory.is_changed()
+        && sig.mode == state.mode
+    {
         return;
     }
     let core = CoreInventory {
@@ -223,7 +226,7 @@ fn rebuild_overlay(
         .map(|recipe| recipes.0.can_craft(recipe, &core))
         .collect();
     let next = OverlaySig {
-        mode: mode.0,
+        mode: state.mode,
         slots: inventory.slots.clone(),
         cursor: inventory.cursor,
         craftable: craftable.clone(),
@@ -278,7 +281,7 @@ fn rebuild_overlay(
     });
 
     commands.entity(side_panel).with_children(|panel| {
-        if mode.0 == GameMode::Creative {
+        if state.mode == GameMode::Creative {
             panel.spawn(label_node("Items"));
             let all: Vec<ItemId> = items.iter().map(|(id, _)| id).collect();
             for chunk in all.chunks(9) {

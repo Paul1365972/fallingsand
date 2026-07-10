@@ -167,7 +167,7 @@ fn toggle_overlay(
     mut actions: MessageReader<LocalAction>,
     mut visible: ResMut<DebugVisible>,
     mut borders: ResMut<BordersVisible>,
-    mode: Res<crate::player::LocalMode>,
+    state: Res<crate::player::LocalPlayerState>,
     mut session: Option<ResMut<Session>>,
 ) {
     for action in actions.read() {
@@ -178,7 +178,7 @@ fn toggle_overlay(
                 if let Some(session) = session.as_mut()
                     && session.player.is_some()
                 {
-                    let target = match mode.0 {
+                    let target = match state.mode {
                         fallingsand_protocol::GameMode::Creative => "s",
                         fallingsand_protocol::GameMode::Survival => "c",
                     };

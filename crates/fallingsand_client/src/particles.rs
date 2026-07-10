@@ -1,7 +1,7 @@
 use crate::camera::WORLD_LAYER;
 use crate::input::InputHeld;
 use crate::inventory::BrushRadius;
-use crate::player::{LocalMode, PlayerVisual, PlayerVisuals};
+use crate::player::{LocalPlayerState, PlayerVisual, PlayerVisuals};
 use crate::worldview::WorldView;
 use crate::{AppState, ClientRegistry, GameState};
 use bevy::camera::visibility::RenderLayers;
@@ -43,7 +43,7 @@ impl Plugin for ParticlesPlugin {
 fn spawn_dig_spray(
     mut commands: Commands,
     held: Res<InputHeld>,
-    mode: Res<LocalMode>,
+    state: Res<LocalPlayerState>,
     view: Res<WorldView>,
     registry: Res<ClientRegistry>,
     session: Option<Res<crate::net::Session>>,
@@ -65,7 +65,7 @@ fn spawn_dig_spray(
         return;
     };
     let aim = Vec2::new(held.0.aim.x as f32, held.0.aim.y as f32);
-    let reach = match mode.0 {
+    let reach = match state.mode {
         GameMode::Survival => SURVIVAL_REACH,
         GameMode::Creative => REACH,
     };
