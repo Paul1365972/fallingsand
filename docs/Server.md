@@ -13,8 +13,6 @@
 7. Build and send one `TickFrame` per session (chunks, players, inventory, self-state, `tick`+`world_age`)
 8. Periodic persistence flush + autosave
 
-Dig/place and crafting run with the inputs *before* the sim (step 2), not after physics; only health/hazards are post-physics.
-
 Budget ~16 ms/tick, sim ≤8 ms; sleeping is what keeps ~2000 active chunks inside it.
 
 ## Interest

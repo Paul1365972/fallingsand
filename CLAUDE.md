@@ -8,8 +8,6 @@ docs/ is the source of truth for intended design: start at docs/Overview.md (it 
 ```
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo fmt --all
-cargo build -p fallingsand_client --target wasm32-unknown-unknown
-cargo run -p fallingsand_client --features dev
 ```
 
 ## Principles
@@ -21,14 +19,13 @@ cargo run -p fallingsand_client --features dev
 
 ## Invariants
 
-- Conservation of mass: cells aren't created or destroyed without a physical cause (a reaction, explicit consumption); overlaps and awkward states should be impossible, or in rare cases resolve by displacement.
-- Velocity is per-cell and dissipative: every cell carries a velocity; motion is bled by drag, contact friction, and restitution (0 ≤ e < 1) so it always terminates and settles. Momentum is not strictly conserved across exchanges — feel and locality win over bookkeeping.
+- Conservation of mass: cells aren't created or destroyed without a physical cause; overlaps and awkward states should be impossible, or in rare cases resolve by displacement.
+- Velocity is per-cell and dissipative: every cell carries a velocity, bled by drag, contact friction, and restitution (0 ≤ e < 1) so motion always terminates and settles. Momentum is not strictly conserved across exchanges — feel and locality win over bookkeeping.
 - One cell, one owner: double occupancy by terrain, rigid bodies, or entities is an architecture bug, not a tuning problem.
 - Universality: every matter-affecting system handles all matter kinds — grid cells, powders/fluids, rigid bodies, entities — or explicitly flags the gap (a fallen tree must burn).
 - Server-authoritative: clients send raw input and render interpolated state — no client prediction, no client-side gameplay logic.
 - Idle cost: a settled world costs ~nothing — no per-tick work, no permanently-awake chunks, server or client.
-- Speed of light: no update may reach beyond its window (= 64); longer-range effects go through the `WorldEdit` queue.
-- Locality: every update — reaction or movement — reads and writes only its immediate neighborhood. No sweeps, no scanning for distant targets, no action at a distance; long-range effects propagate as local waves over ticks or go through the `WorldEdit` queue.
+- Locality & speed of light: every update reads and writes only its immediate neighborhood and never beyond its window (= 64) — no sweeps, no action at a distance; longer-range effects propagate as local waves over ticks or go through the `WorldEdit` queue.
 - Determinism: same seed + inputs → same world on one machine.
 - Suspend/resume: sleep, unload, and reload preserve pending activity — in-flight processes don't freeze in time.
 - Body rasterization: body flag ⇔ exactly one live body's raster covers the cell; public cell writes only produce unflagged cells.
@@ -37,7 +34,7 @@ cargo run -p fallingsand_client --features dev
 
 - Dependency direction: `core ← sim ← {server, client}`, `core ← protocol ← {server, client}`.
 - Scheduling: 4-phase 2×2-chunk-block scheduling; workers get a 4×4-chunk `SimWindow`, disjoint per phase.
-- Rects: `sim` (feeds scheduling) ⊇ `change` (feeds replication/persistence); `set` marks `change` tight + `sim` as the changed cell's 3×3 Moore neighbourhood (across chunk borders), `mark_keep` marks `sim` 1×1 only. `sim` is honest — the exact cells simulated next tick, no read-time dilation. Double-buffered (`prev_*`, `swap_rects`). `window.mark` for "simulate again", `window.set` for real changes.
+- Rects: `sim` (feeds scheduling) ⊇ `change` (feeds replication/persistence); `set` (real change) marks `change` tight + `sim` as the 3×3 Moore neighbourhood (across chunk borders), `mark` (simulate again) marks `sim` 1×1 only. `sim` is honest — the exact cells simulated next tick, no read-time dilation. Double-buffered (`prev_*`).
 - Randomness: tick-seeded, no RNG state, no iteration-order-dependent containers in sim paths.
 - Tuning units: constants are seconds-based, not per-tick.
 

@@ -1,45 +1,19 @@
 # Networking
 
-Everything flows over **one reliable ordered stream** per connection; messages are postcard-encoded
-serde enums, lz4 above a size threshold. `ServerMessage` splits into out-of-band control/social events
-(`HelloAck`, `Reject`, `PlayerJoined`, `PlayerLeft`, `Chat`, `System`) and **one `TickFrame` per server
-tick** carrying `tick`, `world_age`, and every per-tick delta. The frame *is* the tick boundary — no
-end-of-tick sentinel — and its arrival is the client's clock, so an idle world still sends a tiny empty
-frame each tick.
+One reliable ordered stream per connection; messages are postcard-encoded serde enums, lz4 above a size threshold. `ServerMessage` splits into out-of-band control/social events (`HelloAck`, `Reject`, `PlayerJoined`, `PlayerLeft`, `Chat`, `System`) and one `TickFrame` per server tick carrying `tick`, `world_age`, and every per-tick delta. The frame *is* the tick boundary and the client's clock — an idle world still sends a tiny empty frame each tick. The client demultiplexes the frame once.
 
-The frame bundles a delta per subsystem, each with its own change signal (no generic differ):
+Each subsystem rides the frame with its own change signal (no generic differ):
 
-- **chunks** — `ChunkOp` `Load`/`Delta`/`Unload` from the sim's dirty rect against a per-session
-  `known_chunks` set; pixel bodies have no wire presence and ride these deltas.
-- **players** — a change-gated `PlayerState` snapshot (pose, ducking, burning), despawned via
-  `PlayerLeft`, with a full roster on a session's first frame.
-- **inventory + self** — a per-slot inventory delta (all slots + cursor + trash on first send) and
-  private `self_state` (hp, air, mode), each sent only when changed; debug rects only while subscribed.
+- **chunks** — `ChunkOp` `Load`/`Delta`/`Unload` from the sim's change rect against a per-session `known_chunks` set; pixel bodies have no wire presence and ride these deltas.
+- **players** — change-gated `PlayerState` snapshots (pose, ducking, burning); full roster on a session's first frame, despawn via `PlayerLeft`.
+- **inventory + self** — per-slot inventory delta (all slots + cursor + trash on first send) and private `self_state` (hp, air, mode), each sent only when changed; debug rects only while subscribed.
 
-The client demultiplexes the frame once; no system re-scans a message union.
+Client→server: one `InputFrame` per client fixed tick — held `InputState` (latest-wins, OR-merged when frames coalesce into one server tick) plus ordered one-shot `InputAction`s (never coalesced, validated server-side). Held input decays to neutral after 0.5 s without frames. A new discrete input is a new `InputAction` variant, never a new message.
 
-Client→server input is one `InputFrame` per client fixed tick: held `InputState` (move, jump,
-down, primary, secondary, aim) plus ordered one-shot `InputAction`s (`Jump`, `ToggleFlight`,
-`SelectSlot`, `SetBrush`, `Slot(SlotAction)`). State is latest-wins, OR-merged when frames
-coalesce into one server tick; actions are never coalesced and are validated server-side. Held
-input decays to neutral after 0.5 s without frames. A new discrete input is a new `InputAction`
-variant, never a new message.
-A cell's wire state is 3 bytes (material + shade flags), dropping per-cell velocity and timing — the
-client renders from streamed positions and the server re-derives them each tick. Each `ChunkOp` cell
-payload is a Minecraft-style paletted container over that 3-byte state (cell count comes from context —
-chunk area or delta rect): **uniform** (one entry, zero index bits), **paletted** (≤256 first-occurrence
-entries + `ceil(log2(n))`-bit LSB-first indices, no minimum width, no word padding), or **raw** 3-byte
-cells — the encoder picks whichever is smallest. Water costs ~5 bits/cell (materials × 16 random shade
-nibbles), of which the shade noise is the irreducible 4; frame-level lz4 then catches cross-chunk
-palette repetition. IDs: `PlayerId` (session), `PlayerUuid` (account).
-`HelloAck` carries the server's protocol version; the client rejects the connection on a mismatch.
-`PROTOCOL_VERSION` gates content compatibility too — any change to `materials.ron`/`items.ron` bumps it.
+A wire cell is 3 bytes (material + shade flags) — no velocity or timing; the server re-derives them. Each `ChunkOp` cell payload is a paletted container over that state (cell count from context): **uniform**, **paletted** (≤256 first-occurrence entries, `ceil(log2(n))`-bit LSB-first indices, no padding), or **raw** — the encoder picks the smallest. Frame-level lz4 catches cross-chunk palette repetition.
 
-The single-stream choice is load-bearing: reliable+ordered means deltas always apply on top of the last
-state, so there's no per-chunk versioning, no resync, no input sequence numbers. Packet loss costs a
-retransmit delay, never correctness — fine for ~10-player co-op. Moving hot state to datagrams stays a
-contained change behind the transport trait.
+`HelloAck` carries `PROTOCOL_VERSION`; the client rejects on mismatch. The version gates content compatibility too — any change to `materials.ron`/`items.ron` bumps it.
 
-**Latency**: interpolate players between the last two states — no prediction, no reconciliation. Pixel
-bodies are cell-snapped and uninterpolated. Client-side prediction is a deliberate non-feature — the
-shared `step_player` is the insertion point if latency ever forces it.
+Reliable+ordered is load-bearing: deltas always apply on top of the last state — no per-chunk versioning, no resync, no input sequence numbers. Packet loss costs a retransmit delay, never correctness — fine for ~10-player co-op. Moving hot state to datagrams stays a contained change behind the transport trait.
+
+**Latency**: interpolate players between the last two states — no prediction, no reconciliation. Pixel bodies are cell-snapped, uninterpolated. The shared `step_player` is the insertion point if latency ever forces prediction.
