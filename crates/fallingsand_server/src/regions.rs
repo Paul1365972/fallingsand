@@ -295,7 +295,16 @@ pub fn autosave(
             let (player, body, health, mode, air, burning, inventory) = query.get(entity).ok()?;
             Some((
                 player.uuid,
-                player_record(&item_reg.0, &body.0, health, mode, air, burning, inventory),
+                player_record(
+                    &item_reg.0,
+                    player,
+                    &body.0,
+                    health,
+                    mode,
+                    air,
+                    burning,
+                    inventory,
+                ),
             ))
         })
         .collect();
@@ -377,7 +386,9 @@ pub fn save_everything(world: &mut bevy_ecs::world::World, final_save: bool) {
         for (player, body, health, mode, air, burning, inventory) in query.iter(world) {
             players.push((
                 player.uuid,
-                player_record(&item_reg, &body.0, health, mode, air, burning, inventory),
+                player_record(
+                    &item_reg, player, &body.0, health, mode, air, burning, inventory,
+                ),
             ));
         }
     }

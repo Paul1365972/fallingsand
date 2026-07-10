@@ -88,8 +88,10 @@ impl Burning {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn player_record(
     item_reg: &ItemRegistry,
+    player: &Player,
     body: &Actor,
     health: &Health,
     mode: &Mode,
@@ -104,6 +106,7 @@ pub fn player_record(
         mode: mode.0,
         air: air.secs,
         burning: burning.secs,
+        flying: player.flying,
         inventory: slots_to_record(item_reg, &inventory.inner),
         cursor: stack_to_record(item_reg, inventory.cursor),
         trash: stack_to_record(item_reg, inventory.trash),
@@ -234,7 +237,7 @@ pub fn drain_network(
                                         name: name.clone(),
                                         input: Default::default(),
                                         jump_pressed: false,
-                                        flying: false,
+                                        flying: record.map(|r| r.flying).unwrap_or(false),
                                         selected_slot: 0,
                                         brush_radius: BRUSH_RADIUS,
                                         last_input_tick: tick,
@@ -413,6 +416,7 @@ pub fn drain_network(
                             uuid,
                             player_record(
                                 &item_reg.0,
+                                player,
                                 &body.0,
                                 health,
                                 mode,
