@@ -1,15 +1,10 @@
-use crate::inventory::{
-    LocalInventory, SelectedSlot, SlotChanged, SlotCount, SlotSwatch, spawn_slot_widgets,
-    sync_slots,
-};
-use crate::player::{LocalPlayerState, SelfDamaged};
-use crate::{AppState, ClientItemRegistry, ClientRegistry, GameState};
+use super::inventory::{SlotCount, SlotSwatch, spawn_slot_widgets, sync_slots};
+use crate::game::ClientGame;
+use crate::view::Game;
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
 use fallingsand_core::{HOTBAR_SLOTS, ItemStack, MAX_AIR_SECS, MAX_HP};
 use fallingsand_protocol::GameMode;
-
-pub struct HudPlugin;
 
 const SLOT_SIZE: f32 = 42.0;
 const HEALTH_WIDTH: f32 = 180.0;
@@ -17,52 +12,132 @@ const FLASH_SECS: f32 = 0.35;
 const FLASH_MAX_ALPHA: f32 = 0.28;
 
 #[derive(Component)]
-struct HudRoot;
+pub(crate) struct HudRoot;
 
 #[derive(Component)]
-struct HealthFill;
+pub(crate) struct HealthFill;
 
 #[derive(Component)]
-struct HealthLabel;
+pub(crate) struct HealthLabel;
 
 #[derive(Component)]
-struct AirBar;
+pub(crate) struct AirBar;
 
 #[derive(Component)]
-struct AirFill;
+pub(crate) struct AirFill;
 
 #[derive(Component)]
-struct DamageFlash;
+pub(crate) struct DamageFlash;
 
 #[derive(Component)]
-struct HotbarSlot(usize);
+pub(crate) struct HotbarSlot(usize);
 
-#[derive(Resource, Default)]
-struct FlashTimer(f32);
-
-impl Plugin for HudPlugin {
-    fn build(&self, app: &mut App) {
-        app.init_resource::<FlashTimer>()
-            .add_systems(OnEnter(GameState::Playing), spawn_hud)
-            .add_systems(OnExit(GameState::Playing), despawn_hud)
-            .add_systems(
-                Update,
-                (
-                    highlight_hotbar,
-                    update_health_bar,
-                    update_air_bar,
-                    update_flash,
-                )
-                    .run_if(in_state(AppState::InGame)),
-            )
-            .add_systems(
-                Update,
-                sync_hotbar_slots.run_if(in_state(GameState::Playing)),
-            );
+pub fn sync_hud(mut commands: Commands, game: Res<Game>, roots: Query<Entity, With<HudRoot>>) {
+    let should_exist = game.0.playing().is_some();
+    let exists = !roots.is_empty();
+    if should_exist && !exists {
+        spawn_hud(&mut commands, &game.0);
+    } else if !should_exist && exists {
+        for entity in &roots {
+            commands.entity(entity).despawn();
+        }
     }
 }
 
-fn spawn_hud(mut commands: Commands) {
+pub fn patch_hud_slots(
+    game: Res<Game>,
+    slots: Query<&HotbarSlot>,
+    mut swatches: Query<(&ChildOf, &mut Node, &mut BackgroundColor), With<SlotSwatch>>,
+    mut counts: Query<(&ChildOf, &mut Text), With<SlotCount>>,
+) {
+    if game.0.changes.slots.is_empty() {
+        return;
+    }
+    let Some(ingame) = game.0.playing() else {
+        return;
+    };
+    let changed: HashSet<usize> = game.0.changes.slots.iter().copied().collect();
+    let stack_for = |entity: Entity| -> Option<Option<ItemStack>> {
+        let slot = slots.get(entity).ok()?;
+        changed
+            .contains(&slot.0)
+            .then(|| ingame.inventory.slot(slot.0))
+    };
+    sync_slots(
+        stack_for,
+        &game.0.registries.items,
+        &game.0.registries.materials,
+        &mut swatches,
+        &mut counts,
+    );
+}
+
+#[allow(clippy::type_complexity)]
+pub fn hud_status(
+    game: Res<Game>,
+    mut fill: Query<&mut Node, (With<HealthFill>, Without<AirBar>, Without<AirFill>)>,
+    mut label: Query<&mut Text, With<HealthLabel>>,
+    mut bar: Query<&mut Node, (With<AirBar>, Without<HealthFill>, Without<AirFill>)>,
+    mut air_fill: Query<&mut Node, (With<AirFill>, Without<HealthFill>, Without<AirBar>)>,
+    mut overlay: Query<&mut BackgroundColor, With<DamageFlash>>,
+    mut hotbar: Query<(&HotbarSlot, &mut BorderColor)>,
+) {
+    let Some(ingame) = game.0.playing() else {
+        return;
+    };
+    let you = &ingame.you;
+
+    let width = percent((you.hp / MAX_HP * 100.0).clamp(0.0, 100.0));
+    for mut node in &mut fill {
+        if node.width != width {
+            node.width = width;
+        }
+    }
+    if let Ok(mut text) = label.single_mut() {
+        let value = format!("{:.0}", you.hp.max(0.0));
+        if **text != value {
+            **text = value;
+        }
+    }
+
+    let show = you.mode == GameMode::Survival && you.air < MAX_AIR_SECS - 0.05;
+    let display = if show { Display::Flex } else { Display::None };
+    for mut node in &mut bar {
+        if node.display != display {
+            node.display = display;
+        }
+    }
+    let width = percent((you.air / MAX_AIR_SECS * 100.0).clamp(0.0, 100.0));
+    for mut node in &mut air_fill {
+        if node.width != width {
+            node.width = width;
+        }
+    }
+
+    let alpha = you.damage_flash / FLASH_SECS * FLASH_MAX_ALPHA;
+    for mut color in &mut overlay {
+        let target = BackgroundColor(Color::srgba(0.9, 0.1, 0.1, alpha));
+        if *color != target {
+            *color = target;
+        }
+    }
+
+    for (slot, mut border) in &mut hotbar {
+        let target = if slot.0 == ingame.inventory.selected {
+            BorderColor::all(Color::srgb(1.0, 0.9, 0.4))
+        } else {
+            BorderColor::all(Color::srgba(0.0, 0.0, 0.0, 0.6))
+        };
+        if *border != target {
+            *border = target;
+        }
+    }
+}
+
+fn spawn_hud(commands: &mut Commands, game: &ClientGame) {
+    let Some(ingame) = game.ingame() else {
+        return;
+    };
     commands
         .spawn((
             HudRoot,
@@ -101,7 +176,11 @@ fn spawn_hud(mut commands: Commands) {
                             ..default()
                         },
                         BackgroundColor(Color::srgba(0.06, 0.07, 0.10, 0.85)),
-                        BorderColor::all(Color::srgba(0.0, 0.0, 0.0, 0.6)),
+                        BorderColor::all(if index == ingame.inventory.selected {
+                            Color::srgb(1.0, 0.9, 0.4)
+                        } else {
+                            Color::srgba(0.0, 0.0, 0.0, 0.6)
+                        }),
                     ))
                     .with_children(|slot| {
                         slot.spawn((
@@ -114,7 +193,13 @@ fn spawn_hud(mut commands: Commands) {
                             GlobalZIndex(1),
                             Pickable::IGNORE,
                         ));
-                        spawn_slot_widgets(slot, SLOT_SIZE, 9.0);
+                        spawn_slot_widgets(
+                            slot,
+                            SLOT_SIZE,
+                            9.0,
+                            ingame.inventory.slot(index),
+                            game,
+                        );
                     });
                 }
             });
@@ -208,120 +293,4 @@ fn spawn_hud(mut commands: Commands) {
         GlobalZIndex(50),
         Pickable::IGNORE,
     ));
-}
-
-fn despawn_hud(
-    mut commands: Commands,
-    query: Query<Entity, With<HudRoot>>,
-    mut flash: ResMut<FlashTimer>,
-) {
-    for entity in &query {
-        commands.entity(entity).despawn();
-    }
-    flash.0 = 0.0;
-}
-
-#[allow(clippy::too_many_arguments)]
-fn sync_hotbar_slots(
-    mut slot_changes: MessageReader<SlotChanged>,
-    added: Query<Entity, Added<HotbarSlot>>,
-    inventory: Res<LocalInventory>,
-    registry: Res<ClientRegistry>,
-    item_reg: Res<ClientItemRegistry>,
-    slots: Query<&HotbarSlot>,
-    mut swatches: Query<(&ChildOf, &mut Node, &mut BackgroundColor), With<SlotSwatch>>,
-    mut counts: Query<(&ChildOf, &mut Text), With<SlotCount>>,
-) {
-    if slot_changes.is_empty() && added.is_empty() {
-        return;
-    }
-    let changed: HashSet<usize> = slot_changes.read().map(|change| change.0).collect();
-    let added: HashSet<Entity> = added.iter().collect();
-
-    let stack_for = |entity: Entity| -> Option<Option<ItemStack>> {
-        let slot = slots.get(entity).ok()?;
-        (added.contains(&entity) || changed.contains(&slot.0))
-            .then(|| inventory.slots.get(slot.0).copied().flatten())
-    };
-    sync_slots(
-        stack_for,
-        &item_reg.0,
-        &registry.0,
-        &mut swatches,
-        &mut counts,
-    );
-}
-
-fn update_health_bar(
-    state: Res<LocalPlayerState>,
-    mut fill: Query<&mut Node, With<HealthFill>>,
-    mut label: Query<&mut Text, With<HealthLabel>>,
-) {
-    let width = percent((state.hp / MAX_HP * 100.0).clamp(0.0, 100.0));
-    for mut node in &mut fill {
-        if node.width != width {
-            node.width = width;
-        }
-    }
-    if let Ok(mut text) = label.single_mut() {
-        let value = format!("{:.0}", state.hp.max(0.0));
-        if **text != value {
-            **text = value;
-        }
-    }
-}
-
-fn update_air_bar(
-    state: Res<LocalPlayerState>,
-    mut bar: Query<&mut Node, (With<AirBar>, Without<AirFill>)>,
-    mut fill: Query<&mut Node, With<AirFill>>,
-) {
-    let show = state.mode == GameMode::Survival && state.air < MAX_AIR_SECS - 0.05;
-    let display = if show { Display::Flex } else { Display::None };
-    for mut node in &mut bar {
-        if node.display != display {
-            node.display = display;
-        }
-    }
-    let width = percent((state.air / MAX_AIR_SECS * 100.0).clamp(0.0, 100.0));
-    for mut node in &mut fill {
-        if node.width != width {
-            node.width = width;
-        }
-    }
-}
-
-fn update_flash(
-    time: Res<Time>,
-    mut damaged: MessageReader<SelfDamaged>,
-    mut flash: ResMut<FlashTimer>,
-    mut overlay: Query<&mut BackgroundColor, With<DamageFlash>>,
-) {
-    for _ in damaged.read() {
-        flash.0 = FLASH_SECS;
-    }
-    if flash.0 <= 0.0 {
-        return;
-    }
-    flash.0 = (flash.0 - time.delta_secs()).max(0.0);
-    let alpha = flash.0 / FLASH_SECS * FLASH_MAX_ALPHA;
-    for mut color in &mut overlay {
-        *color = BackgroundColor(Color::srgba(0.9, 0.1, 0.1, alpha));
-    }
-}
-
-fn highlight_hotbar(
-    selected: Res<SelectedSlot>,
-    mut slots: Query<(&HotbarSlot, &mut BorderColor)>,
-) {
-    for (slot, mut border) in &mut slots {
-        let target = if slot.0 == selected.0 {
-            BorderColor::all(Color::srgb(1.0, 0.9, 0.4))
-        } else {
-            BorderColor::all(Color::srgba(0.0, 0.0, 0.0, 0.6))
-        };
-        if *border != target {
-            *border = target;
-        }
-    }
 }

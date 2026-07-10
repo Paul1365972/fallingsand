@@ -3,17 +3,9 @@ use bevy::prelude::*;
 use bevy::window::WindowCreated;
 use bevy::winit::WINIT_WINDOWS;
 
-const ICON_PNG: &[u8] = include_bytes!("../../../assets/icon.png");
+const ICON_PNG: &[u8] = include_bytes!("../../../../assets/icon.png");
 
-pub struct IconPlugin;
-
-impl Plugin for IconPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_systems(Update, set_window_icons);
-    }
-}
-
-fn set_window_icons(mut created: MessageReader<WindowCreated>, _main_thread: NonSendMarker) {
+pub fn set_window_icons(mut created: MessageReader<WindowCreated>, _main_thread: NonSendMarker) {
     if created.is_empty() {
         return;
     }

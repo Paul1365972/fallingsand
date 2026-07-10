@@ -1,10 +1,7 @@
 use super::materials::{LightingMaterial, LightingParams};
 use super::{Sky, SkyAssets};
-use crate::ClientRegistry;
-use crate::camera::CameraState;
-use crate::net::Session;
-use crate::player::{PlayerVisual, PlayerVisuals};
-use crate::worldview::WorldView;
+use crate::view::Game;
+use crate::view::camera::CameraState;
 use bevy::prelude::*;
 use fallingsand_core::CellPos;
 
@@ -16,9 +13,6 @@ const EMISSIVE_MERGE_DIST: f32 = 24.0;
 const EMISSIVE_MAX_RADIUS: f32 = 60.0;
 const EMISSIVE_SCAN_STRIDE: i32 = 8;
 const LIGHT_SCAN_INTERVAL: f32 = 0.1;
-
-#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct LightSet;
 
 #[derive(Resource, Default)]
 pub struct ActiveLights {
@@ -39,13 +33,12 @@ impl ActiveLights {
 }
 
 #[derive(Resource, Default)]
-pub(super) struct EmissiveLights(pub(super) Vec<Vec4>);
+pub struct EmissiveLights(Vec<Vec4>);
 
-pub(super) fn scan_emissive(
+pub fn scan_emissive(
+    game: Res<Game>,
     sky: Res<Sky>,
     real: Res<Time>,
-    registry: Res<ClientRegistry>,
-    view: Res<WorldView>,
     state: Res<CameraState>,
     mut emissive_lights: ResMut<EmissiveLights>,
     mut cooldown: Local<f32>,
@@ -55,17 +48,20 @@ pub(super) fn scan_emissive(
         return;
     }
     *cooldown = LIGHT_SCAN_INTERVAL;
-    if !sky.synced || sky.darkness() <= 0.001 {
+    let view = game.0.ingame().map(|ingame| &ingame.world);
+    if view.is_none() || !sky.synced || sky.darkness() <= 0.001 {
         if !emissive_lights.0.is_empty() {
             emissive_lights.0.clear();
         }
         return;
     }
+    let view = view.unwrap();
+    let registry = &game.0.registries.materials;
 
     let mut lights: Vec<Vec4> = Vec::new();
     let center = state.pos;
     let half = state.view_cells() / 2.0 + 32.0;
-    let emissive = registry.0.tag_mask("emissive");
+    let emissive = registry.tag_mask("emissive");
     let min_x =
         ((center.x - half.x) as i32).div_euclid(EMISSIVE_SCAN_STRIDE) * EMISSIVE_SCAN_STRIDE;
     let min_y =
@@ -76,7 +72,7 @@ pub(super) fn scan_emissive(
         while x as f32 <= center.x + half.x {
             let pos = CellPos::new(x, y);
             if let Some(cell) = view.get_cell(pos)
-                && registry.0.has_tag(cell.material, emissive)
+                && registry.has_tag(cell.material, emissive)
             {
                 let point = Vec2::new(x as f32, y as f32);
                 let mut merged = false;
@@ -102,56 +98,62 @@ pub(super) fn scan_emissive(
     emissive_lights.0 = lights;
 }
 
-pub(super) fn collect_lights(
+pub fn apply_lighting(
+    game: Res<Game>,
     sky: Res<Sky>,
     emissive_lights: Res<EmissiveLights>,
-    session: Option<Res<Session>>,
-    visuals: Res<PlayerVisuals>,
-    players: Query<(&Transform, &PlayerVisual)>,
+    state: Res<CameraState>,
+    assets: Res<SkyAssets>,
     mut active: ResMut<ActiveLights>,
+    mut materials: ResMut<Assets<LightingMaterial>>,
 ) {
     active.darkness = if sky.synced { sky.darkness() } else { 0.0 };
     active.lights.clear();
-    if active.darkness <= 0.001 {
-        return;
-    }
-
-    let local = session.and_then(|session| session.player);
-    if let Some(id) = local
-        && let Some(&entity) = visuals.0.get(&id)
-        && let Ok((transform, _)) = players.get(entity)
+    if active.darkness > 0.001
+        && let Some(ingame) = game.0.ingame()
     {
-        active.lights.push(Vec4::new(
-            transform.translation.x,
-            transform.translation.y,
-            PLAYER_LIGHT_RADIUS,
-            1.0,
-        ));
-    }
-    for (transform, visual) in &players {
-        if visual.burning && active.lights.len() < MAX_LIGHTS {
+        if ingame.you.present {
             active.lights.push(Vec4::new(
-                transform.translation.x,
-                transform.translation.y,
+                ingame.you.pos.x,
+                ingame.you.pos.y,
+                PLAYER_LIGHT_RADIUS,
+                1.0,
+            ));
+        }
+        let local = ingame
+            .net
+            .session
+            .as_ref()
+            .and_then(|session| session.player);
+        for (&player, remote) in &ingame.players.roster {
+            if Some(player) == local {
+                continue;
+            }
+            if remote.burning && active.lights.len() < MAX_LIGHTS {
+                active.lights.push(Vec4::new(
+                    remote.pos.x,
+                    remote.pos.y,
+                    BURNING_LIGHT_RADIUS,
+                    1.0,
+                ));
+            }
+        }
+        if ingame.you.present && ingame.you.burning && active.lights.len() < MAX_LIGHTS {
+            active.lights.push(Vec4::new(
+                ingame.you.pos.x,
+                ingame.you.pos.y,
                 BURNING_LIGHT_RADIUS,
                 1.0,
             ));
         }
-    }
-    for light in &emissive_lights.0 {
-        if active.lights.len() >= MAX_LIGHTS {
-            break;
+        for light in &emissive_lights.0 {
+            if active.lights.len() >= MAX_LIGHTS {
+                break;
+            }
+            active.lights.push(*light);
         }
-        active.lights.push(*light);
     }
-}
 
-pub(super) fn apply_lighting(
-    state: Res<CameraState>,
-    active: Res<ActiveLights>,
-    assets: Res<SkyAssets>,
-    mut materials: ResMut<Assets<LightingMaterial>>,
-) {
     let Some(mut material) = materials.get_mut(&assets.lighting) else {
         return;
     };

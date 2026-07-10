@@ -1,16 +1,10 @@
-#[cfg(not(target_family = "wasm"))]
-use crate::ClientRegistry;
-use bevy::prelude::*;
+use super::{ClientGame, Flow, InGame, IoFrame, Phase};
+use bevy::log::{error, info, warn};
 use fallingsand_net::{Connection, ConnectionStatus};
 use fallingsand_protocol::{
-    ClientMessage, PROTOCOL_VERSION, PlayerId, ServerMessage, Stats, TickFrame, decode_message,
+    ClientMessage, InputAction, PROTOCOL_VERSION, PlayerId, ServerMessage, Stats, decode_message,
     encode_message,
 };
-
-pub struct NetPlugin;
-
-#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
-pub struct NetSet;
 
 const STALL_SECS: f32 = 2.0;
 const RETRY_DELAY: f32 = 2.0;
@@ -23,7 +17,6 @@ fn retry_delay(attempt: u32) -> f32 {
     (RETRY_DELAY * 2f32.powi(attempt.min(8) as i32)).min(RETRY_MAX)
 }
 
-#[derive(Resource)]
 pub struct Session {
     conn: Box<dyn Connection>,
     pub player: Option<PlayerId>,
@@ -36,7 +29,8 @@ pub struct Session {
 }
 
 impl Session {
-    fn new(conn: Box<dyn Connection>, identity: crate::identity::Identity) -> Self {
+    fn new(conn: Box<dyn Connection>) -> Self {
+        let identity = super::identity::load_or_create();
         let mut session = Self {
             conn,
             player: None,
@@ -70,21 +64,12 @@ pub struct ConnectTarget {
     pub cert_hash: Option<Vec<u8>>,
 }
 
-#[derive(Resource, Default)]
+#[derive(Default)]
 pub struct Supervisor {
     pub target: Option<ConnectTarget>,
     pub attempt: u32,
     pub retry_in: f32,
     pub last_error: Option<String>,
-}
-
-impl Supervisor {
-    pub fn new(target: Option<ConnectTarget>) -> Self {
-        Self {
-            target,
-            ..Self::default()
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -135,25 +120,6 @@ impl Supervisor {
     }
 }
 
-#[derive(Message)]
-pub struct ServerMsg(pub ServerMessage);
-
-#[derive(Message)]
-pub struct TickMessage(pub TickFrame);
-
-#[derive(Message)]
-pub struct SessionEnded;
-
-#[derive(Resource, Default, Clone, Copy, PartialEq)]
-pub struct ServerStats(pub Stats);
-
-impl std::ops::Deref for ServerStats {
-    type Target = Stats;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
 pub fn parse_cert_hash(hex: &str) -> Option<Vec<u8>> {
     if hex.len() != 64 {
         return None;
@@ -167,7 +133,7 @@ pub fn parse_cert_hash(hex: &str) -> Option<Vec<u8>> {
 pub fn cli_world_name() -> Option<String> {
     #[cfg(not(target_family = "wasm"))]
     {
-        crate::identity::arg_value("--world")
+        super::identity::arg_value("--world")
     }
     #[cfg(target_family = "wasm")]
     {
@@ -177,7 +143,7 @@ pub fn cli_world_name() -> Option<String> {
 
 pub fn default_server() -> String {
     #[cfg(all(target_family = "wasm", target_os = "unknown"))]
-    if let Some(server) = crate::identity::query_param("server") {
+    if let Some(server) = super::identity::query_param("server") {
         return server;
     }
     option_env!("FALLINGSAND_SERVER")
@@ -185,74 +151,120 @@ pub fn default_server() -> String {
         .to_string()
 }
 
-impl Plugin for NetPlugin {
-    fn build(&self, app: &mut App) {
-        app.init_resource::<Supervisor>()
-            .init_resource::<ServerStats>()
-            .add_message::<ServerMsg>()
-            .add_message::<TickMessage>()
-            .add_message::<SessionEnded>()
-            .add_systems(OnEnter(crate::AppState::InGame), open)
-            .add_systems(OnExit(crate::AppState::InGame), close)
-            .add_systems(
-                PreUpdate,
-                drain.in_set(NetSet).run_if(resource_exists::<Session>),
-            )
-            .add_systems(
-                PreUpdate,
-                supervise
-                    .after(NetSet)
-                    .run_if(in_state(crate::AppState::InGame)),
-            )
-            .add_systems(
-                PreUpdate,
-                enter_playing
-                    .after(NetSet)
-                    .run_if(in_state(crate::GameState::Connecting)),
-            );
-
-        #[cfg(not(target_family = "wasm"))]
-        app.add_systems(PreUpdate, embedded::mirror_stats.before(NetSet));
-    }
-}
-
-fn open(world: &mut World) {
-    let target = world.resource::<Supervisor>().target.clone();
-    *world.resource_mut::<Supervisor>() = Supervisor::new(target);
-    if world.resource::<Supervisor>().target.is_none() {
-        #[cfg(not(target_family = "wasm"))]
-        embedded::launch(world);
-        #[cfg(all(target_family = "wasm", target_os = "unknown"))]
-        warn!("no server configured; use the direct-connect menu");
-    }
-}
-
-fn close(world: &mut World) {
-    if let Some(mut session) = world.remove_resource::<Session>() {
-        session.send(&ClientMessage::Goodbye);
-    }
-    *world.resource_mut::<Supervisor>() = Supervisor::default();
+pub struct Net {
+    pub session: Option<Session>,
+    pub supervisor: Supervisor,
     #[cfg(not(target_family = "wasm"))]
-    world.remove_resource::<embedded::EmbeddedServer>();
+    dialing: Option<Dialing>,
     #[cfg(not(target_family = "wasm"))]
-    world.remove_resource::<Dialing>();
+    runtime: Option<tokio::runtime::Runtime>,
+    #[cfg(not(target_family = "wasm"))]
+    embedded: Option<embedded::EmbeddedServer>,
 }
 
-#[allow(clippy::too_many_arguments)]
+impl Net {
+    pub fn remote(target: ConnectTarget) -> Self {
+        Self {
+            session: None,
+            supervisor: Supervisor {
+                target: Some(target),
+                ..Supervisor::default()
+            },
+            #[cfg(not(target_family = "wasm"))]
+            dialing: None,
+            #[cfg(not(target_family = "wasm"))]
+            runtime: None,
+            #[cfg(not(target_family = "wasm"))]
+            embedded: None,
+        }
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    pub fn embedded(
+        registry: std::sync::Arc<fallingsand_core::MaterialRegistry>,
+        world_name: String,
+    ) -> Self {
+        let (session, server) = embedded::launch(registry, world_name);
+        Self {
+            session: Some(session),
+            supervisor: Supervisor::default(),
+            dialing: None,
+            runtime: None,
+            embedded: Some(server),
+        }
+    }
+
+    pub fn is_embedded(&self) -> bool {
+        #[cfg(not(target_family = "wasm"))]
+        {
+            self.embedded.is_some()
+        }
+        #[cfg(target_family = "wasm")]
+        {
+            false
+        }
+    }
+
+    pub fn embedded_stats(&self) -> Option<Stats> {
+        #[cfg(not(target_family = "wasm"))]
+        {
+            self.embedded
+                .as_ref()
+                .map(|server| server.stats.lock().unwrap().0)
+        }
+        #[cfg(target_family = "wasm")]
+        {
+            None
+        }
+    }
+
+    pub fn set_embedded_paused(&self, paused: bool) {
+        #[cfg(not(target_family = "wasm"))]
+        if let Some(server) = &self.embedded {
+            server.control.set_paused(paused);
+        }
+        #[cfg(target_family = "wasm")]
+        let _ = paused;
+    }
+
+    pub fn request_embedded_save(&self) {
+        #[cfg(not(target_family = "wasm"))]
+        if let Some(server) = &self.embedded {
+            server.control.request_save();
+        }
+    }
+}
+
+pub(super) fn update(game: &mut ClientGame, io: &IoFrame) {
+    let Flow::InGame(ingame) = &mut game.flow else {
+        return;
+    };
+    drain(
+        ingame,
+        io,
+        &mut game.changes,
+        &mut game.input,
+        game.view_prefs.debug_borders,
+    );
+    supervise(ingame, io.dt, &mut game.changes, &mut game.input);
+    sync_debug_stream(ingame, game.view_prefs.debug_borders);
+}
+
 fn drain(
-    mut session: ResMut<Session>,
-    mut supervisor: ResMut<Supervisor>,
-    mut messages: MessageWriter<ServerMsg>,
-    mut frames: MessageWriter<TickMessage>,
-    pause: Option<Res<State<crate::PauseState>>>,
-    time: Res<Time>,
+    ingame: &mut InGame,
+    io: &IoFrame,
+    changes: &mut super::Changes,
+    input: &mut super::input::InputCore,
+    debug_borders: bool,
 ) {
+    let Some(session) = ingame.net.session.as_mut() else {
+        return;
+    };
     let closed = matches!(session.status(), ConnectionStatus::Closed { .. });
-    let paused = pause.is_some_and(|state| *state.get() == crate::PauseState::Paused);
-    session.since_rx = if paused || closed {
+    session.since_rx = if ingame.paused || closed {
         0.0
     } else {
-        session.since_rx + time.delta_secs()
+        session.since_rx + io.dt
     };
 
     while let Some(bytes) = session.conn.poll() {
@@ -261,30 +273,58 @@ fn drain(
         session.window_bytes += bytes.len() as u64;
         match decode_message::<ServerMessage>(&bytes) {
             Ok(ServerMessage::TickFrame(tick)) => {
-                frames.write(TickMessage(tick));
+                ingame.world.apply(&tick);
+                ingame.inventory.apply(&tick, changes);
+                ingame
+                    .players
+                    .apply(&tick, session.player, &mut ingame.you, changes);
+                ingame.clock.apply(tick.world_age);
+                ingame.debug.track_rects(&tick, debug_borders);
+                if ingame.phase == Phase::Connecting && session.player.is_some() {
+                    ingame.phase = Phase::Playing;
+                }
             }
-            Ok(message) => {
-                if let ServerMessage::HelloAck {
+            Ok(message) => match message {
+                ServerMessage::HelloAck {
                     protocol_version,
                     player,
                     spawn,
-                } = &message
-                {
-                    if *protocol_version != PROTOCOL_VERSION {
+                } => {
+                    if protocol_version != PROTOCOL_VERSION {
                         error!("server protocol {protocol_version} != {PROTOCOL_VERSION}");
                         session.conn.close("protocol version mismatch");
                     } else {
-                        session.player = Some(*player);
+                        session.player = Some(player);
                         info!("joined as {player:?}, spawn {spawn:?}");
+                        input.queue(InputAction::SelectSlot(ingame.inventory.selected as u8));
+                        input.queue(InputAction::SetBrush(ingame.inventory.brush));
+                        ingame.debug.subscribed = false;
                     }
                 }
-                if let ServerMessage::Reject { reason } = &message {
+                ServerMessage::Reject { reason } => {
                     error!("server rejected connection: {reason}");
-                    supervisor.target = None;
-                    supervisor.last_error = Some(reason.clone());
+                    ingame.net.supervisor.target = None;
+                    ingame.net.supervisor.last_error = Some(reason);
                 }
-                messages.write(ServerMsg(message));
-            }
+                ServerMessage::PlayerJoined { player, name } => {
+                    ingame.players.names.insert(player, name);
+                    changes.roster = true;
+                }
+                ServerMessage::PlayerLeft { player } => {
+                    ingame.players.names.remove(&player);
+                    ingame.players.roster.remove(&player);
+                    changes.roster = true;
+                }
+                ServerMessage::Chat { name, text, .. } => {
+                    ingame.chat.push(format!("{name}: {text}"), io.now);
+                    changes.chat = true;
+                }
+                ServerMessage::System { text } => {
+                    ingame.chat.push(text, io.now);
+                    changes.chat = true;
+                }
+                ServerMessage::TickFrame(_) => unreachable!(),
+            },
             Err(err) => error!("bad message: {err}"),
         }
     }
@@ -294,14 +334,14 @@ fn drain(
     }
 
     if session.player.is_none() {
-        session.handshake_secs += time.delta_secs();
+        session.handshake_secs += io.dt;
         if session.handshake_secs > HANDSHAKE_TIMEOUT_SECS {
             warn!("no hello ack after {HANDSHAKE_TIMEOUT_SECS}s");
             session.conn.close("handshake timed out");
         }
     }
 
-    session.window += time.delta_secs();
+    session.window += io.dt;
     if session.window >= 1.0 {
         session.rx_per_sec = (session.window_bytes as f32 / session.window) as u64;
         session.window = 0.0;
@@ -309,34 +349,32 @@ fn drain(
     }
 }
 
-fn enter_playing(
-    session: Option<Res<Session>>,
-    mut frames: MessageReader<TickMessage>,
-    mut next: ResMut<NextState<crate::GameState>>,
+fn supervise(
+    ingame: &mut InGame,
+    dt: f32,
+    changes: &mut super::Changes,
+    input: &mut super::input::InputCore,
 ) {
-    let joined = session.is_some_and(|session| session.player.is_some());
-    let got_frame = frames.read().next().is_some();
-    if joined && got_frame {
-        next.set(crate::GameState::Playing);
-    }
-}
-
-fn supervise(world: &mut World) {
-    let status = world.get_resource::<Session>().map(Session::status);
+    let status = ingame.net.session.as_ref().map(Session::status);
     match status {
         Some(ConnectionStatus::Closed { reason }) => {
             warn!("connection closed: {reason}");
-            world.remove_resource::<Session>();
-            world.write_message(SessionEnded);
-            let mut supervisor = world.resource_mut::<Supervisor>();
+            ingame.net.session = None;
+            ingame.on_session_lost(changes, input);
+            let supervisor = &mut ingame.net.supervisor;
             supervisor.retry_in = retry_delay(supervisor.attempt);
             if supervisor.target.is_some() || supervisor.last_error.is_none() {
                 supervisor.last_error = Some(reason);
             }
         }
         Some(ConnectionStatus::Connected) => {
-            if world.resource::<Session>().player.is_some() {
-                let mut supervisor = world.resource_mut::<Supervisor>();
+            if ingame
+                .net
+                .session
+                .as_ref()
+                .is_some_and(|session| session.player.is_some())
+            {
+                let supervisor = &mut ingame.net.supervisor;
                 if supervisor.attempt != 0 || supervisor.last_error.is_some() {
                     supervisor.attempt = 0;
                     supervisor.last_error = None;
@@ -344,15 +382,14 @@ fn supervise(world: &mut World) {
             }
         }
         None => {
-            if poll_dial(world) {
+            if poll_dial(&mut ingame.net, dt) {
                 return;
             }
-            let Some(target) = world.resource::<Supervisor>().target.clone() else {
+            let Some(target) = ingame.net.supervisor.target.clone() else {
                 return;
             };
-            let delta = world.resource::<Time>().delta_secs();
-            let mut supervisor = world.resource_mut::<Supervisor>();
-            supervisor.retry_in -= delta;
+            let supervisor = &mut ingame.net.supervisor;
+            supervisor.retry_in -= dt;
             if supervisor.retry_in > 0.0 {
                 return;
             }
@@ -360,76 +397,83 @@ fn supervise(world: &mut World) {
             supervisor.retry_in = retry_delay(supervisor.attempt);
             let attempt = supervisor.attempt;
             info!("connecting to {} (attempt {attempt})", target.url);
-            start_dial(world, target);
+            start_dial(&mut ingame.net, target);
         }
     }
 }
 
-#[cfg(not(target_family = "wasm"))]
-#[derive(Resource)]
-struct NetRuntime(tokio::runtime::Runtime);
+fn sync_debug_stream(ingame: &mut InGame, debug_borders: bool) {
+    let Some(session) = ingame.net.session.as_mut() else {
+        ingame.debug.subscribed = false;
+        return;
+    };
+    if session.player.is_some() && ingame.debug.subscribed != debug_borders {
+        session.send(&ClientMessage::SetDebug {
+            enabled: debug_borders,
+        });
+        ingame.debug.subscribed = debug_borders;
+    }
+}
 
 #[cfg(not(target_family = "wasm"))]
-#[derive(Resource)]
 struct Dialing {
     receiver: std::sync::Mutex<std::sync::mpsc::Receiver<Result<Box<dyn Connection>, String>>>,
     elapsed: f32,
 }
 
 #[cfg(not(target_family = "wasm"))]
-fn poll_dial(world: &mut World) -> bool {
-    let delta = world.resource::<Time>().delta_secs();
-    let Some(mut dialing) = world.get_resource_mut::<Dialing>() else {
+fn poll_dial(net: &mut Net, dt: f32) -> bool {
+    let Some(dialing) = net.dialing.as_mut() else {
         return false;
     };
-    dialing.elapsed += delta;
+    dialing.elapsed += dt;
     let timed_out = dialing.elapsed > DIAL_TIMEOUT_SECS;
     let result = dialing.receiver.lock().unwrap().try_recv();
     match result {
         Ok(Ok(conn)) => {
-            world.remove_resource::<Dialing>();
-            world.insert_resource(Session::new(conn, crate::identity::load_or_create()));
+            net.dialing = None;
+            net.session = Some(Session::new(conn));
         }
         Ok(Err(err)) => {
-            world.remove_resource::<Dialing>();
+            net.dialing = None;
             error!("failed to connect: {err}");
-            world.resource_mut::<Supervisor>().last_error = Some(err);
+            net.supervisor.last_error = Some(err);
         }
         Err(std::sync::mpsc::TryRecvError::Empty) => {
             if timed_out {
-                world.remove_resource::<Dialing>();
+                net.dialing = None;
                 error!("connect attempt timed out after {DIAL_TIMEOUT_SECS}s");
-                world.resource_mut::<Supervisor>().last_error = Some("connect timed out".into());
+                net.supervisor.last_error = Some("connect timed out".into());
             }
         }
         Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-            world.remove_resource::<Dialing>();
-            world.resource_mut::<Supervisor>().last_error = Some("connect worker died".into());
+            net.dialing = None;
+            net.supervisor.last_error = Some("connect worker died".into());
         }
     }
-    world.contains_resource::<Dialing>()
+    net.dialing.is_some()
 }
 
 #[cfg(all(target_family = "wasm", target_os = "unknown"))]
-fn poll_dial(_world: &mut World) -> bool {
+fn poll_dial(_net: &mut Net, _dt: f32) -> bool {
     false
 }
 
 #[cfg(not(target_family = "wasm"))]
-fn start_dial(world: &mut World, target: ConnectTarget) {
-    if !world.contains_resource::<NetRuntime>() {
+fn start_dial(net: &mut Net, target: ConnectTarget) {
+    if net.runtime.is_none() {
         match tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
         {
-            Ok(runtime) => world.insert_resource(NetRuntime(runtime)),
+            Ok(runtime) => net.runtime = Some(runtime),
             Err(err) => {
-                world.resource_mut::<Supervisor>().last_error = Some(err.to_string());
+                net.supervisor.last_error = Some(err.to_string());
                 return;
             }
         }
     }
-    let handle = world.resource::<NetRuntime>().0.handle().clone();
+    let handle = net.runtime.as_ref().unwrap().handle().clone();
     let (sender, receiver) = std::sync::mpsc::channel();
     std::thread::Builder::new()
         .name("wt-dial".into())
@@ -440,32 +484,31 @@ fn start_dial(world: &mut World, target: ConnectTarget) {
             let _ = sender.send(result);
         })
         .expect("spawn dial thread");
-    world.insert_resource(Dialing {
+    net.dialing = Some(Dialing {
         receiver: std::sync::Mutex::new(receiver),
         elapsed: 0.0,
     });
 }
 
 #[cfg(all(target_family = "wasm", target_os = "unknown"))]
-fn start_dial(world: &mut World, target: ConnectTarget) {
+fn start_dial(net: &mut Net, target: ConnectTarget) {
     let conn = Box::new(fallingsand_net::wt_wasm::connect(
         &target.url,
         target.cert_hash.clone(),
     ));
-    world.insert_resource(Session::new(conn, crate::identity::load_or_create()));
+    net.session = Some(Session::new(conn));
 }
 
 #[cfg(not(target_family = "wasm"))]
-pub mod embedded {
-    use super::*;
+mod embedded {
+    use super::Session;
     use fallingsand_server::{Server, ServerConfig, ServerControl, TickStats};
     use std::sync::{Arc, Mutex};
 
-    #[derive(Resource)]
     pub struct EmbeddedServer {
         pub control: Arc<ServerControl>,
         thread: Option<std::thread::JoinHandle<()>>,
-        stats: Arc<Mutex<TickStats>>,
+        pub stats: Arc<Mutex<TickStats>>,
     }
 
     impl Drop for EmbeddedServer {
@@ -477,9 +520,10 @@ pub mod embedded {
         }
     }
 
-    pub fn launch(world: &mut World) {
-        let registry = world.resource::<ClientRegistry>().0.clone();
-        let world_name = world.resource::<crate::menu::SelectedWorld>().0.clone();
+    pub fn launch(
+        registry: Arc<fallingsand_core::MaterialRegistry>,
+        world_name: String,
+    ) -> (Session, EmbeddedServer) {
         let (listener, dialer) = fallingsand_net::memory_listener();
         let control = Arc::new(ServerControl::default());
         let stats = Arc::new(Mutex::new(TickStats::default()));
@@ -508,15 +552,13 @@ pub mod embedded {
             .expect("spawn embedded server thread");
 
         let conn = dialer.connect().expect("connect to embedded server");
-        world.insert_resource(Session::new(
-            Box::new(conn),
-            crate::identity::load_or_create(),
-        ));
-        world.insert_resource(EmbeddedServer {
+        let session = Session::new(Box::new(conn));
+        let server = EmbeddedServer {
             control,
             thread: Some(thread),
             stats,
-        });
+        };
+        (session, server)
     }
 
     fn derive_seed(name: &str) -> u64 {
@@ -529,12 +571,5 @@ pub mod embedded {
             .subsec_nanos()
             .hash(&mut hasher);
         hasher.finish()
-    }
-
-    pub fn mirror_stats(server: Option<Res<EmbeddedServer>>, mut mirror: ResMut<ServerStats>) {
-        let next = server
-            .map(|server| ServerStats(server.stats.lock().unwrap().0))
-            .unwrap_or_default();
-        mirror.set_if_neq(next);
     }
 }

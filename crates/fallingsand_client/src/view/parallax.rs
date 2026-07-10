@@ -1,13 +1,10 @@
-use crate::camera::{CameraSet, CameraState, CompositeCamera, LayerQuad};
-use crate::sky::{ActiveLights, LightSet, LightingParams, Sky, sky_color};
-use crate::{AppState, GameState};
+use super::camera::{CameraState, CompositeCamera, LayerQuad};
+use super::sky::{ActiveLights, LightingParams, Sky, sky_color};
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderType};
 use bevy::shader::ShaderRef;
-use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dPlugin};
+use bevy::sprite_render::{AlphaMode2d, Material2d};
 use fallingsand_core::smoothstep;
-
-pub struct ParallaxPlugin;
 
 const WALL_RATIO: Vec2 = Vec2::splat(0.15);
 const FAR_RATIO: Vec2 = Vec2::new(0.88, 0.92);
@@ -72,32 +69,16 @@ impl Material2d for SilhouetteMaterial {
 }
 
 #[derive(Resource)]
-struct ParallaxAssets {
+pub struct ParallaxAssets {
     wall: Handle<CaveWallMaterial>,
     far: Handle<SilhouetteMaterial>,
     near: Handle<SilhouetteMaterial>,
 }
 
 #[derive(Component)]
-struct ParallaxQuad;
+pub(crate) struct ParallaxQuad;
 
-impl Plugin for ParallaxPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_plugins(Material2dPlugin::<CaveWallMaterial>::default())
-            .add_plugins(Material2dPlugin::<SilhouetteMaterial>::default())
-            .add_systems(PostStartup, setup_parallax)
-            .add_systems(
-                Update,
-                update_parallax
-                    .after(CameraSet::Derive)
-                    .after(LightSet)
-                    .run_if(in_state(GameState::Playing)),
-            )
-            .add_systems(OnExit(AppState::InGame), hide_parallax);
-    }
-}
-
-fn setup_parallax(
+pub fn setup_parallax(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut wall_mats: ResMut<Assets<CaveWallMaterial>>,
@@ -174,7 +155,7 @@ fn altitude_fade(pos_y: f32) -> f32 {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn update_parallax(
+pub fn sync_parallax(
     sky: Res<Sky>,
     state: Res<CameraState>,
     active: Res<ActiveLights>,
@@ -225,11 +206,5 @@ fn update_parallax(
             material.params.snapped_cam = snapped.as_vec2();
             material.params.native_size = native;
         }
-    }
-}
-
-fn hide_parallax(mut quads: Query<&mut Visibility, With<ParallaxQuad>>) {
-    for mut visibility in &mut quads {
-        *visibility = Visibility::Hidden;
     }
 }

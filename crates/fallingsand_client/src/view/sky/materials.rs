@@ -45,10 +45,10 @@ impl Material2d for LightingMaterial {
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
-pub(super) struct SkyCompositeMaterial {
+pub struct SkyCompositeMaterial {
     #[texture(0)]
     #[sampler(1)]
-    pub(super) texture: Handle<Image>,
+    pub texture: Handle<Image>,
 }
 
 impl Material2d for SkyCompositeMaterial {
@@ -62,19 +62,19 @@ impl Material2d for SkyCompositeMaterial {
 }
 
 #[derive(ShaderType, Debug, Clone, Default)]
-pub(super) struct SunParams {
-    pub(super) redness: f32,
-    pub(super) occlusion: f32,
-    pub(super) _pad: Vec2,
+pub struct SunParams {
+    pub redness: f32,
+    pub occlusion: f32,
+    pub _pad: Vec2,
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
-pub(super) struct SunMaterial {
+pub struct SunMaterial {
     #[uniform(0)]
-    pub(super) params: SunParams,
+    pub params: SunParams,
     #[texture(1)]
     #[sampler(2)]
-    pub(super) texture: Handle<Image>,
+    pub texture: Handle<Image>,
 }
 
 impl Material2d for SunMaterial {
@@ -88,21 +88,21 @@ impl Material2d for SunMaterial {
 }
 
 #[derive(ShaderType, Debug, Clone, Default)]
-pub(super) struct MoonParams {
-    pub(super) sun_direction: Vec2,
-    pub(super) illumination: f32,
-    pub(super) umbra: Vec2,
-    pub(super) umbra_radius: f32,
-    pub(super) sky_color: Vec4,
+pub struct MoonParams {
+    pub sun_direction: Vec2,
+    pub illumination: f32,
+    pub umbra: Vec2,
+    pub umbra_radius: f32,
+    pub sky_color: Vec4,
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
-pub(super) struct MoonMaterial {
+pub struct MoonMaterial {
     #[uniform(0)]
-    pub(super) params: MoonParams,
+    pub params: MoonParams,
     #[texture(1)]
     #[sampler(2)]
-    pub(super) texture: Handle<Image>,
+    pub texture: Handle<Image>,
 }
 
 impl Material2d for MoonMaterial {
@@ -116,22 +116,22 @@ impl Material2d for MoonMaterial {
 }
 
 #[derive(ShaderType, Debug, Clone, Default)]
-pub(super) struct StarfieldParams {
-    pub(super) tiling: f32,
-    pub(super) aspect: f32,
-    pub(super) star_visibility: f32,
-    pub(super) horizon: f32,
-    pub(super) time: f32,
-    pub(super) scroll: f32,
+pub struct StarfieldParams {
+    pub tiling: f32,
+    pub aspect: f32,
+    pub star_visibility: f32,
+    pub horizon: f32,
+    pub time: f32,
+    pub scroll: f32,
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
-pub(super) struct StarfieldMaterial {
+pub struct StarfieldMaterial {
     #[uniform(0)]
-    pub(super) params: StarfieldParams,
+    pub params: StarfieldParams,
     #[texture(1)]
     #[sampler(2)]
-    pub(super) texture: Handle<Image>,
+    pub texture: Handle<Image>,
 }
 
 impl Material2d for StarfieldMaterial {
@@ -145,16 +145,16 @@ impl Material2d for StarfieldMaterial {
 }
 
 #[derive(ShaderType, Debug, Clone, Default)]
-pub(super) struct HorizonParams {
-    pub(super) color: Vec4,
-    pub(super) horizon: f32,
-    pub(super) intensity: f32,
+pub struct HorizonParams {
+    pub color: Vec4,
+    pub horizon: f32,
+    pub intensity: f32,
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
-pub(super) struct HorizonMaterial {
+pub struct HorizonMaterial {
     #[uniform(0)]
-    pub(super) params: HorizonParams,
+    pub params: HorizonParams,
 }
 
 impl Material2d for HorizonMaterial {

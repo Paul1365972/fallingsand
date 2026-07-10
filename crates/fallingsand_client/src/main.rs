@@ -1,89 +1,57 @@
-mod camera;
-mod chat;
-mod connscreen;
-mod debug;
-mod hud;
-#[cfg(not(target_family = "wasm"))]
-mod icon;
-mod identity;
-mod input;
-mod inventory;
-mod inventory_ui;
-mod menu;
-mod net;
-mod parallax;
-mod particles;
-mod pause;
-mod player;
-mod render;
-mod settings;
-mod sky;
-mod worldview;
+mod game;
+mod view;
 
+use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::prelude::*;
+use bevy::render::error_handler::{ErrorType, RenderError, RenderErrorHandler, RenderErrorPolicy};
+use bevy::sprite_render::Material2dPlugin;
 use fallingsand_core::{ItemRegistry, MaterialRegistry, RecipeRegistry};
+use game::{ClientGame, Registries};
 use std::sync::Arc;
+use view::Game;
 
 pub const MATERIALS_RON: &str = include_str!("../../../data/materials.ron");
 pub const REACTIONS_RON: &str = include_str!("../../../data/reactions.ron");
 pub const ITEMS_RON: &str = include_str!("../../../data/items.ron");
 pub const RECIPES_RON: &str = include_str!("../../../data/recipes.ron");
 
-#[derive(States, Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub enum AppState {
-    #[default]
-    MainMenu,
-    InGame,
+fn render_error_policy(
+    error: &RenderError,
+    main_world: &mut World,
+    _render_world: &mut World,
+) -> RenderErrorPolicy {
+    match error.ty {
+        ErrorType::DeviceLost => RenderErrorPolicy::Recover(default()),
+        ErrorType::Validation => RenderErrorPolicy::Ignore,
+        _ => {
+            main_world.write_message(AppExit::error());
+            RenderErrorPolicy::StopRendering
+        }
+    }
 }
-
-#[derive(SubStates, Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-#[source(AppState = AppState::InGame)]
-pub enum GameState {
-    #[default]
-    Connecting,
-    Playing,
-}
-
-#[derive(SubStates, Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-#[source(GameState = GameState::Playing)]
-pub enum PauseState {
-    #[default]
-    Running,
-    Paused,
-}
-
-#[derive(Resource, Clone)]
-pub struct ClientRegistry(pub Arc<MaterialRegistry>);
-
-#[derive(Resource, Clone)]
-pub struct ClientItemRegistry(pub Arc<ItemRegistry>);
-
-#[derive(Resource, Clone)]
-pub struct ClientRecipes(pub Arc<RecipeRegistry>);
 
 fn main() {
-    let registry = Arc::new(
+    let materials = Arc::new(
         MaterialRegistry::from_ron(MATERIALS_RON, REACTIONS_RON)
             .expect("data/materials.ron must be valid"),
     );
-    let item_registry = Arc::new(
-        ItemRegistry::from_ron(ITEMS_RON, &registry).expect("data/items.ron must be valid"),
+    let items = Arc::new(
+        ItemRegistry::from_ron(ITEMS_RON, &materials).expect("data/items.ron must be valid"),
     );
     let recipes = Arc::new(
-        RecipeRegistry::from_ron(RECIPES_RON, &item_registry)
-            .expect("data/recipes.ron must be valid"),
+        RecipeRegistry::from_ron(RECIPES_RON, &items).expect("data/recipes.ron must be valid"),
     );
-    let world_name = net::cli_world_name();
-    let initial_state = if world_name.is_some() {
-        AppState::InGame
-    } else {
-        AppState::MainMenu
-    };
+
+    let mut client = ClientGame::new(Registries {
+        materials,
+        items,
+        recipes,
+    });
+    if let Some(world) = game::net::cli_world_name() {
+        client.start_game_local(world);
+    }
 
     let mut app = App::new();
-    if let Some(name) = world_name {
-        app.insert_resource(menu::SelectedWorld(name));
-    }
     app.add_plugins(
         DefaultPlugins
             .set(WindowPlugin {
@@ -96,36 +64,87 @@ fn main() {
             })
             .set(ImagePlugin::default_nearest()),
     )
-    .insert_resource(ClearColor(Color::srgb(0.08, 0.09, 0.13)))
-    .insert_resource(ClientRegistry(registry))
-    .insert_resource(ClientItemRegistry(item_registry))
-    .insert_resource(ClientRecipes(recipes))
-    .insert_state(initial_state)
-    .add_sub_state::<GameState>()
-    .add_sub_state::<PauseState>()
     .add_plugins((
-        net::NetPlugin,
-        input::InputPlugin,
-        render::ChunkRenderPlugin,
-        worldview::WorldViewPlugin,
-        player::PlayerPlugin,
-        camera::CameraPlugin,
-        debug::DebugOverlayPlugin,
+        Material2dPlugin::<view::chunks::ChunkMaterial>::default(),
+        Material2dPlugin::<view::sky::LightingMaterial>::default(),
+        Material2dPlugin::<view::sky::SkyCompositeMaterial>::default(),
+        Material2dPlugin::<view::sky::SunMaterial>::default(),
+        Material2dPlugin::<view::sky::MoonMaterial>::default(),
+        Material2dPlugin::<view::sky::StarfieldMaterial>::default(),
+        Material2dPlugin::<view::sky::HorizonMaterial>::default(),
+        Material2dPlugin::<view::parallax::CaveWallMaterial>::default(),
+        Material2dPlugin::<view::parallax::SilhouetteMaterial>::default(),
+        FrameTimeDiagnosticsPlugin::default(),
     ))
-    .add_plugins((
-        menu::MenuPlugin,
-        pause::PausePlugin,
-        hud::HudPlugin,
-        chat::ChatPlugin,
-        particles::ParticlesPlugin,
-        sky::SkyPlugin,
-        parallax::ParallaxPlugin,
-        connscreen::ConnScreenPlugin,
-        settings::SettingsPlugin,
-        inventory::InventoryPlugin,
-        inventory_ui::InventoryUiPlugin,
-    ));
+    .insert_resource(ClearColor(Color::srgb(0.08, 0.09, 0.13)))
+    .insert_resource(RenderErrorHandler(render_error_policy))
+    .insert_resource(Game(client))
+    .init_resource::<view::io::UiInbox>()
+    .init_resource::<view::camera::CameraState>()
+    .init_resource::<view::chunks::ChunkVisuals>()
+    .init_resource::<view::chunks::ChunkUploadQueue>()
+    .init_resource::<view::players::NametagVisuals>()
+    .init_resource::<view::sky::Sky>()
+    .init_resource::<view::sky::ActiveLights>()
+    .init_resource::<view::sky::EmissiveLights>()
+    .init_resource::<view::ui::debug::StatWindows>()
+    .add_systems(
+        Startup,
+        (
+            view::camera::setup_camera,
+            view::chunks::setup_shared,
+            view::sky::load_shared_shaders,
+            view::ui::debug::setup_overlay,
+        ),
+    )
+    .add_systems(
+        PostStartup,
+        (view::sky::setup_sky, view::parallax::setup_parallax),
+    )
+    .add_systems(
+        Update,
+        (view::io::collect_ui_events, view::io::drive_game).chain(),
+    )
+    .add_systems(
+        Update,
+        (
+            view::camera::sync_camera,
+            view::sky::sync_sky,
+            view::sky::scan_emissive,
+            view::sky::apply_lighting,
+            view::parallax::sync_parallax,
+            view::players::sync_nametags,
+            view::ui::debug::draw_debug_borders,
+        )
+            .chain()
+            .after(view::io::drive_game),
+    )
+    .add_systems(
+        Update,
+        (
+            view::chunks::sync_chunks,
+            view::particles::spawn_particles,
+            view::particles::update_particles,
+            view::ui::menu::sync_menu,
+            view::ui::pause::sync_pause,
+            view::ui::connscreen::sync_connscreen,
+            view::ui::hud::sync_hud,
+            view::ui::hud::patch_hud_slots,
+            view::ui::hud::hud_status,
+            view::ui::inventory::sync_overlay,
+            view::ui::inventory::patch_overlay_slots,
+            view::ui::inventory::sync_craftable,
+            view::ui::inventory::update_cursor_follow,
+            view::ui::inventory::update_tooltip,
+            view::ui::chat::sync_chat,
+            view::ui::chat::fade_chat,
+            view::ui::debug::update_overlay,
+            view::ui::button_hover,
+        )
+            .after(view::io::drive_game),
+    );
     #[cfg(not(target_family = "wasm"))]
-    app.add_plugins(icon::IconPlugin);
+    app.add_systems(Update, view::icon::set_window_icons);
+    view::chunks::setup_render_app(&mut app);
     app.run();
 }

@@ -8,7 +8,7 @@ fallingsand_net       # Transport trait: WebTransport (native + wasm), in-memory
 fallingsand_worldgen  # Procedural generation
 fallingsand_rng       # Tick-seeded stateless randomness (splitmix64)
 fallingsand_server    # Authoritative server: library + dedicated binary
-fallingsand_client    # Bevy app; builds native + WASM
+fallingsand_client    # Plain-Rust game core + bevy IO shell (game/ vs view/); builds native + WASM
 ```
 
 Direction: `core ← sim ← server`, `core ← protocol ← {server, client}`; the client reaches the sim only through the embedded server. `fallingsand_rng` is a dependency-free leaf (splitmix64) used by `core`, `sim`, and `worldgen`.

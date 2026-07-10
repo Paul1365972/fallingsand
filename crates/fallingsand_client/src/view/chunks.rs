@@ -1,6 +1,5 @@
-use crate::ClientRegistry;
-use crate::camera::WORLD_LAYER;
-use crate::worldview::WorldView;
+use super::Game;
+use super::camera::WORLD_LAYER;
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::visibility::RenderLayers;
 use bevy::platform::collections::HashMap;
@@ -14,10 +13,8 @@ use bevy::render::renderer::RenderQueue;
 use bevy::render::texture::GpuImage;
 use bevy::render::{ExtractSchedule, MainWorld, Render, RenderApp, RenderSystems};
 use bevy::shader::ShaderRef;
-use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dPlugin};
+use bevy::sprite_render::{AlphaMode2d, Material2d};
 use fallingsand_core::{CHUNK_AREA, CHUNK_SIZE, Cell, CellOffset, ChunkPos, DirtyRect};
-
-pub struct ChunkRenderPlugin;
 
 const SHADES: u32 = 16;
 const UPLOAD_RETRY_FRAMES: u8 = 3;
@@ -69,22 +66,15 @@ struct RenderChunkUploads(Vec<ChunkUpload>);
 #[derive(Component)]
 pub struct ChunkQuad;
 
-impl Plugin for ChunkRenderPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_plugins(Material2dPlugin::<ChunkMaterial>::default())
-            .init_resource::<ChunkVisuals>()
-            .init_resource::<ChunkUploadQueue>()
-            .add_systems(Startup, setup_shared)
-            .add_systems(Update, sync_chunks);
-        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            render_app
-                .init_resource::<RenderChunkUploads>()
-                .add_systems(ExtractSchedule, extract_chunk_uploads)
-                .add_systems(
-                    Render,
-                    upload_chunk_rects.in_set(RenderSystems::PrepareResources),
-                );
-        }
+pub fn setup_render_app(app: &mut App) {
+    if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+        render_app
+            .init_resource::<RenderChunkUploads>()
+            .add_systems(ExtractSchedule, extract_chunk_uploads)
+            .add_systems(
+                Render,
+                upload_chunk_rects.in_set(RenderSystems::PrepareResources),
+            );
     }
 }
 
@@ -133,13 +123,13 @@ fn upload_chunk_rects(
     });
 }
 
-fn setup_shared(
+pub fn setup_shared(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    registry: Res<ClientRegistry>,
+    game: Res<Game>,
 ) {
-    let materials = &registry.0;
+    let materials = &game.0.registries.materials;
     let width = materials.len().max(1) as u32;
     let mut data = vec![0u8; (width * SHADES * 4) as usize];
     for (id, material) in materials.iter() {
@@ -188,9 +178,9 @@ fn pack_rect(cells: &[Cell; CHUNK_AREA], rect: DirtyRect) -> Vec<u8> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn sync_chunks(
+pub fn sync_chunks(
     mut commands: Commands,
-    mut view: ResMut<WorldView>,
+    mut game: ResMut<Game>,
     mut visuals: ResMut<ChunkVisuals>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<ChunkMaterial>>,
@@ -203,7 +193,11 @@ fn sync_chunks(
 
     let mut removed: Vec<ChunkPos> = Vec::new();
     for &pos in visuals.chunk_entities.keys() {
-        if !view.chunks.contains_key(&pos) {
+        let live = game
+            .0
+            .ingame()
+            .is_some_and(|ingame| ingame.world.chunks.contains_key(&pos));
+        if !live {
             removed.push(pos);
         }
     }
@@ -214,7 +208,10 @@ fn sync_chunks(
         }
     }
 
-    for (&pos, chunk) in view.chunks.iter_mut() {
+    let Some(ingame) = game.0.ingame_mut() else {
+        return;
+    };
+    for (&pos, chunk) in ingame.world.chunks.iter_mut() {
         if chunk.dirty {
             chunk.dirty = false;
             chunk.pending.clear();
