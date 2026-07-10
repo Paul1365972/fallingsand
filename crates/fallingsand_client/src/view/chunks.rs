@@ -1,5 +1,6 @@
 use super::Game;
 use super::camera::WORLD_LAYER;
+use crate::game::world::ChunkChange;
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::visibility::RenderLayers;
 use bevy::platform::collections::HashMap;
@@ -177,6 +178,11 @@ fn pack_rect(cells: &[Cell; CHUNK_AREA], rect: DirtyRect) -> Vec<u8> {
     data
 }
 
+enum Plan {
+    Full,
+    Rects(Vec<DirtyRect>),
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn sync_chunks(
     mut commands: Commands,
@@ -187,90 +193,73 @@ pub fn sync_chunks(
     mut queue: ResMut<ChunkUploadQueue>,
     shared: Res<RenderShared>,
 ) {
-    let size = CHUNK_SIZE as f32;
     visuals.uploads = 0;
     visuals.upload_bytes = 0;
 
-    let mut removed: Vec<ChunkPos> = Vec::new();
-    for &pos in visuals.chunk_entities.keys() {
-        let live = game
-            .0
-            .ingame()
-            .is_some_and(|ingame| ingame.world.chunks.contains_key(&pos));
-        if !live {
-            removed.push(pos);
-        }
-    }
-    for pos in removed {
-        if let Some((entity, image)) = visuals.chunk_entities.remove(&pos) {
+    let Some(ingame) = game.0.ingame_mut() else {
+        for (_, (entity, image)) in visuals.chunk_entities.drain() {
             commands.entity(entity).despawn();
             images.remove(&image);
         }
-    }
-
-    let Some(ingame) = game.0.ingame_mut() else {
         return;
     };
-    for (&pos, chunk) in ingame.world.chunks.iter_mut() {
-        if chunk.take_full() {
-            visuals.uploads += 1;
-            visuals.upload_bytes += CHUNK_AREA * 4;
+    let changes = ingame.world.take_changes();
+    if changes.is_empty() {
+        return;
+    }
 
-            if let Some((_, image)) = visuals.chunk_entities.get(&pos) {
-                queue.0.push(ChunkUpload {
-                    image: image.id(),
-                    rect: DirtyRect::FULL,
-                    data: chunk_texture_data(&chunk.cells),
-                    retries: 0,
-                });
-                continue;
+    let mut plans: HashMap<ChunkPos, Plan> = HashMap::default();
+    for change in changes {
+        match change {
+            ChunkChange::Cleared => {
+                for (_, (entity, image)) in visuals.chunk_entities.drain() {
+                    commands.entity(entity).despawn();
+                    images.remove(&image);
+                }
+                plans.clear();
             }
-
-            let image = images.add(Image::new(
-                Extent3d {
-                    width: CHUNK_SIZE as u32,
-                    height: CHUNK_SIZE as u32,
-                    depth_or_array_layers: 1,
-                },
-                TextureDimension::D2,
-                chunk_texture_data(&chunk.cells),
-                TextureFormat::Rgba8Uint,
-                RenderAssetUsages::RENDER_WORLD,
-            ));
-            let material = materials.add(ChunkMaterial {
-                cells: image.clone(),
-                palette: shared.palette.clone(),
-            });
-            let entity = commands
-                .spawn((
-                    ChunkQuad,
-                    Mesh2d(shared.quad.clone()),
-                    MeshMaterial2d(material),
-                    Transform::from_xyz(
-                        pos.x as f32 * size + size / 2.0,
-                        pos.y as f32 * size + size / 2.0,
-                        0.0,
-                    )
-                    .with_scale(Vec3::new(size, size, 1.0)),
-                    RenderLayers::layer(WORLD_LAYER),
-                ))
-                .id();
-            visuals.chunk_entities.insert(pos, (entity, image));
-            continue;
+            ChunkChange::Loaded(pos) => {
+                plans.insert(pos, Plan::Full);
+            }
+            ChunkChange::Unloaded(pos) => {
+                plans.remove(&pos);
+                if let Some((entity, image)) = visuals.chunk_entities.remove(&pos) {
+                    commands.entity(entity).despawn();
+                    images.remove(&image);
+                }
+            }
+            ChunkChange::Delta(pos, rect) => match plans.get_mut(&pos) {
+                Some(Plan::Full) => {}
+                Some(Plan::Rects(rects)) => rects.push(rect),
+                None => {
+                    plans.insert(pos, Plan::Rects(vec![rect]));
+                }
+            },
         }
+    }
 
-        let pending = chunk.take_pending();
-        if pending.is_empty() {
+    for (pos, plan) in plans {
+        let Some(chunk) = ingame.world.chunks.get(&pos) else {
             continue;
-        }
-        let image = match visuals.chunk_entities.get(&pos) {
-            Some((_, image)) => image.id(),
-            None => {
-                chunk.mark_full();
+        };
+        let rects = match plan {
+            Plan::Rects(rects) if visuals.chunk_entities.contains_key(&pos) => rects,
+            _ => {
+                full_upload(
+                    &mut commands,
+                    &mut visuals,
+                    &mut images,
+                    &mut materials,
+                    &mut queue,
+                    &shared,
+                    pos,
+                    &chunk.cells,
+                );
                 continue;
             }
         };
-        for rect in pending {
+        let image = visuals.chunk_entities[&pos].1.id();
+        for rect in rects {
             let data = pack_rect(&chunk.cells, rect);
             visuals.uploads += 1;
             visuals.upload_bytes += data.len();
@@ -282,4 +271,61 @@ pub fn sync_chunks(
             });
         }
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn full_upload(
+    commands: &mut Commands,
+    visuals: &mut ChunkVisuals,
+    images: &mut Assets<Image>,
+    materials: &mut Assets<ChunkMaterial>,
+    queue: &mut ChunkUploadQueue,
+    shared: &RenderShared,
+    pos: ChunkPos,
+    cells: &[Cell; CHUNK_AREA],
+) {
+    visuals.uploads += 1;
+    visuals.upload_bytes += CHUNK_AREA * 4;
+
+    if let Some((_, image)) = visuals.chunk_entities.get(&pos) {
+        queue.0.push(ChunkUpload {
+            image: image.id(),
+            rect: DirtyRect::FULL,
+            data: chunk_texture_data(cells),
+            retries: 0,
+        });
+        return;
+    }
+
+    let size = CHUNK_SIZE as f32;
+    let image = images.add(Image::new(
+        Extent3d {
+            width: CHUNK_SIZE as u32,
+            height: CHUNK_SIZE as u32,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        chunk_texture_data(cells),
+        TextureFormat::Rgba8Uint,
+        RenderAssetUsages::RENDER_WORLD,
+    ));
+    let material = materials.add(ChunkMaterial {
+        cells: image.clone(),
+        palette: shared.palette.clone(),
+    });
+    let entity = commands
+        .spawn((
+            ChunkQuad,
+            Mesh2d(shared.quad.clone()),
+            MeshMaterial2d(material),
+            Transform::from_xyz(
+                pos.x as f32 * size + size / 2.0,
+                pos.y as f32 * size + size / 2.0,
+                0.0,
+            )
+            .with_scale(Vec3::new(size, size, 1.0)),
+            RenderLayers::layer(WORLD_LAYER),
+        ))
+        .id();
+    visuals.chunk_entities.insert(pos, (entity, image));
 }

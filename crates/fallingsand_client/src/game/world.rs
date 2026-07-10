@@ -5,34 +5,20 @@ use std::collections::HashMap;
 
 pub struct ViewChunk {
     pub cells: Box<[Cell; CHUNK_AREA]>,
-    dirty: bool,
-    pending: Vec<DirtyRect>,
 }
 
-impl ViewChunk {
-    pub fn take_full(&mut self) -> bool {
-        if self.dirty {
-            self.dirty = false;
-            self.pending.clear();
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn take_pending(&mut self) -> Vec<DirtyRect> {
-        std::mem::take(&mut self.pending)
-    }
-
-    pub fn mark_full(&mut self) {
-        self.dirty = true;
-    }
+pub enum ChunkChange {
+    Loaded(ChunkPos),
+    Delta(ChunkPos, DirtyRect),
+    Unloaded(ChunkPos),
+    Cleared,
 }
 
 #[derive(Default)]
 pub struct WorldView {
     pub chunks: HashMap<ChunkPos, ViewChunk>,
     pub server_tick: u64,
+    changes: Vec<ChunkChange>,
 }
 
 impl WorldView {
@@ -45,6 +31,11 @@ impl WorldView {
     pub fn clear(&mut self) {
         self.chunks.clear();
         self.server_tick = 0;
+        self.changes.push(ChunkChange::Cleared);
+    }
+
+    pub fn take_changes(&mut self) -> Vec<ChunkChange> {
+        std::mem::take(&mut self.changes)
     }
 
     pub fn apply(&mut self, tick: &TickFrame) {
@@ -55,24 +46,17 @@ impl WorldView {
                     Ok(decoded) => {
                         let mut buffer = Box::new([Cell::AIR; CHUNK_AREA]);
                         buffer.copy_from_slice(&decoded);
-                        self.chunks.insert(
-                            *pos,
-                            ViewChunk {
-                                cells: buffer,
-                                dirty: true,
-                                pending: Vec::new(),
-                            },
-                        );
+                        self.chunks.insert(*pos, ViewChunk { cells: buffer });
+                        self.changes.push(ChunkChange::Loaded(*pos));
                     }
                     Err(_) => error!("bad chunk load payload for {pos:?}"),
                 },
                 ChunkOp::Unload { pos } => {
-                    self.chunks.remove(pos);
+                    if self.chunks.remove(pos).is_some() {
+                        self.changes.push(ChunkChange::Unloaded(*pos));
+                    }
                 }
                 ChunkOp::Delta { pos, rect, cells } => {
-                    let Some(chunk) = self.chunks.get_mut(pos) else {
-                        continue;
-                    };
                     if rect.is_empty() {
                         continue;
                     }
@@ -85,10 +69,11 @@ impl WorldView {
                         error!("bad delta payload for {pos:?}");
                         continue;
                     };
+                    let Some(chunk) = self.chunks.get_mut(pos) else {
+                        continue;
+                    };
                     apply_rect(chunk, *rect, &decoded);
-                    if !chunk.dirty {
-                        chunk.pending.push(*rect);
-                    }
+                    self.changes.push(ChunkChange::Delta(*pos, *rect));
                 }
             }
         }
