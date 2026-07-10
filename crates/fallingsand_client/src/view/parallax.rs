@@ -1,8 +1,8 @@
 use super::camera::{
-    CameraState, CompositeCamera, FAR_LAYER, FarCamera, LayerQuad, LayerTargets, NEAR_LAYER,
-    NearCamera, WALL_LAYER, WallCamera,
+    CameraState, FAR_LAYER, FAR_RATIO, L_FAR, L_NEAR, L_WALL, LayerCamera, NEAR_LAYER, NEAR_RATIO,
+    WALL_LAYER, WALL_RATIO, layer_camera,
 };
-use super::sky::{ActiveLights, LightingParams, Sky, SkyCompositeMaterial, sky_color};
+use super::sky::{ActiveLights, LightingParams, Sky, sky_color};
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderType};
@@ -10,9 +10,6 @@ use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d};
 use fallingsand_core::smoothstep;
 
-const WALL_RATIO: Vec2 = Vec2::splat(0.15);
-const FAR_RATIO: Vec2 = Vec2::new(0.88, 0.92);
-const NEAR_RATIO: Vec2 = Vec2::new(0.72, 0.80);
 const WALL_COLOR: Vec3 = Vec3::new(0.060, 0.052, 0.048);
 const FAR_BASE: f32 = 14.0;
 const FAR_AMP: f32 = 90.0;
@@ -77,31 +74,26 @@ pub struct ParallaxAssets {
     wall: Handle<CaveWallMaterial>,
     far: Handle<SilhouetteMaterial>,
     near: Handle<SilhouetteMaterial>,
-    far_upscale: Handle<SkyCompositeMaterial>,
-    near_upscale: Handle<SkyCompositeMaterial>,
-    wall_upscale: Handle<SkyCompositeMaterial>,
 }
-
-#[derive(Component)]
-pub(crate) struct ParallaxQuad;
 
 #[derive(Component)]
 pub(crate) struct ParallaxSource;
 
-#[allow(clippy::too_many_arguments)]
 pub fn setup_parallax(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut wall_mats: ResMut<Assets<CaveWallMaterial>>,
     mut silhouette_mats: ResMut<Assets<SilhouetteMaterial>>,
-    mut composite_mats: ResMut<Assets<SkyCompositeMaterial>>,
     state: Res<CameraState>,
-    targets: Res<LayerTargets>,
-    composite: Single<Entity, With<CompositeCamera>>,
-    far_cam: Single<Entity, With<FarCamera>>,
-    near_cam: Single<Entity, With<NearCamera>>,
-    wall_cam: Single<Entity, With<WallCamera>>,
+    cameras: Query<(Entity, &LayerCamera)>,
 ) {
+    let (Some(far_cam), Some(near_cam), Some(wall_cam)) = (
+        layer_camera(&cameras, L_FAR),
+        layer_camera(&cameras, L_NEAR),
+        layer_camera(&cameras, L_WALL),
+    ) else {
+        return;
+    };
     let quad = meshes.add(Rectangle::default());
     let native = state.native.as_vec2().extend(1.0);
     let wall = wall_mats.add(CaveWallMaterial {
@@ -129,19 +121,10 @@ pub fn setup_parallax(
             ..default()
         },
     });
-    let far_upscale = composite_mats.add(SkyCompositeMaterial {
-        texture: targets.far.clone(),
-    });
-    let near_upscale = composite_mats.add(SkyCompositeMaterial {
-        texture: targets.near.clone(),
-    });
-    let wall_upscale = composite_mats.add(SkyCompositeMaterial {
-        texture: targets.wall.clone(),
-    });
 
     for (camera, material, layer) in [
-        (*far_cam, MeshMaterial2d(far.clone()), FAR_LAYER),
-        (*near_cam, MeshMaterial2d(near.clone()), NEAR_LAYER),
+        (far_cam, MeshMaterial2d(far.clone()), FAR_LAYER),
+        (near_cam, MeshMaterial2d(near.clone()), NEAR_LAYER),
     ] {
         commands.entity(camera).with_children(|parent| {
             parent.spawn((
@@ -154,7 +137,7 @@ pub fn setup_parallax(
             ));
         });
     }
-    commands.entity(*wall_cam).with_children(|parent| {
+    commands.entity(wall_cam).with_children(|parent| {
         parent.spawn((
             ParallaxSource,
             Mesh2d(quad.clone()),
@@ -165,39 +148,13 @@ pub fn setup_parallax(
         ));
     });
 
-    commands.entity(*composite).with_children(|parent| {
-        for (material, ratio, z) in [
-            (far_upscale.clone(), FAR_RATIO, -40.0),
-            (near_upscale.clone(), NEAR_RATIO, -38.0),
-            (wall_upscale.clone(), WALL_RATIO, -20.0),
-        ] {
-            parent.spawn((
-                ParallaxQuad,
-                LayerQuad { ratio, z },
-                Mesh2d(quad.clone()),
-                MeshMaterial2d(material),
-                Transform::from_xyz(0.0, 0.0, z),
-                Visibility::Hidden,
-            ));
-        }
-    });
-
-    commands.insert_resource(ParallaxAssets {
-        wall,
-        far,
-        near,
-        far_upscale,
-        near_upscale,
-        wall_upscale,
-    });
+    commands.insert_resource(ParallaxAssets { wall, far, near });
 }
 
 fn altitude_fade(pos_y: f32) -> f32 {
     (1.0 - smoothstep(350.0, 900.0, pos_y)) * (1.0 - smoothstep(60.0, 220.0, -pos_y))
 }
 
-#[allow(clippy::too_many_arguments)]
-#[allow(clippy::type_complexity)]
 pub fn sync_parallax(
     sky: Res<Sky>,
     state: Res<CameraState>,
@@ -205,11 +162,12 @@ pub fn sync_parallax(
     assets: Res<ParallaxAssets>,
     mut wall_mats: ResMut<Assets<CaveWallMaterial>>,
     mut silhouette_mats: ResMut<Assets<SilhouetteMaterial>>,
-    mut visibility: Query<&mut Visibility, Or<(With<ParallaxQuad>, With<ParallaxSource>)>>,
-    mut sources: Query<&mut Transform, With<ParallaxSource>>,
+    mut sources: Query<(&mut Transform, &mut Visibility), With<ParallaxSource>>,
 ) {
-    for mut quad in &mut visibility {
-        *quad = if sky.synced {
+    let native = state.native.as_vec2();
+    for (mut transform, mut visibility) in &mut sources {
+        transform.scale = native.extend(1.0);
+        *visibility = if sky.synced {
             Visibility::Inherited
         } else {
             Visibility::Hidden
@@ -219,10 +177,6 @@ pub fn sync_parallax(
         return;
     }
 
-    let native = state.native.as_vec2();
-    for mut transform in &mut sources {
-        transform.scale = native.extend(1.0);
-    }
     if let Some(mut material) = wall_mats.get_mut(&assets.wall) {
         active.write(&mut material.lighting);
         let (snapped, _) = state.layer(WALL_RATIO);
@@ -252,28 +206,6 @@ pub fn sync_parallax(
             let (snapped, _) = state.layer(ratio);
             material.params.snapped_cam = snapped.as_vec2();
             material.params.native_size = native;
-        }
-    }
-}
-
-pub fn rebind_targets(
-    targets: Res<LayerTargets>,
-    assets: Option<Res<ParallaxAssets>>,
-    mut composite_mats: ResMut<Assets<SkyCompositeMaterial>>,
-) {
-    if !targets.is_changed() {
-        return;
-    }
-    let Some(assets) = assets else {
-        return;
-    };
-    for (handle, target) in [
-        (&assets.far_upscale, &targets.far),
-        (&assets.near_upscale, &targets.near),
-        (&assets.wall_upscale, &targets.wall),
-    ] {
-        if let Some(mut material) = composite_mats.get_mut(handle) {
-            material.texture = target.clone();
         }
     }
 }

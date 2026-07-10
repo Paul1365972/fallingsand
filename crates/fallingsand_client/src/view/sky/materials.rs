@@ -44,23 +44,6 @@ impl Material2d for LightingMaterial {
     }
 }
 
-#[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
-pub struct SkyCompositeMaterial {
-    #[texture(0)]
-    #[sampler(1)]
-    pub texture: Handle<Image>,
-}
-
-impl Material2d for SkyCompositeMaterial {
-    fn fragment_shader() -> ShaderRef {
-        "shaders/sky_composite.wgsl".into()
-    }
-
-    fn alpha_mode(&self) -> AlphaMode2d {
-        AlphaMode2d::Blend
-    }
-}
-
 #[derive(ShaderType, Debug, Clone, Default)]
 pub struct SunParams {
     pub redness: f32,

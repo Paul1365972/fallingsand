@@ -3,12 +3,10 @@ mod materials;
 
 pub use lighting::{ActiveLights, EmissiveLights, apply_lighting, scan_emissive};
 pub use materials::{HorizonMaterial, MoonMaterial, StarfieldMaterial, SunMaterial};
-pub use materials::{LightingMaterial, LightingParams, SkyCompositeMaterial};
+pub use materials::{LightingMaterial, LightingParams};
 
 use super::Game;
-use super::camera::{
-    CameraState, CompositeCamera, LayerQuad, LayerTargets, SKY_LAYER, SkyLayerCamera,
-};
+use super::camera::{CameraState, L_SKY, LayerCamera, SKY_LAYER, layer_camera};
 use bevy::camera::visibility::RenderLayers;
 use bevy::image::{
     ImageAddressMode, ImageFilterMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor,
@@ -45,8 +43,6 @@ impl Sky {
 
 #[derive(Resource)]
 pub struct SkyAssets {
-    pub lighting: Handle<LightingMaterial>,
-    sky_composite: Handle<SkyCompositeMaterial>,
     sun: Handle<SunMaterial>,
     moon: Handle<MoonMaterial>,
     starfield: Handle<StarfieldMaterial>,
@@ -55,12 +51,6 @@ pub struct SkyAssets {
 
 #[derive(Resource)]
 pub(crate) struct SharedShaders(#[allow(dead_code)] Vec<Handle<Shader>>);
-
-#[derive(Component)]
-pub(crate) struct LitWorldQuad;
-
-#[derive(Component)]
-pub(crate) struct SkyQuad;
 
 #[derive(Component)]
 pub(crate) struct StarfieldQuad;
@@ -85,25 +75,17 @@ pub fn load_shared_shaders(mut commands: Commands, asset_server: Res<AssetServer
 pub fn setup_sky(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut lighting_mats: ResMut<Assets<LightingMaterial>>,
-    mut sky_composite_mats: ResMut<Assets<SkyCompositeMaterial>>,
     mut sun_mats: ResMut<Assets<SunMaterial>>,
     mut moon_mats: ResMut<Assets<MoonMaterial>>,
     mut star_mats: ResMut<Assets<StarfieldMaterial>>,
     mut horizon_mats: ResMut<Assets<HorizonMaterial>>,
     asset_server: Res<AssetServer>,
-    targets: Res<LayerTargets>,
-    composite: Single<Entity, With<CompositeCamera>>,
-    sky_camera: Single<Entity, With<SkyLayerCamera>>,
+    cameras: Query<(Entity, &LayerCamera)>,
 ) {
+    let Some(sky_camera) = layer_camera(&cameras, L_SKY) else {
+        return;
+    };
     let quad = meshes.add(Rectangle::default());
-    let lighting = lighting_mats.add(LightingMaterial {
-        params: LightingParams::default(),
-        world: targets.world.clone(),
-    });
-    let sky_composite = sky_composite_mats.add(SkyCompositeMaterial {
-        texture: targets.sky.clone(),
-    });
     let sun = sun_mats.add(SunMaterial {
         params: SunParams::default(),
         texture: asset_server.load("sky/sun.png"),
@@ -129,7 +111,7 @@ pub fn setup_sky(
     });
     let horizon = horizon_mats.add(HorizonMaterial::default());
 
-    commands.entity(*sky_camera).with_children(|parent| {
+    commands.entity(sky_camera).with_children(|parent| {
         parent.spawn((
             StarfieldQuad,
             Mesh2d(quad.clone()),
@@ -161,58 +143,12 @@ pub fn setup_sky(
             RenderLayers::layer(SKY_LAYER),
         ));
     });
-
-    commands.entity(*composite).with_children(|parent| {
-        parent.spawn((
-            SkyQuad,
-            LayerQuad {
-                ratio: Vec2::ONE,
-                z: -44.0,
-            },
-            Mesh2d(quad.clone()),
-            MeshMaterial2d(sky_composite.clone()),
-            Transform::from_xyz(0.0, 0.0, -44.0),
-        ));
-        parent.spawn((
-            LitWorldQuad,
-            LayerQuad {
-                ratio: Vec2::ZERO,
-                z: 0.0,
-            },
-            Mesh2d(quad),
-            MeshMaterial2d(lighting.clone()),
-            Transform::from_xyz(0.0, 0.0, 0.0),
-            Visibility::Hidden,
-        ));
-    });
     commands.insert_resource(SkyAssets {
-        lighting,
-        sky_composite,
         sun,
         moon,
         starfield,
         horizon,
     });
-}
-
-pub fn rebind_targets(
-    targets: Res<LayerTargets>,
-    assets: Option<Res<SkyAssets>>,
-    mut lighting_mats: ResMut<Assets<LightingMaterial>>,
-    mut sky_composite_mats: ResMut<Assets<SkyCompositeMaterial>>,
-) {
-    if !targets.is_changed() {
-        return;
-    }
-    let Some(assets) = assets else {
-        return;
-    };
-    if let Some(mut material) = lighting_mats.get_mut(&assets.lighting) {
-        material.world = targets.world.clone();
-    }
-    if let Some(mut material) = sky_composite_mats.get_mut(&assets.sky_composite) {
-        material.texture = targets.sky.clone();
-    }
 }
 
 pub fn sky_color(light: f32, sun_alt: f32, solar_occ: f32) -> Vec3 {
@@ -246,7 +182,6 @@ pub fn sync_sky(
     mut quads: ParamSet<(
         Query<(&mut Transform, &mut Visibility), With<SunVisual>>,
         Query<(&mut Transform, &mut Visibility), With<MoonVisual>>,
-        Query<&mut Visibility, With<LitWorldQuad>>,
         Query<(&mut Transform, &mut Visibility), With<StarfieldQuad>>,
         Query<(&mut Transform, &mut Visibility), With<HorizonQuad>>,
     )>,
@@ -320,15 +255,8 @@ pub fn sync_sky(
 
     let native = state.native.as_vec2();
     let horizon_uv = 0.5 + HORIZON_FRAC * ORBIT_RADIUS / native.y;
-    for mut visibility in &mut quads.p2() {
-        *visibility = if synced {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        };
-    }
     let stars_on = synced && sky.star_visibility > 0.001;
-    for (mut transform, mut visibility) in &mut quads.p3() {
+    for (mut transform, mut visibility) in &mut quads.p2() {
         transform.scale = Vec3::new(native.x, native.y, 1.0);
         *visibility = if stars_on {
             Visibility::Inherited
@@ -336,7 +264,7 @@ pub fn sync_sky(
             Visibility::Hidden
         };
     }
-    for (mut transform, mut visibility) in &mut quads.p4() {
+    for (mut transform, mut visibility) in &mut quads.p3() {
         transform.scale = Vec3::new(native.x, native.y, 1.0);
         *visibility = if synced {
             Visibility::Inherited

@@ -67,7 +67,7 @@ fn main() {
     .add_plugins((
         Material2dPlugin::<view::chunks::ChunkMaterial>::default(),
         Material2dPlugin::<view::sky::LightingMaterial>::default(),
-        Material2dPlugin::<view::sky::SkyCompositeMaterial>::default(),
+        Material2dPlugin::<view::camera::UpscaleMaterial>::default(),
         Material2dPlugin::<view::sky::SunMaterial>::default(),
         Material2dPlugin::<view::sky::MoonMaterial>::default(),
         Material2dPlugin::<view::sky::StarfieldMaterial>::default(),
@@ -110,8 +110,7 @@ fn main() {
         (
             view::camera::sync_camera,
             view::camera::resize_targets,
-            view::sky::rebind_targets,
-            view::parallax::rebind_targets,
+            view::camera::rebind_targets,
             view::sky::sync_sky,
             view::sky::scan_emissive,
             view::sky::apply_lighting,

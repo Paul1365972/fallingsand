@@ -1,7 +1,7 @@
+use super::Sky;
 use super::materials::{LightingMaterial, LightingParams};
-use super::{Sky, SkyAssets};
 use crate::view::Game;
-use crate::view::camera::CameraState;
+use crate::view::camera::{CameraState, LayerAssets};
 use bevy::prelude::*;
 use fallingsand_core::CellPos;
 
@@ -103,7 +103,7 @@ pub fn apply_lighting(
     sky: Res<Sky>,
     emissive_lights: Res<EmissiveLights>,
     state: Res<CameraState>,
-    assets: Res<SkyAssets>,
+    assets: Res<LayerAssets>,
     mut active: ResMut<ActiveLights>,
     mut materials: ResMut<Assets<LightingMaterial>>,
 ) {

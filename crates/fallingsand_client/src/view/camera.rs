@@ -1,4 +1,5 @@
 use super::Game;
+use super::sky::{LightingMaterial, LightingParams};
 use crate::game::RenderMode;
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::visibility::RenderLayers;
@@ -7,78 +8,116 @@ use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::image::Image;
 use bevy::post_process::bloom::{Bloom, BloomPrefilter};
 use bevy::prelude::*;
-use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
+use bevy::render::render_resource::{
+    AsBindGroup, Extent3d, TextureDimension, TextureFormat, TextureUsages,
+};
+use bevy::shader::ShaderRef;
+use bevy::sprite_render::{AlphaMode2d, Material2d};
 use bevy::ui::IsDefaultUiCamera;
 
 pub const VIRTUAL_WIDTH: f32 = 424.0;
+
 pub const WORLD_LAYER: usize = 1;
 pub const SKY_LAYER: usize = 2;
 pub const FAR_LAYER: usize = 3;
 pub const NEAR_LAYER: usize = 4;
 pub const WALL_LAYER: usize = 5;
 
+pub const L_WORLD: usize = 0;
+pub const L_SKY: usize = 1;
+pub const L_FAR: usize = 2;
+pub const L_NEAR: usize = 3;
+pub const L_WALL: usize = 4;
+
+pub const FAR_RATIO: Vec2 = Vec2::new(0.88, 0.92);
+pub const NEAR_RATIO: Vec2 = Vec2::new(0.72, 0.80);
+pub const WALL_RATIO: Vec2 = Vec2::splat(0.15);
+
+pub struct LayerDef {
+    pub render_layer: usize,
+    pub ratio: Vec2,
+    pub z: f32,
+    pub follow: bool,
+    pub lit: bool,
+}
+
+pub const LAYERS: [LayerDef; 5] = [
+    LayerDef {
+        render_layer: WORLD_LAYER,
+        ratio: Vec2::ZERO,
+        z: 0.0,
+        follow: true,
+        lit: true,
+    },
+    LayerDef {
+        render_layer: SKY_LAYER,
+        ratio: Vec2::ONE,
+        z: -44.0,
+        follow: false,
+        lit: false,
+    },
+    LayerDef {
+        render_layer: FAR_LAYER,
+        ratio: FAR_RATIO,
+        z: -40.0,
+        follow: false,
+        lit: false,
+    },
+    LayerDef {
+        render_layer: NEAR_LAYER,
+        ratio: NEAR_RATIO,
+        z: -38.0,
+        follow: false,
+        lit: false,
+    },
+    LayerDef {
+        render_layer: WALL_LAYER,
+        ratio: WALL_RATIO,
+        z: -20.0,
+        follow: false,
+        lit: false,
+    },
+];
+
 #[derive(Component)]
 pub struct WorldCamera;
 
 #[derive(Component)]
-pub struct SkyLayerCamera;
-
-#[derive(Component)]
-pub struct FarCamera;
-
-#[derive(Component)]
-pub struct NearCamera;
-
-#[derive(Component)]
-pub struct WallCamera;
-
-#[derive(Component)]
 pub struct CompositeCamera;
 
-#[derive(Component, Clone, Copy, PartialEq, Eq)]
-pub enum Layer {
-    World,
-    Sky,
-    Far,
-    Near,
-    Wall,
-}
-
-#[derive(Resource)]
-pub struct LayerTargets {
-    pub world: Handle<Image>,
-    pub sky: Handle<Image>,
-    pub far: Handle<Image>,
-    pub near: Handle<Image>,
-    pub wall: Handle<Image>,
-}
-
-impl LayerTargets {
-    fn handle(&self, layer: Layer) -> &Handle<Image> {
-        match layer {
-            Layer::World => &self.world,
-            Layer::Sky => &self.sky,
-            Layer::Far => &self.far,
-            Layer::Near => &self.near,
-            Layer::Wall => &self.wall,
-        }
-    }
-
-    fn set(&mut self, layer: Layer, handle: Handle<Image>) {
-        match layer {
-            Layer::World => self.world = handle,
-            Layer::Sky => self.sky = handle,
-            Layer::Far => self.far = handle,
-            Layer::Near => self.near = handle,
-            Layer::Wall => self.wall = handle,
-        }
-    }
-}
+#[derive(Component)]
+pub struct LayerCamera(pub usize);
 
 #[derive(Component)]
 pub struct LayerQuad {
     pub ratio: Vec2,
     pub z: f32,
+}
+
+#[derive(Resource)]
+pub struct LayerTargets(pub [Handle<Image>; 5]);
+
+#[derive(Resource)]
+pub struct LayerAssets {
+    pub lighting: Handle<LightingMaterial>,
+    upscale: [Option<Handle<UpscaleMaterial>>; 5],
+}
+
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
+pub struct UpscaleMaterial {
+    #[texture(0)]
+    #[sampler(1)]
+    pub texture: Handle<Image>,
+}
+
+impl Material2d for UpscaleMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/upscale.wgsl".into()
+    }
+
+    fn alpha_mode(&self) -> AlphaMode2d {
+        AlphaMode2d::Blend
+    }
 }
 
 #[derive(Resource)]
@@ -111,6 +150,13 @@ impl CameraState {
     pub fn view_cells(&self) -> Vec2 {
         self.window_px.as_vec2() / self.k as f32
     }
+}
+
+pub fn layer_camera(cameras: &Query<(Entity, &LayerCamera)>, index: usize) -> Option<Entity> {
+    cameras
+        .iter()
+        .find(|(_, layer)| layer.0 == index)
+        .map(|(entity, _)| entity)
 }
 
 pub fn base_scale(window_px: UVec2) -> u32 {
@@ -174,6 +220,9 @@ fn native_camera(order: isize, layer: usize, native: UVec2, target: Handle<Image
 pub fn setup_camera(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut upscale_mats: ResMut<Assets<UpscaleMaterial>>,
+    mut lighting_mats: ResMut<Assets<LightingMaterial>>,
     window: Single<&Window>,
 ) {
     let window_px = UVec2::new(
@@ -188,63 +237,73 @@ pub fn setup_camera(
         ..default()
     });
 
-    let targets = LayerTargets {
-        world: native_target(&mut images, native),
-        sky: native_target(&mut images, native),
-        far: native_target(&mut images, native),
-        near: native_target(&mut images, native),
-        wall: native_target(&mut images, native),
-    };
+    let targets: [Handle<Image>; 5] = std::array::from_fn(|_| native_target(&mut images, native));
 
-    commands.spawn((
-        native_camera(0, WORLD_LAYER, native, targets.world.clone()),
-        Layer::World,
-        WorldCamera,
-    ));
-    commands.spawn((
-        native_camera(-1, SKY_LAYER, native, targets.sky.clone()),
-        Layer::Sky,
-        SkyLayerCamera,
-    ));
-    commands.spawn((
-        native_camera(-4, FAR_LAYER, native, targets.far.clone()),
-        Layer::Far,
-        FarCamera,
-    ));
-    commands.spawn((
-        native_camera(-3, NEAR_LAYER, native, targets.near.clone()),
-        Layer::Near,
-        NearCamera,
-    ));
-    commands.spawn((
-        native_camera(-2, WALL_LAYER, native, targets.wall.clone()),
-        Layer::Wall,
-        WallCamera,
-    ));
-    commands.insert_resource(targets);
+    for (i, def) in LAYERS.iter().enumerate() {
+        let mut camera = commands.spawn((
+            native_camera(-(i as isize), def.render_layer, native, targets[i].clone()),
+            LayerCamera(i),
+        ));
+        if def.follow {
+            camera.insert(WorldCamera);
+        }
+    }
 
-    commands.spawn((
-        Camera2d,
-        Hdr,
-        Msaa::Off,
-        Tonemapping::AcesFitted,
-        Bloom {
-            intensity: 0.55,
-            prefilter: BloomPrefilter {
-                threshold: 1.0,
-                threshold_softness: 0.4,
+    let composite = commands
+        .spawn((
+            Camera2d,
+            Hdr,
+            Msaa::Off,
+            Tonemapping::AcesFitted,
+            Bloom {
+                intensity: 0.55,
+                prefilter: BloomPrefilter {
+                    threshold: 1.0,
+                    threshold_softness: 0.4,
+                },
+                ..Bloom::NATURAL
             },
-            ..Bloom::NATURAL
-        },
-        Camera {
-            order: 1,
-            ..default()
-        },
-        IsDefaultUiCamera,
-        fixed_projection(window_px),
-        Transform::IDENTITY,
-        CompositeCamera,
-    ));
+            Camera {
+                order: 1,
+                ..default()
+            },
+            IsDefaultUiCamera,
+            fixed_projection(window_px),
+            Transform::IDENTITY,
+            CompositeCamera,
+        ))
+        .id();
+
+    let quad = meshes.add(Rectangle::default());
+    let lighting = lighting_mats.add(LightingMaterial {
+        params: LightingParams::default(),
+        world: targets[L_WORLD].clone(),
+    });
+    let mut upscale: [Option<Handle<UpscaleMaterial>>; 5] = Default::default();
+    commands.entity(composite).with_children(|parent| {
+        for (i, def) in LAYERS.iter().enumerate() {
+            let mut quad = parent.spawn((
+                LayerQuad {
+                    ratio: def.ratio,
+                    z: def.z,
+                },
+                Mesh2d(quad.clone()),
+                Transform::from_xyz(0.0, 0.0, def.z),
+            ));
+            if def.lit {
+                quad.insert(MeshMaterial2d(lighting.clone()));
+            } else {
+                let material = upscale_mats.add(UpscaleMaterial {
+                    texture: targets[i].clone(),
+                });
+                upscale[i] = Some(material.clone());
+                quad.insert(MeshMaterial2d(material));
+            }
+        }
+    });
+
+    commands.insert_resource(LayerTargets(targets));
+    commands.insert_resource(LayerAssets { lighting, upscale });
 }
 
 #[allow(clippy::type_complexity)]
@@ -304,19 +363,43 @@ pub fn resize_targets(
     mut last: Local<UVec2>,
     mut images: ResMut<Assets<Image>>,
     mut targets: ResMut<LayerTargets>,
-    mut cams: Query<(&Layer, &mut Projection, &mut RenderTarget)>,
+    mut cameras: Query<(&LayerCamera, &mut Projection, &mut RenderTarget)>,
 ) {
     if *last == state.native {
         return;
     }
     *last = state.native;
 
-    for (layer, mut projection, mut target) in &mut cams {
+    for (layer, mut projection, mut target) in &mut cameras {
         let handle = native_target(&mut images, state.native);
-        images.remove(targets.handle(*layer));
-        targets.set(*layer, handle.clone());
+        images.remove(&targets.0[layer.0]);
+        targets.0[layer.0] = handle.clone();
         *projection = fixed_projection(state.native);
         *target = RenderTarget::from(handle);
+    }
+}
+
+pub fn rebind_targets(
+    targets: Res<LayerTargets>,
+    assets: Option<Res<LayerAssets>>,
+    mut upscale_mats: ResMut<Assets<UpscaleMaterial>>,
+    mut lighting_mats: ResMut<Assets<LightingMaterial>>,
+) {
+    if !targets.is_changed() {
+        return;
+    }
+    let Some(assets) = assets else {
+        return;
+    };
+    if let Some(mut material) = lighting_mats.get_mut(&assets.lighting) {
+        material.world = targets.0[L_WORLD].clone();
+    }
+    for (i, handle) in assets.upscale.iter().enumerate() {
+        if let Some(handle) = handle
+            && let Some(mut material) = upscale_mats.get_mut(handle)
+        {
+            material.texture = targets.0[i].clone();
+        }
     }
 }
 
