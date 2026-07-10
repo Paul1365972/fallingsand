@@ -1,5 +1,9 @@
-use super::camera::{CameraState, CompositeCamera, LayerQuad};
-use super::sky::{ActiveLights, LightingParams, Sky, sky_color};
+use super::camera::{
+    CameraState, CompositeCamera, FAR_LAYER, FarCamera, LayerQuad, LayerTargets, NEAR_LAYER,
+    NearCamera, WALL_LAYER, WallCamera,
+};
+use super::sky::{ActiveLights, LightingParams, Sky, SkyCompositeMaterial, sky_color};
+use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderType};
 use bevy::shader::ShaderRef;
@@ -73,19 +77,33 @@ pub struct ParallaxAssets {
     wall: Handle<CaveWallMaterial>,
     far: Handle<SilhouetteMaterial>,
     near: Handle<SilhouetteMaterial>,
+    far_upscale: Handle<SkyCompositeMaterial>,
+    near_upscale: Handle<SkyCompositeMaterial>,
+    wall_upscale: Handle<SkyCompositeMaterial>,
 }
 
 #[derive(Component)]
 pub(crate) struct ParallaxQuad;
 
+#[derive(Component)]
+pub(crate) struct ParallaxSource;
+
+#[allow(clippy::too_many_arguments)]
 pub fn setup_parallax(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut wall_mats: ResMut<Assets<CaveWallMaterial>>,
     mut silhouette_mats: ResMut<Assets<SilhouetteMaterial>>,
+    mut composite_mats: ResMut<Assets<SkyCompositeMaterial>>,
+    state: Res<CameraState>,
+    targets: Res<LayerTargets>,
     composite: Single<Entity, With<CompositeCamera>>,
+    far_cam: Single<Entity, With<FarCamera>>,
+    near_cam: Single<Entity, With<NearCamera>>,
+    wall_cam: Single<Entity, With<WallCamera>>,
 ) {
     let quad = meshes.add(Rectangle::default());
+    let native = state.native.as_vec2().extend(1.0);
     let wall = wall_mats.add(CaveWallMaterial {
         wall: WallParams {
             base_color: WALL_COLOR.extend(1.0),
@@ -111,43 +129,67 @@ pub fn setup_parallax(
             ..default()
         },
     });
+    let far_upscale = composite_mats.add(SkyCompositeMaterial {
+        texture: targets.far.clone(),
+    });
+    let near_upscale = composite_mats.add(SkyCompositeMaterial {
+        texture: targets.near.clone(),
+    });
+    let wall_upscale = composite_mats.add(SkyCompositeMaterial {
+        texture: targets.wall.clone(),
+    });
 
-    commands.entity(*composite).with_children(|parent| {
+    for (camera, material, layer) in [
+        (*far_cam, MeshMaterial2d(far.clone()), FAR_LAYER),
+        (*near_cam, MeshMaterial2d(near.clone()), NEAR_LAYER),
+    ] {
+        commands.entity(camera).with_children(|parent| {
+            parent.spawn((
+                ParallaxSource,
+                Mesh2d(quad.clone()),
+                material,
+                Transform::from_scale(native),
+                RenderLayers::layer(layer),
+                Visibility::Hidden,
+            ));
+        });
+    }
+    commands.entity(*wall_cam).with_children(|parent| {
         parent.spawn((
-            ParallaxQuad,
-            LayerQuad {
-                ratio: FAR_RATIO,
-                z: -40.0,
-            },
+            ParallaxSource,
             Mesh2d(quad.clone()),
-            MeshMaterial2d(far.clone()),
-            Transform::from_xyz(0.0, 0.0, -40.0),
-            Visibility::Hidden,
-        ));
-        parent.spawn((
-            ParallaxQuad,
-            LayerQuad {
-                ratio: NEAR_RATIO,
-                z: -38.0,
-            },
-            Mesh2d(quad.clone()),
-            MeshMaterial2d(near.clone()),
-            Transform::from_xyz(0.0, 0.0, -38.0),
-            Visibility::Hidden,
-        ));
-        parent.spawn((
-            ParallaxQuad,
-            LayerQuad {
-                ratio: WALL_RATIO,
-                z: -20.0,
-            },
-            Mesh2d(quad),
             MeshMaterial2d(wall.clone()),
-            Transform::from_xyz(0.0, 0.0, -20.0),
+            Transform::from_scale(native),
+            RenderLayers::layer(WALL_LAYER),
             Visibility::Hidden,
         ));
     });
-    commands.insert_resource(ParallaxAssets { wall, far, near });
+
+    commands.entity(*composite).with_children(|parent| {
+        for (material, ratio, z) in [
+            (far_upscale.clone(), FAR_RATIO, -40.0),
+            (near_upscale.clone(), NEAR_RATIO, -38.0),
+            (wall_upscale.clone(), WALL_RATIO, -20.0),
+        ] {
+            parent.spawn((
+                ParallaxQuad,
+                LayerQuad { ratio, z },
+                Mesh2d(quad.clone()),
+                MeshMaterial2d(material),
+                Transform::from_xyz(0.0, 0.0, z),
+                Visibility::Hidden,
+            ));
+        }
+    });
+
+    commands.insert_resource(ParallaxAssets {
+        wall,
+        far,
+        near,
+        far_upscale,
+        near_upscale,
+        wall_upscale,
+    });
 }
 
 fn altitude_fade(pos_y: f32) -> f32 {
@@ -155,6 +197,7 @@ fn altitude_fade(pos_y: f32) -> f32 {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::type_complexity)]
 pub fn sync_parallax(
     sky: Res<Sky>,
     state: Res<CameraState>,
@@ -162,10 +205,11 @@ pub fn sync_parallax(
     assets: Res<ParallaxAssets>,
     mut wall_mats: ResMut<Assets<CaveWallMaterial>>,
     mut silhouette_mats: ResMut<Assets<SilhouetteMaterial>>,
-    mut quads: Query<&mut Visibility, With<ParallaxQuad>>,
+    mut visibility: Query<&mut Visibility, Or<(With<ParallaxQuad>, With<ParallaxSource>)>>,
+    mut sources: Query<&mut Transform, With<ParallaxSource>>,
 ) {
-    for mut visibility in &mut quads {
-        *visibility = if sky.synced {
+    for mut quad in &mut visibility {
+        *quad = if sky.synced {
             Visibility::Inherited
         } else {
             Visibility::Hidden
@@ -176,6 +220,9 @@ pub fn sync_parallax(
     }
 
     let native = state.native.as_vec2();
+    for mut transform in &mut sources {
+        transform.scale = native.extend(1.0);
+    }
     if let Some(mut material) = wall_mats.get_mut(&assets.wall) {
         active.write(&mut material.lighting);
         let (snapped, _) = state.layer(WALL_RATIO);
@@ -205,6 +252,28 @@ pub fn sync_parallax(
             let (snapped, _) = state.layer(ratio);
             material.params.snapped_cam = snapped.as_vec2();
             material.params.native_size = native;
+        }
+    }
+}
+
+pub fn rebind_targets(
+    targets: Res<LayerTargets>,
+    assets: Option<Res<ParallaxAssets>>,
+    mut composite_mats: ResMut<Assets<SkyCompositeMaterial>>,
+) {
+    if !targets.is_changed() {
+        return;
+    }
+    let Some(assets) = assets else {
+        return;
+    };
+    for (handle, target) in [
+        (&assets.far_upscale, &targets.far),
+        (&assets.near_upscale, &targets.near),
+        (&assets.wall_upscale, &targets.wall),
+    ] {
+        if let Some(mut material) = composite_mats.get_mut(handle) {
+            material.texture = target.clone();
         }
     }
 }

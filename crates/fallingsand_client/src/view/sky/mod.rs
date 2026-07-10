@@ -7,7 +7,7 @@ pub use materials::{LightingMaterial, LightingParams, SkyCompositeMaterial};
 
 use super::Game;
 use super::camera::{
-    CameraState, CompositeCamera, LayerQuad, SKY_LAYER, SkyLayerCamera, SkyTarget, WorldTarget,
+    CameraState, CompositeCamera, LayerQuad, LayerTargets, SKY_LAYER, SkyLayerCamera,
 };
 use bevy::camera::visibility::RenderLayers;
 use bevy::image::{
@@ -46,6 +46,7 @@ impl Sky {
 #[derive(Resource)]
 pub struct SkyAssets {
     pub lighting: Handle<LightingMaterial>,
+    sky_composite: Handle<SkyCompositeMaterial>,
     sun: Handle<SunMaterial>,
     moon: Handle<MoonMaterial>,
     starfield: Handle<StarfieldMaterial>,
@@ -91,18 +92,17 @@ pub fn setup_sky(
     mut star_mats: ResMut<Assets<StarfieldMaterial>>,
     mut horizon_mats: ResMut<Assets<HorizonMaterial>>,
     asset_server: Res<AssetServer>,
-    world_target: Res<WorldTarget>,
-    sky_target: Res<SkyTarget>,
+    targets: Res<LayerTargets>,
     composite: Single<Entity, With<CompositeCamera>>,
     sky_camera: Single<Entity, With<SkyLayerCamera>>,
 ) {
     let quad = meshes.add(Rectangle::default());
     let lighting = lighting_mats.add(LightingMaterial {
         params: LightingParams::default(),
-        world: world_target.0.clone(),
+        world: targets.world.clone(),
     });
     let sky_composite = sky_composite_mats.add(SkyCompositeMaterial {
-        texture: sky_target.0.clone(),
+        texture: targets.sky.clone(),
     });
     let sun = sun_mats.add(SunMaterial {
         params: SunParams::default(),
@@ -170,7 +170,7 @@ pub fn setup_sky(
                 z: -44.0,
             },
             Mesh2d(quad.clone()),
-            MeshMaterial2d(sky_composite),
+            MeshMaterial2d(sky_composite.clone()),
             Transform::from_xyz(0.0, 0.0, -44.0),
         ));
         parent.spawn((
@@ -187,11 +187,32 @@ pub fn setup_sky(
     });
     commands.insert_resource(SkyAssets {
         lighting,
+        sky_composite,
         sun,
         moon,
         starfield,
         horizon,
     });
+}
+
+pub fn rebind_targets(
+    targets: Res<LayerTargets>,
+    assets: Option<Res<SkyAssets>>,
+    mut lighting_mats: ResMut<Assets<LightingMaterial>>,
+    mut sky_composite_mats: ResMut<Assets<SkyCompositeMaterial>>,
+) {
+    if !targets.is_changed() {
+        return;
+    }
+    let Some(assets) = assets else {
+        return;
+    };
+    if let Some(mut material) = lighting_mats.get_mut(&assets.lighting) {
+        material.world = targets.world.clone();
+    }
+    if let Some(mut material) = sky_composite_mats.get_mut(&assets.sky_composite) {
+        material.texture = targets.sky.clone();
+    }
 }
 
 pub fn sky_color(light: f32, sun_alt: f32, solar_occ: f32) -> Vec3 {

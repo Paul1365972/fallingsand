@@ -13,6 +13,9 @@ use bevy::ui::IsDefaultUiCamera;
 pub const VIRTUAL_WIDTH: f32 = 424.0;
 pub const WORLD_LAYER: usize = 1;
 pub const SKY_LAYER: usize = 2;
+pub const FAR_LAYER: usize = 3;
+pub const NEAR_LAYER: usize = 4;
+pub const WALL_LAYER: usize = 5;
 
 #[derive(Component)]
 pub struct WorldCamera;
@@ -21,13 +24,56 @@ pub struct WorldCamera;
 pub struct SkyLayerCamera;
 
 #[derive(Component)]
+pub struct FarCamera;
+
+#[derive(Component)]
+pub struct NearCamera;
+
+#[derive(Component)]
+pub struct WallCamera;
+
+#[derive(Component)]
 pub struct CompositeCamera;
 
-#[derive(Resource)]
-pub struct WorldTarget(pub Handle<Image>);
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+pub enum Layer {
+    World,
+    Sky,
+    Far,
+    Near,
+    Wall,
+}
 
 #[derive(Resource)]
-pub struct SkyTarget(pub Handle<Image>);
+pub struct LayerTargets {
+    pub world: Handle<Image>,
+    pub sky: Handle<Image>,
+    pub far: Handle<Image>,
+    pub near: Handle<Image>,
+    pub wall: Handle<Image>,
+}
+
+impl LayerTargets {
+    fn handle(&self, layer: Layer) -> &Handle<Image> {
+        match layer {
+            Layer::World => &self.world,
+            Layer::Sky => &self.sky,
+            Layer::Far => &self.far,
+            Layer::Near => &self.near,
+            Layer::Wall => &self.wall,
+        }
+    }
+
+    fn set(&mut self, layer: Layer, handle: Handle<Image>) {
+        match layer {
+            Layer::World => self.world = handle,
+            Layer::Sky => self.sky = handle,
+            Layer::Far => self.far = handle,
+            Layer::Near => self.near = handle,
+            Layer::Wall => self.wall = handle,
+        }
+    }
+}
 
 #[derive(Component)]
 pub struct LayerQuad {
@@ -108,6 +154,23 @@ fn native_target(images: &mut Assets<Image>, size: UVec2) -> Handle<Image> {
     images.add(image)
 }
 
+fn native_camera(order: isize, layer: usize, native: UVec2, target: Handle<Image>) -> impl Bundle {
+    (
+        Camera2d,
+        Hdr,
+        Msaa::Off,
+        Camera {
+            order,
+            clear_color: ClearColorConfig::Custom(Color::NONE),
+            ..default()
+        },
+        RenderTarget::from(target),
+        RenderLayers::layer(layer),
+        fixed_projection(native),
+        Transform::IDENTITY,
+    )
+}
+
 pub fn setup_camera(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
@@ -125,42 +188,40 @@ pub fn setup_camera(
         ..default()
     });
 
-    let world_target = native_target(&mut images, native);
-    let sky_target = native_target(&mut images, native);
-    commands.insert_resource(WorldTarget(world_target.clone()));
-    commands.insert_resource(SkyTarget(sky_target.clone()));
+    let targets = LayerTargets {
+        world: native_target(&mut images, native),
+        sky: native_target(&mut images, native),
+        far: native_target(&mut images, native),
+        near: native_target(&mut images, native),
+        wall: native_target(&mut images, native),
+    };
 
     commands.spawn((
-        Camera2d,
-        Hdr,
-        Msaa::Off,
-        Camera {
-            order: -1,
-            clear_color: ClearColorConfig::Custom(Color::NONE),
-            ..default()
-        },
-        RenderTarget::from(sky_target),
-        RenderLayers::layer(SKY_LAYER),
-        fixed_projection(native),
-        Transform::IDENTITY,
-        SkyLayerCamera,
-    ));
-
-    commands.spawn((
-        Camera2d,
-        Hdr,
-        Msaa::Off,
-        Camera {
-            order: 0,
-            clear_color: ClearColorConfig::Custom(Color::NONE),
-            ..default()
-        },
-        RenderTarget::from(world_target),
-        RenderLayers::layer(WORLD_LAYER),
-        fixed_projection(native),
-        Transform::IDENTITY,
+        native_camera(0, WORLD_LAYER, native, targets.world.clone()),
+        Layer::World,
         WorldCamera,
     ));
+    commands.spawn((
+        native_camera(-1, SKY_LAYER, native, targets.sky.clone()),
+        Layer::Sky,
+        SkyLayerCamera,
+    ));
+    commands.spawn((
+        native_camera(-4, FAR_LAYER, native, targets.far.clone()),
+        Layer::Far,
+        FarCamera,
+    ));
+    commands.spawn((
+        native_camera(-3, NEAR_LAYER, native, targets.near.clone()),
+        Layer::Near,
+        NearCamera,
+    ));
+    commands.spawn((
+        native_camera(-2, WALL_LAYER, native, targets.wall.clone()),
+        Layer::Wall,
+        WallCamera,
+    ));
+    commands.insert_resource(targets);
 
     commands.spawn((
         Camera2d,
@@ -186,23 +247,12 @@ pub fn setup_camera(
     ));
 }
 
-#[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
 pub fn sync_camera(
     game: Res<Game>,
     time: Res<Time>,
     window: Single<&Window>,
     mut state: ResMut<CameraState>,
-    mut images: ResMut<Assets<Image>>,
-    world_target: Res<WorldTarget>,
-    sky_target: Res<SkyTarget>,
-    mut natives: Query<
-        &mut Projection,
-        (
-            Or<(With<WorldCamera>, With<SkyLayerCamera>)>,
-            Without<CompositeCamera>,
-        ),
-    >,
     mut composite: Single<&mut Projection, With<CompositeCamera>>,
     mut world_camera: Single<&mut Transform, (With<WorldCamera>, Without<LayerQuad>)>,
     mut quads: Query<(&LayerQuad, &mut Transform), Without<WorldCamera>>,
@@ -213,29 +263,12 @@ pub fn sync_camera(
     );
     let (k, native) = pixel_scale(window_px, game.0.view_prefs.zoom_index);
     if state.k != k || state.native != native || state.window_px != window_px {
-        let resize_native = state.native != native;
-        let resize_window = state.window_px != window_px;
+        if state.window_px != window_px {
+            **composite = fixed_projection(window_px);
+        }
         state.k = k;
         state.native = native;
         state.window_px = window_px;
-
-        if resize_native {
-            for target in [&world_target.0, &sky_target.0] {
-                if let Some(mut image) = images.get_mut(target) {
-                    image.resize(Extent3d {
-                        width: native.x,
-                        height: native.y,
-                        depth_or_array_layers: 1,
-                    });
-                }
-            }
-            for mut projection in &mut natives {
-                *projection = fixed_projection(native);
-            }
-        }
-        if resize_window {
-            **composite = fixed_projection(window_px);
-        }
     }
 
     match game.0.player_pos() {
@@ -263,6 +296,27 @@ pub fn sync_camera(
         };
         transform.translation = offset.extend(quad.z);
         transform.scale = Vec3::new(size.x, size.y, 1.0);
+    }
+}
+
+pub fn resize_targets(
+    state: Res<CameraState>,
+    mut last: Local<UVec2>,
+    mut images: ResMut<Assets<Image>>,
+    mut targets: ResMut<LayerTargets>,
+    mut cams: Query<(&Layer, &mut Projection, &mut RenderTarget)>,
+) {
+    if *last == state.native {
+        return;
+    }
+    *last = state.native;
+
+    for (layer, mut projection, mut target) in &mut cams {
+        let handle = native_target(&mut images, state.native);
+        images.remove(targets.handle(*layer));
+        targets.set(*layer, handle.clone());
+        *projection = fixed_projection(state.native);
+        *target = RenderTarget::from(handle);
     }
 }
 
