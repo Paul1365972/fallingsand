@@ -10,6 +10,8 @@ use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d};
 
 const WALL_COLOR: Vec3 = Vec3::new(0.060, 0.052, 0.048);
+const FAR_HAZE: f32 = 0.6;
+const NEAR_HAZE: f32 = 0.35;
 const FAR_BASE: f32 = 14.0;
 const FAR_AMP: f32 = 90.0;
 const FAR_WAVELENGTH: f32 = 220.0;
@@ -187,15 +189,13 @@ pub fn sync_parallax(
     );
     let linear = Color::srgb(srgb.x, srgb.y, srgb.z).to_linear();
     let sky_linear = Vec3::new(linear.red, linear.green, linear.blue);
-    let deep = Vec3::new(0.04, 0.05, 0.09);
-    let dim = 1.0 - (1.0 - sky.state.light) * 0.85;
 
-    for (handle, ratio, mix) in [
-        (&assets.far, FAR_RATIO, 0.35),
-        (&assets.near, NEAR_RATIO, 0.6),
+    for (handle, ratio, haze) in [
+        (&assets.far, FAR_RATIO, FAR_HAZE),
+        (&assets.near, NEAR_RATIO, NEAR_HAZE),
     ] {
         if let Some(mut material) = silhouette_mats.get_mut(handle) {
-            let rgb = sky_linear.lerp(deep, mix) * dim;
+            let rgb = sky_linear * haze;
             material.params.color = rgb.extend(1.0);
             let (snapped, _) = state.layer(ratio);
             material.params.snapped_cam = snapped.as_vec2();
