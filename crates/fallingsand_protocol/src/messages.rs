@@ -3,9 +3,6 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct EntityId(pub u64);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct PlayerId(pub u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -111,25 +108,9 @@ pub enum SlotAction {
     LeftClick { slot: u16 },
     RightClick { slot: u16 },
     QuickMove { slot: u16 },
-    DropSlot { slot: u16, all: bool },
-    DropCursor { all: bool },
+    Trash,
     Craft { recipe: u16, all: bool },
     CreativeGrab { item: ItemId },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct ItemEntityState {
-    pub id: EntityId,
-    pub x: Fixed,
-    pub y: Fixed,
-    pub stack: ItemStack,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct ItemMove {
-    pub id: EntityId,
-    pub x: Fixed,
-    pub y: Fixed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -172,21 +153,14 @@ pub enum ChunkOp {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct ItemDelta {
-    pub spawned: Vec<ItemEntityState>,
-    pub moved: Vec<ItemMove>,
-    pub despawned: Vec<EntityId>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct TickFrame {
     pub tick: u64,
     pub world_age: u64,
     pub chunks: Vec<ChunkOp>,
     pub players: Vec<PlayerState>,
-    pub items: ItemDelta,
     pub inventory: Vec<(u16, Option<ItemStack>)>,
     pub cursor: Option<Option<ItemStack>>,
+    pub trash: Option<Option<ItemStack>>,
     pub self_state: Option<SelfState>,
     pub debug: Vec<ChunkDebugRects>,
 }

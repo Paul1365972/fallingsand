@@ -15,9 +15,6 @@ const GAP: f32 = 3.0;
 struct OverlayRoot;
 
 #[derive(Component)]
-struct DropZone;
-
-#[derive(Component)]
 struct CursorFollow;
 
 #[derive(Component)]
@@ -32,6 +29,7 @@ struct TooltipText;
 #[derive(Clone, Copy, PartialEq)]
 enum SlotRegion {
     Player,
+    Trash,
     Craft(u16),
     Palette(ItemId),
 }
@@ -47,6 +45,7 @@ struct OverlaySig {
     mode: GameMode,
     slots: Vec<Option<ItemStack>>,
     cursor: Option<ItemStack>,
+    trash: Option<ItemStack>,
     craftable: Vec<bool>,
 }
 
@@ -103,8 +102,6 @@ fn spawn_overlay(commands: &mut Commands) {
     commands
         .spawn((
             OverlayRoot,
-            DropZone,
-            Button,
             Node {
                 position_type: PositionType::Absolute,
                 width: percent(100),
@@ -229,6 +226,7 @@ fn rebuild_overlay(
         mode: state.mode,
         slots: inventory.slots.clone(),
         cursor: inventory.cursor,
+        trash: inventory.trash,
         craftable: craftable.clone(),
     };
     if sig.as_ref() == Some(&next) {
@@ -277,6 +275,14 @@ fn rebuild_overlay(
                     materials,
                 );
             }
+        });
+        panel.spawn(Node {
+            height: px(6),
+            ..default()
+        });
+        panel.spawn(label_node("Trash"));
+        panel.spawn(row_node()).with_children(|r| {
+            spawn_slot(r, SlotRegion::Trash, 0, inventory.trash, items, materials);
         });
     });
 
@@ -401,7 +407,11 @@ fn spawn_slot(
                 ..default()
             },
             BackgroundColor(Color::srgba(0.06, 0.07, 0.10, 0.92)),
-            BorderColor::all(Color::srgba(0.0, 0.0, 0.0, 0.6)),
+            BorderColor::all(if region == SlotRegion::Trash {
+                Color::srgba(0.6, 0.15, 0.1, 0.8)
+            } else {
+                Color::srgba(0.0, 0.0, 0.0, 0.6)
+            }),
         ))
         .with_children(|slot| {
             if let Some(item) = stack {
@@ -443,9 +453,7 @@ fn handle_clicks(
     pointer: Res<Pointer>,
     modifiers: Res<Modifiers>,
     open: Res<InventoryOpen>,
-    inventory: Res<LocalInventory>,
     slots: Query<(&UiSlot, &Interaction)>,
-    drop_zone: Query<&Interaction, With<DropZone>>,
     mut acc: ResMut<InputAccumulator>,
 ) {
     if !open.0 {
@@ -475,6 +483,12 @@ fn handle_clicks(
                     SlotAction::RightClick { slot: s }
                 }
             }
+            SlotRegion::Trash => {
+                if !left {
+                    return;
+                }
+                SlotAction::Trash
+            }
             SlotRegion::Craft(recipe) => {
                 if !left {
                     return;
@@ -489,14 +503,6 @@ fn handle_clicks(
             }
         };
         acc.queue(InputAction::Slot(action));
-        return;
-    }
-
-    let on_backdrop = drop_zone
-        .iter()
-        .any(|interaction| !matches!(interaction, Interaction::None));
-    if on_backdrop && inventory.cursor.is_some() {
-        acc.queue(InputAction::Slot(SlotAction::DropCursor { all: left }));
     }
 }
 
@@ -556,6 +562,7 @@ fn update_tooltip(
     };
     let item = hovered.and_then(|slot| match slot.region {
         SlotRegion::Player => inventory.slots.get(slot.index).copied().flatten(),
+        SlotRegion::Trash => inventory.trash,
         SlotRegion::Palette(id) => Some(ItemStack::new(id, 1)),
         SlotRegion::Craft(_) => None,
     });

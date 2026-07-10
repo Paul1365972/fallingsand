@@ -1,7 +1,5 @@
 use crate::commands::{PendingCommand, PendingCommands};
-use crate::inventory::{
-    DroppedItem, Inventory, ItemActor, ItemReg, NextEntityId, SlotActions, spawn_dropped_item,
-};
+use crate::inventory::{Inventory, ItemReg, SlotActions};
 use crate::persistence::{
     PlayerRecord, player_slots_from_record, slots_to_record, stack_to_record,
 };
@@ -17,9 +15,8 @@ use fallingsand_core::{
     MaterialId, MaterialRegistry, Phase, TICK_DT,
 };
 use fallingsand_protocol::{
-    ChunkDebugRects, ChunkOp, ClientMessage, EntityId, GameMode, InputAction, InputState,
-    ItemDelta, ItemEntityState, ItemMove, PROTOCOL_VERSION, PlayerId, PlayerState, SelfState,
-    ServerMessage, TickFrame, cells_to_wire, decode_message,
+    ChunkDebugRects, ChunkOp, ClientMessage, GameMode, InputAction, InputState, PROTOCOL_VERSION,
+    PlayerId, PlayerState, SelfState, ServerMessage, TickFrame, cells_to_wire, decode_message,
 };
 use fallingsand_sim::ActorAabb;
 use fallingsand_sim::physics::{
@@ -109,6 +106,7 @@ pub fn player_record(
         burning: burning.secs,
         inventory: slots_to_record(item_reg, &inventory.inner),
         cursor: stack_to_record(item_reg, inventory.cursor),
+        trash: stack_to_record(item_reg, inventory.trash),
     }
 }
 
@@ -281,6 +279,12 @@ pub fn drain_network(
                                             crate::persistence::stack_from_record(
                                                 &item_reg.0,
                                                 &r.cursor,
+                                            )
+                                        }),
+                                        record.and_then(|r| {
+                                            crate::persistence::stack_from_record(
+                                                &item_reg.0,
+                                                &r.trash,
                                             )
                                         }),
                                     ),
@@ -460,15 +464,12 @@ pub fn drain_network(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn apply_player_inputs(
-    mut commands: Commands,
     mut sim: ResMut<SimWorld>,
     registry: Res<Registry>,
     item_reg: Res<ItemReg>,
     obstacles: Res<SimObstacles>,
     mut bodies: ResMut<crate::bodies::PixelBodies>,
-    mut next_id: ResMut<NextEntityId>,
     mut query: Query<(&Player, &PlayerActor, &Mode, &mut DigState, &mut Inventory)>,
 ) {
     let reg = &item_reg.0;
@@ -491,7 +492,6 @@ pub fn apply_player_inputs(
         let mut dug = false;
         if input.primary {
             if survival {
-                let mut drops = Vec::new();
                 dug = survival_dig(
                     &mut sim.0,
                     &registry.0,
@@ -500,21 +500,7 @@ pub fn apply_player_inputs(
                     &mut inventory,
                     input.aim,
                     radius,
-                    &mut drops,
                 );
-                for (pos, stack) in drops {
-                    spawn_dropped_item(
-                        &mut commands,
-                        &mut next_id,
-                        stack,
-                        Fixed::cell_center(pos.x),
-                        Fixed::cell_center(pos.y),
-                        0.0,
-                        40.0,
-                        0,
-                        0,
-                    );
-                }
             } else {
                 for (_, pos) in brush_cells(input.aim, radius) {
                     let Some(cell) = sim.0.get_cell(pos) else {
@@ -589,7 +575,6 @@ fn brush_cells(aim: CellPos, radius: i32) -> impl Iterator<Item = (i32, CellPos)
     })
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn survival_dig(
     world: &mut fallingsand_sim::CellWorld,
     registry: &MaterialRegistry,
@@ -598,7 +583,6 @@ pub fn survival_dig(
     inventory: &mut Inventory,
     aim: CellPos,
     radius: i32,
-    drops: &mut Vec<(CellPos, ItemStack)>,
 ) -> bool {
     let mut candidates: Vec<(i32, i32, i32)> = brush_cells(aim, radius)
         .filter(|&(_, pos)| {
@@ -631,18 +615,19 @@ pub fn survival_dig(
         if dig.budget < cost {
             break;
         }
-        dig.budget -= cost;
-        world.place_material(pos, MaterialId::AIR);
         let item = item_reg.item_for_material(cell.material);
         if item != ItemId::NONE {
-            if let Some(overflow) = inventory
+            if inventory
                 .inner
                 .insert_first_fit(ItemStack::new(item, 1), item_reg)
+                .is_some()
             {
-                drops.push((pos, overflow));
+                continue;
             }
             inventory.dirty = true;
         }
+        dig.budget -= cost;
+        world.place_material(pos, MaterialId::AIR);
         dug = true;
     }
     dug
@@ -869,7 +854,6 @@ pub fn replicate(
         &Air,
     )>,
     mut inventories: Query<&mut Inventory>,
-    dropped: Query<(&DroppedItem, &ItemActor)>,
 ) {
     let tick = sim.0.tick();
     let world_age = clock.0.age;
@@ -893,23 +877,6 @@ pub fn replicate(
     last_players.0 = all_players
         .iter()
         .map(|state| (state.player, *state))
-        .collect();
-
-    let item_views: Vec<(EntityId, fallingsand_core::ChunkPos, ItemEntityState, bool)> = dropped
-        .iter()
-        .map(|(item, body)| {
-            (
-                item.id,
-                body.0.cell().chunk(),
-                ItemEntityState {
-                    id: item.id,
-                    x: body.0.x,
-                    y: body.0.y,
-                    stack: item.stack,
-                },
-                item.moved,
-            )
-        })
         .collect();
 
     for session in &mut sessions.sessions {
@@ -947,10 +914,9 @@ pub fn replicate(
         } else {
             changed_players.clone()
         };
-        let items = build_items(&mut session.known_items, &interest, &item_views);
-        let (inventory, cursor) = match inventories.get_mut(entity) {
+        let (inventory, cursor, trash) = match inventories.get_mut(entity) {
             Ok(mut inv) => inv.delta(session.fresh),
-            Err(_) => (Vec::new(), None),
+            Err(_) => (Vec::new(), None, None),
         };
         let current_self = SelfState {
             hp: health.hp,
@@ -970,9 +936,9 @@ pub fn replicate(
             world_age,
             chunks,
             players,
-            items,
             inventory,
             cursor,
+            trash,
             self_state,
             debug,
         }));
@@ -1036,39 +1002,6 @@ fn build_tiles(
         });
     }
     ops
-}
-
-fn build_items(
-    known: &mut FxHashSet<EntityId>,
-    interest: &FxHashSet<fallingsand_core::ChunkPos>,
-    views: &[(EntityId, fallingsand_core::ChunkPos, ItemEntityState, bool)],
-) -> ItemDelta {
-    let mut delta = ItemDelta::default();
-    let mut visible: FxHashSet<EntityId> = FxHashSet::default();
-    for (id, chunk, state, has_moved) in views {
-        if !interest.contains(chunk) {
-            continue;
-        }
-        visible.insert(*id);
-        if known.contains(id) {
-            if *has_moved {
-                delta.moved.push(ItemMove {
-                    id: *id,
-                    x: state.x,
-                    y: state.y,
-                });
-            }
-        } else {
-            delta.spawned.push(*state);
-        }
-    }
-    delta.despawned = known
-        .iter()
-        .filter(|id| !visible.contains(id))
-        .copied()
-        .collect();
-    *known = visible;
-    delta
 }
 
 pub fn advance_clock(mut clock: ResMut<crate::WorldClock>) {

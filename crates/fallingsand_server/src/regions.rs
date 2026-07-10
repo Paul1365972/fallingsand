@@ -1,8 +1,5 @@
-use crate::inventory::{
-    DroppedItem, Inventory, ItemActor, ItemReg, NextEntityId, bucket_dropped, gather_region_extras,
-    spawn_region_extras,
-};
-use crate::persistence::{PlayerRecord, RegionExtras, WorldMeta, WorldStore, encode_region};
+use crate::inventory::{Inventory, ItemReg};
+use crate::persistence::{PlayerRecord, WorldMeta, WorldStore, encode_region};
 use crate::session::Sessions;
 use crate::systems::{Air, Burning, Health, Mode, PlayerActor, player_record};
 use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y, SimWorld, WorldClock, WorldInfo};
@@ -129,21 +126,13 @@ fn snapshot_region(sim: &CellWorld, pos: RegionPos) -> Region {
     region
 }
 
-fn collect_dirty_saves(
-    sim: &CellWorld,
-    regions: &mut RegionMap,
-    extras: &FxHashMap<RegionPos, RegionExtras>,
-) -> Vec<(RegionPos, Vec<u8>)> {
+fn collect_dirty_saves(sim: &CellWorld, regions: &mut RegionMap) -> Vec<(RegionPos, Vec<u8>)> {
     let mut out = Vec::new();
     for (pos, state) in regions.states.iter_mut() {
         if !state.dirty {
             continue;
         }
-        let region_extras = extras.get(pos).cloned().unwrap_or_default();
-        out.push((
-            *pos,
-            encode_region(&snapshot_region(sim, *pos), &region_extras),
-        ));
+        out.push((*pos, encode_region(&snapshot_region(sim, *pos))));
         state.dirty = false;
     }
     out
@@ -159,19 +148,14 @@ fn body_overlaps_region(body: &PixelBody, pos: RegionPos) -> bool {
         && cy - radius < base.y + REGION_SIZE_CELLS as i32
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn manage_regions(
-    mut commands: Commands,
     mut sim: ResMut<SimWorld>,
     mut regions: ResMut<RegionMap>,
     generator: Res<Generator>,
     store: Res<Store>,
     registry: Res<crate::Registry>,
-    item_reg: Res<ItemReg>,
     tickets: Res<ChunkTickets>,
     mut bodies: ResMut<crate::bodies::PixelBodies>,
-    mut next_id: ResMut<NextEntityId>,
-    items: Query<(Entity, &DroppedItem, &ItemActor)>,
 ) {
     let tick = sim.0.tick();
     let wanted = wanted_regions(&tickets);
@@ -197,17 +181,14 @@ pub fn manage_regions(
                 None
             })
         });
-        let (region, extras) = match loaded {
-            Some((mut region, extras)) => {
+        let region = match loaded {
+            Some(mut region) => {
                 strip_body_flags(&mut region);
-                (region, extras)
+                region
             }
-            None => (generator.0.generate_region(pos), RegionExtras::default()),
+            None => generator.0.generate_region(pos),
         };
         insert_region(&mut sim.0, pos, region);
-        if !extras.items.is_empty() {
-            spawn_region_extras(&mut commands, &mut next_id, &item_reg.0, &extras);
-        }
         regions.states.insert(
             pos,
             RegionState {
@@ -260,12 +241,8 @@ pub fn manage_regions(
     for pos in expired {
         let state = regions.states.remove(&pos).expect("state exists");
         let region = extract_region(&mut sim.0, pos);
-        let (extras, entities) = gather_region_extras(pos, &item_reg.0, &items);
-        for entity in entities {
-            commands.entity(entity).despawn();
-        }
         if store.0.is_some() && state.dirty {
-            to_save.push((pos, encode_region(&region, &extras)));
+            to_save.push((pos, encode_region(&region)));
         }
     }
     if let Some(store) = store.0.as_ref()
@@ -294,7 +271,6 @@ pub fn autosave(
         &Burning,
         &Inventory,
     )>,
-    items: Query<(Entity, &DroppedItem, &ItemActor)>,
 ) {
     let Some(store) = store.0.as_ref() else {
         return;
@@ -304,8 +280,7 @@ pub fn autosave(
         return;
     }
 
-    let extras = bucket_dropped(items.iter().map(|(_, d, b)| (d, b)), &item_reg.0);
-    let to_save = collect_dirty_saves(&sim.0, &mut regions, &extras);
+    let to_save = collect_dirty_saves(&sim.0, &mut regions);
     match store.save_regions(&to_save) {
         Ok(()) if !to_save.is_empty() => tracing::debug!("autosaved {} regions", to_save.len()),
         Ok(()) => {}
@@ -381,17 +356,8 @@ pub fn save_everything(world: &mut bevy_ecs::world::World, final_save: bool) {
     }
 
     let item_reg = world.resource::<ItemReg>().0.clone();
-    let region_extras = {
-        let mut items = world.query::<(&DroppedItem, &ItemActor)>();
-        bucket_dropped(items.iter(world), &item_reg)
-    };
-
     let to_save = world.resource_scope::<RegionMap, _>(|world, mut regions| {
-        collect_dirty_saves(
-            &world.resource::<SimWorld>().0,
-            &mut regions,
-            &region_extras,
-        )
+        collect_dirty_saves(&world.resource::<SimWorld>().0, &mut regions)
     });
     if let Err(err) = store.save_regions(&to_save) {
         tracing::error!("final save failed: {err}");

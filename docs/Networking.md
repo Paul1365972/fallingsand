@@ -13,10 +13,8 @@ The frame bundles a delta per subsystem, each with its own change signal (no gen
   `known_chunks` set; pixel bodies have no wire presence and ride these deltas.
 - **players** — a change-gated `PlayerState` snapshot (pose, ducking, burning), despawned via
   `PlayerLeft`, with a full roster on a session's first frame.
-- **items** — dropped items, the one explicitly-replicated non-player entity: interest-filtered
-  `ItemDelta` (spawn/move/despawn) against a per-session `known_items` set, interpolated like players.
-- **inventory + self** — a per-slot inventory delta (all slots on first send) and private `self_state`
-  (hp, air, mode), each sent only when changed; debug rects only while subscribed.
+- **inventory + self** — a per-slot inventory delta (all slots + cursor + trash on first send) and
+  private `self_state` (hp, air, mode), each sent only when changed; debug rects only while subscribed.
 
 The client demultiplexes the frame once; no system re-scans a message union.
 
@@ -33,8 +31,7 @@ chunk area or delta rect): **uniform** (one entry, zero index bits), **paletted*
 entries + `ceil(log2(n))`-bit LSB-first indices, no minimum width, no word padding), or **raw** 3-byte
 cells — the encoder picks whichever is smallest. Water costs ~5 bits/cell (materials × 16 random shade
 nibbles), of which the shade noise is the irreducible 4; frame-level lz4 then catches cross-chunk
-palette repetition. IDs: `PlayerId` (session),
-`EntityId` (replicated non-player entities; today only dropped items), `PlayerUuid` (account).
+palette repetition. IDs: `PlayerId` (session), `PlayerUuid` (account).
 `HelloAck` carries the server's protocol version; the client rejects the connection on a mismatch.
 `PROTOCOL_VERSION` gates content compatibility too — any change to `materials.ron`/`items.ron` bumps it.
 
@@ -43,6 +40,6 @@ state, so there's no per-chunk versioning, no resync, no input sequence numbers.
 retransmit delay, never correctness — fine for ~10-player co-op. Moving hot state to datagrams stays a
 contained change behind the transport trait.
 
-**Latency**: interpolate players and remote entities between the last two states — no prediction, no
-reconciliation. Pixel bodies are cell-snapped and uninterpolated. Client-side prediction is a deliberate
-non-feature — the shared `step_player` is the insertion point if latency ever forces it.
+**Latency**: interpolate players between the last two states — no prediction, no reconciliation. Pixel
+bodies are cell-snapped and uninterpolated. Client-side prediction is a deliberate non-feature — the
+shared `step_player` is the insertion point if latency ever forces it.

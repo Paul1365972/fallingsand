@@ -7,8 +7,8 @@ use redb::{Database, ReadableDatabase, TableDefinition};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-pub const REGION_FORMAT_VERSION: u8 = 7;
-pub const WORLD_FORMAT_VERSION: u16 = 10;
+pub const REGION_FORMAT_VERSION: u8 = 8;
+pub const WORLD_FORMAT_VERSION: u16 = 11;
 const CELL_BYTES: usize = 7;
 const RECT_BYTES: usize = 4;
 const REGION_CELL_BYTES: usize = REGION_AREA_CHUNKS * CHUNK_AREA * CELL_BYTES;
@@ -39,23 +39,7 @@ pub struct PlayerRecord {
     pub burning: f32,
     pub inventory: Vec<SlotRecord>,
     pub cursor: SlotRecord,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct DroppedRecord {
-    pub x: Fixed,
-    pub y: Fixed,
-    pub vx: f32,
-    pub vy: f32,
-    pub item: String,
-    pub count: u32,
-    pub age_ticks: u64,
-    pub pickup_delay: u16,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct RegionExtras {
-    pub items: Vec<DroppedRecord>,
+    pub trash: SlotRecord,
 }
 
 pub fn stack_to_record(reg: &ItemRegistry, stack: Option<ItemStack>) -> SlotRecord {
@@ -187,10 +171,7 @@ impl WorldStore {
         Ok(())
     }
 
-    pub fn load_region(
-        &self,
-        pos: RegionPos,
-    ) -> Result<Option<(Region, RegionExtras)>, StoreError> {
+    pub fn load_region(&self, pos: RegionPos) -> Result<Option<Region>, StoreError> {
         let read = self.db.begin_read()?;
         let table = read.open_table(REGIONS)?;
         let Some(guard) = table.get(pos.zorder_key())? else {
@@ -248,7 +229,7 @@ fn parse_meta(bytes: &[u8]) -> Result<WorldMeta, StoreError> {
     Ok(postcard::from_bytes(bytes)?)
 }
 
-pub fn encode_region(region: &Region, extras: &RegionExtras) -> Vec<u8> {
+pub fn encode_region(region: &Region) -> Vec<u8> {
     let mut raw = Vec::with_capacity(REGION_RAW_BYTES);
     for chunk in region.chunks() {
         for cell in chunk.cells() {
@@ -263,12 +244,9 @@ pub fn encode_region(region: &Region, extras: &RegionExtras) -> Vec<u8> {
         raw.extend_from_slice(&[rect.min_x, rect.min_y, rect.max_x, rect.max_y]);
     }
     let cell_blob = lz4_flex::compress_prepend_size(&raw);
-    let extras_blob = postcard::to_allocvec(extras).expect("extras serialize");
-    let mut blob = Vec::with_capacity(cell_blob.len() + extras_blob.len() + 8);
+    let mut blob = Vec::with_capacity(cell_blob.len() + 1);
     blob.push(REGION_FORMAT_VERSION);
-    blob.extend_from_slice(&(cell_blob.len() as u32).to_le_bytes());
     blob.extend_from_slice(&cell_blob);
-    blob.extend_from_slice(&extras_blob);
     blob
 }
 
@@ -286,22 +264,13 @@ fn decode_rect(bytes: &[u8]) -> DirtyRect {
     )
 }
 
-pub fn decode_region(blob: &[u8]) -> Result<(Region, RegionExtras), StoreError> {
-    let (&version, rest) = blob
+pub fn decode_region(blob: &[u8]) -> Result<Region, StoreError> {
+    let (&version, compressed) = blob
         .split_first()
         .ok_or_else(|| StoreError::CorruptRegion("empty blob".into()))?;
     if version != REGION_FORMAT_VERSION {
         return Err(StoreError::UnsupportedRegion(version));
     }
-    if rest.len() < 4 {
-        return Err(StoreError::CorruptRegion("missing length header".into()));
-    }
-    let cell_len = u32::from_le_bytes([rest[0], rest[1], rest[2], rest[3]]) as usize;
-    let body = &rest[4..];
-    if body.len() < cell_len {
-        return Err(StoreError::CorruptRegion("truncated cell blob".into()));
-    }
-    let (compressed, extras_blob) = body.split_at(cell_len);
     let raw = lz4_flex::decompress_size_prepended(compressed)
         .map_err(|err| StoreError::CorruptRegion(err.to_string()))?;
     if raw.len() != REGION_RAW_BYTES {
@@ -328,10 +297,5 @@ pub fn decode_region(blob: &[u8]) -> Result<(Region, RegionExtras), StoreError> 
     for (chunk, bytes) in region.chunks_mut().iter_mut().zip(rects) {
         chunk.sim = decode_rect(bytes);
     }
-    let extras = if extras_blob.is_empty() {
-        RegionExtras::default()
-    } else {
-        postcard::from_bytes(extras_blob)?
-    };
-    Ok((region, extras))
+    Ok(region)
 }

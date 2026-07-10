@@ -24,45 +24,41 @@ Ops: `insert_first_fit` (fill matches then empties, returns overflow), `left_cli
   server-side per-player fields set via `InputAction::SelectSlot`/`SetBrush`. The server clamps
   the brush to `MAX_BRUSH` and ignores a slot outside the hotbar — slot eligibility is
   server-authoritative.
-- Survival dig → `item_for_material` into the inventory; overflow spawns a dropped item at the cell.
+- Survival dig → `item_for_material` into the inventory; a cell whose yield doesn't fit is refused —
+  it stays undug in the world (no dig budget spent on it), so a full stack never voids material and
+  never blocks digging other materials in the same brush.
 - Place reads the selected slot's `place` material and stamps it across the brush (survival decrements
   per cell).
 
 ## Slot actions (`InputAction::Slot(SlotAction)` → `apply_slot_actions`)
 
 Server-authoritative and intent-based — the client resolves its keybinds to intents, no raw modifiers
-cross the wire: `LeftClick`/`RightClick` (cursor), `QuickMove` (hotbar↔main), `DropSlot`/`DropCursor`
-(throw into world), `Craft { recipe, all }` (server crafts once, or repeatedly until inputs run out),
-`CreativeGrab` (creative: infinite stack onto cursor). The server holds the cursor and re-validates
-every action against authoritative state. Inventory rides the `TickFrame`: all slots + cursor on a
-session's first frame, then per-slot `(slot, stack)` diffs (plus the cursor when it changes) while
-dirty — there is no standalone inventory message.
+cross the wire: `LeftClick`/`RightClick` (cursor), `QuickMove` (hotbar↔main), `Trash` (see below),
+`Craft { recipe, all }` (server crafts once, or repeatedly until inputs run out; a craft whose output
+wouldn't fit is refused — inputs are consumed against a trial copy first, so crafts that free their own
+space still work, and `all` stops at capacity), `CreativeGrab` (creative: infinite stack onto cursor).
+The server holds the cursor and re-validates every action against authoritative state. Inventory rides
+the `TickFrame`: all slots + cursor + trash on a session's first frame, then per-slot `(slot, stack)`
+diffs (plus the cursor / trash when they change) while dirty — there is no standalone inventory message.
 
-## Dropped items (Terraria-style)
+## Trash
 
-`DroppedItem` + `ItemActor(Actor)` — small AABB reusing `move_body`. `step_items`: gravity (capped at a
-speed-of-light-safe fall clamp) + grid sweep + seconds-based ground/air drag; local same-item touch-merge
-(overlapping stacks drain together, never deletes — mass is conserved, only emptied entities despawn);
-magnetic pull toward a nearby player with room, absorbed within pickup range (thrown items have a short
-pickup delay).
-Items **sleep** once settled on the ground with no player in grab range — skipping physics, merge, and
-replication until a player nears — so a resting pile costs ~nothing. Client renders a swatch sprite that
-bobs and interpolates. Replicated as interest-filtered `ServerMessage::ItemDelta { spawned, moved,
-despawned }` against a per-session known-item set: only awake (moving) items send positions, so an idle
-world sends nothing; persisted in the owning region blob.
+The one sanctioned mass-deletion affordance (items never drop into the world). A cursor-pattern
+`trash: Option<ItemStack>` beside the cursor on the server `Inventory` — invisible to `insert_first_fit`,
+`count_item`, `remove_item`, and crafting by construction. One payload-less `SlotAction::Trash`:
+cursor non-empty → the previous trash contents are destroyed and the cursor stack moves in; cursor
+empty → the trashed stack returns to the cursor (recoverable until replaced). No merge, no half-stack,
+no quick-move — destroying is a single deliberate gesture.
 
 ## Client UI
 
-`E` toggles a full-screen overlay (player grid + hotbar; side panel = crafting / creative
+`E` toggles a full-screen overlay (player grid + hotbar + trash slot; side panel = crafting / creative
 palette). Drag & drop via the authoritative cursor (no prediction): left = pick/place/swap, right =
-half/one, shift-left = quick-move, click backdrop = drop to world. Tooltips on hover; hotbar shows
-slots 0..9. World input is suppressed while the overlay (or chat) is open.
+half/one, shift-left = quick-move, left on the red-bordered trash slot = trash/recover. Tooltips on
+hover; hotbar shows slots 0..9. World input is suppressed while the overlay (or chat) is open.
 
 ## Persistence
 
-`WORLD_FORMAT_VERSION = 10`, `REGION_FORMAT_VERSION = 7` (no migrations). `PlayerRecord` stores per-slot
-`(item_name, count)` + cursor. Region blobs append `RegionExtras { items }` (item name, position,
-velocity, age, pickup delay); re-spawned on region load, gathered on unload/autosave. Active items mark
-their region dirty each tick (both the region they leave and the one they enter, so boundary crossings
-clear the stale blob); asleep items mark nothing, so an idle region — terrain and items alike — is never
-re-saved. This closes the pickup/boundary dupe and keeps conservation of mass across save/reload.
+`WORLD_FORMAT_VERSION = 11`, `REGION_FORMAT_VERSION = 8` (no migrations). `PlayerRecord` stores per-slot
+`(item_name, count)` + cursor + trash. Region blobs are version byte + lz4 cell payload — nothing else
+rides them.

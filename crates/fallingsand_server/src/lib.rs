@@ -188,7 +188,6 @@ impl Server {
         world.insert_resource(Registry(config.registry));
         world.insert_resource(inventory::ItemReg(item_registry));
         world.insert_resource(inventory::Recipes(recipes));
-        world.insert_resource(inventory::NextEntityId::default());
         world.insert_resource(inventory::SlotActions::default());
         world.insert_resource(NetListener(config.listener));
         world.insert_resource(Sessions::default());
@@ -227,7 +226,6 @@ impl Server {
                 (
                     systems::push_players,
                     systems::step_physics,
-                    inventory::step_items,
                     bodies::step_bodies,
                     hazards::apply_hazards,
                     systems::advance_clock,

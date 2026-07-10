@@ -17,7 +17,7 @@ Canonical names for the core domain vocabulary. One concept, one name.
 
 | Term | Meaning |
 |------|---------|
-| **Fixed** | Q24.8 `i32` fixed-point for continuous pose/velocity (actors, bodies, items); on the wire and in saves |
+| **Fixed** | Q24.8 `i32` fixed-point for continuous pose/velocity (actors, bodies); on the wire and in saves |
 | **Cell velocity** | `Cell.vx/vy` = `i16` Q11.4 **cells/s**, sim-only, never sent on the wire |
 | **VEL_MAX** | in-flow clamp on cell velocity: ±2000 cells/s (storage range is ±2047) |
 | **GRID_GRAVITY / BODY_GRAVITY / PlayerParams.gravity** | grid-CA / pixel-body / player-controller gravity; y is **up** (falling = negative vy) |
@@ -26,22 +26,21 @@ Canonical names for the core domain vocabulary. One concept, one name.
 
 | Term | Meaning |
 |------|---------|
-| **Actor** | kinematic AABB controller (`sim::physics::Actor`): players and dropped items — pos, velocity, half-extents, `on_ground` |
+| **Actor** | kinematic AABB controller (`sim::physics::Actor`): players (creatures later) — pos, velocity, half-extents, `on_ground` |
 | **PixelBody** | rigid body made of cells (pose + angle + spin + mass + raster); the only "Body" |
-| **PlayerActor / ItemActor** | server ECS components wrapping an `Actor` (a player / a dropped item) |
+| **PlayerActor** | server ECS component wrapping an `Actor` |
 | **ActorAabb / ActorDynamics** | actor collision proxies handed to the sim and the pixel-body pass |
 
 ## Protocol & ids
 
 | Term | Meaning |
 |------|---------|
-| **TickFrame** | the one frame sent per server tick: `tick`, `world_age`, `chunks`, `players`, `items`, inventory/cursor/self/debug |
+| **TickFrame** | the one frame sent per server tick: `tick`, `world_age`, `chunks`, `players`, inventory/cursor/trash/self/debug |
 | **ChunkOp** | per-chunk wire delta inside a `TickFrame`: `Load` / `Delta` / `Unload` |
 | **PlayerState** | wire snapshot of a player (pos, ducking, burning) |
 | **InputFrame** | per-client-tick input message: held `InputState` (latest-wins, merged) + ordered one-shot `InputAction`s (never lost) |
 | **PlayerId / PlayerUuid** | session player id / persistent account id |
-| **EntityId** | id for replicated non-player world entities (today: dropped items; reserved for creatures) |
-| **tick / world_age / age_ticks** | monotonic sim tick number / calendar clock (DAY_UNITS; YEAR_UNITS = 60 days, `season()`/`day_of_year()` are integer-math accessors) / a dropped item's lifetime |
+| **tick / world_age** | monotonic sim tick number / calendar clock (DAY_UNITS; YEAR_UNITS = 60 days, `season()`/`day_of_year()` are integer-math accessors) |
 
 ## Sim internals
 
