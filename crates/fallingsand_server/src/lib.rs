@@ -1,11 +1,15 @@
-pub mod bodies;
-pub mod commands;
-pub mod hazards;
-pub mod inventory;
-pub mod persistence;
-pub mod regions;
-pub mod session;
-pub mod systems;
+pub(crate) mod bodies;
+pub(crate) mod commands;
+pub(crate) mod dig;
+pub(crate) mod hazards;
+pub(crate) mod inventory;
+pub(crate) mod persistence;
+pub(crate) mod physics;
+pub(crate) mod player;
+pub(crate) mod regions;
+pub(crate) mod replication;
+pub(crate) mod session;
+pub(crate) mod sim;
 
 use bevy_ecs::prelude::*;
 use fallingsand_core::{
@@ -191,7 +195,7 @@ impl Server {
         world.insert_resource(inventory::SlotActions::default());
         world.insert_resource(NetListener(config.listener));
         world.insert_resource(Sessions::default());
-        world.insert_resource(systems::LastPlayers::default());
+        world.insert_resource(replication::LastPlayers::default());
         world.insert_resource(TickStats::default());
         world.insert_resource(Generator(generator));
         world.insert_resource(Store(store));
@@ -213,23 +217,23 @@ impl Server {
         schedule.add_systems(
             (
                 (
-                    systems::drain_network,
+                    session::drain_network,
                     commands::run_commands,
-                    systems::apply_player_inputs,
+                    dig::apply_player_inputs,
                     inventory::apply_slot_actions,
                     regions::compute_tickets,
                     regions::manage_regions,
-                    systems::build_obstacles,
-                    systems::step_simulation,
+                    sim::build_obstacles,
+                    sim::step_simulation,
                 )
                     .chain(),
                 (
-                    systems::push_players,
-                    systems::step_physics,
+                    physics::push_players,
+                    physics::step_physics,
                     bodies::step_bodies,
                     hazards::apply_hazards,
-                    systems::advance_clock,
-                    systems::replicate,
+                    replication::advance_clock,
+                    replication::replicate,
                     regions::autosave,
                 )
                     .chain(),

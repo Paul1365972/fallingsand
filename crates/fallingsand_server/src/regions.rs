@@ -1,7 +1,7 @@
 use crate::inventory::{Inventory, ItemReg};
 use crate::persistence::{PlayerRecord, WorldMeta, WorldStore, encode_region};
+use crate::player::{Air, Burning, Health, Mode, PlayerActor, player_record};
 use crate::session::Sessions;
-use crate::systems::{Air, Burning, Health, Mode, PlayerActor, player_record};
 use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y, SimWorld, WorldClock, WorldInfo};
 use bevy_ecs::prelude::*;
 use fallingsand_core::{CellPos, ChunkPos, REGION_SIZE_CELLS, Region, RegionPos};
@@ -40,12 +40,6 @@ impl RegionMap {
         let loaded = self.states.len() as u32;
         let dirty = self.states.values().filter(|state| state.dirty).count() as u32;
         (loaded, dirty)
-    }
-
-    pub fn mark_dirty(&mut self, pos: RegionPos) {
-        if let Some(state) = self.states.get_mut(&pos) {
-            state.dirty = true;
-        }
     }
 }
 
@@ -263,7 +257,7 @@ pub fn autosave(
     info: Res<WorldInfo>,
     clock: Res<WorldClock>,
     query: Query<(
-        &crate::session::Player,
+        &crate::player::Player,
         &PlayerActor,
         &Health,
         &Mode,
@@ -375,7 +369,7 @@ pub fn save_everything(world: &mut bevy_ecs::world::World, final_save: bool) {
     let mut players: Vec<(PlayerUuid, PlayerRecord)> = Vec::new();
     {
         let mut query = world.query::<(
-            &crate::session::Player,
+            &crate::player::Player,
             &PlayerActor,
             &Health,
             &Mode,

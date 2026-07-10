@@ -1,5 +1,5 @@
+use crate::player::{PLAYER_MASS, PlayerActor};
 use crate::regions::ChunkTickets;
-use crate::systems::{PLAYER_MASS, PlayerActor};
 use crate::{PlayerImpulses, Registry, SimWorld, TickStats};
 use bevy_ecs::prelude::*;
 use fallingsand_core::{CellPos, Fixed, TICK_DT};

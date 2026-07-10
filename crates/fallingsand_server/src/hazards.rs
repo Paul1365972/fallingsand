@@ -1,4 +1,4 @@
-use crate::systems::{Air, Burning, Health, Mode, PlayerActor};
+use crate::player::{Air, Burning, Health, Mode, PlayerActor};
 use crate::{MAX_AIR_SECS, MAX_HP, Registry, SimWorld};
 use bevy_ecs::prelude::*;
 use fallingsand_core::{CellPos, Fixed, MaterialRegistry, Phase, TICK_DT};

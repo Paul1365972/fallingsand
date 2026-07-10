@@ -18,7 +18,7 @@ Item-centric inventory over the material sim. Items are the resource; materials 
 Ops: `insert_first_fit` (fill matches then empties, returns overflow), `left_click` /
 `right_click` (cursor semantics), `remove_item`, `count_item`. Server holds the cursor-held stack.
 
-## Dig / place (server `systems.rs`)
+## Dig / place (server `dig.rs`)
 
 - Selected hotbar slot and brush size (0..=6, `[`/`]` or `-`/`=`; scroll cycles the hotbar) are
   server-side per-player fields set via `InputAction::SelectSlot`/`SetBrush`. The server clamps

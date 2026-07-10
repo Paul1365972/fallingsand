@@ -1,5 +1,4 @@
-use crate::session::Player;
-use crate::systems::Mode;
+use crate::player::{Mode, Player};
 use bevy_ecs::prelude::*;
 use fallingsand_core::{
     Inventory as CoreInventory, ItemId, ItemRegistry, ItemStack, RecipeRegistry,

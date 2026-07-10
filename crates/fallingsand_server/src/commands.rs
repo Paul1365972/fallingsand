@@ -1,5 +1,5 @@
+use crate::player::Mode;
 use crate::session::{SessionState, Sessions};
-use crate::systems::Mode;
 use bevy_ecs::prelude::*;
 use fallingsand_core::DAY_UNITS;
 use fallingsand_protocol::{GameMode, ServerMessage};
@@ -41,7 +41,7 @@ const GAMEMODE: CommandSpec = CommandSpec {
         }
         current.0 = mode;
         if mode != GameMode::Creative
-            && let Some(mut player) = world.get_mut::<crate::session::Player>(entity)
+            && let Some(mut player) = world.get_mut::<crate::player::Player>(entity)
         {
             player.flying = false;
         }
