@@ -101,12 +101,12 @@ pub fn per_tick_keep(rate: f32) -> f32 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MaterialFile {
+struct MaterialFile {
     pub materials: Vec<Material>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReactionFile {
+struct ReactionFile {
     pub reactions: Vec<ReactionDef>,
 }
 
@@ -186,7 +186,7 @@ impl MaterialRegistry {
         Self::from_materials(materials.materials, reactions.reactions)
     }
 
-    pub fn from_materials(
+    fn from_materials(
         materials: Vec<Material>,
         reaction_defs: Vec<ReactionDef>,
     ) -> Result<Self, RegistryError> {

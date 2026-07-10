@@ -1,7 +1,7 @@
 use crate::material::MaterialId;
 use serde::{Deserialize, Serialize};
 
-pub const VEL_FRAC_BITS: u32 = 4;
+const VEL_FRAC_BITS: u32 = 4;
 pub const VEL_ONE: i32 = 1 << VEL_FRAC_BITS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

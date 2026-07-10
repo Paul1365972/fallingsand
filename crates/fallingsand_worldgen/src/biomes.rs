@@ -80,7 +80,7 @@ pub enum Canopy {
     Conifer,
 }
 
-pub struct TreeDef {
+pub(crate) struct TreeDef {
     pub density: f32,
     pub spacing: i32,
     pub trunk_height: (i32, i32),
@@ -90,7 +90,8 @@ pub struct TreeDef {
     pub snow_capped: bool,
 }
 
-pub struct Biome {
+pub(crate) struct Biome {
+    #[allow(dead_code)]
     pub name: &'static str,
     pub surface: MaterialId,
     pub soil: MaterialId,
@@ -118,7 +119,7 @@ pub struct Band {
     pub aquifers: bool,
 }
 
-pub struct OreDef {
+pub(crate) struct OreDef {
     pub material: MaterialId,
     pub min_y: i32,
     pub max_y: i32,
@@ -127,7 +128,7 @@ pub struct OreDef {
     pub radius: (i32, i32),
 }
 
-pub struct WorldDef {
+pub(crate) struct WorldDef {
     pub sea_level: i32,
     pub biomes: Vec<Biome>,
     pub bands: Vec<Band>,
@@ -177,7 +178,7 @@ pub const ISLAND_MIN_Y: i32 = 220;
 pub const ISLAND_MAX_Y: i32 = 1400;
 pub const STRUCTURE_MARGIN: i32 = 200;
 
-pub fn world_def(palette: &Palette) -> WorldDef {
+pub(crate) fn world_def(palette: &Palette) -> WorldDef {
     WorldDef {
         sea_level: -10,
         biomes: vec![

@@ -318,7 +318,7 @@ impl Inventory {
         self.insert_into_range(stack, range, reg)
     }
 
-    pub fn count_item(&self, item: ItemId) -> u64 {
+    fn count_item(&self, item: ItemId) -> u64 {
         self.slots
             .iter()
             .filter_map(|slot| slot.as_ref())

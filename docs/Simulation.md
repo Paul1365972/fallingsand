@@ -6,7 +6,7 @@ The CA (`fallingsand_sim`) collides against the cell grid directly — terrain c
 
 - **4-phase block scheduling**: chunks group into 2×2 blocks; each tick runs 4 phases by block parity. A worker owns its block and reads/writes one chunk beyond it; same-phase windows share no chunks, so rayon workers hold disjoint mutable access — race-free, no locking.
 - **Neighbourhood-complete**: a chunk simulates only when its whole 3×3 chunk neighbourhood is loaded; a chunk at the loaded frontier defers (keeping its rects) until its neighbours arrive, so the kernel never reads unloaded cells.
-- **Speed of light = 64**: no update reaches farther than 64 cells. Longer-range effects (explosions, placement) go through the `WorldEdit` queue, applied once after the four phases.
+- **Speed of light = 64**: no update reaches farther than 64 cells. Longer-range effects propagate as local waves over ticks; a true long-range effect (teleport, scripted event) would go through a queued world-event list applied between ticks — none exists today.
 - Randomness is tick-seeded and stateless (`fallingsand_rng`).
 
 ## Movement rules

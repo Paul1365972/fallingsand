@@ -6,7 +6,7 @@ use crate::terrain::Terrain;
 use fallingsand_core::MaterialId;
 use fallingsand_rng::Hash;
 
-pub struct FeatureCell {
+pub(crate) struct FeatureCell {
     pub x: i32,
     pub y: i32,
     pub material: MaterialId,
@@ -37,7 +37,7 @@ fn ground_of(solid: &dyn Fn(i32, i32) -> bool, surface: i32, x: i32) -> Option<i
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn trees_for_rect(
+pub(crate) fn trees_for_rect(
     seed: u64,
     def: &WorldDef,
     palette: &Palette,
@@ -142,7 +142,7 @@ pub fn trees_for_rect(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn decorations_for_rect(
+pub(crate) fn decorations_for_rect(
     seed: u64,
     def: &WorldDef,
     palette: &Palette,
@@ -252,7 +252,7 @@ fn floor_site(
     }
 }
 
-pub fn mushrooms_for_rect(
+pub(crate) fn mushrooms_for_rect(
     seed: u64,
     palette: &Palette,
     solid: &dyn Fn(i32, i32) -> bool,

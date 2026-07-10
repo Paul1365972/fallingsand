@@ -2,13 +2,13 @@ use crate::biomes::{ORE_ANCHOR_GRID, ORE_MARGIN, WorldDef};
 use fallingsand_core::MaterialId;
 use fallingsand_rng::Hash;
 
-pub struct VeinCell {
+pub(crate) struct VeinCell {
     pub x: i32,
     pub y: i32,
     pub material: MaterialId,
 }
 
-pub fn veins_for_rect(
+pub(crate) fn veins_for_rect(
     seed: u64,
     def: &WorldDef,
     min_x: i32,

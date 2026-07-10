@@ -1,16 +1,16 @@
 ﻿use crate::Calendar;
 use std::f32::consts::{PI, TAU};
 
-pub const SUN_DISC_RADIUS: f32 = 0.090;
-pub const MOON_DISC_RADIUS: f32 = 0.096;
+const SUN_DISC_RADIUS: f32 = 0.090;
+const MOON_DISC_RADIUS: f32 = 0.096;
 pub const SHADE_DISC_RADIUS: f32 = 0.125;
-pub const SHADE_TRACK: f32 = 1.06;
-pub const TRACK_FLATTEN: f32 = 0.62;
-pub const HUB_AMPLITUDE: f32 = 0.30;
-pub const MOON_ECCENTRE: f32 = 0.48;
-pub const MOON_BREATH: f32 = 0.2;
-pub const MOON_LIGHT_MAX: f32 = 0.5;
-pub const SKYGLOW: f32 = 0.03;
+const SHADE_TRACK: f32 = 1.06;
+const TRACK_FLATTEN: f32 = 0.62;
+const HUB_AMPLITUDE: f32 = 0.30;
+const MOON_ECCENTRE: f32 = 0.48;
+const MOON_BREATH: f32 = 0.2;
+const MOON_LIGHT_MAX: f32 = 0.5;
+const SKYGLOW: f32 = 0.03;
 const STARS_BEGIN: f32 = -0.0175;
 const STARS_FULL: f32 = -0.2756;
 const STARS_LIGHT_BEGIN: f32 = 0.30;

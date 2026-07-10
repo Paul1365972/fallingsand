@@ -3,9 +3,9 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 
-pub const COMPRESSION_THRESHOLD: usize = 256;
+const COMPRESSION_THRESHOLD: usize = 256;
 pub const CELL_WIRE_BYTES: usize = 3;
-pub const MAX_DECOMPRESSED_LEN: usize = 64 * 1024 * 1024;
+const MAX_DECOMPRESSED_LEN: usize = 64 * 1024 * 1024;
 
 const TAG_RAW: u8 = 0;
 const TAG_LZ4: u8 = 1;

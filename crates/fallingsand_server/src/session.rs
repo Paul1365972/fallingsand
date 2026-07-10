@@ -1,20 +1,17 @@
 use crate::commands::{PendingCommand, PendingCommands};
 use crate::inventory::{Inventory, ItemReg, SlotActions};
-use crate::persistence::player_slots_from_record;
 use crate::player::{
-    Air, Burning, Control, DigState, Health, Mode, PLAYER_HALF_H, PLAYER_HALF_W, Player,
-    PlayerActor, PlayerRaster, player_record,
+    Air, Burning, Health, Mode, Player, PlayerActor, PlayerRaster, player_record, spawn_player,
 };
 use crate::regions::Store;
-use crate::{MAX_AIR_SECS, MAX_HP, NetListener, SimWorld, SpawnPoint};
+use crate::{NetListener, SimWorld, SpawnPoint};
 use bevy_ecs::prelude::*;
-use fallingsand_core::{BRUSH_RADIUS, CellPos, ChunkPos, Fixed, HOTBAR_SLOTS, MAX_BRUSH};
+use fallingsand_core::{BRUSH_RADIUS, CellPos, ChunkPos, HOTBAR_SLOTS, MAX_BRUSH};
 use fallingsand_net::Connection;
 use fallingsand_protocol::{
     ClientMessage, GameMode, InputAction, InputState, PROTOCOL_VERSION, PlayerId, PlayerUuid,
     SelfState, ServerMessage, decode_message, encode_message,
 };
-use fallingsand_sim::physics::Actor;
 use rustc_hash::FxHashSet;
 
 const CHAT_MAX_CHARS: usize = 240;
@@ -72,7 +69,92 @@ pub struct Sessions {
     pub next_player: u32,
 }
 
-#[allow(clippy::type_complexity)]
+type PlayerQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static mut Player,
+        &'static PlayerActor,
+        &'static Health,
+        &'static Mode,
+        &'static Air,
+        &'static Burning,
+        &'static mut Inventory,
+    ),
+>;
+
+fn supersede_sessions(
+    sessions: &mut [Session],
+    uuid: PlayerUuid,
+    commands: &mut Commands,
+    despawned: &mut Vec<Entity>,
+    left: &mut Vec<PlayerId>,
+) -> Option<Entity> {
+    let mut taken_entity = None;
+    for other in sessions.iter_mut() {
+        if other.uuid == Some(uuid) {
+            other.send(&ServerMessage::Reject {
+                reason: "superseded by a new session".into(),
+            });
+            other.conn.close("superseded by a new session");
+            other.uuid = None;
+            if let Some(entity) = other.entity.take()
+                && let Some(superseded) = taken_entity.replace(entity)
+            {
+                despawned.push(superseded);
+                commands.entity(superseded).despawn();
+            }
+            if let Some(old) = other.player.take() {
+                left.push(old);
+            }
+        }
+    }
+    taken_entity
+}
+
+fn take_over(
+    commands: &mut Commands,
+    players: &mut PlayerQuery,
+    entity: Entity,
+    id: PlayerId,
+    name: &str,
+    tick: u64,
+    despawned: &mut Vec<Entity>,
+) -> Option<(Entity, CellPos)> {
+    let Ok((mut existing, body, ..)) = players.get_mut(entity) else {
+        despawned.push(entity);
+        commands.entity(entity).despawn();
+        return None;
+    };
+    existing.id = id;
+    existing.name = name.to_string();
+    existing.input = Default::default();
+    existing.jump_pressed = false;
+    existing.selected_slot = 0;
+    existing.brush_radius = BRUSH_RADIUS;
+    existing.last_input_tick = tick;
+    Some((
+        entity,
+        CellPos::new(body.0.x.floor_cell(), body.0.y.floor_cell()),
+    ))
+}
+
+fn announce_join(session: &mut Session, players: &PlayerQuery, player: PlayerId, name: &str) {
+    session.send(&ServerMessage::PlayerJoined {
+        player,
+        name: name.to_string(),
+    });
+    for (existing, ..) in players.iter() {
+        if existing.id == player {
+            continue;
+        }
+        session.send(&ServerMessage::PlayerJoined {
+            player: existing.id,
+            name: existing.name.clone(),
+        });
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn drain_network(
     mut commands: Commands,
@@ -80,15 +162,7 @@ pub fn drain_network(
     mut sessions: ResMut<Sessions>,
     mut pending: ResMut<PendingCommands>,
     mut slot_actions: ResMut<SlotActions>,
-    mut players: Query<(
-        &mut Player,
-        &PlayerActor,
-        &Health,
-        &Mode,
-        &Air,
-        &Burning,
-        &mut Inventory,
-    )>,
+    mut players: PlayerQuery,
     mut rasters: Query<&mut PlayerRaster>,
     item_reg: Res<ItemReg>,
     mut sim: ResMut<SimWorld>,
@@ -139,45 +213,24 @@ pub fn drain_network(
                     let player = PlayerId(sessions.next_player);
                     sessions.next_player += 1;
 
-                    let mut taken_entity = None;
-                    for other in &mut sessions.sessions {
-                        if other.uuid == Some(uuid) {
-                            other.send(&ServerMessage::Reject {
-                                reason: "superseded by a new session".into(),
-                            });
-                            other.conn.close("superseded by a new session");
-                            other.uuid = None;
-                            if let Some(entity) = other.entity.take()
-                                && let Some(superseded) = taken_entity.replace(entity)
-                            {
-                                despawned.push(superseded);
-                                commands.entity(superseded).despawn();
-                            }
-                            if let Some(old) = other.player.take() {
-                                left.push(old);
-                            }
-                        }
-                    }
-
-                    let mut takeover = None;
-                    if let Some(entity) = taken_entity {
-                        if let Ok((mut existing, body, _, _, _, _, _)) = players.get_mut(entity) {
-                            existing.id = player;
-                            existing.name = name.clone();
-                            existing.input = Default::default();
-                            existing.jump_pressed = false;
-                            existing.selected_slot = 0;
-                            existing.brush_radius = BRUSH_RADIUS;
-                            existing.last_input_tick = tick;
-                            takeover = Some((
-                                entity,
-                                CellPos::new(body.0.x.floor_cell(), body.0.y.floor_cell()),
-                            ));
-                        } else {
-                            despawned.push(entity);
-                            commands.entity(entity).despawn();
-                        }
-                    }
+                    let taken_entity = supersede_sessions(
+                        &mut sessions.sessions,
+                        uuid,
+                        &mut commands,
+                        &mut despawned,
+                        &mut left,
+                    );
+                    let takeover = taken_entity.and_then(|entity| {
+                        take_over(
+                            &mut commands,
+                            &mut players,
+                            entity,
+                            player,
+                            &name,
+                            tick,
+                            &mut despawned,
+                        )
+                    });
                     let (entity, spawn) = match takeover {
                         Some(takeover) => takeover,
                         None => {
@@ -191,72 +244,16 @@ pub fn drain_network(
                                 }
                                 None => spawn_point.0,
                             };
-                            let record = restored.as_ref();
-                            let entity = commands
-                                .spawn((
-                                    Player {
-                                        id: player,
-                                        uuid,
-                                        name: name.clone(),
-                                        input: Default::default(),
-                                        jump_pressed: false,
-                                        flying: record.map(|r| r.flying).unwrap_or(false),
-                                        selected_slot: 0,
-                                        brush_radius: BRUSH_RADIUS,
-                                        last_input_tick: tick,
-                                    },
-                                    PlayerActor(Actor::new(
-                                        record.map(|r| r.x).unwrap_or(Fixed::from_cell(spawn.x)),
-                                        record.map(|r| r.y).unwrap_or(Fixed::from_cell(spawn.y)),
-                                        PLAYER_HALF_W,
-                                        PLAYER_HALF_H,
-                                    )),
-                                    PlayerRaster::default(),
-                                    Control::default(),
-                                    Health {
-                                        hp: record
-                                            .map(|r| r.hp)
-                                            .filter(|hp| hp.is_finite() && *hp > 0.0)
-                                            .unwrap_or(MAX_HP)
-                                            .min(MAX_HP),
-                                        last_damage_tick: 0,
-                                    },
-                                    DigState::default(),
-                                    Mode(record.map(|r| r.mode).unwrap_or_default()),
-                                    Air {
-                                        secs: record
-                                            .map(|r| r.air)
-                                            .filter(|air| air.is_finite())
-                                            .unwrap_or(MAX_AIR_SECS)
-                                            .clamp(0.0, MAX_AIR_SECS),
-                                    },
-                                    Burning {
-                                        secs: record
-                                            .map(|r| r.burning)
-                                            .filter(|secs| secs.is_finite())
-                                            .unwrap_or(0.0)
-                                            .max(0.0),
-                                    },
-                                    Inventory::with(
-                                        player_slots_from_record(
-                                            &item_reg.0,
-                                            record.map(|r| r.inventory.as_slice()).unwrap_or(&[]),
-                                        ),
-                                        record.and_then(|r| {
-                                            crate::persistence::stack_from_record(
-                                                &item_reg.0,
-                                                &r.cursor,
-                                            )
-                                        }),
-                                        record.and_then(|r| {
-                                            crate::persistence::stack_from_record(
-                                                &item_reg.0,
-                                                &r.trash,
-                                            )
-                                        }),
-                                    ),
-                                ))
-                                .id();
+                            let entity = spawn_player(
+                                &mut commands,
+                                &item_reg.0,
+                                player,
+                                uuid,
+                                name.clone(),
+                                tick,
+                                restored.as_ref(),
+                                spawn,
+                            );
                             (entity, spawn)
                         }
                     };
@@ -271,19 +268,7 @@ pub fn drain_network(
                         player,
                         spawn,
                     });
-                    session.send(&ServerMessage::PlayerJoined {
-                        player,
-                        name: name.clone(),
-                    });
-                    for (existing, ..) in players.iter() {
-                        if existing.id == player {
-                            continue;
-                        }
-                        session.send(&ServerMessage::PlayerJoined {
-                            player: existing.id,
-                            name: existing.name.clone(),
-                        });
-                    }
+                    announce_join(session, &players, player, &name);
                     tracing::info!("{name} ({uuid}) joined as player {}", player.0);
                     joined.push((player, name));
                 }

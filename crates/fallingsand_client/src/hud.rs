@@ -1,5 +1,6 @@
 use crate::inventory::{
-    LocalInventory, SelectedSlot, SlotChanged, SlotCount, SlotSwatch, apply_count, apply_swatch,
+    LocalInventory, SelectedSlot, SlotChanged, SlotCount, SlotSwatch, spawn_slot_widgets,
+    sync_slots,
 };
 use crate::player::{LocalPlayerState, SelfDamaged};
 use crate::{AppState, ClientItemRegistry, ClientRegistry, GameState};
@@ -113,37 +114,7 @@ fn spawn_hud(mut commands: Commands) {
                             GlobalZIndex(1),
                             Pickable::IGNORE,
                         ));
-                        slot.spawn((
-                            SlotSwatch,
-                            Node {
-                                position_type: PositionType::Absolute,
-                                left: px(9),
-                                top: px(9),
-                                width: px(SLOT_SIZE - 18.0),
-                                height: px(SLOT_SIZE - 18.0),
-                                display: Display::None,
-                                ..default()
-                            },
-                            BackgroundColor(Color::NONE),
-                            Pickable::IGNORE,
-                        ));
-                        slot.spawn((
-                            SlotCount,
-                            Text::new(""),
-                            TextFont {
-                                font_size: FontSize::Px(11.0),
-                                ..default()
-                            },
-                            TextColor(Color::srgba(1.0, 1.0, 1.0, 0.95)),
-                            Node {
-                                position_type: PositionType::Absolute,
-                                right: px(3),
-                                bottom: px(1),
-                                ..default()
-                            },
-                            GlobalZIndex(2),
-                            Pickable::IGNORE,
-                        ));
+                        spawn_slot_widgets(slot, SLOT_SIZE, 9.0);
                     });
                 }
             });
@@ -272,17 +243,13 @@ fn sync_hotbar_slots(
         (added.contains(&entity) || changed.contains(&slot.0))
             .then(|| inventory.slots.get(slot.0).copied().flatten())
     };
-
-    for (child_of, mut node, mut color) in &mut swatches {
-        if let Some(stack) = stack_for(child_of.parent()) {
-            apply_swatch(stack, &item_reg.0, &registry.0, &mut node, &mut color);
-        }
-    }
-    for (child_of, mut text) in &mut counts {
-        if let Some(stack) = stack_for(child_of.parent()) {
-            apply_count(stack, &mut text);
-        }
-    }
+    sync_slots(
+        stack_for,
+        &item_reg.0,
+        &registry.0,
+        &mut swatches,
+        &mut counts,
+    );
 }
 
 fn update_health_bar(
@@ -296,10 +263,10 @@ fn update_health_bar(
             node.width = width;
         }
     }
-    let value = format!("{:.0}", state.hp.max(0.0));
-    for mut text in &mut label {
+    if let Ok(mut text) = label.single_mut() {
+        let value = format!("{:.0}", state.hp.max(0.0));
         if **text != value {
-            **text = value.clone();
+            **text = value;
         }
     }
 }

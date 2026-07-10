@@ -1,4 +1,3 @@
-use crate::edits::WorldEdit;
 use fallingsand_core::{CHUNK_SIZE, Cell, CellPos, Chunk, ChunkPos, MaterialId};
 use fallingsand_rng::Hash;
 use rustc_hash::FxHashMap;
@@ -6,7 +5,6 @@ use rustc_hash::FxHashMap;
 #[derive(Default)]
 pub struct CellWorld {
     chunks: FxHashMap<ChunkPos, Chunk>,
-    edits: Vec<WorldEdit>,
     structural: Vec<CellPos>,
     damage: Vec<CellPos>,
     tick: u64,
@@ -102,18 +100,6 @@ impl CellWorld {
         self.set_cell(pos, Cell::new(material, shade));
     }
 
-    pub fn mark_keep(&mut self, pos: CellPos) {
-        let Some(chunk) = self.chunks.get_mut(&pos.chunk()) else {
-            return;
-        };
-        chunk.wake(self.tick as u8);
-        chunk.sim.mark(pos.offset());
-    }
-
-    pub fn queue_edit(&mut self, edit: WorldEdit) {
-        self.edits.push(edit);
-    }
-
     pub(crate) fn push_structural(&mut self, positions: Vec<CellPos>) {
         self.structural.extend(positions);
     }
@@ -128,22 +114,6 @@ impl CellWorld {
 
     pub fn take_damage(&mut self) -> Vec<CellPos> {
         std::mem::take(&mut self.damage)
-    }
-
-    pub(crate) fn apply_edits(&mut self) {
-        let edits = std::mem::take(&mut self.edits);
-        for edit in edits {
-            match edit {
-                WorldEdit::SetCell { pos, material } => self.place_material(pos, material),
-                WorldEdit::FillRect { min, max, material } => {
-                    for y in min.y..=max.y {
-                        for x in min.x..=max.x {
-                            self.place_material(CellPos::new(x, y), material);
-                        }
-                    }
-                }
-            }
-        }
     }
 
     pub fn awake_counts(&self) -> (usize, u64) {

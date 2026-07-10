@@ -30,7 +30,7 @@ impl Waters {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn cave_fill(
+pub(crate) fn cave_fill(
     biome: &Biome,
     band: &Band,
     lava_material: MaterialId,

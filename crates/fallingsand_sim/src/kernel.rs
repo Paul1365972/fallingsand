@@ -31,7 +31,6 @@ pub fn step_scoped(
     for phase in 0..4 {
         run_phase(world, registry, phase, tick, simulate);
     }
-    world.apply_edits();
 }
 
 fn run_phase(

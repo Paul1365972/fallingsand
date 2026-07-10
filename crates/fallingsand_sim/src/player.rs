@@ -60,7 +60,7 @@ fn flesh_cell(flesh: MaterialId, local: u16, ducked: bool, facing_left: bool) ->
     cell
 }
 
-pub fn player_raster(fp: Footprint) -> Raster {
+pub(crate) fn player_raster(fp: Footprint) -> Raster {
     let mut raster = Raster::default();
     for y in fp.y0..=fp.y1 {
         for x in fp.x0..=fp.x1 {

@@ -51,4 +51,3 @@ Canonical names for the core domain vocabulary. One concept, one name.
 | **SimWindow** | a worker's 4×4-chunk window; simulates the inner 2×2 block and reads one chunk beyond |
 | **SPEED_OF_LIGHT** | max reach of one update = `CHUNK_SIZE` = 64 cells |
 | **Dynamics** | per-material precomputed per-tick sim coefficients (drag_keep, friction_keep, cohesion, restitution, redirect_keep, …) |
-| **WorldEdit** | queued long-range edit applied after the 4 CA phases |

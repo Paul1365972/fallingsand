@@ -1,7 +1,7 @@
 use crate::input::{InputAccumulator, LocalAction, Modifiers, Pointer};
 use crate::inventory::{
-    InventoryOpen, LocalInventory, SlotChanged, SlotCount, SlotSwatch, TrashChanged, apply_count,
-    apply_swatch, format_count, item_color,
+    InventoryOpen, LocalInventory, SlotChanged, SlotCount, SlotSwatch, TrashChanged, format_count,
+    item_color, spawn_slot_widgets, sync_slots,
 };
 use crate::player::LocalPlayerState;
 use crate::{ClientItemRegistry, ClientRegistry, GameState, PauseState};
@@ -350,17 +350,13 @@ fn sync_overlay_slots(
             _ => None,
         }
     };
-
-    for (child_of, mut node, mut color) in &mut swatches {
-        if let Some(stack) = stack_for(child_of.parent()) {
-            apply_swatch(stack, &item_reg.0, &registry.0, &mut node, &mut color);
-        }
-    }
-    for (child_of, mut text) in &mut counts {
-        if let Some(stack) = stack_for(child_of.parent()) {
-            apply_count(stack, &mut text);
-        }
-    }
+    sync_slots(
+        stack_for,
+        &item_reg.0,
+        &registry.0,
+        &mut swatches,
+        &mut counts,
+    );
 }
 
 fn sync_craftable(
@@ -457,38 +453,7 @@ fn spawn_slot(parent: &mut ChildSpawnerCommands, region: SlotRegion, index: usiz
                 Color::srgba(0.0, 0.0, 0.0, 0.6)
             }),
         ))
-        .with_children(|slot| {
-            slot.spawn((
-                SlotSwatch,
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: px(6),
-                    top: px(6),
-                    width: px(SLOT - 12.0),
-                    height: px(SLOT - 12.0),
-                    display: Display::None,
-                    ..default()
-                },
-                BackgroundColor(Color::NONE),
-                Pickable::IGNORE,
-            ));
-            slot.spawn((
-                SlotCount,
-                Text::new(""),
-                TextFont {
-                    font_size: FontSize::Px(11.0),
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-                Node {
-                    position_type: PositionType::Absolute,
-                    right: px(2),
-                    bottom: px(0),
-                    ..default()
-                },
-                Pickable::IGNORE,
-            ));
-        });
+        .with_children(|slot| spawn_slot_widgets(slot, SLOT, 6.0));
 }
 
 fn handle_clicks(

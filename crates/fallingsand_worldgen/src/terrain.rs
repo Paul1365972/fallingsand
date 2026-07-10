@@ -105,7 +105,7 @@ impl Terrain {
             .range(0, count as i32 - 1) as usize
     }
 
-    pub fn biome_mix(&self, count: usize, x: i32) -> (usize, usize, f32) {
+    pub(crate) fn biome_mix(&self, count: usize, x: i32) -> (usize, usize, f32) {
         let cell = x.div_euclid(BIOME_CELL);
         let offset = x - cell * BIOME_CELL;
         let own = self.biome_of_cell(count, cell);
@@ -128,12 +128,12 @@ impl Terrain {
         if mix < 0.5 { a } else { b }
     }
 
-    pub fn ruggedness(&self, def: &WorldDef, x: i32) -> f32 {
+    pub(crate) fn ruggedness(&self, def: &WorldDef, x: i32) -> f32 {
         let (a, b, mix) = self.biome_mix(def.biomes.len(), x);
         def.biomes[a].ruggedness * (1.0 - mix) + def.biomes[b].ruggedness * mix
     }
 
-    pub fn surface_height(&self, def: &WorldDef, x: i32) -> i32 {
+    pub(crate) fn surface_height(&self, def: &WorldDef, x: i32) -> i32 {
         let (a, b, mix) = self.biome_mix(def.biomes.len(), x);
         let amplitude =
             def.biomes[a].height_amplitude * (1.0 - mix) + def.biomes[b].height_amplitude * mix;
@@ -183,7 +183,7 @@ impl Terrain {
         self.band_edge.get_noise_2d(x as f32, index as f32 * 1000.0) * 24.0
     }
 
-    pub fn pond(&self, def: &WorldDef, x: i32, biome: usize) -> Option<(i32, i32)> {
+    pub(crate) fn pond(&self, def: &WorldDef, x: i32, biome: usize) -> Option<(i32, i32)> {
         let chance = def.biomes[biome].pond_chance;
         if chance <= 0.0 {
             return None;

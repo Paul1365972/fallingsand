@@ -9,10 +9,10 @@ pub const YEAR_UNITS: u64 = YEAR_DAYS * DAY_UNITS;
 pub const SEASON_DAYS: u64 = 15;
 pub const SYNODIC_UNITS: u64 = 643 * DAY_UNITS / 100;
 pub const ECCENTRE_UNITS: u64 = 4652 * DAY_UNITS / 1000;
-pub const ANOMALISTIC_UNITS: u64 = 587 * DAY_UNITS / 100;
-pub const SYNODIC_EPOCH: u64 = 29 * SYNODIC_UNITS / 100;
-pub const ECCENTRE_EPOCH: u64 = 61 * ECCENTRE_UNITS / 100;
-pub const ANOMALISTIC_EPOCH: u64 = 43 * ANOMALISTIC_UNITS / 100;
+const ANOMALISTIC_UNITS: u64 = 587 * DAY_UNITS / 100;
+const SYNODIC_EPOCH: u64 = 29 * SYNODIC_UNITS / 100;
+const ECCENTRE_EPOCH: u64 = 61 * ECCENTRE_UNITS / 100;
+const ANOMALISTIC_EPOCH: u64 = 43 * ANOMALISTIC_UNITS / 100;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Season {
@@ -76,7 +76,7 @@ impl Calendar {
         (self.age % YEAR_UNITS) as f32 / YEAR_UNITS as f32
     }
 
-    pub fn synodic_fraction(self) -> f32 {
+    fn synodic_fraction(self) -> f32 {
         ((self.age + SYNODIC_EPOCH) % SYNODIC_UNITS) as f32 / SYNODIC_UNITS as f32
     }
 

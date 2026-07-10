@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-pub const CHUNK_BITS: u32 = 6;
-pub const REGION_BITS: u32 = 3;
+const CHUNK_BITS: u32 = 6;
+const REGION_BITS: u32 = 3;
 
 const _: () = assert!(1usize << CHUNK_BITS == crate::chunk::CHUNK_SIZE);
 const _: () = assert!(1usize << REGION_BITS == crate::region::REGION_SIZE_CHUNKS);

@@ -7,7 +7,7 @@ use crate::features::Clip;
 use fallingsand_core::MaterialId;
 use fallingsand_rng::{Hash, Rng};
 
-pub struct StructureCell {
+pub(crate) struct StructureCell {
     pub x: i32,
     pub y: i32,
     pub material: MaterialId,
@@ -39,7 +39,7 @@ impl Builder<'_> {
 const GROUND_SCAN: i32 = 48;
 
 #[allow(clippy::too_many_arguments)]
-pub fn structures_for_rect(
+pub(crate) fn structures_for_rect(
     seed: u64,
     palette: &Palette,
     solid: &dyn Fn(i32, i32) -> bool,

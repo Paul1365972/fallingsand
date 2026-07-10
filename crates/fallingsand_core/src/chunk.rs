@@ -52,7 +52,7 @@ impl DirtyRect {
         self.max_y = self.max_y.max(offset.y);
     }
 
-    pub fn mark_neighbourhood(&mut self, offset: CellOffset) {
+    fn mark_neighbourhood(&mut self, offset: CellOffset) {
         let last = (CHUNK_SIZE - 1) as u8;
         self.min_x = self.min_x.min(offset.x.saturating_sub(1));
         self.min_y = self.min_y.min(offset.y.saturating_sub(1));
@@ -60,7 +60,7 @@ impl DirtyRect {
         self.max_y = self.max_y.max(min_u8(offset.y + 1, last));
     }
 
-    pub fn union(self, other: Self) -> Self {
+    fn union(self, other: Self) -> Self {
         if self.is_empty() {
             return other;
         }
@@ -198,7 +198,7 @@ impl Chunk {
         self.sim.union(self.prev_sim)
     }
 
-    pub fn normalize_updated(&mut self, tick: u8) {
+    fn normalize_updated(&mut self, tick: u8) {
         for cell in self.cells.iter_mut() {
             cell.updated = tick;
         }

@@ -73,7 +73,60 @@ pub fn format_count(count: u32) -> String {
     }
 }
 
-pub fn apply_swatch(
+pub fn sync_slots(
+    stack_for: impl Fn(Entity) -> Option<Option<ItemStack>>,
+    items: &ItemRegistry,
+    materials: &MaterialRegistry,
+    swatches: &mut Query<(&ChildOf, &mut Node, &mut BackgroundColor), With<SlotSwatch>>,
+    counts: &mut Query<(&ChildOf, &mut Text), With<SlotCount>>,
+) {
+    for (child_of, mut node, mut color) in swatches {
+        if let Some(stack) = stack_for(child_of.parent()) {
+            apply_swatch(stack, items, materials, &mut node, &mut color);
+        }
+    }
+    for (child_of, mut text) in counts {
+        if let Some(stack) = stack_for(child_of.parent()) {
+            apply_count(stack, &mut text);
+        }
+    }
+}
+
+pub fn spawn_slot_widgets(slot: &mut ChildSpawnerCommands, size: f32, inset: f32) {
+    slot.spawn((
+        SlotSwatch,
+        Node {
+            position_type: PositionType::Absolute,
+            left: px(inset),
+            top: px(inset),
+            width: px(size - 2.0 * inset),
+            height: px(size - 2.0 * inset),
+            display: Display::None,
+            ..default()
+        },
+        BackgroundColor(Color::NONE),
+        Pickable::IGNORE,
+    ));
+    slot.spawn((
+        SlotCount,
+        Text::new(""),
+        TextFont {
+            font_size: FontSize::Px(11.0),
+            ..default()
+        },
+        TextColor(Color::WHITE),
+        Node {
+            position_type: PositionType::Absolute,
+            right: px(2),
+            bottom: px(0),
+            ..default()
+        },
+        GlobalZIndex(2),
+        Pickable::IGNORE,
+    ));
+}
+
+fn apply_swatch(
     stack: Option<ItemStack>,
     items: &ItemRegistry,
     materials: &MaterialRegistry,
@@ -99,7 +152,7 @@ pub fn apply_swatch(
     }
 }
 
-pub fn apply_count(stack: Option<ItemStack>, text: &mut Mut<Text>) {
+fn apply_count(stack: Option<ItemStack>, text: &mut Mut<Text>) {
     let target = match stack {
         Some(stack) if stack.count > 1 => format_count(stack.count),
         _ => String::new(),

@@ -1,7 +1,7 @@
 use crate::TICK_RATE;
 use serde::{Deserialize, Serialize};
 
-pub const FRAC_BITS: u32 = 8;
+const FRAC_BITS: u32 = 8;
 const SCALE: i32 = 1 << FRAC_BITS;
 
 #[derive(

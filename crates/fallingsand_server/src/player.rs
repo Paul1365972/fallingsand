@@ -1,8 +1,10 @@
 use crate::inventory::Inventory;
-use crate::persistence::{PlayerRecord, slots_to_record, stack_to_record};
+use crate::persistence::{
+    PlayerRecord, player_slots_from_record, slots_to_record, stack_from_record, stack_to_record,
+};
 use crate::{MAX_AIR_SECS, MAX_HP};
 use bevy_ecs::prelude::*;
-use fallingsand_core::{Fixed, ItemRegistry};
+use fallingsand_core::{BRUSH_RADIUS, CellPos, Fixed, ItemRegistry};
 use fallingsand_protocol::{GameMode, InputState, PlayerId, PlayerUuid};
 use fallingsand_sim::PlayerStamp;
 use fallingsand_sim::physics::{Actor, Controller};
@@ -76,6 +78,74 @@ impl Burning {
     pub fn active(&self) -> bool {
         self.secs > 0.0
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_player(
+    commands: &mut Commands,
+    item_reg: &ItemRegistry,
+    id: PlayerId,
+    uuid: PlayerUuid,
+    name: String,
+    tick: u64,
+    record: Option<&PlayerRecord>,
+    spawn: CellPos,
+) -> Entity {
+    commands
+        .spawn((
+            Player {
+                id,
+                uuid,
+                name,
+                input: Default::default(),
+                jump_pressed: false,
+                flying: record.map(|r| r.flying).unwrap_or(false),
+                selected_slot: 0,
+                brush_radius: BRUSH_RADIUS,
+                last_input_tick: tick,
+            },
+            PlayerActor(Actor::new(
+                record.map(|r| r.x).unwrap_or(Fixed::from_cell(spawn.x)),
+                record.map(|r| r.y).unwrap_or(Fixed::from_cell(spawn.y)),
+                PLAYER_HALF_W,
+                PLAYER_HALF_H,
+            )),
+            PlayerRaster::default(),
+            Control::default(),
+            Health {
+                hp: record
+                    .map(|r| r.hp)
+                    .filter(|hp| hp.is_finite() && *hp > 0.0)
+                    .unwrap_or(MAX_HP)
+                    .min(MAX_HP),
+                last_damage_tick: 0,
+            },
+            DigState::default(),
+            Mode(record.map(|r| r.mode).unwrap_or_default()),
+            Air {
+                secs: record
+                    .map(|r| r.air)
+                    .filter(|air| air.is_finite())
+                    .unwrap_or(MAX_AIR_SECS)
+                    .clamp(0.0, MAX_AIR_SECS),
+            },
+            Burning {
+                secs: record
+                    .map(|r| r.burning)
+                    .filter(|secs| secs.is_finite())
+                    .unwrap_or(0.0)
+                    .max(0.0),
+            },
+            Inventory::with(
+                player_slots_from_record(
+                    item_reg,
+                    record.map(|r| r.inventory.as_slice()).unwrap_or(&[]),
+                ),
+                record.and_then(|r| stack_from_record(item_reg, &r.cursor)),
+                record.and_then(|r| stack_from_record(item_reg, &r.trash)),
+            ),
+        ))
+        .id()
 }
 
 #[allow(clippy::too_many_arguments)]
