@@ -281,17 +281,13 @@ fn note_undermined(window: &mut SimWindow, registry: &MaterialRegistry, vacated:
 }
 
 fn ambient_density(window: &SimWindow, registry: &MaterialRegistry, pos: CellPos) -> f32 {
-    match window.get(pos.translated(0, -1)) {
-        Some(below)
-            if matches!(
-                registry.get(below.material).phase,
-                Phase::Liquid | Phase::Gas
-            ) =>
-        {
-            registry.get(below.material).density
+    if let Some(below) = window.get(pos.translated(0, -1)) {
+        let material = registry.get(below.material);
+        if matches!(material.phase, Phase::Liquid | Phase::Gas) {
+            return material.density;
         }
-        _ => registry.get(MaterialId::AIR).density,
     }
+    registry.get(MaterialId::AIR).density
 }
 
 fn neighbor_mean_vel(
@@ -355,8 +351,9 @@ fn update_dynamic(
     rng: &mut Rng,
     tick_byte: u8,
 ) {
-    let phase = registry.get(cell.material).phase;
-    let density = registry.get(cell.material).density;
+    let material = registry.get(cell.material);
+    let phase = material.phase;
+    let density = material.density;
     let dynamics = registry.dynamics(cell.material);
     let is_powder = phase == Phase::Powder;
 
@@ -364,12 +361,12 @@ fn update_dynamic(
 
     if matches!(phase, Phase::Liquid) {
         let above = pos.translated(0, 1);
-        if let Some(top) = window.get(above)
-            && registry.get(top.material).phase == Phase::Liquid
-            && registry.get(top.material).density > density
-        {
-            window.swap(pos, above);
-            return;
+        if let Some(top) = window.get(above) {
+            let top_material = registry.get(top.material);
+            if top_material.phase == Phase::Liquid && top_material.density > density {
+                window.swap(pos, above);
+                return;
+            }
         }
     }
 

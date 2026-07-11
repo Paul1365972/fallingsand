@@ -83,7 +83,6 @@ impl SimWindow {
             debug_assert!(false, "write to unloaded chunk at {pos:?}");
             return;
         };
-        chunk.wake((self.tick as u8).wrapping_sub(1));
         let old = chunk.get(pos.offset());
         chunk.set(pos.offset(), cell);
         if old.is_body() && !cell.is_body() {
@@ -121,7 +120,6 @@ impl SimWindow {
         let Some(chunk) = self.slots[slot].as_mut() else {
             return;
         };
-        chunk.wake((self.tick as u8).wrapping_sub(1));
         chunk.sim.mark(pos.offset());
     }
 
@@ -135,12 +133,5 @@ impl SimWindow {
         cell_b.updated = tick_byte;
         self.set(a, cell_b);
         self.set(b, cell_a);
-    }
-
-    pub(crate) fn wake_chunk(&mut self, sx: i32, sy: i32) {
-        let idx = (sy * WINDOW_CHUNKS + sx) as usize;
-        if let Some(chunk) = self.slots[idx].as_mut() {
-            chunk.wake((self.tick as u8).wrapping_sub(1));
-        }
     }
 }

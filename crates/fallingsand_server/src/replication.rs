@@ -3,7 +3,7 @@ use crate::player::{Air, Burning, Control, Health, Mode, Player, PlayerActor, Pl
 use crate::session::{SessionState, Sessions};
 use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y, SimWorld, TickStats};
 use bevy_ecs::prelude::*;
-use fallingsand_core::CellOffset;
+use fallingsand_core::{CellOffset, ChunkPos};
 use fallingsand_protocol::{
     ChunkDebugRects, ChunkOp, PlayerId, PlayerState, SelfState, ServerMessage, TickFrame,
     cells_to_wire,
@@ -128,7 +128,7 @@ pub fn replicate(
 
     stats.players = all_players.len();
     (stats.awake_chunks, stats.awake_cells) = sim.0.awake_counts();
-    stats.loaded_chunks = sim.0.chunks().count();
+    stats.loaded_chunks = sim.0.chunk_count();
     (stats.loaded_regions, stats.dirty_regions) = regions.counts();
     stats.replicated_bytes = sessions.sessions.iter().map(|s| s.sent_bytes).sum();
     for session in &mut sessions.sessions {
@@ -137,10 +137,10 @@ pub fn replicate(
 }
 
 fn build_tiles(
-    known: &mut FxHashSet<fallingsand_core::ChunkPos>,
+    known: &mut FxHashSet<ChunkPos>,
     debug: bool,
     sim: &fallingsand_sim::CellWorld,
-    interest: &FxHashSet<fallingsand_core::ChunkPos>,
+    interest: &FxHashSet<ChunkPos>,
     debug_rects: &mut Vec<ChunkDebugRects>,
 ) -> Vec<ChunkOp> {
     let mut ops = Vec::new();

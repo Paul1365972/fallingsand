@@ -1,7 +1,7 @@
 use fallingsand_core::{Cell, MaterialId};
+use rustc_hash::FxHashMap;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use std::collections::HashMap;
 
 const COMPRESSION_THRESHOLD: usize = 256;
 const CELL_WIRE_BYTES: usize = 3;
@@ -95,7 +95,7 @@ fn cells_to_wire_raw(cells: &[Cell]) -> Vec<u8> {
 
 pub fn cells_to_wire(cells: &[Cell]) -> Vec<u8> {
     let mut palette: Vec<[u8; CELL_WIRE_BYTES]> = Vec::new();
-    let mut lookup: HashMap<u32, u8> = HashMap::new();
+    let mut lookup: FxHashMap<u32, u8> = FxHashMap::default();
     let mut indices: Vec<u8> = Vec::with_capacity(cells.len());
     for &cell in cells {
         let key = cell.material.0 as u32 | (cell.shade_flags as u32) << 16;

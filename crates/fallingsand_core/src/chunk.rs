@@ -99,7 +99,6 @@ pub struct Chunk {
     pub prev_change: DirtyRect,
     pub sim: DirtyRect,
     pub prev_sim: DirtyRect,
-    pub sleeping: bool,
 }
 
 impl Default for Chunk {
@@ -116,7 +115,6 @@ impl Chunk {
             prev_change: DirtyRect::EMPTY,
             sim: DirtyRect::EMPTY,
             prev_sim: DirtyRect::EMPTY,
-            sleeping: true,
         }
     }
 
@@ -158,18 +156,5 @@ impl Chunk {
 
     pub fn sim_rect(&self) -> DirtyRect {
         self.sim.union(self.prev_sim)
-    }
-
-    fn normalize_updated(&mut self, tick: u8) {
-        for cell in self.cells.iter_mut() {
-            cell.updated = tick;
-        }
-    }
-
-    pub fn wake(&mut self, tick: u8) {
-        if self.sleeping {
-            self.normalize_updated(tick);
-            self.sleeping = false;
-        }
     }
 }

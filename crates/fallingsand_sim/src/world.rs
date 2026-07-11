@@ -43,6 +43,10 @@ impl CellWorld {
         self.chunks.iter().map(|(&pos, chunk)| (pos, chunk))
     }
 
+    pub fn chunk_count(&self) -> usize {
+        self.chunks.len()
+    }
+
     pub(crate) fn chunk_map_mut(&mut self) -> &mut FxHashMap<ChunkPos, Chunk> {
         &mut self.chunks
     }
@@ -55,7 +59,6 @@ impl CellWorld {
         let Some(chunk) = self.chunks.get_mut(&pos.chunk()) else {
             return;
         };
-        chunk.wake(self.tick as u8);
         let old = chunk.get(pos.offset());
         cell.updated = self.tick as u8;
         chunk.set(pos.offset(), cell);
@@ -69,7 +72,6 @@ impl CellWorld {
         let Some(chunk) = self.chunks.get_mut(&pos.chunk()) else {
             return;
         };
-        chunk.wake(self.tick as u8);
         cell.updated = self.tick as u8;
         chunk.set(pos.offset(), cell);
         self.mark_sim_border(pos);

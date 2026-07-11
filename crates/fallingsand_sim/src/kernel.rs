@@ -16,13 +16,9 @@ pub fn step_scoped(
         let ready = simulate(pos)
             && (-1..=1).all(|dy| (-1..=1).all(|dx| loaded.contains(&pos.translated(dx, dy))));
         if !ready {
-            chunk.sleeping = true;
             continue;
         }
         chunk.swap_rects();
-        if chunk.prev_sim.is_empty() {
-            chunk.sleeping = true;
-        }
     }
     for phase in 0..4 {
         run_phase(world, registry, phase, tick, simulate);
@@ -108,13 +104,9 @@ fn process_block(
             {
                 continue;
             }
-            let rect = window
+            rects[oy as usize][ox as usize] = window
                 .chunk_at(sx, sy)
                 .map_or(DirtyRect::EMPTY, |chunk| chunk.sim_rect());
-            rects[oy as usize][ox as usize] = rect;
-            if !rect.is_empty() {
-                window.wake_chunk(sx, sy);
-            }
         }
     }
 
