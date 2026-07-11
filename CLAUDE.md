@@ -1,7 +1,7 @@
 # fallingsand
 
 Multiplayer Noita-like falling-sand game.
-docs/ is the source of truth for intended design: start at docs/Overview.md (it indexes the rest). It can lag the code, so read the relevant doc first and reconcile any deviation you spot (fix the doc or the code, whichever is wrong).
+docs/ holds the intended design — goals, ideas, invariants, not detailed spec: start at docs/Overview.md (it indexes the rest). Docs can lag the code; reconcile deviations you spot (fix whichever is wrong).
 
 ## Commands
 
@@ -12,35 +12,33 @@ cargo fmt --all
 
 ## Principles
 
-- Quality bar: great, not good; Noita and Celeste are the benchmarks (worldgen taste: Terraria × Noita × modern Minecraft), and feel is judged by human playtest.
-- Semi-realism: physics is semi-realistic and phase-based; no artificial caps or clamps that distort it.
+- Quality bar: great, not good; Noita and Celeste are the benchmarks (worldgen taste: Terraria × Noita × modern Minecraft); feel is judged by human playtest.
+- Semi-realism: phase-based, semi-realistic physics; no artificial caps or clamps that distort it.
 - Fix root causes: recurring sim/physics bugs get architectural reworks, not symptom patches.
-- Boil-the-ocean mode: nothing is holy — rework any system, architecture, or protocol freely; no backwards compatibility or migrations, bump the version constants instead.
+- Boil-the-ocean mode: nothing is holy — rework any system, architecture, or protocol freely; no backwards compatibility or migrations, bump the version constants.
 
 ## Invariants
 
-- Conservation of mass: cells aren't created or destroyed without a physical cause; overlaps and awkward states should be impossible, or in rare cases resolve by displacement.
-- Velocity is per-cell and dissipative: every cell carries a velocity, bled by drag, contact friction, and restitution (0 ≤ e < 1) so motion always terminates and settles. Momentum is not strictly conserved across exchanges — feel and locality win over bookkeeping.
+- Conservation of mass: cells aren't created or destroyed without a physical cause; overlaps should be impossible, or in rare cases resolve by displacement.
+- Velocity is per-cell and dissipative: drag, contact friction, and restitution (0 ≤ e < 1) make all motion terminate and settle; feel and locality win over strict momentum bookkeeping.
 - One cell, one owner: double occupancy by terrain, rigid bodies, or entities is an architecture bug, not a tuning problem.
-- Universality: every matter-affecting system handles all matter kinds — grid cells, powders/fluids, rigid bodies, entities — or explicitly flags the gap (a fallen tree must burn).
-- Server-authoritative: clients send raw input and render replicated state — no client prediction, no client-side gameplay logic.
-- Idle cost: a settled world costs ~nothing — no per-tick work, no permanently-awake chunks, server or client.
-- Locality & speed of light: every update reads and writes only its immediate neighborhood and never beyond its window (= 64) — no sweeps, no action at a distance; longer-range effects propagate as local waves over ticks (a between-ticks world-event queue — teleports, scripted events — is the sanctioned escape hatch if one is ever needed; none exists today).
+- Universality: every matter-affecting system handles all matter kinds — grid cells, rigid bodies, entities — or explicitly flags the gap (a fallen tree must burn).
+- Server-authoritative: clients send raw input and render replicated state — no prediction, no client-side gameplay logic.
+- Idle cost: a settled world costs ~nothing — no per-tick work, no permanently-awake chunks.
+- Locality & speed of light: every update stays within its 64-cell window — no sweeps, no action at a distance; longer-range effects propagate as local waves over ticks.
 - Determinism: same seed + inputs → same world on one machine.
 - Suspend/resume: sleep, unload, and reload preserve pending activity — in-flight processes don't freeze in time.
 - Body rasterization: body flag ⇔ exactly one live body's or player's raster covers the cell; public cell writes only produce unflagged cells. The player is a grid resident — its cells are as real as any terrain.
 
 ## Architecture
 
-- Dependency direction: `material ← {macros, core}`, `macros ← core ← sim ← server`, `core ← protocol ← {server, client}`; the client reaches the sim only through the embedded server. `fallingsand_material` is the shared source of truth (types, TICK_RATE, quantization) for the `content!` proc macro and the runtime; content compiles from `fallingsand_core/content/` into constants and exhaustive-match accessors; the grid kernel is monomorphized per material and integer-only.
-- Scheduling: 4-phase 2×2-chunk-block scheduling; workers get a 4×4-chunk `SimWindow`, disjoint per phase.
-- Rects: `sim` (feeds scheduling) ⊇ `change` (feeds replication/persistence); `set` (real change) marks `change` tight + `sim` as the 3×3 Moore neighbourhood (across chunk borders), `mark` (simulate again) marks `sim` 1×1 only. `sim` is honest — the exact cells simulated next tick, no read-time dilation. Double-buffered (`prev_*`).
-- Randomness: tick-seeded, no RNG state, no iteration-order-dependent containers in sim paths.
-- Tuning units: constants are seconds-based, not per-tick.
+- Crates and dependency direction: docs/Tech.md. Content compiles from `fallingsand_core/content/` via the `content!` proc macro; the grid kernel is monomorphized per material and integer-only.
+- Scheduling: 4-phase 2×2-chunk-block scheduling, disjoint 4×4-chunk `SimWindow`s per phase. Rects: `sim` (scheduling) ⊇ `change` (replication/persistence); `sim` is honest — exactly the cells simulated next tick (docs/Simulation.md).
+- Randomness: tick-seeded, stateless, no iteration-order-dependent containers in sim paths. Tuning constants are seconds-based, not per-tick.
 
 ## Workflow
 
-- No comments: no code comments, no doc comments (rare exceptions like `// SAFETY:`); docs are terse and standalone, no meta talk.
-- Verification: no tests unless asked; verify with clippy + build, then hand feel/UI verification to the user rather than hacking up self-verification.
+- No comments: no code or doc comments (rare exceptions like `// SAFETY:`); docs are terse and standalone, no meta talk.
+- Verification: no tests unless asked; clippy + build, then hand feel/UI verification to the user.
 - Whole-feature builds: big features are built as one unit and playtested once at the end.
-- Commits: once at the end of a task (packets only when clearly separable): conventional subject, no body, no co-author; don't push; leave the user's parallel WIP untouched.
+- Commits: once at the end of a task: conventional subject, no body, no co-author; don't push; leave the user's parallel WIP untouched.
