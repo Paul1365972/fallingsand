@@ -11,7 +11,9 @@ use fallingsand_sim::bodies::wake_covering;
 use fallingsand_sim::physics::{
     Actor, Controller, Footprint, PlayerParams, StepInput, footprint_at, grounded, step_player,
 };
-use fallingsand_sim::player::{force_stamp_player, stamp_player, unstamp_player};
+use fallingsand_sim::player::{
+    DUCK_ROWS, STAND_ROWS, force_stamp_player, stamp_player, unstamp_player,
+};
 
 const SPAWN_SEARCH_UP: i32 = 64;
 
@@ -232,12 +234,25 @@ fn spawn_stamp(
     stamp: &mut fallingsand_sim::PlayerStamp,
     body: &mut Actor,
 ) {
+    body.half_h = PLAYER_HALF_H;
     let base = body.footprint();
     if !footprint_loaded(sim, base) {
         return;
     }
-    body.half_h = PLAYER_HALF_H;
-    for up in 0..=SPAWN_SEARCH_UP {
+    for rows in (DUCK_ROWS as i32..=STAND_ROWS as i32).rev() {
+        let fp = Footprint {
+            x0: base.x0,
+            y0: base.y0,
+            x1: base.x1,
+            y1: base.y0 + rows - 1,
+        };
+        if stamp_player(sim, registry, stamp, fp, false).is_some() {
+            body.y += Fixed::from_int(rows / 2 - STAND_ROWS as i32 / 2);
+            body.half_h = Fixed::from_int(rows).mul(Fixed::HALF);
+            return;
+        }
+    }
+    for up in 1..=SPAWN_SEARCH_UP {
         let fp = Footprint {
             x0: base.x0,
             y0: base.y0 + up,
