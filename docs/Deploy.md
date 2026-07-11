@@ -1,6 +1,6 @@
 # Deploy
 
-The dedicated binary (`fallingsand_server`) serves WebTransport over UDP (QUIC), default `0.0.0.0:4433`. On start it prints a web client URL (from `FALLINGSAND_WEB_CLIENT_URL`) pre-filling the direct-connect host. Saves live at `saves/dedicated/world.redb`; keep the working directory stable so cached certs and saves are reused.
+The dedicated binary (`fallingsand_server`) serves WebTransport over UDP (QUIC), default `0.0.0.0:4433`. On start it prints a web client URL (from `FALLINGSAND_WEB_CLIENT_URL`) pre-filling the direct-connect host. Env vars load from a `.env` in the working directory; release server archives bundle `.env.template` to copy from. Saves live at `saves/dedicated/world.redb`; keep the working directory stable so cached certs and saves are reused.
 
 ## TLS modes (picked at startup, in order)
 
