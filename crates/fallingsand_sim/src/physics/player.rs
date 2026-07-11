@@ -1,12 +1,14 @@
 use super::movement::move_body;
 use super::{
     Actor, CellSource, FLUID_DRAG_LINEAR, FLUID_DRAG_QUAD, MAX_FLUID_DRAG, MoveResult, OwnCells,
-    StepInput, Submersion, cell_blocks, footprint_at, ring_submersion,
+    StepInput, Submersion, cell_blocks, ring_submersion,
 };
+use crate::player::{DUCK_ROWS, STAND_ROWS};
 use fallingsand_core::{CellPos, Fixed, MaterialRegistry, Phase, TICK_DT};
 
 const MIN_GRIP: f32 = 0.06;
 const COYOTE_SECS: f32 = 0.1;
+const DUCK_STEP_SECS: f32 = 0.016;
 const BUFFER_SECS: f32 = 0.1;
 const VAR_JUMP_TIME: f32 = 0.2;
 const CEILING_VAR_JUMP_GRACE: f32 = 0.15;
@@ -31,8 +33,6 @@ pub struct PlayerParams {
     pub fast_max_accel: Fixed,
     pub jump_speed: Fixed,
     pub jump_h_boost: Fixed,
-    pub stand_half_h: Fixed,
-    pub duck_half_h: Fixed,
     pub swim_thrust: Fixed,
     pub density: f32,
     pub wade_run_mult: Fixed,
@@ -56,8 +56,6 @@ impl Default for PlayerParams {
             fast_max_accel: Fixed::accel_per_sec2(300.0),
             jump_speed: Fixed::vel_per_sec(105.0),
             jump_h_boost: Fixed::vel_per_sec(40.0),
-            stand_half_h: Fixed::from_f32(crate::player::STAND_ROWS as f32 * 0.5),
-            duck_half_h: Fixed::from_f32(crate::player::DUCK_ROWS as f32 * 0.5),
             swim_thrust: Fixed::accel_per_sec2(450.0),
             density: 1050.0,
             wade_run_mult: Fixed::from_f32(0.5),
@@ -74,17 +72,7 @@ pub struct Controller {
     var_jump_timer: f32,
     var_jump_speed: Fixed,
     max_fall: Fixed,
-    ducking: bool,
-}
-
-impl Controller {
-    pub fn ducking(&self) -> bool {
-        self.ducking
-    }
-
-    pub fn set_ducking(&mut self, ducking: bool) {
-        self.ducking = ducking;
-    }
+    duck_step: f32,
 }
 
 fn approach(value: Fixed, target: Fixed, delta: Fixed) -> Fixed {
@@ -142,6 +130,7 @@ pub fn step_player<W: CellSource>(
         (ctrl.coyote - TICK_DT).max(0.0)
     };
     ctrl.var_jump_timer = (ctrl.var_jump_timer - TICK_DT).max(0.0);
+    ctrl.duck_step = (ctrl.duck_step - TICK_DT).max(0.0);
 
     let move_x = input.move_x.clamp(-1, 1) as i32;
     let submersion = ring_submersion(world, registry, body);
@@ -176,9 +165,7 @@ fn fly_update<W: CellSource>(
     ctrl.buffer = 0.0;
     ctrl.coyote = 0.0;
     ctrl.var_jump_timer = 0.0;
-    if ctrl.ducking && can_unduck(world, registry, params, body) {
-        unduck(params, body, ctrl);
-    }
+    step_height(world, registry, body, ctrl, STAND_ROWS as i32);
     let move_y = jump_held as i32 - down_held as i32;
     body.vx = approach(body.vx, params.fly_max.mul_int(move_x), params.fly_accel);
     body.vy = approach(body.vy, params.fly_max.mul_int(move_y), params.fly_accel);
@@ -197,22 +184,19 @@ fn normal_update<W: CellSource>(
     submersion: Submersion,
 ) {
     let swimming = !body.on_ground && submersion.fraction >= SWIM_CONTROL_MIN_SUBMERSION;
-    if swimming {
-        if ctrl.ducking && can_unduck(world, registry, params, body) {
-            unduck(params, body, ctrl);
-        }
-    } else if !ctrl.ducking && down_held {
-        duck(params, body, ctrl);
-    } else if ctrl.ducking && !down_held && can_unduck(world, registry, params, body) {
-        unduck(params, body, ctrl);
-    }
+    let target_rows = if !swimming && down_held {
+        DUCK_ROWS as i32
+    } else {
+        STAND_ROWS as i32
+    };
+    step_height(world, registry, body, ctrl, target_rows);
 
     let grip = if body.on_ground {
         Fixed::from_f32(ground_grip(world, registry, body))
     } else {
         Fixed::ONE
     };
-    if body.on_ground && ctrl.ducking {
+    if body.on_ground && body.rows() < STAND_ROWS as i32 {
         let target = params.max_run.mul(params.duck_run_mult).mul_int(move_x);
         let rate = if move_x == 0 {
             params.duck_friction
@@ -339,34 +323,31 @@ fn jump(params: &PlayerParams, body: &mut Actor, ctrl: &mut Controller, move_x: 
     ctrl.var_jump_speed = body.vy;
 }
 
-fn duck(params: &PlayerParams, body: &mut Actor, ctrl: &mut Controller) {
-    body.y -= params.stand_half_h - params.duck_half_h;
-    body.half_h = params.duck_half_h;
-    ctrl.ducking = true;
-}
-
-fn unduck(params: &PlayerParams, body: &mut Actor, ctrl: &mut Controller) {
-    body.y += params.stand_half_h - body.half_h;
-    body.half_h = params.stand_half_h;
-    ctrl.ducking = false;
-}
-
-fn can_unduck<W: CellSource>(
+fn step_height<W: CellSource>(
     world: &W,
     registry: &MaterialRegistry,
-    params: &PlayerParams,
-    body: &Actor,
-) -> bool {
-    let stand_cy = body.y - body.half_h + params.stand_half_h;
-    let cur = body.footprint();
-    let next = footprint_at(body.x, stand_cy, body.half_w, params.stand_half_h);
-    for y in next.y0..=next.y1 {
-        for x in next.x0..=next.x1 {
-            let pos = CellPos::new(x, y);
-            if !cur.contains(pos) && cell_blocks(world, registry, pos) {
-                return false;
+    body: &mut Actor,
+    ctrl: &mut Controller,
+    target_rows: i32,
+) {
+    let rows = body.rows();
+    if rows == target_rows || ctrl.duck_step > 0.0 {
+        return;
+    }
+    let next = if target_rows > rows {
+        rows + 1
+    } else {
+        rows - 1
+    };
+    if next > rows {
+        let fp = body.footprint();
+        for x in fp.x0..=fp.x1 {
+            if cell_blocks(world, registry, CellPos::new(x, fp.y1 + 1)) {
+                return;
             }
         }
     }
-    true
+    body.y += Fixed::from_int(next / 2 - rows / 2);
+    body.half_h = Fixed::from_int(next).mul(Fixed::HALF);
+    ctrl.duck_step = DUCK_STEP_SECS;
 }

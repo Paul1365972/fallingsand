@@ -1,6 +1,6 @@
 use super::Game;
+use super::PLAYER_SIZE;
 use super::camera::WORLD_LAYER;
-use super::{PLAYER_DUCK_SIZE, PLAYER_SIZE};
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 use fallingsand_core::{Phase, REACH, SURVIVAL_REACH};
@@ -46,11 +46,7 @@ pub fn spawn_particles(
         if !remote.burning {
             continue;
         }
-        let size = if remote.ducking {
-            PLAYER_DUCK_SIZE
-        } else {
-            PLAYER_SIZE
-        };
+        let size = Vec2::new(PLAYER_SIZE.x, remote.height.max(1) as f32);
         for _ in 0..2 {
             let offset = Vec2::new(
                 (rng.draw().unit() - 0.5) * size.x,

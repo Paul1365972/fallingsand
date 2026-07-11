@@ -161,7 +161,8 @@ pub fn player_record(
 ) -> PlayerRecord {
     PlayerRecord {
         x: body.x,
-        y: body.y + (PLAYER_HALF_H - body.half_h),
+        y: body.y
+            + Fixed::from_int(fallingsand_sim::player::STAND_ROWS as i32 / 2 - body.rows() / 2),
         hp: health.hp,
         mode: mode.0,
         air: air.secs,

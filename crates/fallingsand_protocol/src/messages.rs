@@ -118,7 +118,7 @@ pub struct PlayerState {
     pub player: PlayerId,
     pub cx: i32,
     pub cy: i32,
-    pub ducking: bool,
+    pub height: u8,
     pub burning: bool,
     pub facing_left: bool,
 }

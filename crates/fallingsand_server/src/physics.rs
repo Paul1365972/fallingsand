@@ -61,13 +61,7 @@ pub fn step_physics(
         };
 
         if !raster.0.is_stamped() {
-            spawn_stamp(
-                &mut sim.0,
-                &registry.0,
-                &mut raster.0,
-                &mut body.0,
-                &mut control.0,
-            );
+            spawn_stamp(&mut sim.0, &registry.0, &mut raster.0, &mut body.0);
             if !raster.0.is_stamped() {
                 continue;
             }
@@ -82,7 +76,6 @@ pub fn step_physics(
         }
 
         let snapshot = body.0;
-        let was_ducking = control.0.ducking();
         let result = {
             let own = raster.0.own_cells();
             step_player(
@@ -112,9 +105,7 @@ pub fn step_physics(
             &mut bodies,
             &mut raster.0,
             &mut body.0,
-            &mut control.0,
             snapshot,
-            was_ducking,
             facing_left,
         );
 
@@ -172,27 +163,23 @@ pub fn step_physics(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn commit_pose(
     sim: &mut CellWorld,
     registry: &fallingsand_core::MaterialRegistry,
     bodies: &mut crate::bodies::PixelBodies,
     stamp: &mut fallingsand_sim::PlayerStamp,
     body: &mut Actor,
-    control: &mut Controller,
     snapshot: Actor,
-    was_ducking: bool,
     facing_left: bool,
 ) {
-    let ducking = control.ducking();
     let candidates = [
-        (body.x, body.y, body.half_h, ducking),
-        (body.x, snapshot.y, snapshot.half_h, was_ducking),
-        (snapshot.x, body.y, body.half_h, ducking),
+        (body.x, body.y, body.half_h),
+        (body.x, snapshot.y, snapshot.half_h),
+        (snapshot.x, body.y, body.half_h),
     ];
-    for (attempt, &(x, y, half_h, duck)) in candidates.iter().enumerate() {
+    for (attempt, &(x, y, half_h)) in candidates.iter().enumerate() {
         let fp = footprint_at(x, y, body.half_w, half_h);
-        let Some(vacated) = stamp_player(sim, registry, stamp, fp, duck, facing_left) else {
+        let Some(vacated) = stamp_player(sim, registry, stamp, fp, facing_left) else {
             continue;
         };
         match attempt {
@@ -200,7 +187,6 @@ fn commit_pose(
                 body.y = snapshot.y;
                 body.half_h = snapshot.half_h;
                 body.vy = Fixed::ZERO;
-                control.set_ducking(was_ducking);
             }
             2 => {
                 body.x = snapshot.x;
@@ -217,7 +203,6 @@ fn commit_pose(
     *body = snapshot;
     body.vx = Fixed::ZERO;
     body.vy = Fixed::ZERO;
-    control.set_ducking(was_ducking);
     body.on_ground = grounded(sim, registry, body, stamp.own_cells());
 }
 
@@ -246,13 +231,11 @@ fn spawn_stamp(
     registry: &fallingsand_core::MaterialRegistry,
     stamp: &mut fallingsand_sim::PlayerStamp,
     body: &mut Actor,
-    control: &mut Controller,
 ) {
     let base = body.footprint();
     if !footprint_loaded(sim, base) {
         return;
     }
-    control.set_ducking(false);
     body.half_h = PLAYER_HALF_H;
     for up in 0..=SPAWN_SEARCH_UP {
         let fp = Footprint {
@@ -261,13 +244,13 @@ fn spawn_stamp(
             x1: base.x1,
             y1: base.y1 + up,
         };
-        if stamp_player(sim, registry, stamp, fp, false, false).is_some() {
+        if stamp_player(sim, registry, stamp, fp, false).is_some() {
             body.y += Fixed::from_int(up);
             return;
         }
     }
     tracing::warn!("spawn stamp forced at {:?}", (base.x0, base.y0));
-    force_stamp_player(sim, stamp, base, false, false);
+    force_stamp_player(sim, stamp, base, false);
 }
 
 fn footprint_loaded(sim: &CellWorld, fp: Footprint) -> bool {

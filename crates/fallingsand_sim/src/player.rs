@@ -16,7 +16,7 @@ const DARK: u8 = 3;
 const BELT: u8 = 4;
 const BUCKLE: u8 = 5;
 
-const STAND_PATTERN: [[u8; PLAYER_COLS]; STAND_ROWS] = [
+const ROWS_9: [[u8; PLAYER_COLS]; 9] = [
     [ROBE, ROBE, HAIR],
     [ROBE, HAIR, HAIR],
     [SHADE, SHADE, SHADE],
@@ -28,7 +28,37 @@ const STAND_PATTERN: [[u8; PLAYER_COLS]; STAND_ROWS] = [
     [SHADE, SHADE, DARK],
 ];
 
-const DUCK_PATTERN: [[u8; PLAYER_COLS]; DUCK_ROWS] = [
+const ROWS_8: [[u8; PLAYER_COLS]; 8] = [
+    [ROBE, HAIR, HAIR],
+    [SHADE, SHADE, SHADE],
+    [ROBE, ROBE, SHADE],
+    [ROBE, ROBE, SHADE],
+    [BELT, BELT, BUCKLE],
+    [ROBE, ROBE, SHADE],
+    [ROBE, ROBE, SHADE],
+    [SHADE, SHADE, DARK],
+];
+
+const ROWS_7: [[u8; PLAYER_COLS]; 7] = [
+    [ROBE, HAIR, HAIR],
+    [SHADE, SHADE, SHADE],
+    [ROBE, ROBE, SHADE],
+    [ROBE, ROBE, SHADE],
+    [BELT, BELT, BUCKLE],
+    [ROBE, ROBE, SHADE],
+    [SHADE, SHADE, DARK],
+];
+
+const ROWS_6: [[u8; PLAYER_COLS]; 6] = [
+    [ROBE, HAIR, HAIR],
+    [SHADE, SHADE, SHADE],
+    [ROBE, ROBE, SHADE],
+    [BELT, BELT, BUCKLE],
+    [ROBE, ROBE, SHADE],
+    [SHADE, SHADE, DARK],
+];
+
+const ROWS_5: [[u8; PLAYER_COLS]; 5] = [
     [ROBE, HAIR, HAIR],
     [SHADE, SHADE, SHADE],
     [ROBE, ROBE, SHADE],
@@ -36,10 +66,20 @@ const DUCK_PATTERN: [[u8; PLAYER_COLS]; DUCK_ROWS] = [
     [SHADE, SHADE, DARK],
 ];
 
+fn pattern(rows: usize) -> &'static [[u8; PLAYER_COLS]] {
+    match rows {
+        5 => &ROWS_5,
+        6 => &ROWS_6,
+        7 => &ROWS_7,
+        8 => &ROWS_8,
+        _ => &ROWS_9,
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct PlayerStamp {
     pub(crate) raster: Option<Raster>,
-    pub(crate) ducked: bool,
+    pub(crate) rows: u8,
     pub(crate) facing_left: bool,
 }
 
@@ -63,21 +103,17 @@ impl PlayerStamp {
     }
 }
 
-fn shade_for(local: u16, ducked: bool, facing_left: bool) -> u8 {
+fn shade_for(local: u16, rows: u8, facing_left: bool) -> u8 {
     let row = (local / PLAYER_COLS as u16) as usize;
     let mut col = (local % PLAYER_COLS as u16) as usize;
     if facing_left {
         col = PLAYER_COLS - 1 - col;
     }
-    if ducked {
-        DUCK_PATTERN[row][col]
-    } else {
-        STAND_PATTERN[row][col]
-    }
+    pattern(rows as usize)[row][col]
 }
 
-fn flesh_cell(local: u16, ducked: bool, facing_left: bool) -> Cell {
-    let mut cell = Cell::new(material::FLESH, shade_for(local, ducked, facing_left));
+fn flesh_cell(local: u16, rows: u8, facing_left: bool) -> Cell {
+    let mut cell = Cell::new(material::FLESH, shade_for(local, rows, facing_left));
     cell.set_body(true);
     cell
 }
@@ -110,10 +146,10 @@ pub fn stamp_player(
     registry: &MaterialRegistry,
     stamp: &mut PlayerStamp,
     fp: Footprint,
-    ducked: bool,
     facing_left: bool,
 ) -> Option<Vec<CellPos>> {
-    let unchanged = stamp.ducked == ducked
+    let rows = (fp.y1 - fp.y0 + 1) as u8;
+    let unchanged = stamp.rows == rows
         && stamp.facing_left == facing_left
         && stamp
             .raster
@@ -128,19 +164,19 @@ pub fn stamp_player(
         });
         if !intact {
             for &(pos, local) in &raster.cells {
-                world.set_cell_raw(pos, flesh_cell(local, ducked, facing_left));
+                world.set_cell_raw(pos, flesh_cell(local, rows, facing_left));
             }
         }
         return Some(Vec::new());
     }
 
     let new = player_raster(fp);
-    let cell_for = |local: u16| flesh_cell(local, ducked, facing_left);
+    let cell_for = |local: u16| flesh_cell(local, rows, facing_left);
     let empty = Raster::default();
     let old = stamp.raster.as_ref().unwrap_or(&empty);
     let vacated = commit_stamp(world, registry, &[], old, &new, &cell_for)?;
     stamp.raster = Some(new);
-    stamp.ducked = ducked;
+    stamp.rows = rows;
     stamp.facing_left = facing_left;
     Some(vacated)
 }
@@ -149,16 +185,16 @@ pub fn force_stamp_player(
     world: &mut CellWorld,
     stamp: &mut PlayerStamp,
     fp: Footprint,
-    ducked: bool,
     facing_left: bool,
 ) {
     unstamp_player(world, stamp);
+    let rows = (fp.y1 - fp.y0 + 1) as u8;
     let new = player_raster(fp);
     for &(pos, local) in &new.cells {
-        world.set_cell_raw(pos, flesh_cell(local, ducked, facing_left));
+        world.set_cell_raw(pos, flesh_cell(local, rows, facing_left));
     }
     stamp.raster = Some(new);
-    stamp.ducked = ducked;
+    stamp.rows = rows;
     stamp.facing_left = facing_left;
 }
 

@@ -56,6 +56,10 @@ impl Actor {
     pub fn footprint(&self) -> Footprint {
         footprint_at(self.x, self.y, self.half_w, self.half_h)
     }
+
+    pub fn rows(&self) -> i32 {
+        self.half_h.mul_int(2).round_int().max(1)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -7,7 +7,7 @@ const DAMAGE_FLASH_SECS: f32 = 0.35;
 
 pub struct RemotePlayer {
     pub pos: Vec2,
-    pub ducking: bool,
+    pub height: u8,
     pub burning: bool,
 }
 
@@ -41,12 +41,12 @@ impl Players {
                 .entry(state.player)
                 .and_modify(|player| {
                     player.pos = pos;
-                    player.ducking = state.ducking;
+                    player.height = state.height;
                     player.burning = state.burning;
                 })
                 .or_insert(RemotePlayer {
                     pos,
-                    ducking: state.ducking,
+                    height: state.height,
                     burning: state.burning,
                 });
         }
