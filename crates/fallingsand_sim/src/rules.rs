@@ -1,8 +1,8 @@
 use crate::window::SimWindow;
 use fallingsand_core::content::{self, MatSpec, material};
 use fallingsand_core::{
-    Cell, CellPos, Dynamics, Ember, GRID_GRAVITY, GasDynamics, LiquidDynamics, MaterialId, Phase,
-    PowderDynamics, TICK_DT, VEL_ONE,
+    Cell, CellPos, Dynamics, Ember, EmberKind, GRID_GRAVITY, GasDynamics, LiquidDynamics,
+    MaterialId, Phase, PowderDynamics, TICK_DT, VEL_ONE,
 };
 use fallingsand_macros::per_tick_threshold;
 use fallingsand_rng::{Hash, Rng};
@@ -177,7 +177,7 @@ fn ember_step<M: MatSpec>(
     tick_byte: u8,
 ) -> bool {
     if let Some(water) = adjacent_water(window, pos) {
-        if ember.flame {
+        if ember.kind == EmberKind::Flame {
             set_product(window, pos, material::STEAM, rng, tick_byte);
         } else {
             burn_out::<M>(window, pos, ember, rng, tick_byte);
@@ -188,7 +188,7 @@ fn ember_step<M: MatSpec>(
     if rng.draw().below(ember.emit) {
         emit_into_air(window, pos, material::FIRE, rng, tick_byte);
     }
-    if ember.flame && sustained_by_fuel(window, pos) {
+    if ember.kind == EmberKind::Flame && sustained_by_fuel(window, pos) {
         if rng.draw().below(FLICKER_THRESHOLD) {
             let mut flicker = cell;
             flicker.set_shade(rng.draw().bits(4) as u8);

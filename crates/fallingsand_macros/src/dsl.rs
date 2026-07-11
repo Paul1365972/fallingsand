@@ -315,6 +315,29 @@ pub fn expr_phase(
     }
 }
 
+pub fn expr_block(
+    expr: &Expr,
+    file: &str,
+    context: &str,
+    marker: &str,
+) -> syn::Result<Vec<(Ident, Expr)>> {
+    let expected = || fail(format!("{file}: {context}: expected `{marker} {{ .. }}`"));
+    let Expr::Struct(block) = expr else {
+        return Err(expected());
+    };
+    if !block.path.is_ident(marker) || block.rest.is_some() || block.dot2_token.is_some() {
+        return Err(expected());
+    }
+    block
+        .fields
+        .iter()
+        .map(|field| match &field.member {
+            syn::Member::Named(ident) => Ok((ident.clone(), field.expr.clone())),
+            syn::Member::Unnamed(_) => Err(expected()),
+        })
+        .collect()
+}
+
 pub fn expr_tags(expr: &Expr, file: &str, context: &str) -> syn::Result<Vec<String>> {
     let Expr::Array(array) = expr else {
         return Err(fail(format!("{file}: {context}: expected a tag list [..]")));

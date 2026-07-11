@@ -1,7 +1,6 @@
 use crate::TICK_RATE;
 use std::f32::consts::TAU;
 
-const MOON_PHASES: u32 = 8;
 pub const DAY_UNITS: u64 = 86_400_000;
 const AGE_PER_SEC: u64 = 288_000;
 const AGE_PER_TICK: u64 = AGE_PER_SEC / TICK_RATE as u64;
@@ -81,7 +80,7 @@ impl Calendar {
         (self.day_fraction() + self.year_fraction()).fract()
     }
 
-    fn synodic_fraction(self) -> f32 {
+    pub fn synodic_fraction(self) -> f32 {
         ((self.age + SYNODIC_EPOCH) % SYNODIC_UNITS) as f32 / SYNODIC_UNITS as f32
     }
 
@@ -95,9 +94,5 @@ impl Calendar {
 
     pub fn elongation(self) -> f32 {
         self.synodic_fraction() * TAU
-    }
-
-    pub fn moon_phase(self) -> u32 {
-        ((self.synodic_fraction() * MOON_PHASES as f32).round() as u32) % MOON_PHASES
     }
 }

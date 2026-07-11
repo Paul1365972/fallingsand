@@ -7,10 +7,6 @@ pub struct WorldClock {
 }
 
 impl WorldClock {
-    pub fn moon_phase(&self) -> u32 {
-        self.calendar.moon_phase()
-    }
-
     pub(super) fn apply(&mut self, world_age: u64) {
         self.calendar.age = world_age;
         self.synced = true;

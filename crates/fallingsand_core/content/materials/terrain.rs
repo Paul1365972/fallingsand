@@ -34,12 +34,15 @@ GRASS = Material {
     ],
     hardness: 0.08,
     tags: [Dissolvable],
-    flammability: 3.0,
-    burn_rate: 5.0,
-    burn_emit: 18.0,
-    residue_into: ASH,
-    residue_chance: 0.3,
-    burn_damage: 7.0,
+    burn_variant: Burning {
+        ignite: 3.0,
+        rate: 5.0,
+        emit: 18.0,
+        residue: ASH,
+        residue_chance: 0.3,
+        burnout: SMOKE,
+        damage: 7.0,
+    },
 },
 GRAVEL = Material {
     phase: Powder {

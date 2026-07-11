@@ -38,17 +38,19 @@ OIL = Material {
         [66, 54, 30, 215],
         [84, 72, 44, 215],
     ],
-    flammability: 3.0,
-    burn_rate: 0.5,
-    burn_emit: 16.0,
-    burn_colors: [
-        [255, 168, 48, 255],
-        [255, 128, 28, 255],
-        [255, 200, 72, 255],
-        [232, 100, 18, 255],
-    ],
-    burnout_into: SMOKE,
-    burn_damage: 8.0,
+    burn_variant: Burning {
+        ignite: 3.0,
+        rate: 0.5,
+        emit: 16.0,
+        colors: [
+            [255, 168, 48, 255],
+            [255, 128, 28, 255],
+            [255, 200, 72, 255],
+            [232, 100, 18, 255],
+        ],
+        burnout: SMOKE,
+        damage: 8.0,
+    },
 },
 LAVA = Material {
     phase: Liquid {

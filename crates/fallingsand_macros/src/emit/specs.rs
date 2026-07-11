@@ -11,7 +11,7 @@ pub fn emit(content: &Content) -> TokenStream {
         let density_milli = Literal::i32_suffixed(mat.density_milli);
         let is_hot = mat.tags.contains(fallingsand_material::Tag::Hot);
         let open_flame = match &mat.ember {
-            Some(ember) => ember.flame,
+            Some(ember) => matches!(ember.kind, fallingsand_material::EmberKind::Flame),
             None => true,
         };
         let ember = match &mat.ember {
@@ -24,14 +24,21 @@ pub fn emit(content: &Content) -> TokenStream {
                     quote!((#threshold, #id))
                 }));
                 let burnout = material_id(ember.burnout);
-                let flame = ember.flame;
+                let kind = match ember.kind {
+                    fallingsand_material::EmberKind::Flame => {
+                        quote!(crate::material::EmberKind::Flame)
+                    }
+                    fallingsand_material::EmberKind::Fuel => {
+                        quote!(crate::material::EmberKind::Fuel)
+                    }
+                };
                 quote! {
                     Some(crate::material::Ember {
                         burn: #burn,
                         emit: #emit,
                         residue: #residue,
                         burnout: #burnout,
-                        flame: #flame,
+                        kind: #kind,
                     })
                 }
             }

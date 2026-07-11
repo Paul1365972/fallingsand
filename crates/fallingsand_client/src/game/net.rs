@@ -1,9 +1,9 @@
 use super::{ClientGame, Flow, InGame, IoFrame, Phase};
 use bevy::log::{error, info, warn};
+use fallingsand_core::{HOTBAR_SLOTS, MAX_BRUSH};
 use fallingsand_net::{Connection, ConnectionStatus};
 use fallingsand_protocol::{
-    ClientMessage, InputAction, PROTOCOL_VERSION, PlayerId, ServerMessage, Stats, decode_message,
-    encode_message,
+    ClientMessage, PROTOCOL_VERSION, PlayerId, ServerMessage, Stats, decode_message, encode_message,
 };
 
 const STALL_SECS: f32 = 2.0;
@@ -240,24 +240,12 @@ pub(super) fn update(game: &mut ClientGame, io: &IoFrame) {
     let Flow::InGame(ingame) = &mut game.flow else {
         return;
     };
-    drain(
-        ingame,
-        io,
-        &mut game.changes,
-        &mut game.input,
-        game.view_prefs.debug_borders,
-    );
+    drain(ingame, io, &mut game.changes, game.view_prefs.debug_borders);
     supervise(ingame, io.dt, &mut game.changes, &mut game.input);
     sync_debug_stream(ingame, game.view_prefs.debug_borders);
 }
 
-fn drain(
-    ingame: &mut InGame,
-    io: &IoFrame,
-    changes: &mut super::Changes,
-    input: &mut super::input::InputCore,
-    debug_borders: bool,
-) {
+fn drain(ingame: &mut InGame, io: &IoFrame, changes: &mut super::Changes, debug_borders: bool) {
     let Some(session) = ingame.net.session.as_mut() else {
         return;
     };
@@ -289,6 +277,8 @@ fn drain(
                 protocol_version,
                 player,
                 spawn,
+                selected,
+                brush,
             }) => {
                 if protocol_version != PROTOCOL_VERSION {
                     error!("server protocol {protocol_version} != {PROTOCOL_VERSION}");
@@ -296,8 +286,8 @@ fn drain(
                 } else {
                     session.player = Some(player);
                     info!("joined as {player:?}, spawn {spawn:?}");
-                    input.queue(InputAction::SelectSlot(ingame.inventory.selected as u8));
-                    input.queue(InputAction::SetBrush(ingame.inventory.brush));
+                    ingame.inventory.selected = (selected as usize).min(HOTBAR_SLOTS - 1);
+                    ingame.inventory.brush = brush.min(MAX_BRUSH);
                     ingame.debug.subscribed = false;
                 }
             }

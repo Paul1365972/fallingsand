@@ -4,7 +4,7 @@ use crate::persistence::{
 };
 use crate::{MAX_AIR_SECS, MAX_HP};
 use bevy_ecs::prelude::*;
-use fallingsand_core::{BRUSH_RADIUS, CellPos, Fixed, ItemRegistry};
+use fallingsand_core::{BRUSH_RADIUS, CellPos, Fixed, HOTBAR_SLOTS, ItemRegistry, MAX_BRUSH};
 use fallingsand_protocol::{GameMode, InputState, PlayerId, PlayerUuid};
 use fallingsand_sim::PlayerStamp;
 use fallingsand_sim::physics::{Actor, Controller};
@@ -100,8 +100,12 @@ pub fn spawn_player(
                 input: Default::default(),
                 jump_pressed: false,
                 flying: record.map(|r| r.flying).unwrap_or(false),
-                selected_slot: 0,
-                brush_radius: BRUSH_RADIUS,
+                selected_slot: record
+                    .map(|r| r.selected.min(HOTBAR_SLOTS as u8 - 1))
+                    .unwrap_or(0),
+                brush_radius: record
+                    .map(|r| r.brush.min(MAX_BRUSH))
+                    .unwrap_or(BRUSH_RADIUS),
                 last_input_tick: tick,
             },
             PlayerActor(Actor::new(
@@ -168,6 +172,8 @@ pub fn player_record(
         air: air.secs,
         burning: burning.secs,
         flying: player.flying,
+        selected: player.selected_slot,
+        brush: player.brush_radius,
         inventory: slots_to_record(item_reg, &inventory.inner),
         cursor: stack_to_record(item_reg, inventory.cursor),
         trash: stack_to_record(item_reg, inventory.trash),

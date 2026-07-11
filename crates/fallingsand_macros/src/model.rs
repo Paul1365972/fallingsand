@@ -1,7 +1,7 @@
 use crate::dsl::{self, Header, MaterialAst, OperandAst, Sources};
 use fallingsand_material::{
-    Dynamics, Ember, GasDynamics, Ignition, LiquidDynamics, MaterialId, Phase, PowderDynamics,
-    Reaction, Tag, Tags, milli, per_tick_chance, per_tick_keep, q16,
+    Dynamics, Ember, EmberKind, GasDynamics, Ignition, LiquidDynamics, MaterialId, Phase,
+    PowderDynamics, Reaction, Tag, Tags, milli, per_tick_chance, per_tick_keep, q16,
 };
 use fallingsand_rng::chance_threshold;
 use std::collections::HashMap;
@@ -47,6 +47,28 @@ impl RawPhase {
     }
 }
 
+#[derive(Clone, Default)]
+struct RawBurn {
+    ignite: f32,
+    smoulder: f32,
+    rate: f32,
+    emit: f32,
+    colors: Vec<[u8; 4]>,
+    residue: Option<String>,
+    residue_chance: f32,
+    burnout: Option<String>,
+    damage: f32,
+}
+
+#[derive(Clone, Default)]
+struct RawEmber {
+    rate: f32,
+    emit: f32,
+    residue: Option<String>,
+    residue_chance: f32,
+    burnout: Option<String>,
+}
+
 #[derive(Clone)]
 struct RawMaterial {
     name: String,
@@ -59,16 +81,8 @@ struct RawMaterial {
     surface_bounce: f32,
     contact_damage: f32,
     tags: Tags,
-    ember: bool,
-    flammability: f32,
-    burn_rate: f32,
-    burn_emit: f32,
-    burn_colors: Vec<[u8; 4]>,
-    smoulder: f32,
-    residue_into: Option<String>,
-    residue_chance: f32,
-    burnout_into: Option<String>,
-    burn_damage: f32,
+    burn: Option<RawBurn>,
+    ember: Option<RawEmber>,
 }
 
 impl RawMaterial {
@@ -84,16 +98,8 @@ impl RawMaterial {
             surface_bounce: 0.0,
             contact_damage: 0.0,
             tags: Tags::EMPTY,
-            ember: false,
-            flammability: 0.0,
-            burn_rate: 0.0,
-            burn_emit: 0.0,
-            burn_colors: Vec::new(),
-            smoulder: 0.0,
-            residue_into: None,
-            residue_chance: 0.0,
-            burnout_into: None,
-            burn_damage: 0.0,
+            burn: None,
+            ember: None,
         }
     }
 }
@@ -142,12 +148,12 @@ pub fn build(header: &Header, sources: &Sources) -> syn::Result<Content> {
     let hand_len = raws.len();
     let mut ignitions: Vec<Option<Ignition>> = vec![None; hand_len];
     for index in 0..hand_len {
-        if raws[index].ember || raws[index].flammability <= 0.0 {
+        let Some(burn) = raws[index].burn.clone() else {
             continue;
-        }
+        };
         let base = raws[index].clone();
-        let chance = per_tick_chance(base.flammability);
-        let smoulder = base.smoulder.clamp(0.0, 1.0);
+        let chance = per_tick_chance(burn.ignite);
+        let smoulder = burn.smoulder.clamp(0.0, 1.0);
         ignitions[index] = Some(Ignition {
             into: MaterialId(raws.len() as u16),
             open: chance_threshold(chance),
@@ -155,17 +161,21 @@ pub fn build(header: &Header, sources: &Sources) -> syn::Result<Content> {
         });
         raws.push(RawMaterial {
             name: format!("burning_{}", base.name),
-            colors: if base.burn_colors.is_empty() {
+            colors: if burn.colors.is_empty() {
                 header.ember_colors.clone()
             } else {
-                base.burn_colors.clone()
+                burn.colors.clone()
             },
-            contact_damage: base.burn_damage.max(base.contact_damage),
+            contact_damage: burn.damage.max(base.contact_damage),
             tags: base.tags.union(Tags::new(&[Tag::Hot, Tag::Emissive])),
-            ember: true,
-            flammability: 0.0,
-            smoulder: 0.0,
-            burn_colors: Vec::new(),
+            ember: Some(RawEmber {
+                rate: burn.rate,
+                emit: burn.emit,
+                residue: burn.residue.clone(),
+                residue_chance: burn.residue_chance,
+                burnout: burn.burnout.clone(),
+            }),
+            burn: None,
             ..base
         });
     }
@@ -229,23 +239,28 @@ pub fn build(header: &Header, sources: &Sources) -> syn::Result<Content> {
     for (index, raw) in raws.iter().enumerate() {
         let decay = decays[index];
 
-        let ember = if raw.ember {
-            let residue = match (&raw.residue_into, raw.residue_chance) {
-                (Some(_), chance) if chance > 0.0 => {
-                    let id = resolve(&raw.residue_into, &raw.name)?.unwrap_or(MaterialId::AIR);
-                    Some((chance_threshold(chance.clamp(0.0, 1.0)), id))
-                }
-                _ => None,
-            };
-            Some(Ember {
-                burn: chance_threshold(per_tick_chance(raw.burn_rate)),
-                emit: chance_threshold(per_tick_chance(raw.burn_emit)),
-                residue,
-                burnout: resolve(&raw.burnout_into, &raw.name)?.unwrap_or(MaterialId::AIR),
-                flame: index < hand_len,
-            })
-        } else {
-            None
+        let ember = match &raw.ember {
+            Some(raw_ember) => {
+                let residue = match (&raw_ember.residue, raw_ember.residue_chance) {
+                    (Some(_), chance) if chance > 0.0 => {
+                        let id = resolve(&raw_ember.residue, &raw.name)?.unwrap_or(MaterialId::AIR);
+                        Some((chance_threshold(chance.clamp(0.0, 1.0)), id))
+                    }
+                    _ => None,
+                };
+                Some(Ember {
+                    burn: chance_threshold(per_tick_chance(raw_ember.rate)),
+                    emit: chance_threshold(per_tick_chance(raw_ember.emit)),
+                    residue,
+                    burnout: resolve(&raw_ember.burnout, &raw.name)?.unwrap_or(MaterialId::AIR),
+                    kind: if index < hand_len {
+                        EmberKind::Flame
+                    } else {
+                        EmberKind::Fuel
+                    },
+                })
+            }
+            None => None,
         };
 
         let reactive = decay.is_some()
@@ -268,7 +283,7 @@ pub fn build(header: &Header, sources: &Sources) -> syn::Result<Content> {
                     rigid_capable: true
                 }
             ),
-            is_fuel_ember: raw.ember && index >= hand_len,
+            is_fuel_ember: raw.ember.is_some() && index >= hand_len,
             hardness: raw.hardness,
             restitution: raw.restitution,
             surface_grip: raw.surface_grip,
@@ -482,20 +497,18 @@ fn parse_material(file: &str, ast: &MaterialAst, done: &[RawMaterial]) -> syn::R
                 }
                 raw.tags = tags;
             }
-            "ember" => raw.ember = dsl::expr_bool(value, file, &context)?,
-            "flammability" => raw.flammability = dsl::expr_f32(value, file, &context)?,
-            "burn_rate" => raw.burn_rate = dsl::expr_f32(value, file, &context)?,
-            "burn_emit" => raw.burn_emit = dsl::expr_f32(value, file, &context)?,
-            "burn_colors" => raw.burn_colors = dsl::expr_colors(value, file, &context)?,
-            "smoulder" => raw.smoulder = dsl::expr_f32(value, file, &context)?,
-            "residue_into" => raw.residue_into = Some(dsl::expr_handle(value, file, &context)?),
-            "residue_chance" => raw.residue_chance = dsl::expr_f32(value, file, &context)?,
-            "burnout_into" => raw.burnout_into = Some(dsl::expr_handle(value, file, &context)?),
-            "burn_damage" => raw.burn_damage = dsl::expr_f32(value, file, &context)?,
+            "burn_variant" => raw.burn = Some(parse_burn_variant(file, &name, value)?),
+            "ember" => raw.ember = Some(parse_ember(file, &name, value)?),
             other @ ("drag" | "friction" | "repose" | "redirect_keep" | "cohesion"
             | "turbulence" | "flow_rate" | "rigid_capable") => {
                 return Err(dsl::fail(format!(
                     "{file}: material {name}: `{other}` belongs in the phase block"
+                )));
+            }
+            other @ ("flammability" | "burn_rate" | "burn_emit" | "burn_colors" | "smoulder"
+            | "residue_into" | "residue_chance" | "burnout_into" | "burn_damage") => {
+                return Err(dsl::fail(format!(
+                    "{file}: material {name}: `{other}` moved into the `burn_variant: Burning {{ .. }}` block"
                 )));
             }
             other @ ("decay_rate" | "decay_into") => {
@@ -510,30 +523,66 @@ fn parse_material(file: &str, ast: &MaterialAst, done: &[RawMaterial]) -> syn::R
             }
         }
     }
-    validate(file, &raw, ast)?;
+    validate(file, &raw)?;
     Ok(raw)
 }
 
-fn validate(file: &str, raw: &RawMaterial, ast: &MaterialAst) -> syn::Result<()> {
-    let name = &raw.name;
-    let fuel = raw.flammability > 0.0;
-    if raw.ember && fuel {
-        return Err(dsl::fail(format!(
-            "{file}: material {name}: an ember cannot be flammable (set `flammability: 0.0`)"
-        )));
-    }
-    for (field, _) in &ast.fields {
-        let complaint = match field.to_string().as_str() {
-            "smoulder" | "burn_colors" | "burn_damage" if !fuel => "needs flammability",
-            "burn_rate" | "burn_emit" | "residue_into" | "residue_chance" | "burnout_into"
-                if !(fuel || raw.ember) =>
-            {
-                "needs flammability or ember"
+fn parse_burn_variant(file: &str, name: &str, value: &Expr) -> syn::Result<RawBurn> {
+    let outer = format!("material {name}: field `burn_variant`");
+    let fields = dsl::expr_block(value, file, &outer, "Burning")?;
+    let mut burn = RawBurn::default();
+    for (field, value) in &fields {
+        let context = format!("material {name}: burn_variant field `{field}`");
+        match field.to_string().as_str() {
+            "ignite" => burn.ignite = dsl::expr_f32(value, file, &context)?,
+            "smoulder" => burn.smoulder = dsl::expr_f32(value, file, &context)?,
+            "rate" => burn.rate = dsl::expr_f32(value, file, &context)?,
+            "emit" => burn.emit = dsl::expr_f32(value, file, &context)?,
+            "colors" => burn.colors = dsl::expr_colors(value, file, &context)?,
+            "residue" => burn.residue = Some(dsl::expr_handle(value, file, &context)?),
+            "residue_chance" => burn.residue_chance = dsl::expr_f32(value, file, &context)?,
+            "burnout" => burn.burnout = Some(dsl::expr_handle(value, file, &context)?),
+            "damage" => burn.damage = dsl::expr_f32(value, file, &context)?,
+            other => {
+                return Err(dsl::fail(format!(
+                    "{file}: {outer}: unknown field `{other}`"
+                )));
             }
-            _ => continue,
-        };
+        }
+    }
+    if burn.ignite <= 0.0 {
+        return Err(dsl::fail(format!("{file}: {outer}: `ignite` must be > 0")));
+    }
+    Ok(burn)
+}
+
+fn parse_ember(file: &str, name: &str, value: &Expr) -> syn::Result<RawEmber> {
+    let outer = format!("material {name}: field `ember`");
+    let fields = dsl::expr_block(value, file, &outer, "Ember")?;
+    let mut ember = RawEmber::default();
+    for (field, value) in &fields {
+        let context = format!("material {name}: ember field `{field}`");
+        match field.to_string().as_str() {
+            "rate" => ember.rate = dsl::expr_f32(value, file, &context)?,
+            "emit" => ember.emit = dsl::expr_f32(value, file, &context)?,
+            "residue" => ember.residue = Some(dsl::expr_handle(value, file, &context)?),
+            "residue_chance" => ember.residue_chance = dsl::expr_f32(value, file, &context)?,
+            "burnout" => ember.burnout = Some(dsl::expr_handle(value, file, &context)?),
+            other => {
+                return Err(dsl::fail(format!(
+                    "{file}: {outer}: unknown field `{other}`"
+                )));
+            }
+        }
+    }
+    Ok(ember)
+}
+
+fn validate(file: &str, raw: &RawMaterial) -> syn::Result<()> {
+    let name = &raw.name;
+    if raw.ember.is_some() && raw.burn.is_some() {
         return Err(dsl::fail(format!(
-            "{file}: material {name}: `{field}` {complaint}"
+            "{file}: material {name}: an ember cannot author a burn_variant"
         )));
     }
     if !matches!(raw.phase, RawPhase::Empty | RawPhase::Solid { .. }) && raw.density <= 0.0 {

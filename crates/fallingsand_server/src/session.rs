@@ -120,7 +120,7 @@ fn take_over(
     name: &str,
     tick: u64,
     despawned: &mut Vec<Entity>,
-) -> Option<(Entity, CellPos)> {
+) -> Option<(Entity, CellPos, u8, u8)> {
     let Ok((mut existing, body, ..)) = players.get_mut(entity) else {
         despawned.push(entity);
         commands.entity(entity).despawn();
@@ -130,12 +130,12 @@ fn take_over(
     existing.name = name.to_string();
     existing.input = Default::default();
     existing.jump_pressed = false;
-    existing.selected_slot = 0;
-    existing.brush_radius = BRUSH_RADIUS;
     existing.last_input_tick = tick;
     Some((
         entity,
         CellPos::new(body.0.x.floor_cell(), body.0.y.floor_cell()),
+        existing.selected_slot,
+        existing.brush_radius,
     ))
 }
 
@@ -232,7 +232,7 @@ pub fn drain_network(
                             &mut despawned,
                         )
                     });
-                    let (entity, spawn) = match takeover {
+                    let (entity, spawn, selected, brush) = match takeover {
                         Some(takeover) => takeover,
                         None => {
                             let restored = store
@@ -245,6 +245,14 @@ pub fn drain_network(
                                 }
                                 None => spawn_point.0,
                             };
+                            let selected = restored
+                                .as_ref()
+                                .map(|r| r.selected.min(HOTBAR_SLOTS as u8 - 1))
+                                .unwrap_or(0);
+                            let brush = restored
+                                .as_ref()
+                                .map(|r| r.brush.min(MAX_BRUSH))
+                                .unwrap_or(BRUSH_RADIUS);
                             let entity = spawn_player(
                                 &mut commands,
                                 &item_reg.0,
@@ -255,7 +263,7 @@ pub fn drain_network(
                                 restored.as_ref(),
                                 spawn,
                             );
-                            (entity, spawn)
+                            (entity, spawn, selected, brush)
                         }
                     };
 
@@ -268,6 +276,8 @@ pub fn drain_network(
                         protocol_version: PROTOCOL_VERSION,
                         player,
                         spawn,
+                        selected,
+                        brush,
                     });
                     announce_join(session, &players, player, &name);
                     tracing::info!("{name} ({uuid}) joined as player {}", player.0);

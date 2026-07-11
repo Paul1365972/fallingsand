@@ -294,7 +294,7 @@ fn playing_lines(
         SEASON_DAYS,
         minute_of_day / 60,
         minute_of_day % 60,
-        moon_name(clock.moon_phase()),
+        moon_name(clock.calendar.synodic_fraction()),
         eclipse
     ));
 
@@ -493,17 +493,18 @@ fn compass(dx: f32, dy: f32) -> &'static str {
     DIRS[(((deg + 22.5) / 45.0) as usize) % 8]
 }
 
-fn moon_name(phase: u32) -> &'static str {
-    match phase {
-        0 => "new moon",
-        1 => "waxing crescent",
-        2 => "first quarter",
-        3 => "waxing gibbous",
-        4 => "full moon",
-        5 => "waning gibbous",
-        6 => "last quarter",
-        _ => "waning crescent",
-    }
+fn moon_name(synodic_fraction: f32) -> &'static str {
+    const NAMES: [&str; 8] = [
+        "new moon",
+        "waxing crescent",
+        "first quarter",
+        "waxing gibbous",
+        "full moon",
+        "waning gibbous",
+        "last quarter",
+        "waning crescent",
+    ];
+    NAMES[((synodic_fraction * NAMES.len() as f32).round() as usize) % NAMES.len()]
 }
 
 fn phase_label(phase: MaterialPhase) -> &'static str {

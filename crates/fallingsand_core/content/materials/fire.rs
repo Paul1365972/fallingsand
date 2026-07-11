@@ -10,9 +10,10 @@ FIRE = Material {
         [255, 200, 64, 255],
         [232, 88, 8, 255],
     ],
-    ember: true,
-    burn_rate: 6.3,
-    burnout_into: SMOKE,
+    ember: Ember {
+        rate: 6.3,
+        burnout: SMOKE,
+    },
     contact_damage: 8.0,
     tags: [Hot, Emissive],
 },

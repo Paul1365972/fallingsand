@@ -191,6 +191,8 @@ pub enum ServerMessage {
         protocol_version: u16,
         player: PlayerId,
         spawn: CellPos,
+        selected: u8,
+        brush: u8,
     },
     Reject {
         reason: String,

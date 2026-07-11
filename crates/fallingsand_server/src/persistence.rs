@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 pub const REGION_FORMAT_VERSION: u8 = 11;
-pub const WORLD_FORMAT_VERSION: u16 = 16;
+pub const WORLD_FORMAT_VERSION: u16 = 17;
 const CELL_BYTES: usize = 8;
 const RECT_BYTES: usize = 4;
 const REGION_CELL_BYTES: usize = REGION_AREA_CHUNKS * CHUNK_AREA * CELL_BYTES;
@@ -38,6 +38,8 @@ pub struct PlayerRecord {
     pub air: f32,
     pub burning: f32,
     pub flying: bool,
+    pub selected: u8,
+    pub brush: u8,
     pub inventory: Vec<SlotRecord>,
     pub cursor: SlotRecord,
     pub trash: SlotRecord,

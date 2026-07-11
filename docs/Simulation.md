@@ -35,10 +35,10 @@ Constants are seconds-based, converted per-tick from `TICK_DT`, so behaviour is 
 
 ## Combustion
 
-Burning is an **ember material**: each flammable fuel authors one *burn profile* and gets a synthesized `burning_*` twin (same phase and dynamics, its own palette, `hot`+`emissive`) — nothing hand-mirrored, no per-cell state beyond the id. Three local stages:
+Burning is an **ember material**: each flammable fuel authors one `burn_variant: Burning { … }` block and gets a synthesized `burning_*` twin (same phase and dynamics, its own palette, `hot`+`emissive`) — nothing hand-mirrored, no per-cell state beyond the id. Three local stages:
 
-- **Ignite**: any `hot` cell transmutes adjacent flammables into their embers at `flammability`, keeping velocity and shade (igniting oil keeps flowing); ember spread into a sealed neighbour (no adjacent oxygen) scales by `smoulder` — 0 is surface-only (oil), higher burns through a sealed lump (coal) — while open flames (lava, `fire`) ignite sealed fuel at the full rate.
-- **Burn**: an ember damages entities, emits `fire` into adjacent air at `burn_emit`, and burns out at `burn_rate` — that rate *is* the burn duration; `residue_chance` leaves ash, otherwise burnout resolves to `burnout_into` (smoke) so the front self-exposes to oxygen.
+- **Ignite**: any `hot` cell transmutes adjacent flammables into their embers at their `ignite` rate, keeping velocity and shade (igniting oil keeps flowing); ember spread into a sealed neighbour (no adjacent oxygen) scales by `smoulder` — 0 is surface-only (oil), higher burns through a sealed lump (coal) — while open flames (lava, `fire`) ignite sealed fuel at the full rate.
+- **Burn**: an ember damages entities, emits `fire` into adjacent air at `emit`, and burns out at `rate` — that rate *is* the burn duration; `residue`/`residue_chance` leave ash, otherwise burnout resolves to `burnout` (smoke) so the front self-exposes to oxygen.
 - **Flame**: `fire` is a hand-authored ember with no base fuel — a `hot` gas persisting beside fuel, burning out into `smoke`. One pipeline covers fuel and flame; there is no fire phase.
 
 A `water` neighbour quenches: a flame just dies to steam, keeping the water; a fuel ember resolves to its residue (charring is never restored) and the water flashes to steam — dousing *spends* the water, so a puddle can only smother so much. Fuels sleep until lit, so an unlit forest costs nothing.
