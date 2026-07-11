@@ -128,6 +128,7 @@ fn ignite_neighbors(
     tick_byte: u8,
     open_flame: bool,
 ) {
+    let mut pending = false;
     for (dx, dy) in NEIGHBORS {
         let neighbor_pos = pos.translated(dx, dy);
         let Some(neighbor) = window.get(neighbor_pos) else {
@@ -144,12 +145,20 @@ fn ignite_neighbors(
         {
             chance *= ignition.smoulder;
         }
-        if chance > 0.0 && rng.draw().chance(chance) {
+        if chance <= 0.0 {
+            continue;
+        }
+        pending = true;
+        if rng.draw().chance(chance) {
             let mut lit = neighbor;
             lit.material = ignition.into;
+            lit.set_body(false);
             lit.updated = tick_byte;
             window.set(neighbor_pos, lit);
         }
+    }
+    if pending {
+        window.mark(pos);
     }
 }
 
