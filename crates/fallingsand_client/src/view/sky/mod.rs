@@ -32,7 +32,6 @@ const DEFAULT_CLEAR: Color = Color::srgb(0.08, 0.09, 0.13);
 #[derive(Resource, Default, Clone, Copy)]
 pub struct Sky {
     pub state: CelestialState,
-    pub star_visibility: f32,
     pub synced: bool,
 }
 
@@ -176,7 +175,6 @@ pub fn sky_color(light: f32, sun_alt: f32, solar_occ: f32) -> Vec3 {
 #[allow(clippy::type_complexity)]
 pub fn sync_sky(
     game: Res<Game>,
-    real: Res<Time>,
     state: Res<CameraState>,
     assets: Res<SkyAssets>,
     mut sky: ResMut<Sky>,
@@ -194,13 +192,13 @@ pub fn sync_sky(
 ) {
     let clock = game.0.ingame().map(|ingame| ingame.clock);
     let synced = clock.is_some_and(|clock| clock.synced);
+    let calendar = clock.map(|clock| clock.calendar).unwrap_or_default();
     sky.synced = synced;
 
     let radius = ORBIT_RADIUS;
     let center = Vec2::new(0.0, -HORIZON_FRAC * radius);
 
     if synced {
-        let calendar = clock.unwrap().calendar;
         let celestial = calendar.celestial();
 
         let sun_position = Vec2::from(celestial.sun_position) * radius;
@@ -215,7 +213,6 @@ pub fn sync_sky(
         let umbra_radius = SHADE_DISC_RADIUS * radius * world_to_moon_uv;
 
         sky.state = celestial;
-        sky.star_visibility = celestial.star_visibility;
 
         if let Ok((mut transform, mut visibility)) = quads.p0().single_mut() {
             transform.translation = (sun_position + center).round().extend(-50.0);
@@ -262,7 +259,7 @@ pub fn sync_sky(
 
     let native = state.native.as_vec2();
     let horizon_uv = 0.5 + HORIZON_FRAC * ORBIT_RADIUS / native.y;
-    let stars_on = synced && sky.star_visibility > 0.001;
+    let stars_on = synced && sky.state.star_visibility > 0.001;
     for (mut transform, mut visibility) in &mut quads.p2() {
         transform.scale = Vec3::new(native.x, native.y, 1.0);
         *visibility = if stars_on {
@@ -282,11 +279,11 @@ pub fn sync_sky(
     if let Some(mut material) = star_mats.get_mut(&assets.starfield) {
         material.params.center = center;
         material.params.native_size = native;
-        material.params.scroll = star_scroll(real.elapsed_secs()).floor();
+        material.params.scroll = star_scroll(calendar).floor();
         material.params.world_scale = STAR_WORLD_TILE;
-        material.params.star_visibility = sky.star_visibility;
+        material.params.star_visibility = sky.state.star_visibility;
         material.params.horizon = horizon_uv;
-        material.params.time = real.elapsed_secs();
+        material.params.sidereal = calendar.sidereal();
     }
     if let Some(mut material) = horizon_mats.get_mut(&assets.horizon) {
         let day_haze = Vec3::new(0.72, 0.82, 0.96);

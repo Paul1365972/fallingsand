@@ -55,7 +55,6 @@ pub struct CelestialState {
     pub daylight: f32,
     pub light: f32,
     pub star_visibility: f32,
-    pub sidereal: f32,
 }
 
 impl CelestialState {
@@ -119,8 +118,6 @@ impl Calendar {
             * (1.0 - MOON_STAR_WASH * moonlight))
             .max(1.0 - smoothstep(STARS_LIGHT_FULL, STARS_LIGHT_BEGIN, light));
 
-        let sidereal = (self.day_fraction() + self.year_fraction()).fract();
-
         CelestialState {
             sun_position,
             moon_position,
@@ -134,7 +131,6 @@ impl Calendar {
             daylight,
             light,
             star_visibility,
-            sidereal,
         }
     }
 }

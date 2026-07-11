@@ -196,12 +196,14 @@ const frac = (age, units, epoch) => Number((age + epoch) % units) / Number(units
 
 function calendar(age) {
   const dayFrac = Number(age % DAY) / Number(DAY);
+  const yearFrac = Number(age % YEAR) / Number(YEAR);
   return {
     day: Number(age / DAY),
     dayOfYear: Number((age % YEAR) / DAY),
     minuteOfDay: Number((age % DAY) / 60000n),
     dayFrac,
-    yearFrac: Number(age % YEAR) / Number(YEAR),
+    yearFrac,
+    sidereal: (dayFrac + yearFrac) % 1,
     synodic: frac(age, SYNODIC, SYNODIC_EPOCH),
     eccentre: frac(age, ECCENTRE, ECCENTRE_EPOCH),
     anomalistic: frac(age, ANOMALISTIC, ANOMALISTIC_EPOCH),
@@ -262,10 +264,9 @@ function celestial(age) {
   const starVis = Math.max(
     (1 - smoothstep(STARS_FULL, STARS_BEGIN, sunPos[1])) * (1 - MOON_STAR_WASH * moonlight),
     1 - smoothstep(0.08, 0.30, light));
-  const sidereal = (c.dayFrac + c.yearFrac) % 1;
 
   return { cal: c, sunPos, moonPos, shadePos, sunAlt, moonAlt, sunDir, illum, occ, shadow,
-           moonScale, moonR, daylight, moonlight, light, starVis, sidereal, sep: toSunLen };
+           moonScale, moonR, daylight, moonlight, light, starVis, sep: toSunLen };
 }
 
 function skyColor(light, sunAlt, occ) {
@@ -323,7 +324,7 @@ const STARS = [];
 for (let i = 0; i < 900; i++) {
   STARS.push({
     x: hash(i, 1), y: hash(i, 2), mag: hash(i, 3),
-    rate: 1 + 2.5 * hash(i, 4), phase: hash(i, 5) * TAU,
+    cycles: Math.round(48 + 119 * hash(i, 4)), phase: hash(i, 5) * TAU,
     hue: hash(i, 6),
   });
 }
@@ -404,14 +405,13 @@ function drawSky() {
   sctx.fillRect(0, 0, W, horizonY + 1);
 
   const scrollW = R * 512 / 133;
-  const time = performance.now() / 1000;
   for (const st of STARS) {
-    const sx = ((st.x * scrollW - s.sidereal * scrollW) % scrollW + scrollW) % scrollW;
+    const sx = ((st.x * scrollW - s.cal.sidereal * scrollW) % scrollW + scrollW) % scrollW;
     if (sx > W) continue;
     const sy = st.y * horizonY;
     const vis = clamp((s.starVis - st.mag * 0.85) / 0.12, 0, 1);
     if (vis <= 0) continue;
-    const flick = 1 - 0.55 * Math.pow(0.5 + 0.5 * Math.sin(time * st.rate + st.phase), 2);
+    const flick = 1 - 0.55 * Math.pow(0.5 + 0.5 * Math.sin(s.cal.sidereal * st.cycles * TAU + st.phase), 2);
     const above = 1 - smoothstep(horizonY - 26 * dpr, horizonY, sy);
     const alpha = vis * flick * above;
     if (alpha <= 0.01) continue;

@@ -76,6 +76,10 @@ impl Calendar {
         (self.age % YEAR_UNITS) as f32 / YEAR_UNITS as f32
     }
 
+    pub fn sidereal(self) -> f32 {
+        (self.day_fraction() + self.year_fraction()).fract()
+    }
+
     fn synodic_fraction(self) -> f32 {
         ((self.age + SYNODIC_EPOCH) % SYNODIC_UNITS) as f32 / SYNODIC_UNITS as f32
     }

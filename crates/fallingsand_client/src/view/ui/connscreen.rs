@@ -88,7 +88,7 @@ pub fn sync_connscreen(
             ConnPhase::Reconnecting { attempt } => (
                 "connecting".to_string(),
                 Color::srgb(0.9, 0.8, 0.5),
-                format!("{server} — attempt {attempt}"),
+                format!("{server} - attempt {attempt}"),
                 true,
                 1.0,
                 Some("Cancel"),
@@ -119,7 +119,7 @@ pub fn sync_connscreen(
             ConnPhase::Reconnecting { attempt } => (
                 "reconnecting".to_string(),
                 Color::srgb(0.95, 0.6, 0.3),
-                format!("{server} — attempt {attempt}"),
+                format!("{server} - attempt {attempt}"),
                 true,
                 0.85,
                 None,
@@ -135,7 +135,7 @@ pub fn sync_connscreen(
             ConnPhase::Lost { reason } => (
                 "connection lost".to_string(),
                 Color::srgb(0.9, 0.3, 0.3),
-                format!("{reason} — press Esc for menu"),
+                format!("{reason} - press Esc for menu"),
                 false,
                 0.85,
                 Some("Back to Menu"),
@@ -162,7 +162,7 @@ pub fn sync_connscreen(
         } else {
             0
         };
-        set_text(&mut text, "● ".repeat(count).trim_end().to_string());
+        set_text(&mut text, ". ".repeat(count).trim_end().to_string());
     }
     if let Ok(entity) = detail.single()
         && let Ok((mut text, _)) = texts.get_mut(entity)

@@ -119,7 +119,7 @@ pub struct StarfieldParams {
     pub world_scale: f32,
     pub star_visibility: f32,
     pub horizon: f32,
-    pub time: f32,
+    pub sidereal: f32,
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]

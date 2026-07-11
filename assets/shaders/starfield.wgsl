@@ -8,12 +8,16 @@ struct StarfieldParams {
     world_scale: f32,
     star_visibility: f32,
     horizon: f32,
-    time: f32,
+    sidereal: f32,
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: StarfieldParams;
 @group(#{MATERIAL_BIND_GROUP}) @binding(1) var tex: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(2) var tex_sampler: sampler;
+
+const TAU: f32 = 6.2831853;
+const FLICKER_CYCLES_MIN: f32 = 48.0;
+const FLICKER_CYCLES_SPAN: f32 = 119.0;
 
 fn hash(p: vec2<f32>) -> f32 {
     return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453);
@@ -28,9 +32,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let sample = textureSample(tex, tex_sampler, uv);
 
     let gcell = floor(fract(uv) * 512.0);
-    let phase = hash(gcell) * 6.2831853;
-    let rate = 1.0 + 2.5 * hash(gcell + vec2<f32>(19.3, 7.1));
-    let flicker = 1.0 - 0.55 * pow(0.5 + 0.5 * sin(params.time * rate + phase), 2.0);
+    let phase = hash(gcell) * TAU;
+    let cycles = round(FLICKER_CYCLES_MIN + FLICKER_CYCLES_SPAN * hash(gcell + vec2<f32>(19.3, 7.1)));
+    let flicker = 1.0 - 0.55 * pow(0.5 + 0.5 * sin(params.sidereal * cycles * TAU + phase), 2.0);
 
     let magnitude = hash(gcell + vec2<f32>(41.7, 289.3));
     let vis = smoothstep(0.0, 0.12, params.star_visibility - magnitude * 0.85);

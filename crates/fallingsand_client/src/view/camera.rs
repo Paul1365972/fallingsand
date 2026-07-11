@@ -16,6 +16,7 @@ use bevy::render::render_resource::{
 use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
 use bevy::ui::IsDefaultUiCamera;
+use fallingsand_core::Calendar;
 
 pub const VIRTUAL_WIDTH: f32 = 424.0;
 
@@ -38,10 +39,12 @@ pub const NEAR_RATIO: Vec2 = Vec2::new(0.72, 0.80);
 pub const WALL_RATIO: Vec2 = Vec2::splat(0.15);
 
 pub const STAR_WORLD_TILE: f32 = 512.0;
-const STAR_DRIFT: f32 = -0.35;
 
-pub fn star_scroll(elapsed: f32) -> Vec2 {
-    Vec2::new((elapsed * STAR_DRIFT).rem_euclid(STAR_WORLD_TILE), 0.0)
+pub fn star_scroll(calendar: Calendar) -> Vec2 {
+    Vec2::new(
+        (-calendar.sidereal() * STAR_WORLD_TILE).rem_euclid(STAR_WORLD_TILE),
+        0.0,
+    )
 }
 
 pub struct LayerDef {
@@ -389,11 +392,16 @@ pub fn sync_camera(
     world_camera.translation.x = snapped.x as f32;
     world_camera.translation.y = snapped.y as f32;
 
+    let calendar = game
+        .0
+        .ingame()
+        .map(|ingame| ingame.clock.calendar)
+        .unwrap_or_default();
     let size = (state.native * state.k).as_vec2();
     for (quad, mut transform) in &mut quads {
         let (_, remainder_px) = state.layer(quad.ratio);
         let drift_px = if quad.drift {
-            let scroll = star_scroll(time.elapsed_secs());
+            let scroll = star_scroll(calendar);
             (scroll - scroll.floor()) * state.k as f32
         } else {
             Vec2::ZERO
