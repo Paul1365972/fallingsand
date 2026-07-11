@@ -5,6 +5,5 @@
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-    let sample = textureSample(tex, tex_sampler, in.uv);
-    return vec4<f32>(sample.rgb / max(sample.a, 1e-4), sample.a);
+    return textureSample(tex, tex_sampler, in.uv);
 }

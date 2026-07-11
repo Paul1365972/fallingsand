@@ -6,13 +6,15 @@ use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{Hdr, RenderTarget, ScalingMode};
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::image::Image;
+use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::post_process::bloom::{Bloom, BloomPrefilter};
 use bevy::prelude::*;
 use bevy::render::render_resource::{
-    AsBindGroup, Extent3d, TextureDimension, TextureFormat, TextureUsages,
+    AsBindGroup, BlendState, Extent3d, RenderPipelineDescriptor, SpecializedMeshPipelineError,
+    TextureDimension, TextureFormat, TextureUsages,
 };
 use bevy::shader::ShaderRef;
-use bevy::sprite_render::{AlphaMode2d, Material2d};
+use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
 use bevy::ui::IsDefaultUiCamera;
 
 pub const VIRTUAL_WIDTH: f32 = 424.0;
@@ -141,6 +143,23 @@ impl Material2d for UpscaleMaterial {
 
     fn alpha_mode(&self) -> AlphaMode2d {
         AlphaMode2d::Blend
+    }
+
+    fn specialize(
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        _key: Material2dKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        premultiplied_composite(descriptor);
+        Ok(())
+    }
+}
+
+pub fn premultiplied_composite(descriptor: &mut RenderPipelineDescriptor) {
+    if let Some(fragment) = &mut descriptor.fragment {
+        for target in fragment.targets.iter_mut().flatten() {
+            target.blend = Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING);
+        }
     }
 }
 

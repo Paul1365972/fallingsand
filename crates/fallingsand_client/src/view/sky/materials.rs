@@ -1,8 +1,12 @@
 use super::lighting::MAX_LIGHTS;
+use crate::view::camera::premultiplied_composite;
+use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::prelude::*;
-use bevy::render::render_resource::{AsBindGroup, ShaderType};
+use bevy::render::render_resource::{
+    AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
+};
 use bevy::shader::ShaderRef;
-use bevy::sprite_render::{AlphaMode2d, Material2d};
+use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
 
 #[derive(ShaderType, Debug, Clone)]
 pub struct LightingParams {
@@ -41,6 +45,15 @@ impl Material2d for LightingMaterial {
 
     fn alpha_mode(&self) -> AlphaMode2d {
         AlphaMode2d::Blend
+    }
+
+    fn specialize(
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        _key: Material2dKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        premultiplied_composite(descriptor);
+        Ok(())
     }
 }
 

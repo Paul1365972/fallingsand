@@ -13,6 +13,6 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let g = glow(layer_cell(t, light_params.snapped_cam, native));
     let factor = clamp(light_params.darkness * (1.0 - g), 0.0, 1.0);
     let dark = vec3<f32>(0.01, 0.012, 0.03);
-    let rgb = mix(world.rgb, dark, factor);
+    let rgb = mix(world.rgb, dark * world.a, factor);
     return vec4<f32>(rgb, world.a);
 }
