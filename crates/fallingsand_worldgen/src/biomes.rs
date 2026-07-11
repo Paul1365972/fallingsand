@@ -1,5 +1,5 @@
 ﻿use fallingsand_core::MaterialId;
-use fallingsand_data::material;
+use fallingsand_core::content::material;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Beach {

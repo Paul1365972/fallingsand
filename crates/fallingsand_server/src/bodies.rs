@@ -1,6 +1,6 @@
 use crate::player::{PLAYER_MASS, PlayerActor};
 use crate::regions::ChunkTickets;
-use crate::{PlayerImpulses, Registry, SimWorld, TickStats};
+use crate::{PlayerImpulses, SimWorld, TickStats};
 use bevy_ecs::prelude::*;
 use fallingsand_core::{CellPos, Fixed, TICK_DT};
 use fallingsand_sim::bodies::{
@@ -26,7 +26,6 @@ impl PixelBodies {
 
 pub fn step_bodies(
     mut sim: ResMut<SimWorld>,
-    registry: Res<Registry>,
     tickets: Res<ChunkTickets>,
     mut bodies: ResMut<PixelBodies>,
     mut impulses: ResMut<PlayerImpulses>,
@@ -38,7 +37,7 @@ pub fn step_bodies(
     let damage = sim.0.take_damage();
     if !damage.is_empty() {
         let next_id = &mut bodies.next_id;
-        apply_damage(&mut sim.0, &registry.0, &mut bodies.bodies, damage, || {
+        apply_damage(&mut sim.0, &mut bodies.bodies, damage, || {
             let id = *next_id;
             *next_id += 1;
             id
@@ -54,7 +53,7 @@ pub fn step_bodies(
             wake_covering(&mut bodies.bodies, seed);
             continue;
         }
-        let Some(island) = detect_island(&sim.0, &registry.0, seed) else {
+        let Some(island) = detect_island(&sim.0, seed) else {
             continue;
         };
         if !island_simulated(&sim.0, &tickets, &island) {
@@ -62,7 +61,7 @@ pub fn step_bodies(
         }
         let id = bodies.next_id;
         bodies.next_id += 1;
-        let body = register_body(&mut sim.0, &registry.0, id, &island);
+        let body = register_body(&mut sim.0, id, &island);
         bodies.bodies.push(body);
     }
 
@@ -88,7 +87,6 @@ pub fn step_bodies(
 
     let entity_impulses = simulate_bodies(
         &mut sim.0,
-        &registry.0,
         &mut bodies.bodies,
         &entities,
         BODY_GRAVITY,

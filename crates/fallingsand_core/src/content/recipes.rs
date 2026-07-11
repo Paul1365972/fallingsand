@@ -1,6 +1,8 @@
-use crate::items::item;
-use crate::material;
-use fallingsand_core::{ItemId, ItemRegistry, MaterialId};
+use crate::content::items::item;
+use crate::content::macros::recipes;
+use crate::content::material;
+use crate::item::{ItemId, ItemRegistry};
+use crate::material::MaterialId;
 
 pub(crate) enum Ingredient {
     Material(MaterialId),

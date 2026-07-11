@@ -73,6 +73,11 @@ impl Hash {
     }
 
     #[inline]
+    pub const fn below(self, threshold: u64) -> bool {
+        self.0 < threshold
+    }
+
+    #[inline]
     pub fn chance(self, chance: f32) -> bool {
         if chance.is_nan() || chance <= 0.0 {
             return false;

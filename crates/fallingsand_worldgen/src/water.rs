@@ -1,7 +1,7 @@
 use crate::biomes::{AQUIFER_MIN_DEPTH, AQUIFER_THRESHOLD, Band, Biome, SHALLOW_AQUIFER_FLOOR};
 use crate::noise::{Field, noise_seed};
 use fallingsand_core::MaterialId;
-use fallingsand_data::material;
+use fallingsand_core::content::material;
 use fastnoise_lite::{FastNoiseLite, FractalType, NoiseType};
 
 pub struct Waters {

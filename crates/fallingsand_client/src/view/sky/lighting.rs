@@ -56,7 +56,6 @@ pub fn scan_emissive(
         return;
     }
     let view = view.unwrap();
-    let registry = &game.0.registries.materials;
 
     let mut lights: Vec<Vec4> = Vec::new();
     let center = state.pos;
@@ -71,7 +70,8 @@ pub fn scan_emissive(
         while x as f32 <= center.x + half.x {
             let pos = CellPos::new(x, y);
             if let Some(cell) = view.get_cell(pos)
-                && registry.has_tag(cell.material, fallingsand_core::Tag::Emissive)
+                && fallingsand_core::content::tags(cell.material)
+                    .contains(fallingsand_core::Tag::Emissive)
             {
                 let point = Vec2::new(x as f32, y as f32);
                 let mut merged = false;

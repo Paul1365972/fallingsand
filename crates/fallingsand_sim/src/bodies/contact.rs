@@ -1,6 +1,7 @@
 use super::{ActorDynamics, PixelBody, quantized_trig};
 use crate::world::CellWorld;
-use fallingsand_core::{CellPos, MaterialRegistry, Phase};
+use fallingsand_core::content;
+use fallingsand_core::{CellPos, Phase};
 use rustc_hash::FxHashSet;
 
 pub(super) enum Other {
@@ -42,7 +43,6 @@ pub(super) struct Contact {
 
 fn obstructed(
     world: &CellWorld,
-    registry: &MaterialRegistry,
     entities: &[ActorDynamics],
     own: &FxHashSet<CellPos>,
     pos: CellPos,
@@ -51,10 +51,7 @@ fn obstructed(
         return false;
     }
     let solid = match world.get_cell(pos) {
-        Some(cell) => matches!(
-            registry.get(cell.material).phase,
-            Phase::Solid | Phase::Powder
-        ),
+        Some(cell) => matches!(content::phase(cell.material), Phase::Solid | Phase::Powder),
         None => true,
     };
     solid || entities.iter().any(|entity| entity.bbox.contains_cell(pos))
@@ -62,7 +59,6 @@ fn obstructed(
 
 pub(super) fn find_contacts(
     world: &CellWorld,
-    registry: &MaterialRegistry,
     entities: &[ActorDynamics],
     bodies: &[PixelBody],
     index: usize,
@@ -122,20 +118,15 @@ pub(super) fn find_contacts(
                                 }
                             }
                             None => {
-                                surface = registry.get(cell.material).restitution;
+                                surface = content::material(cell.material).restitution;
                                 Other::Terrain
                             }
                         }
                     }
                 }
             }
-            Some(cell)
-                if matches!(
-                    registry.get(cell.material).phase,
-                    Phase::Solid | Phase::Powder
-                ) =>
-            {
-                surface = registry.get(cell.material).restitution;
+            Some(cell) if matches!(content::phase(cell.material), Phase::Solid | Phase::Powder) => {
+                surface = content::material(cell.material).restitution;
                 Other::Terrain
             }
             Some(_) => {
@@ -167,13 +158,7 @@ pub(super) fn find_contacts(
                 if (dx, dy) == (0, 0) {
                     continue;
                 }
-                if !obstructed(
-                    world,
-                    registry,
-                    entities,
-                    &body.raster.set,
-                    pos.translated(dx, dy),
-                ) {
+                if !obstructed(world, entities, &body.raster.set, pos.translated(dx, dy)) {
                     nx += dx as f32;
                     ny += dy as f32;
                 }

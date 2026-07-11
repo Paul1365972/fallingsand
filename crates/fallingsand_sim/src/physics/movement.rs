@@ -2,7 +2,8 @@ use super::{
     Actor, BOUNCE_MIN_SPEED, CellSource, OwnCells, footprint_at, own_covers, rect_blocked,
     supported_at,
 };
-use fallingsand_core::{CellPos, Fixed, MaterialRegistry, Phase};
+use fallingsand_core::content;
+use fallingsand_core::{CellPos, Fixed, Phase};
 
 const LAUNCH_MIN_SPEED: Fixed = Fixed::vel_per_sec(80.0);
 const LEDGE_LAUNCH_K: Fixed = Fixed::from_f32(0.35);
@@ -75,11 +76,11 @@ fn resolve_axis(v: Fixed, e: f32) -> Fixed {
     }
 }
 
-fn solids_bounce<W: CellSource>(world: &W, registry: &MaterialRegistry, solids: &[CellPos]) -> f32 {
+fn solids_bounce<W: CellSource>(world: &W, solids: &[CellPos]) -> f32 {
     let mut e = 0.0f32;
     for &pos in solids {
         if let Some(cell) = world.cell_at(pos) {
-            e = e.max(registry.get(cell.material).surface_bounce);
+            e = e.max(content::material(cell.material).surface_bounce);
         }
     }
     e
@@ -87,7 +88,6 @@ fn solids_bounce<W: CellSource>(world: &W, registry: &MaterialRegistry, solids: 
 
 fn passage<W: CellSource>(
     world: &W,
-    registry: &MaterialRegistry,
     body: &Actor,
     cx: Fixed,
     cy: Fixed,
@@ -109,10 +109,7 @@ fn passage<W: CellSource>(
             if cur.contains(pos) || own_covers(own, pos) {
                 continue;
             }
-            if matches!(
-                registry.get(cell.material).phase,
-                Phase::Solid | Phase::Powder
-            ) {
+            if matches!(content::phase(cell.material), Phase::Solid | Phase::Powder) {
                 blockage.solid = true;
                 blockage.solids.push(pos);
             }
@@ -123,7 +120,6 @@ fn passage<W: CellSource>(
 
 fn try_step_up<W: CellSource>(
     world: &W,
-    registry: &MaterialRegistry,
     body: &mut Actor,
     blockage: &Blockage,
     own: OwnCells,
@@ -137,7 +133,7 @@ fn try_step_up<W: CellSource>(
     if rise_needed <= Fixed::ZERO || rise_needed > Fixed::from_int(STEP_UP_CELLS) {
         return false;
     }
-    if rect_blocked(world, registry, body, body.x, body.y + rise_needed, own) {
+    if rect_blocked(world, body, body.x, body.y + rise_needed, own) {
         return false;
     }
     body.y += rise_needed;
@@ -150,7 +146,6 @@ fn try_step_up<W: CellSource>(
 
 fn corner_correct<W: CellSource>(
     world: &W,
-    registry: &MaterialRegistry,
     body: &Actor,
     next_y: Fixed,
     own: OwnCells,
@@ -165,7 +160,7 @@ fn corner_correct<W: CellSource>(
     for side in sides {
         for off in 1..=UPWARD_CORNER_CORRECTION {
             let cand_x = body.x + Fixed::from_int(side * off);
-            if passage(world, registry, body, cand_x, next_y, own).free() {
+            if passage(world, body, cand_x, next_y, own).free() {
                 return Some(cand_x);
             }
         }
@@ -175,7 +170,6 @@ fn corner_correct<W: CellSource>(
 
 pub fn move_body<W: CellSource>(
     world: &W,
-    registry: &MaterialRegistry,
     body: &mut Actor,
     submersion: f32,
     own: OwnCells,
@@ -224,32 +218,32 @@ pub fn move_body<W: CellSource>(
                 next_x <= target
             };
             if overshoots {
-                let blockage = passage(world, registry, body, target, body.y, own);
+                let blockage = passage(world, body, target, body.y, own);
                 if blockage.free() {
                     body.x = target;
                     break;
                 }
-                if try_step_up(world, registry, body, &blockage, own) {
+                if try_step_up(world, body, &blockage, own) {
                     climbed = true;
                     continue;
                 }
-                let e = solids_bounce(world, registry, &blockage.solids);
+                let e = solids_bounce(world, &blockage.solids);
                 let after = resolve_axis(body.vx, e);
                 result.record_blocked(&blockage.solids, (body.vx - after).vel_f32(), 0.0);
                 body.vx = after;
                 break;
             }
-            let blockage = passage(world, registry, body, next_x, body.y, own);
+            let blockage = passage(world, body, next_x, body.y, own);
             if blockage.free() {
                 body.x = next_x;
                 col = next_col;
                 continue;
             }
-            if try_step_up(world, registry, body, &blockage, own) {
+            if try_step_up(world, body, &blockage, own) {
                 climbed = true;
                 continue;
             }
-            let e = solids_bounce(world, registry, &blockage.solids);
+            let e = solids_bounce(world, &blockage.solids);
             let after = resolve_axis(body.vx, e);
             result.record_blocked(&blockage.solids, (body.vx - after).vel_f32(), 0.0);
             let snap = blockage.near_col(dir);
@@ -271,14 +265,14 @@ pub fn move_body<W: CellSource>(
     if was_grounded
         && body.vy <= Fixed::ZERO
         && submersion < SNAP_DOWN_MAX_SUBMERSION
-        && !supported_at(world, registry, body, body.x, body.y, own)
+        && !supported_at(world, body, body.x, body.y, own)
     {
         for step in 1..=STEP_DOWN_CELLS {
             let next_y = body.y - Fixed::from_int(step);
-            if rect_blocked(world, registry, body, body.x, next_y, own) {
+            if rect_blocked(world, body, body.x, next_y, own) {
                 break;
             }
-            if supported_at(world, registry, body, body.x, next_y, own) {
+            if supported_at(world, body, body.x, next_y, own) {
                 body.y = next_y;
                 body.on_ground = true;
                 break;
@@ -307,11 +301,11 @@ pub fn move_body<W: CellSource>(
                 next_y <= target
             };
             if overshoots {
-                let blockage = passage(world, registry, body, body.x, target, own);
+                let blockage = passage(world, body, body.x, target, own);
                 if blockage.free() {
                     body.y = target;
                 } else {
-                    let e = solids_bounce(world, registry, &blockage.solids);
+                    let e = solids_bounce(world, &blockage.solids);
                     let after = resolve_axis(body.vy, e);
                     result.record_blocked(&blockage.solids, 0.0, (body.vy - after).vel_f32());
                     if dir > 0 {
@@ -321,13 +315,13 @@ pub fn move_body<W: CellSource>(
                 }
                 break;
             }
-            let blockage = passage(world, registry, body, body.x, next_y, own);
+            let blockage = passage(world, body, body.x, next_y, own);
             if blockage.free() {
                 body.y = next_y;
                 row = next_row;
             } else {
                 if dir > 0 {
-                    if let Some(corrected_x) = corner_correct(world, registry, body, next_y, own) {
+                    if let Some(corrected_x) = corner_correct(world, body, next_y, own) {
                         body.x = corrected_x;
                         body.y = next_y;
                         row = next_row;
@@ -335,7 +329,7 @@ pub fn move_body<W: CellSource>(
                     }
                     result.hit_ceiling = true;
                 }
-                let e = solids_bounce(world, registry, &blockage.solids);
+                let e = solids_bounce(world, &blockage.solids);
                 let after = resolve_axis(body.vy, e);
                 result.record_blocked(&blockage.solids, 0.0, (body.vy - after).vel_f32());
                 body.y = match blockage.near_row(dir) {
@@ -353,10 +347,7 @@ pub fn move_body<W: CellSource>(
         }
     }
 
-    if body.vy <= Fixed::ZERO
-        && !body.on_ground
-        && supported_at(world, registry, body, body.x, body.y, own)
-    {
+    if body.vy <= Fixed::ZERO && !body.on_ground && supported_at(world, body, body.x, body.y, own) {
         body.on_ground = true;
     }
     result

@@ -12,7 +12,7 @@ pub(crate) mod session;
 pub(crate) mod sim;
 
 use bevy_ecs::prelude::*;
-use fallingsand_core::{Calendar, CellPos, DAY_UNITS, MaterialRegistry};
+use fallingsand_core::{Calendar, CellPos, DAY_UNITS};
 use fallingsand_net::Listener;
 use fallingsand_sim::CellWorld;
 use fallingsand_worldgen::WorldGenerator;
@@ -35,9 +35,6 @@ pub(crate) struct SimWorld(pub(crate) CellWorld);
 
 #[derive(Resource, Default)]
 pub(crate) struct PlayerImpulses(pub(crate) rustc_hash::FxHashMap<Entity, (f32, f32)>);
-
-#[derive(Resource, Clone)]
-pub(crate) struct Registry(pub(crate) Arc<MaterialRegistry>);
 
 #[derive(Resource)]
 pub(crate) struct NetListener(pub(crate) Box<dyn Listener>);
@@ -161,9 +158,8 @@ impl Server {
         };
         let seed = meta.seed;
         let generator = Arc::new(WorldGenerator::new(seed));
-        let materials = Arc::new(fallingsand_data::material_registry());
-        let item_registry = Arc::new(fallingsand_data::item_registry(&materials));
-        let recipes = Arc::new(fallingsand_data::recipe_registry(&item_registry));
+        let item_registry = Arc::new(fallingsand_core::content::item_registry());
+        let recipes = Arc::new(fallingsand_core::content::recipe_registry(&item_registry));
 
         let spawn_x = 0;
         let spawn = CellPos::new(spawn_x, generator.surface_height(spawn_x) + 12);
@@ -172,7 +168,6 @@ impl Server {
         cell_world.set_tick(meta.tick);
         let mut world = World::new();
         world.insert_resource(SimWorld(cell_world));
-        world.insert_resource(Registry(materials));
         world.insert_resource(inventory::ItemReg(item_registry));
         world.insert_resource(inventory::Recipes(recipes));
         world.insert_resource(inventory::SlotActions::default());

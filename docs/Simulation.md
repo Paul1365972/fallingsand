@@ -8,6 +8,7 @@ The CA (`fallingsand_sim`) collides against the cell grid directly — terrain c
 - **Neighbourhood-complete**: a chunk simulates only when its whole 3×3 chunk neighbourhood is loaded; a chunk at the loaded frontier defers (keeping its rects) until its neighbours arrive, so the kernel never reads unloaded cells.
 - **Speed of light = 64**: no update reaches farther than 64 cells. Longer-range effects propagate as local waves over ticks; a true long-range effect (teleport, scripted event) would go through a queued world-event list applied between ticks — none exists today.
 - Randomness is tick-seeded and stateless (`fallingsand_rng`).
+- **Per-material kernels**: `update_cell` dispatches through a generated match into `update_cell_spec<M: MatSpec>`, monomorphized per material — the cell's own phase, density, dynamics, burn/decay thresholds, and reaction row are immediate constants (an inert solid's kernel is nearly empty), while neighbour properties come from generated exhaustive-match accessors the compiler lowers to lookup tables. Movement runs one kernel per phase (`update_powder`/`update_liquid`/`update_gas`, selected by the const `Dynamics` enum) built from steps named after the rules below; each takes exactly its phase's coefficient struct, so a liquid kernel cannot read a repose angle. The kernel is integer-only: probabilities are precomputed `u64` RNG thresholds, velocity coefficients Q16 multipliers, densities milli-units — no floating point executes at runtime, so grid determinism is independent of float semantics.
 
 ## Movement rules
 
@@ -32,11 +33,11 @@ Cell particles (aspirational): cells knocked loose fly ballistically as free par
 
 ## Tuning units
 
-Constants are seconds-based, converted per-tick from `TICK_DT`, so behaviour is ~invariant to tick rate. Rates (`1/s`): `per_tick_chance` = `1−e^(−r·dt)`; `per_tick_keep` = `e^(−r·dt)`. Accelerations (`cells/s²`) integrate as `a·dt`. Turbulence scales by `√dt`. Durations (`s`) become tick counts. Restitution, density ratios, and redirect gain are dimensionless.
+Constants are seconds-based, converted per-tick from `TICK_DT`, so behaviour is ~invariant to tick rate. Rates (`1/s`): `per_tick_chance` = `1−e^(−r·dt)`; `per_tick_keep` = `e^(−r·dt)`. Accelerations (`cells/s²`) integrate as `a·dt`. Turbulence scales by `√dt`. Durations (`s`) become tick counts. Restitution, density ratios, and redirect gain are dimensionless. The conversion (and quantization to integer thresholds/Q16 multipliers) happens at compile time — material rates in the `content!` macro, sim-local rates via `per_tick_threshold!`.
 
 ## Combustion
 
-Three stages, all local — burning is an **ember material**: each flammable fuel gets a synthesized `burning_*` twin at registry build (same phase, density, and dynamics; its own `burn_colors` palette; `hot` + `emissive` tags). Fuels author one *burn profile*; nothing is hand-mirrored, and no per-cell state or timer exists beyond the material id itself.
+Three stages, all local — burning is an **ember material**: each flammable fuel gets a synthesized `burning_*` twin at compile time (same phase, density, and dynamics; its own `burn_colors` palette; `hot` + `emissive` tags). Fuels author one *burn profile*; nothing is hand-mirrored, and no per-cell state or timer exists beyond the material id itself.
 
 - **Ignite**: an igniter (any `hot` cell — `fire`, lava, an ember) transmutes each adjacent flammable neighbour into its ember at that fuel's `flammability` (`oil` fast, `coal` slow), keeping the cell's velocity and shade (igniting oil keeps flowing). An open flame (`fire`, lava) ignites at the full rate; ember-to-fuel spread into a sealed neighbour (no adjacent air/gas) is scaled by the fuel's `smoulder` (0..1) — 0 is surface-only (oil), higher lets a sealed lump burn through (coal).
 - **Burn**: an ember glows and damages entities (`contact_damage` = the fuel's `burn_damage`), emits `fire` into adjacent air at `burn_emit`, and burns out at `burn_rate` — that rate *is* the burn duration. Burnout mostly gasifies the fuel (air) so the front self-exposes to oxygen; only `residue_chance` leaves solid `ash`.

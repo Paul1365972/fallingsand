@@ -4,7 +4,8 @@ use super::{
     StepInput, Submersion, cell_blocks, ring_submersion,
 };
 use crate::player::{DUCK_ROWS, STAND_ROWS};
-use fallingsand_core::{CellPos, Fixed, MaterialRegistry, Phase, TICK_DT};
+use fallingsand_core::content;
+use fallingsand_core::{CellPos, Fixed, Phase, TICK_DT};
 
 const MIN_GRIP: f32 = 0.06;
 const COYOTE_SECS: f32 = 0.1;
@@ -87,18 +88,17 @@ fn same_direction(v: Fixed, dir: i32) -> bool {
     (dir > 0 && v > Fixed::ZERO) || (dir < 0 && v < Fixed::ZERO)
 }
 
-fn ground_grip<W: CellSource>(world: &W, registry: &MaterialRegistry, body: &Actor) -> f32 {
+fn ground_grip<W: CellSource>(world: &W, body: &Actor) -> f32 {
     let fp = body.footprint();
     let feet = fp.y0 - 1;
     let mut grip = 0.0f32;
     let mut found = false;
     for x in fp.x0..=fp.x1 {
-        if let Some(cell) = world.cell_at(CellPos::new(x, feet)) {
-            let material = registry.get(cell.material);
-            if matches!(material.phase, Phase::Solid | Phase::Powder) {
-                found = true;
-                grip = grip.max(material.surface_grip);
-            }
+        if let Some(cell) = world.cell_at(CellPos::new(x, feet))
+            && matches!(content::phase(cell.material), Phase::Solid | Phase::Powder)
+        {
+            found = true;
+            grip = grip.max(content::material(cell.material).surface_grip);
         }
     }
     if found {
@@ -110,7 +110,6 @@ fn ground_grip<W: CellSource>(world: &W, registry: &MaterialRegistry, body: &Act
 
 pub fn step_player<W: CellSource>(
     world: &W,
-    registry: &MaterialRegistry,
     params: &PlayerParams,
     body: &mut Actor,
     ctrl: &mut Controller,
@@ -133,28 +132,24 @@ pub fn step_player<W: CellSource>(
     ctrl.duck_step = (ctrl.duck_step - TICK_DT).max(0.0);
 
     let move_x = input.move_x.clamp(-1, 1) as i32;
-    let submersion = ring_submersion(world, registry, body);
+    let submersion = ring_submersion(world, body);
     if input.fly {
-        fly_update(
-            world, registry, params, body, ctrl, move_x, jump_held, down_held,
-        );
+        fly_update(world, params, body, ctrl, move_x, jump_held, down_held);
     } else {
         normal_update(
-            world, registry, params, body, ctrl, move_x, jump_held, down_held, submersion,
+            world, params, body, ctrl, move_x, jump_held, down_held, submersion,
         );
     }
 
-    let result = move_body(world, registry, body, submersion.fraction, own);
+    let result = move_body(world, body, submersion.fraction, own);
     if result.hit_ceiling && ctrl.var_jump_timer < CEILING_VAR_JUMP_GRACE {
         ctrl.var_jump_timer = 0.0;
     }
     result
 }
 
-#[allow(clippy::too_many_arguments)]
 fn fly_update<W: CellSource>(
     world: &W,
-    registry: &MaterialRegistry,
     params: &PlayerParams,
     body: &mut Actor,
     ctrl: &mut Controller,
@@ -165,7 +160,7 @@ fn fly_update<W: CellSource>(
     ctrl.buffer = 0.0;
     ctrl.coyote = 0.0;
     ctrl.var_jump_timer = 0.0;
-    step_height(world, registry, body, ctrl, STAND_ROWS as i32);
+    step_height(world, body, ctrl, STAND_ROWS as i32);
     let move_y = jump_held as i32 - down_held as i32;
     body.vx = approach(body.vx, params.fly_max.mul_int(move_x), params.fly_accel);
     body.vy = approach(body.vy, params.fly_max.mul_int(move_y), params.fly_accel);
@@ -174,7 +169,6 @@ fn fly_update<W: CellSource>(
 #[allow(clippy::too_many_arguments)]
 fn normal_update<W: CellSource>(
     world: &W,
-    registry: &MaterialRegistry,
     params: &PlayerParams,
     body: &mut Actor,
     ctrl: &mut Controller,
@@ -189,10 +183,10 @@ fn normal_update<W: CellSource>(
     } else {
         STAND_ROWS as i32
     };
-    step_height(world, registry, body, ctrl, target_rows);
+    step_height(world, body, ctrl, target_rows);
 
     let grip = if body.on_ground {
-        Fixed::from_f32(ground_grip(world, registry, body))
+        Fixed::from_f32(ground_grip(world, body))
     } else {
         Fixed::ONE
     };
@@ -282,19 +276,14 @@ fn normal_update<W: CellSource>(
         } else if submersion.fraction >= BANK_VAULT_MIN_SUBMERSION
             && submersion.fraction <= BANK_VAULT_MAX_SUBMERSION
             && body.vy >= -BANK_VAULT_MAX_SINK
-            && bank_ahead(world, registry, body, move_x)
+            && bank_ahead(world, body, move_x)
         {
             jump(params, body, ctrl, move_x, Fixed::ONE);
         }
     }
 }
 
-fn bank_ahead<W: CellSource>(
-    world: &W,
-    registry: &MaterialRegistry,
-    body: &Actor,
-    move_x: i32,
-) -> bool {
+fn bank_ahead<W: CellSource>(world: &W, body: &Actor, move_x: i32) -> bool {
     let fp = body.footprint();
     let dirs: &[i32] = match move_x {
         1 => &[1],
@@ -305,7 +294,7 @@ fn bank_ahead<W: CellSource>(
         let edge = if dir > 0 { fp.x1 } else { fp.x0 };
         for off in 1..=BANK_PROBE_CELLS {
             for y in fp.y0..=fp.y1 {
-                if cell_blocks(world, registry, CellPos::new(edge + dir * off, y)) {
+                if cell_blocks(world, CellPos::new(edge + dir * off, y)) {
                     return true;
                 }
             }
@@ -325,7 +314,6 @@ fn jump(params: &PlayerParams, body: &mut Actor, ctrl: &mut Controller, move_x: 
 
 fn step_height<W: CellSource>(
     world: &W,
-    registry: &MaterialRegistry,
     body: &mut Actor,
     ctrl: &mut Controller,
     target_rows: i32,
@@ -342,7 +330,7 @@ fn step_height<W: CellSource>(
     if next > rows {
         let fp = body.footprint();
         for x in fp.x0..=fp.x1 {
-            if cell_blocks(world, registry, CellPos::new(x, fp.y1 + 1)) {
+            if cell_blocks(world, CellPos::new(x, fp.y1 + 1)) {
                 return;
             }
         }

@@ -1,65 +1,76 @@
 use crate::window::SimWindow;
+use fallingsand_core::content::{self, MatSpec, material};
 use fallingsand_core::{
-    Cell, CellPos, Dynamics, Ember, GRID_GRAVITY, MaterialId, MaterialRegistry, Phase, TICK_DT,
-    Tag, VEL_ONE, per_tick_chance,
+    Cell, CellPos, Dynamics, Ember, GRID_GRAVITY, GasDynamics, LiquidDynamics, MaterialId, Phase,
+    PowderDynamics, TICK_DT, VEL_ONE,
 };
-use fallingsand_data::material;
+use fallingsand_macros::per_tick_threshold;
 use fallingsand_rng::{Hash, Rng};
-use std::sync::LazyLock;
 
 const NEIGHBORS: [(i32, i32); 4] = [(0, -1), (-1, 0), (1, 0), (0, 1)];
-const FLICKER_RATE: f32 = 18.0;
-static FLICKER_CHANCE: LazyLock<f32> = LazyLock::new(|| per_tick_chance(FLICKER_RATE));
+const FLICKER_THRESHOLD: u64 = per_tick_threshold!(18.0);
 
 const VEL_MAX: i32 = 31 * VEL_ONE;
 const MAX_STEP: i32 = 31;
 const SETTLE: i32 = (7.5 * TICK_DT * VEL_ONE as f32) as i32;
-const SUBMERGED_DENSITY: f32 = 100.0;
-const SUBMERGED_DRAG: f32 = 6.0;
+const SUBMERGED_DENSITY_MILLI: i32 = 100_000;
 const GRAVITY_DV: i32 = (GRID_GRAVITY * TICK_DT * TICK_DT * VEL_ONE as f32 + 0.5) as i32;
 
-pub(crate) fn update_cell(
+macro_rules! material_dispatch {
+    ($(($idx:literal, $name:ident, $spec:ident)),* $(,)?) => {
+        pub(crate) fn update_cell(
+            window: &mut SimWindow,
+            pos: CellPos,
+            tick: u64,
+            tick_byte: u8,
+        ) {
+            let Some(cell) = window.get(pos) else {
+                return;
+            };
+            if cell.updated == tick_byte {
+                return;
+            }
+            match cell.material.0 {
+                $( $idx => update_cell_spec::<content::specs::$spec>(
+                    window, pos, cell, tick, tick_byte,
+                ), )*
+                _ => unreachable!("invalid material id"),
+            }
+        }
+    };
+}
+fallingsand_core::for_each_material!(material_dispatch);
+
+fn update_cell_spec<M: MatSpec>(
     window: &mut SimWindow,
-    registry: &MaterialRegistry,
     pos: CellPos,
+    cell: Cell,
     tick: u64,
     tick_byte: u8,
 ) {
-    let Some(cell) = window.get(pos) else {
-        return;
-    };
-    if cell.updated == tick_byte {
-        return;
-    }
     let mut rng = Hash::seed(tick).pos(pos.x, pos.y).rng();
 
-    let material = registry.get(cell.material);
-    let ember = registry.ember(cell.material);
-    if material.tags.contains(Tag::Hot) {
-        let open_flame = ember.is_none_or(|ember| ember.is_flame());
-        ignite_neighbors(window, registry, pos, &mut rng, tick_byte, open_flame);
+    if const { M::IS_HOT } {
+        ignite_neighbors(window, pos, &mut rng, tick_byte, const { M::OPEN_FLAME });
     }
-    if let Some(ember) = ember
-        && ember_step(window, registry, pos, cell, ember, &mut rng, tick_byte)
+    if let Some(ember) = const { M::EMBER }
+        && ember_step::<M>(window, pos, cell, ember, &mut rng, tick_byte)
     {
         return;
     }
-    if registry.is_reactive(cell.material)
-        && react(window, registry, pos, cell, &mut rng, tick_byte)
-    {
+    if const { M::IS_REACTIVE } && react::<M>(window, pos, cell, &mut rng, tick_byte) {
         return;
     }
-    match material.phase {
-        Phase::Empty | Phase::Solid => {}
-        Phase::Powder | Phase::Liquid | Phase::Gas => {
-            update_dynamic(window, registry, pos, cell, &mut rng, tick_byte)
-        }
+    match const { M::DYNAMICS } {
+        Dynamics::None => {}
+        Dynamics::Powder(d) => update_powder::<M>(window, pos, cell, d, &mut rng, tick_byte),
+        Dynamics::Liquid(d) => update_liquid::<M>(window, pos, cell, d, &mut rng, tick_byte),
+        Dynamics::Gas(d) => update_gas::<M>(window, pos, cell, d, &mut rng, tick_byte),
     }
 }
 
-fn react(
+fn react<M: MatSpec>(
     window: &mut SimWindow,
-    registry: &MaterialRegistry,
     pos: CellPos,
     cell: Cell,
     rng: &mut Rng,
@@ -71,19 +82,20 @@ fn react(
         let Some(neighbor) = window.get(neighbor_pos) else {
             continue;
         };
-        if let Some(reaction) = registry.reaction(cell.material, neighbor.material) {
+        let reaction = M::REACTIONS[neighbor.material.0 as usize];
+        if reaction.threshold != 0 {
             keep = true;
-            if rng.draw().chance(reaction.chance) {
-                note_structural(window, registry, pos, cell.material);
-                note_structural(window, registry, neighbor_pos, neighbor.material);
+            if rng.draw().below(reaction.threshold) {
+                note_structural(window, pos, cell.material);
+                note_structural(window, neighbor_pos, neighbor.material);
                 set_product(window, pos, reaction.becomes, rng, tick_byte);
                 set_product(window, neighbor_pos, reaction.other_becomes, rng, tick_byte);
                 return true;
             }
         }
     }
-    if let Some((chance, product)) = registry.decay(cell.material) {
-        if rng.draw().chance(chance) {
+    if let Some((threshold, product)) = const { M::DECAY } {
+        if rng.draw().below(threshold) {
             set_product(window, pos, product, rng, tick_byte);
             return true;
         }
@@ -95,13 +107,8 @@ fn react(
     false
 }
 
-fn note_structural(
-    window: &mut SimWindow,
-    registry: &MaterialRegistry,
-    pos: CellPos,
-    material: MaterialId,
-) {
-    if registry.get(material).phase != Phase::Solid {
+fn note_structural(window: &mut SimWindow, pos: CellPos, material: MaterialId) {
+    if content::phase(material) != Phase::Solid {
         return;
     }
     for (dx, dy) in NEIGHBORS {
@@ -109,20 +116,16 @@ fn note_structural(
     }
 }
 
-fn sustained_by_fuel(window: &SimWindow, registry: &MaterialRegistry, pos: CellPos) -> bool {
+fn sustained_by_fuel(window: &SimWindow, pos: CellPos) -> bool {
     NEIGHBORS.iter().any(|&(dx, dy)| {
         window.get(pos.translated(dx, dy)).is_some_and(|neighbor| {
-            registry.is_flammable(neighbor.material)
-                || registry
-                    .ember(neighbor.material)
-                    .is_some_and(|ember| !ember.is_flame())
+            content::is_flammable(neighbor.material) || content::is_fuel_ember(neighbor.material)
         })
     })
 }
 
 fn ignite_neighbors(
     window: &mut SimWindow,
-    registry: &MaterialRegistry,
     pos: CellPos,
     rng: &mut Rng,
     tick_byte: u8,
@@ -137,19 +140,22 @@ fn ignite_neighbors(
         if neighbor.updated == tick_byte {
             continue;
         }
-        let Some(ignition) = registry.ignition(neighbor.material) else {
+        let Some(ignition) = content::ignition(neighbor.material) else {
             continue;
         };
-        let mut chance = ignition.chance;
-        if !open_flame && ignition.smoulder < 1.0 && !oxygen_exposed(window, registry, neighbor_pos)
+        let threshold = if open_flame
+            || ignition.sealed == ignition.open
+            || oxygen_exposed(window, neighbor_pos)
         {
-            chance *= ignition.smoulder;
-        }
-        if chance <= 0.0 {
+            ignition.open
+        } else {
+            ignition.sealed
+        };
+        if threshold == 0 {
             continue;
         }
         pending = true;
-        if rng.draw().chance(chance) {
+        if rng.draw().below(threshold) {
             let mut lit = neighbor;
             lit.material = ignition.into;
             lit.set_body(false);
@@ -162,9 +168,8 @@ fn ignite_neighbors(
     }
 }
 
-fn ember_step(
+fn ember_step<M: MatSpec>(
     window: &mut SimWindow,
-    registry: &MaterialRegistry,
     pos: CellPos,
     cell: Cell,
     ember: Ember,
@@ -175,16 +180,16 @@ fn ember_step(
         if ember.is_flame() {
             set_product(window, pos, material::STEAM, rng, tick_byte);
         } else {
-            burn_out(window, registry, pos, cell.material, ember, rng, tick_byte);
+            burn_out::<M>(window, pos, ember, rng, tick_byte);
             set_product(window, water, material::STEAM, rng, tick_byte);
         }
         return true;
     }
-    if rng.draw().chance(ember.emit_chance) {
+    if rng.draw().below(ember.emit) {
         emit_into_air(window, pos, material::FIRE, rng, tick_byte);
     }
-    if ember.is_flame() && sustained_by_fuel(window, registry, pos) {
-        if rng.draw().chance(*FLICKER_CHANCE) {
+    if ember.is_flame() && sustained_by_fuel(window, pos) {
+        if rng.draw().below(FLICKER_THRESHOLD) {
             let mut flicker = cell;
             flicker.set_shade(rng.draw().bits(4) as u8);
             flicker.updated = tick_byte;
@@ -194,26 +199,28 @@ fn ember_step(
         }
         return true;
     }
-    if rng.draw().chance(ember.burn_chance) {
-        burn_out(window, registry, pos, cell.material, ember, rng, tick_byte);
+    if rng.draw().below(ember.burn) {
+        burn_out::<M>(window, pos, ember, rng, tick_byte);
         return true;
     }
     window.mark(pos);
     false
 }
 
-fn burn_out(
+fn burn_out<M: MatSpec>(
     window: &mut SimWindow,
-    registry: &MaterialRegistry,
     pos: CellPos,
-    material: MaterialId,
     ember: Ember,
     rng: &mut Rng,
     tick_byte: u8,
 ) {
-    note_structural(window, registry, pos, material);
+    if const { matches!(M::PHASE, Phase::Solid) } {
+        for (dx, dy) in NEIGHBORS {
+            window.note_structural(pos.translated(dx, dy));
+        }
+    }
     let out = match ember.residue {
-        Some((chance, id)) if rng.draw().chance(chance) => id,
+        Some((threshold, id)) if rng.draw().below(threshold) => id,
         _ => MaterialId::AIR,
     };
     set_product(window, pos, out, rng, tick_byte);
@@ -246,13 +253,10 @@ fn adjacent_water(window: &SimWindow, pos: CellPos) -> Option<CellPos> {
     })
 }
 
-fn oxygen_exposed(window: &SimWindow, registry: &MaterialRegistry, pos: CellPos) -> bool {
+fn oxygen_exposed(window: &SimWindow, pos: CellPos) -> bool {
     NEIGHBORS.iter().any(|&(dx, dy)| {
         window.get(pos.translated(dx, dy)).is_some_and(|neighbor| {
-            matches!(
-                registry.get(neighbor.material).phase,
-                Phase::Empty | Phase::Gas
-            )
+            matches!(content::phase(neighbor.material), Phase::Empty | Phase::Gas)
         })
     })
 }
@@ -269,39 +273,32 @@ fn set_product(
     window.set(pos, cell);
 }
 
-fn note_undermined(window: &mut SimWindow, registry: &MaterialRegistry, vacated: CellPos) {
+fn note_undermined(window: &mut SimWindow, vacated: CellPos) {
     let above = vacated.translated(0, 1);
     let rigid = window.get(above).is_some_and(|cell| {
-        let material = registry.get(cell.material);
-        material.phase == Phase::Solid && material.rigid_capable
+        content::phase(cell.material) == Phase::Solid && content::is_rigid_capable(cell.material)
     });
     if rigid {
         window.note_structural(above);
     }
 }
 
-fn ambient_density(window: &SimWindow, registry: &MaterialRegistry, pos: CellPos) -> f32 {
-    if let Some(below) = window.get(pos.translated(0, -1)) {
-        let material = registry.get(below.material);
-        if matches!(material.phase, Phase::Liquid | Phase::Gas) {
-            return material.density;
-        }
+fn ambient_density_milli(window: &SimWindow, pos: CellPos) -> i32 {
+    if let Some(below) = window.get(pos.translated(0, -1))
+        && matches!(content::phase(below.material), Phase::Liquid | Phase::Gas)
+    {
+        return content::density_milli(below.material);
     }
-    registry.get(MaterialId::AIR).density
+    const { content::density_milli(MaterialId::AIR) }
 }
 
-fn neighbor_mean_vel(
-    window: &SimWindow,
-    registry: &MaterialRegistry,
-    pos: CellPos,
-    phase: Phase,
-) -> Option<(i32, i32)> {
+fn neighbor_mean_vel(window: &SimWindow, pos: CellPos, phase: Phase) -> Option<(i32, i32)> {
     let mut sum_x = 0;
     let mut sum_y = 0;
     let mut count = 0;
     for (dx, dy) in NEIGHBORS {
         if let Some(cell) = window.get(pos.translated(dx, dy))
-            && registry.get(cell.material).phase == phase
+            && content::phase(cell.material) == phase
         {
             sum_x += cell.vx as i32;
             sum_y += cell.vy as i32;
@@ -311,112 +308,213 @@ fn neighbor_mean_vel(
     (count > 0).then(|| (sum_x / count, sum_y / count))
 }
 
-fn can_enter(
-    window: &SimWindow,
-    registry: &MaterialRegistry,
-    density: f32,
-    dir: (i32, i32),
-    target: CellPos,
-) -> bool {
+fn can_enter<M: MatSpec>(window: &SimWindow, dir: (i32, i32), target: CellPos) -> bool {
     let Some(cell) = window.get(target) else {
         return false;
     };
-    let material = registry.get(cell.material);
-    if !matches!(material.phase, Phase::Empty | Phase::Liquid | Phase::Gas) {
+    if !matches!(
+        content::phase(cell.material),
+        Phase::Empty | Phase::Liquid | Phase::Gas
+    ) {
         return false;
     }
+    let density = const { M::DENSITY_MILLI };
+    let target_density = content::density_milli(cell.material);
     match dir.1 {
-        dy if dy < 0 => density > material.density,
-        dy if dy > 0 => density < material.density,
-        _ => density > material.density || cell.is_air(),
+        dy if dy < 0 => density > target_density,
+        dy if dy > 0 => density < target_density,
+        _ => density > target_density || cell.is_air(),
     }
 }
 
 fn step_cells(v: i32, rng: &mut Rng) -> i32 {
     let mag = v.abs();
-    let cells = (mag / VEL_ONE + rng.draw().chance((mag % VEL_ONE) as f32 / VEL_ONE as f32) as i32)
-        .min(MAX_STEP);
+    let fractional = (rng.draw().bits(10) as i32) < mag % VEL_ONE;
+    let cells = (mag / VEL_ONE + fractional as i32).min(MAX_STEP);
     cells * v.signum()
 }
 
-fn reflect(v: i32, restitution: f32) -> i32 {
-    -(v as f32 * restitution).round() as i32
+fn mul_q16(v: i32, keep_q16: u32) -> i32 {
+    scaled_round(v as i64 * keep_q16 as i64, 16)
 }
 
-fn update_dynamic(
+fn scaled_round(product: i64, shift: u32) -> i32 {
+    let half = 1i64 << (shift - 1);
+    let magnitude = (product.abs() + half) >> shift;
+    (if product < 0 { -magnitude } else { magnitude }) as i32
+}
+
+fn reflect(v: i32, restitution_q16: u32) -> i32 {
+    -mul_q16(v, restitution_q16)
+}
+
+fn update_powder<M: MatSpec>(
     window: &mut SimWindow,
-    registry: &MaterialRegistry,
     pos: CellPos,
     cell: Cell,
+    d: PowderDynamics,
     rng: &mut Rng,
     tick_byte: u8,
 ) {
-    let material = registry.get(cell.material);
-    let phase = material.phase;
-    let density = material.density;
-    let dynamics = registry.dynamics(cell.material);
-    let is_powder = phase == Phase::Powder;
+    let (mut vx, mut vy) = cell.vel();
+
+    let ambient = ambient_density_milli(window, pos);
+    vy -= buoyant_gravity::<M>(ambient);
+    apply_drag(
+        &mut vx,
+        &mut vy,
+        ambient,
+        d.drag_keep_q16,
+        d.drag_keep_submerged_q16,
+    );
+
+    if supported_below::<M>(window, pos) {
+        vx = mul_q16(vx, d.friction_keep_q16);
+    }
+    note_body_below(window, pos);
+    cohesion::<M>(window, pos, &mut vx, &mut vy, d.cohesion_q16);
+
+    let (mut cur, mut moved) = traverse::<M>(window, pos, &mut vx, &mut vy, d.restitution_q16, rng);
+    if !can_enter::<M>(window, (0, -1), cur.translated(0, -1)) {
+        moved |= repose_slide::<M>(window, &mut cur, &mut vx, vy, d, rng);
+    }
+    if moved {
+        note_undermined(window, pos);
+    }
+    finish::<M>(window, cur, vx, vy, d.restitution_q16, -1, tick_byte);
+}
+
+fn update_liquid<M: MatSpec>(
+    window: &mut SimWindow,
+    pos: CellPos,
+    cell: Cell,
+    d: LiquidDynamics,
+    rng: &mut Rng,
+    tick_byte: u8,
+) {
+    let above = pos.translated(0, 1);
+    if let Some(top) = window.get(above)
+        && content::phase(top.material) == Phase::Liquid
+        && content::density_milli(top.material) > const { M::DENSITY_MILLI }
+    {
+        window.swap(pos, above);
+        return;
+    }
 
     let (mut vx, mut vy) = cell.vel();
 
-    if matches!(phase, Phase::Liquid) {
-        let above = pos.translated(0, 1);
-        if let Some(top) = window.get(above) {
-            let top_material = registry.get(top.material);
-            if top_material.phase == Phase::Liquid && top_material.density > density {
-                window.swap(pos, above);
-                return;
-            }
-        }
+    let ambient = ambient_density_milli(window, pos);
+    vy -= buoyant_gravity::<M>(ambient);
+    apply_drag(
+        &mut vx,
+        &mut vy,
+        ambient,
+        d.drag_keep_q16,
+        d.drag_keep_submerged_q16,
+    );
+
+    if supported_below::<M>(window, pos) {
+        vx = mul_q16(vx, d.friction_keep_q16);
+    }
+    note_body_below(window, pos);
+    cohesion::<M>(window, pos, &mut vx, &mut vy, d.cohesion_q16);
+
+    let (mut cur, mut moved) = traverse::<M>(window, pos, &mut vx, &mut vy, d.restitution_q16, rng);
+    if !can_enter::<M>(window, (0, -1), cur.translated(0, -1)) {
+        moved |= ledge_flow::<M>(window, &mut cur, &mut vx, vy, d, rng);
+    }
+    if moved {
+        note_undermined(window, pos);
+    }
+    finish::<M>(window, cur, vx, vy, d.restitution_q16, -1, tick_byte);
+}
+
+fn update_gas<M: MatSpec>(
+    window: &mut SimWindow,
+    pos: CellPos,
+    cell: Cell,
+    d: GasDynamics,
+    rng: &mut Rng,
+    tick_byte: u8,
+) {
+    let (mut vx, mut vy) = cell.vel();
+
+    vy += GRAVITY_DV;
+    vx = mul_q16(vx, d.drag_keep_q16);
+    vy = mul_q16(vy, d.drag_keep_q16);
+    if d.turbulence_q16 > 0 {
+        let r = rng.draw().bits(16) as i64 - 32768;
+        vx += scaled_round(d.turbulence_q16 as i64 * r, 31);
     }
 
-    let sinks = matches!(phase, Phase::Powder | Phase::Liquid);
-    let ambient = if sinks {
-        ambient_density(window, registry, pos)
+    note_body_below(window, pos);
+    cohesion::<M>(window, pos, &mut vx, &mut vy, d.cohesion_q16);
+
+    let (mut cur, mut moved) = traverse::<M>(window, pos, &mut vx, &mut vy, d.restitution_q16, rng);
+    if !can_enter::<M>(window, (0, 1), cur.translated(0, 1)) {
+        moved |= ceiling_spread::<M>(window, &mut cur, &mut vx, vy, d, rng);
+    }
+    if moved {
+        note_undermined(window, pos);
+    }
+    finish::<M>(window, cur, vx, vy, d.restitution_q16, 1, tick_byte);
+}
+
+fn buoyant_gravity<M: MatSpec>(ambient: i32) -> i32 {
+    let density = const { M::DENSITY_MILLI } as i64;
+    let submerged = (density - ambient as i64).clamp(0, density);
+    ((GRAVITY_DV as i64 * submerged + density / 2) / density) as i32
+}
+
+fn apply_drag(vx: &mut i32, vy: &mut i32, ambient: i32, keep_q16: u32, keep_submerged_q16: u32) {
+    let keep = if ambient > SUBMERGED_DENSITY_MILLI {
+        keep_submerged_q16
     } else {
-        registry.get(MaterialId::AIR).density
+        keep_q16
     };
-    if sinks {
-        let buoy = ((density - ambient) / density).clamp(0.0, 1.0);
-        vy -= (GRAVITY_DV as f32 * buoy).round() as i32;
-    } else {
-        vy += GRAVITY_DV;
-    }
+    *vx = mul_q16(*vx, keep);
+    *vy = mul_q16(*vy, keep);
+}
 
-    let mut drag_loss = 1.0 - dynamics.drag_keep;
-    if ambient > SUBMERGED_DENSITY {
-        drag_loss *= SUBMERGED_DRAG;
-    }
-    let keep = 1.0 - drag_loss.min(0.9);
-    vx = (vx as f32 * keep).round() as i32;
-    vy = (vy as f32 * keep).round() as i32;
+fn supported_below<M: MatSpec>(window: &SimWindow, pos: CellPos) -> bool {
+    !can_enter::<M>(window, (0, -1), pos.translated(0, -1))
+}
 
-    if dynamics.turbulence > 0.0 {
-        let r = (rng.draw().bits(16) as i32 - 32768) as f32 / 32768.0;
-        vx += (dynamics.turbulence * r).round() as i32;
-    }
-
+fn note_body_below(window: &mut SimWindow, pos: CellPos) {
     let below = pos.translated(0, -1);
-    let supported = !can_enter(window, registry, density, (0, -1), below);
-    if supported {
-        vx = (vx as f32 * dynamics.friction_keep).round() as i32;
-    }
-    if window.get(below).is_some_and(|c| c.is_body()) {
+    if window.get(below).is_some_and(|cell| cell.is_body()) {
         window.note_structural(below);
     }
+}
 
-    if dynamics.cohesion > 0.0
-        && let Some((mean_x, mean_y)) = neighbor_mean_vel(window, registry, pos, phase)
+fn cohesion<M: MatSpec>(
+    window: &SimWindow,
+    pos: CellPos,
+    vx: &mut i32,
+    vy: &mut i32,
+    cohesion_q16: u32,
+) {
+    if cohesion_q16 > 0
+        && let Some((mean_x, mean_y)) = neighbor_mean_vel(window, pos, const { M::PHASE })
     {
-        vx += (dynamics.cohesion * (mean_x - vx) as f32).round() as i32;
-        vy += (dynamics.cohesion * (mean_y - vy) as f32).round() as i32;
+        *vx += mul_q16(mean_x - *vx, cohesion_q16);
+        *vy += mul_q16(mean_y - *vy, cohesion_q16);
     }
+}
 
-    vx = vx.clamp(-VEL_MAX, VEL_MAX);
-    vy = vy.clamp(-VEL_MAX, VEL_MAX);
+fn traverse<M: MatSpec>(
+    window: &mut SimWindow,
+    pos: CellPos,
+    vx: &mut i32,
+    vy: &mut i32,
+    restitution_q16: u32,
+    rng: &mut Rng,
+) -> (CellPos, bool) {
+    *vx = (*vx).clamp(-VEL_MAX, VEL_MAX);
+    *vy = (*vy).clamp(-VEL_MAX, VEL_MAX);
 
-    let tx = step_cells(vx, rng);
-    let ty = step_cells(vy, rng);
+    let tx = step_cells(*vx, rng);
+    let ty = step_cells(*vy, rng);
     let (ix, iy) = (tx.abs(), ty.abs());
     let (sx, sy) = (tx.signum(), ty.signum());
 
@@ -434,18 +532,18 @@ fn update_dynamic(
         };
         if step_x {
             let next = cur.translated(sx, 0);
-            if can_enter(window, registry, density, (sx, 0), next) {
+            if can_enter::<M>(window, (sx, 0), next) {
                 window.swap(cur, next);
                 cur = next;
                 moved = true;
                 done_x += 1;
             } else {
-                vx = reflect(vx, dynamics.restitution);
+                *vx = reflect(*vx, restitution_q16);
                 done_x = ix;
             }
         } else {
             let next = cur.translated(0, sy);
-            if can_enter(window, registry, density, (0, sy), next) {
+            if can_enter::<M>(window, (0, sy), next) {
                 window.swap(cur, next);
                 cur = next;
                 moved = true;
@@ -455,37 +553,30 @@ fn update_dynamic(
             }
         }
     }
+    (cur, moved)
+}
 
-    let gdir = if sinks { -1 } else { 1 };
-    let ahead = cur.translated(0, gdir);
-    if !can_enter(window, registry, density, (0, gdir), ahead) {
-        moved |= redirect(
-            window, registry, &mut cur, density, is_powder, gdir, &mut vx, vy, dynamics, rng,
-        );
-    }
-
-    if moved {
-        note_undermined(window, registry, pos);
-    }
-
+fn finish<M: MatSpec>(
+    window: &mut SimWindow,
+    cur: CellPos,
+    mut vx: i32,
+    mut vy: i32,
+    restitution_q16: u32,
+    gdir: i32,
+    tick_byte: u8,
+) {
     for (dx, dy) in NEIGHBORS {
         let into = if dx != 0 { vx * dx > 0 } else { vy * dy > 0 };
         let target = cur.translated(dx, dy);
-        if into && !can_enter(window, registry, density, (dx, dy), target) {
+        if into && !can_enter::<M>(window, (dx, dy), target) {
             if dx != 0 {
-                vx = reflect(vx, dynamics.restitution);
+                vx = reflect(vx, restitution_q16);
             } else {
-                vy = reflect(vy, dynamics.restitution);
+                vy = reflect(vy, restitution_q16);
             }
         }
     }
-    let settled = !can_enter(
-        window,
-        registry,
-        density,
-        (0, gdir),
-        cur.translated(0, gdir),
-    );
+    let settled = !can_enter::<M>(window, (0, gdir), cur.translated(0, gdir));
     if settled {
         if vx.abs() < SETTLE {
             vx = 0;
@@ -510,21 +601,8 @@ fn update_dynamic(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn redirect(
-    window: &mut SimWindow,
-    registry: &MaterialRegistry,
-    cur: &mut CellPos,
-    density: f32,
-    is_powder: bool,
-    vdir: i32,
-    vx: &mut i32,
-    vy: i32,
-    dynamics: Dynamics,
-    rng: &mut Rng,
-) -> bool {
-    let gain = (dynamics.redirect_keep * vy.unsigned_abs() as f32).round() as i32;
-    let prefer = match (*vx).cmp(&0) {
+fn prefer_side(vx: i32, rng: &mut Rng) -> i32 {
+    match vx.cmp(&0) {
         std::cmp::Ordering::Greater => 1,
         std::cmp::Ordering::Less => -1,
         std::cmp::Ordering::Equal => {
@@ -534,29 +612,85 @@ fn redirect(
                 -1
             }
         }
-    };
-    let can_flow = dynamics.flow_chance >= 1.0 || rng.draw().chance(dynamics.flow_chance);
+    }
+}
+
+fn repose_slide<M: MatSpec>(
+    window: &mut SimWindow,
+    cur: &mut CellPos,
+    vx: &mut i32,
+    vy: i32,
+    d: PowderDynamics,
+    rng: &mut Rng,
+) -> bool {
+    let gain = mul_q16(vy.abs(), d.redirect_keep_q16);
+    let prefer = prefer_side(*vx, rng);
     for side in [prefer, -prefer] {
-        let beside = cur.translated(side, 0);
-        if !can_enter(window, registry, density, (side, 0), beside) {
+        if !can_enter::<M>(window, (side, 0), cur.translated(side, 0)) {
             continue;
         }
-        let diag = cur.translated(side, vdir);
-        let diag_open = can_enter(window, registry, density, (side, vdir), diag);
-        if is_powder {
-            if diag_open && rng.draw().chance(dynamics.slide_chance) {
-                *vx += side * gain;
-                window.swap(*cur, diag);
-                *cur = diag;
-                return true;
-            }
+        let diag = cur.translated(side, -1);
+        if can_enter::<M>(window, (side, -1), diag) && rng.draw().below(d.slide_threshold) {
+            *vx += side * gain;
+            window.swap(*cur, diag);
+            *cur = diag;
+            return true;
+        }
+    }
+    false
+}
+
+fn ledge_flow<M: MatSpec>(
+    window: &mut SimWindow,
+    cur: &mut CellPos,
+    vx: &mut i32,
+    vy: i32,
+    d: LiquidDynamics,
+    rng: &mut Rng,
+) -> bool {
+    let gain = mul_q16(vy.abs(), d.redirect_keep_q16);
+    let prefer = prefer_side(*vx, rng);
+    let can_flow = d.flow_threshold == u64::MAX || rng.draw().below(d.flow_threshold);
+    for side in [prefer, -prefer] {
+        let beside = cur.translated(side, 0);
+        if !can_enter::<M>(window, (side, 0), beside) {
             continue;
         }
         if !can_flow {
             window.mark(*cur);
             return false;
         }
-        if diag_open {
+        let diag = cur.translated(side, -1);
+        if can_enter::<M>(window, (side, -1), diag) {
+            *vx += side * gain;
+            window.swap(*cur, diag);
+            *cur = diag;
+            return true;
+        }
+        window.swap(*cur, beside);
+        *cur = beside;
+        return true;
+    }
+    false
+}
+
+fn ceiling_spread<M: MatSpec>(
+    window: &mut SimWindow,
+    cur: &mut CellPos,
+    vx: &mut i32,
+    vy: i32,
+    d: GasDynamics,
+    rng: &mut Rng,
+) -> bool {
+    let gain = mul_q16(vy.abs(), d.redirect_keep_q16);
+    let prefer = prefer_side(*vx, rng);
+    for side in [prefer, -prefer] {
+        let beside = cur.translated(side, 0);
+        if !can_enter::<M>(window, (side, 0), beside) {
+            continue;
+        }
+        let diag = cur.translated(side, 1);
+        if can_enter::<M>(window, (side, 1), diag) {
             *vx += side * gain;
             window.swap(*cur, diag);
             *cur = diag;

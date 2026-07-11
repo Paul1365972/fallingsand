@@ -1,4 +1,5 @@
-use crate::material::*;
+use crate::content::macros::items;
+use crate::content::material::{GOLD_ORE, IRON_ORE, PLANKS, STONE, WOOD};
 
 items! {
     STICK "Stick" 99 WOOD;

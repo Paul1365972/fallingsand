@@ -9,14 +9,16 @@ pub mod pause;
 use super::io::Btn;
 use bevy::prelude::*;
 use bevy::text::TextCursorStyle;
-use fallingsand_core::{IconSpec, ItemId, ItemRegistry, MaterialRegistry};
+use fallingsand_core::{IconSpec, ItemId, ItemRegistry};
 
 pub const BUTTON_BG: Color = Color::srgb(0.14, 0.16, 0.22);
 pub const BUTTON_HOVER: Color = Color::srgb(0.22, 0.25, 0.33);
 
-pub fn item_color(item_reg: &ItemRegistry, materials: &MaterialRegistry, item: ItemId) -> [u8; 4] {
+pub fn item_color(item_reg: &ItemRegistry, item: ItemId) -> [u8; 4] {
     match item_reg.try_get(item).map(|def| def.icon) {
-        Some(IconSpec::MaterialSwatch(material)) => materials.get(material).colors[0],
+        Some(IconSpec::MaterialSwatch(material)) => {
+            fallingsand_core::content::material(material).colors[0]
+        }
         _ => [180, 180, 190, 255],
     }
 }

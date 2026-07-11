@@ -2,13 +2,14 @@ pub mod calendar;
 pub mod celestial;
 pub mod cell;
 pub mod chunk;
+pub mod content;
 pub mod coords;
 pub mod fixed;
 pub mod item;
 pub mod material;
 pub mod region;
 
-pub const TICK_RATE: u32 = 60;
+pub use material::TICK_RATE;
 pub const TICK_DT: f32 = 1.0 / TICK_RATE as f32;
 
 pub const fn ticks_from_secs(secs: f32) -> u64 {
@@ -35,7 +36,7 @@ pub use item::{
     MAIN_SLOTS, MATERIAL_STACK_MAX, PLAYER_SLOTS, Recipe, RecipeRegistry,
 };
 pub use material::{
-    Dynamics, Ember, Ignition, Material, MaterialId, MaterialRegistry, Operand, Phase, Reaction,
-    ReactionDef, Tag, Tags, per_tick_chance,
+    Dynamics, Ember, GasDynamics, Ignition, LiquidDynamics, MaterialId, MaterialInfo, Phase,
+    PowderDynamics, Reaction, Tag, Tags,
 };
 pub use region::{REGION_AREA_CHUNKS, REGION_SIZE_CELLS, REGION_SIZE_CHUNKS, Region};

@@ -1,8 +1,8 @@
 use crate::bodies::{Raster, commit_stamp};
 use crate::physics::Footprint;
 use crate::world::CellWorld;
-use fallingsand_core::{Cell, CellPos, MaterialRegistry};
-use fallingsand_data::material;
+use fallingsand_core::content::material;
+use fallingsand_core::{Cell, CellPos};
 use rustc_hash::FxHashSet;
 
 pub const PLAYER_COLS: usize = 3;
@@ -143,7 +143,6 @@ fn covers_exactly(raster: &Raster, fp: Footprint) -> bool {
 
 pub fn stamp_player(
     world: &mut CellWorld,
-    registry: &MaterialRegistry,
     stamp: &mut PlayerStamp,
     fp: Footprint,
     facing_left: bool,
@@ -174,7 +173,7 @@ pub fn stamp_player(
     let cell_for = |local: u16| flesh_cell(local, rows, facing_left);
     let empty = Raster::default();
     let old = stamp.raster.as_ref().unwrap_or(&empty);
-    let vacated = commit_stamp(world, registry, &[], old, &new, &cell_for)?;
+    let vacated = commit_stamp(world, &[], old, &new, &cell_for)?;
     stamp.raster = Some(new);
     stamp.rows = rows;
     stamp.facing_left = facing_left;

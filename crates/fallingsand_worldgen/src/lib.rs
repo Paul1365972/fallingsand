@@ -12,11 +12,11 @@ use biomes::{
     OVERHANG_AMPLITUDE, OVERHANG_FADE, SNOW_COVER_DEPTH, SNOW_LINE, WorldDef, world_def,
 };
 use caves::Caves;
+use fallingsand_core::content::material;
 use fallingsand_core::{
     Cell, CellOffset, ChunkOffset, DirtyRect, MaterialId, REGION_SIZE_CELLS, REGION_SIZE_CHUNKS,
     Region, RegionPos,
 };
-use fallingsand_data::material;
 use fallingsand_rng::Hash;
 use noise::Cached;
 use terrain::Terrain;

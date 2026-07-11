@@ -24,15 +24,10 @@ fn render_error_policy(
 }
 
 fn main() {
-    let materials = Arc::new(fallingsand_data::material_registry());
-    let items = Arc::new(fallingsand_data::item_registry(&materials));
-    let recipes = Arc::new(fallingsand_data::recipe_registry(&items));
+    let items = Arc::new(fallingsand_core::content::item_registry());
+    let recipes = Arc::new(fallingsand_core::content::recipe_registry(&items));
 
-    let mut client = ClientGame::new(Registries {
-        materials,
-        items,
-        recipes,
-    });
+    let mut client = ClientGame::new(Registries { items, recipes });
     if let Some(world) = game::net::cli_world_name() {
         client.start_game_local(world);
     }

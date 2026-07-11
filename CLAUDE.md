@@ -32,7 +32,7 @@ cargo fmt --all
 
 ## Architecture
 
-- Dependency direction: `core ← sim ← server`, `core ← protocol ← {server, client}`; the client reaches the sim only through the embedded server.
+- Dependency direction: `material ← {macros, core}`, `macros ← core ← sim ← server`, `core ← protocol ← {server, client}`; the client reaches the sim only through the embedded server. `fallingsand_material` is the shared source of truth (types, TICK_RATE, quantization) for the `content!` proc macro and the runtime; content compiles from `fallingsand_core/content/` into constants and exhaustive-match accessors; the grid kernel is monomorphized per material and integer-only.
 - Scheduling: 4-phase 2×2-chunk-block scheduling; workers get a 4×4-chunk `SimWindow`, disjoint per phase.
 - Rects: `sim` (feeds scheduling) ⊇ `change` (feeds replication/persistence); `set` (real change) marks `change` tight + `sim` as the 3×3 Moore neighbourhood (across chunk borders), `mark` (simulate again) marks `sim` 1×1 only. `sim` is honest — the exact cells simulated next tick, no read-time dilation. Double-buffered (`prev_*`).
 - Randomness: tick-seeded, no RNG state, no iteration-order-dependent containers in sim paths.

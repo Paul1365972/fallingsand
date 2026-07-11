@@ -5,7 +5,8 @@ pub use movement::{Blocked, MoveResult};
 pub use player::{Controller, PlayerParams, step_player};
 
 use crate::world::CellWorld;
-use fallingsand_core::{Cell, CellPos, Fixed, MaterialRegistry, Phase, TICK_RATE, VEL_ONE};
+use fallingsand_core::content;
+use fallingsand_core::{Cell, CellPos, Fixed, Phase, TICK_RATE, VEL_ONE};
 use rustc_hash::FxHashSet;
 
 pub(crate) const BOUNCE_MIN_SPEED: f32 = 30.0;
@@ -130,19 +131,15 @@ pub struct StepInput {
     pub fly: bool,
 }
 
-fn cell_blocks<W: CellSource>(world: &W, registry: &MaterialRegistry, pos: CellPos) -> bool {
+fn cell_blocks<W: CellSource>(world: &W, pos: CellPos) -> bool {
     match world.cell_at(pos) {
-        Some(cell) => matches!(
-            registry.get(cell.material).phase,
-            Phase::Solid | Phase::Powder
-        ),
+        Some(cell) => matches!(content::phase(cell.material), Phase::Solid | Phase::Powder),
         None => true,
     }
 }
 
 fn rect_blocked<W: CellSource>(
     world: &W,
-    registry: &MaterialRegistry,
     body: &Actor,
     cx: Fixed,
     cy: Fixed,
@@ -156,7 +153,7 @@ fn rect_blocked<W: CellSource>(
             if cur.contains(pos) || own_covers(own, pos) {
                 continue;
             }
-            if cell_blocks(world, registry, pos) {
+            if cell_blocks(world, pos) {
                 return true;
             }
         }
@@ -166,7 +163,6 @@ fn rect_blocked<W: CellSource>(
 
 fn supported_at<W: CellSource>(
     world: &W,
-    registry: &MaterialRegistry,
     body: &Actor,
     cx: Fixed,
     cy: Fixed,
@@ -176,17 +172,12 @@ fn supported_at<W: CellSource>(
     let row = next.y0 - 1;
     (next.x0..=next.x1).any(|x| {
         let pos = CellPos::new(x, row);
-        !own_covers(own, pos) && cell_blocks(world, registry, pos)
+        !own_covers(own, pos) && cell_blocks(world, pos)
     })
 }
 
-pub fn grounded<W: CellSource>(
-    world: &W,
-    registry: &MaterialRegistry,
-    body: &Actor,
-    own: OwnCells,
-) -> bool {
-    body.vy <= Fixed::ZERO && supported_at(world, registry, body, body.x, body.y, own)
+pub fn grounded<W: CellSource>(world: &W, body: &Actor, own: OwnCells) -> bool {
+    body.vy <= Fixed::ZERO && supported_at(world, body, body.x, body.y, own)
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -197,11 +188,7 @@ struct Submersion {
     flow_vy: f32,
 }
 
-fn ring_submersion<W: CellSource>(
-    world: &W,
-    registry: &MaterialRegistry,
-    body: &Actor,
-) -> Submersion {
+fn ring_submersion<W: CellSource>(world: &W, body: &Actor) -> Submersion {
     let fp = body.footprint();
     let mut total = 0u32;
     let mut liquid = 0u32;
@@ -213,10 +200,9 @@ fn ring_submersion<W: CellSource>(
         let Some(cell) = world.cell_at(pos) else {
             return;
         };
-        let material = registry.get(cell.material);
-        if material.phase == Phase::Liquid {
+        if content::phase(cell.material) == Phase::Liquid {
             liquid += 1;
-            density_sum += material.density;
+            density_sum += content::density_milli(cell.material) as f32 / 1000.0;
             let (cvx, cvy) = cell.vel();
             flow_x += cvx as i64;
             flow_y += cvy as i64;

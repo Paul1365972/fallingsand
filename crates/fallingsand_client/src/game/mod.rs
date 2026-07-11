@@ -17,7 +17,7 @@ use bevy::math::Vec2;
 use chat::Chat;
 use clock::WorldClock;
 use debug::DebugState;
-use fallingsand_core::{CellPos, ItemRegistry, MaterialRegistry, RecipeRegistry};
+use fallingsand_core::{CellPos, ItemRegistry, RecipeRegistry};
 use input::InputCore;
 use inventory::{Inventory, SlotRegion};
 use menu::MenuState;
@@ -28,7 +28,6 @@ use std::sync::Arc;
 use world::WorldView;
 
 pub struct Registries {
-    pub materials: Arc<MaterialRegistry>,
     pub items: Arc<ItemRegistry>,
     pub recipes: Arc<RecipeRegistry>,
 }

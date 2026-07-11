@@ -1,7 +1,8 @@
 use crate::material::MaterialId;
 use serde::{Deserialize, Serialize};
 
-pub const VEL_ONE: i32 = crate::Fixed::ONE.raw() as i32;
+pub use fallingsand_material::VEL_ONE;
+const _: () = assert!(VEL_ONE == crate::Fixed::ONE.raw() as i32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(C)]

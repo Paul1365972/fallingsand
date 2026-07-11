@@ -6,6 +6,7 @@ use crate::view::particles::Particle;
 use crate::view::sky::Sky;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
+use fallingsand_core::content;
 use fallingsand_core::{
     CHUNK_AREA, CHUNK_SIZE, Cell, ChunkPos, MAX_HP, Phase as MaterialPhase, REGION_SIZE_CELLS,
     SEASON_DAYS,
@@ -315,15 +316,15 @@ fn playing_lines(
 
     left_lines.push(String::new());
     let cursor = match view.get_cell(aim) {
-        Some(cell) => match game.registries.materials.try_get(cell.material) {
-            Some(material) => format!(
+        Some(cell) if (cell.material.0 as usize) < content::MATERIAL_COUNT => {
+            format!(
                 "cursor: {} [{}] d{:.2}",
-                material.name,
-                phase_label(material.phase),
-                material.density
-            ),
-            None => "cursor: ?".to_string(),
-        },
+                content::material(cell.material).name,
+                phase_label(content::phase(cell.material)),
+                content::density_milli(cell.material) as f32 / 1000.0
+            )
+        }
+        Some(_) => "cursor: ?".to_string(),
         None => "cursor: unloaded".to_string(),
     };
     left_lines.push(cursor);

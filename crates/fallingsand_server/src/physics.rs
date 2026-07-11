@@ -2,7 +2,7 @@ use crate::player::{
     Air, Burning, Control, Health, Mode, PLAYER_HALF_H, PLAYER_HALF_W, PLAYER_MASS, Player,
     PlayerActor, PlayerRaster,
 };
-use crate::{MAX_AIR_SECS, MAX_HP, Registry, SimWorld, SpawnPoint};
+use crate::{MAX_AIR_SECS, MAX_HP, SimWorld, SpawnPoint};
 use bevy_ecs::prelude::*;
 use fallingsand_core::{CellPos, Fixed};
 use fallingsand_protocol::GameMode;
@@ -21,7 +21,6 @@ const SPAWN_SEARCH_UP: i32 = 64;
 #[allow(clippy::too_many_arguments)]
 pub fn step_physics(
     mut sim: ResMut<SimWorld>,
-    registry: Res<Registry>,
     spawn_point: Res<SpawnPoint>,
     mut bodies: ResMut<crate::bodies::PixelBodies>,
     mut impulses: ResMut<crate::PlayerImpulses>,
@@ -63,7 +62,7 @@ pub fn step_physics(
         };
 
         if !raster.0.is_stamped() {
-            spawn_stamp(&mut sim.0, &registry.0, &mut raster.0, &mut body.0);
+            spawn_stamp(&mut sim.0, &mut raster.0, &mut body.0);
             if !raster.0.is_stamped() {
                 continue;
             }
@@ -82,7 +81,6 @@ pub fn step_physics(
             let own = raster.0.own_cells();
             step_player(
                 &sim.0,
-                &registry.0,
                 &params,
                 &mut body.0,
                 &mut control.0,
@@ -103,7 +101,6 @@ pub fn step_physics(
         };
         commit_pose(
             &mut sim.0,
-            &registry.0,
             &mut bodies,
             &mut raster.0,
             &mut body.0,
@@ -167,7 +164,6 @@ pub fn step_physics(
 
 fn commit_pose(
     sim: &mut CellWorld,
-    registry: &fallingsand_core::MaterialRegistry,
     bodies: &mut crate::bodies::PixelBodies,
     stamp: &mut fallingsand_sim::PlayerStamp,
     body: &mut Actor,
@@ -181,7 +177,7 @@ fn commit_pose(
     ];
     for (attempt, &(x, y, half_h)) in candidates.iter().enumerate() {
         let fp = footprint_at(x, y, body.half_w, half_h);
-        let Some(vacated) = stamp_player(sim, registry, stamp, fp, facing_left) else {
+        let Some(vacated) = stamp_player(sim, stamp, fp, facing_left) else {
             continue;
         };
         match attempt {
@@ -197,7 +193,7 @@ fn commit_pose(
             _ => {}
         }
         if attempt != 0 {
-            body.on_ground = grounded(sim, registry, body, stamp.own_cells());
+            body.on_ground = grounded(sim, body, stamp.own_cells());
         }
         wake_neighbours(sim, bodies, stamp, &vacated);
         return;
@@ -205,7 +201,7 @@ fn commit_pose(
     *body = snapshot;
     body.vx = Fixed::ZERO;
     body.vy = Fixed::ZERO;
-    body.on_ground = grounded(sim, registry, body, stamp.own_cells());
+    body.on_ground = grounded(sim, body, stamp.own_cells());
 }
 
 fn wake_neighbours(
@@ -228,12 +224,7 @@ fn wake_neighbours(
     }
 }
 
-fn spawn_stamp(
-    sim: &mut CellWorld,
-    registry: &fallingsand_core::MaterialRegistry,
-    stamp: &mut fallingsand_sim::PlayerStamp,
-    body: &mut Actor,
-) {
+fn spawn_stamp(sim: &mut CellWorld, stamp: &mut fallingsand_sim::PlayerStamp, body: &mut Actor) {
     body.half_h = PLAYER_HALF_H;
     let base = body.footprint();
     if !footprint_loaded(sim, base) {
@@ -246,7 +237,7 @@ fn spawn_stamp(
             x1: base.x1,
             y1: base.y0 + rows - 1,
         };
-        if stamp_player(sim, registry, stamp, fp, false).is_some() {
+        if stamp_player(sim, stamp, fp, false).is_some() {
             body.y += Fixed::from_int(rows / 2 - STAND_ROWS as i32 / 2);
             body.half_h = Fixed::from_int(rows).mul(Fixed::HALF);
             return;
@@ -259,7 +250,7 @@ fn spawn_stamp(
             x1: base.x1,
             y1: base.y1 + up,
         };
-        if stamp_player(sim, registry, stamp, fp, false).is_some() {
+        if stamp_player(sim, stamp, fp, false).is_some() {
             body.y += Fixed::from_int(up);
             return;
         }

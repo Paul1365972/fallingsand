@@ -7,16 +7,17 @@ pub use step::{settle_body, step_bodies};
 
 use crate::physics::ActorAabb;
 use crate::world::CellWorld;
-use fallingsand_core::{Cell, CellPos, Fixed, MaterialId, MaterialRegistry, Phase};
+use fallingsand_core::content;
+use fallingsand_core::{Cell, CellPos, Fixed, MaterialId, Phase};
 use rustc_hash::FxHashSet;
 
 const ANGLE_STEPS: u32 = 1024;
-const REFERENCE_DENSITY: f32 = 1000.0;
+const REFERENCE_DENSITY_MILLI: f32 = 1_000_000.0;
 const RELOCATE_RADIUS: i32 = 8;
 const SURFACE_PROBE: i32 = 256;
 
-fn cell_mass(registry: &MaterialRegistry, material: MaterialId) -> f32 {
-    registry.get(material).density / REFERENCE_DENSITY
+fn cell_mass(material: MaterialId) -> f32 {
+    content::density_milli(material) as f32 / REFERENCE_DENSITY_MILLI
 }
 
 fn quantized_trig(angle: f32) -> (f32, f32) {
@@ -136,7 +137,6 @@ fn rasterize_at(body: &PixelBody, x: Fixed, y: Fixed, angle: f32) -> Raster {
 
 pub(crate) fn commit_stamp(
     world: &mut CellWorld,
-    registry: &MaterialRegistry,
     entities: &[ActorAabb],
     old: &Raster,
     new: &Raster,
@@ -151,7 +151,7 @@ pub(crate) fn commit_stamp(
         if cell.is_body() {
             return None;
         }
-        match registry.get(cell.material).phase {
+        match content::phase(cell.material) {
             Phase::Solid | Phase::Powder => return None,
             Phase::Empty => {}
             Phase::Liquid | Phase::Gas => displaced.push((pos, cell)),
@@ -184,7 +184,7 @@ pub(crate) fn commit_stamp(
         writes.push((target, Cell::AIR));
     }
     for (from, cell) in spill {
-        let spot = relocation_spot(world, registry, entities, &claimed, &new.set, from)?;
+        let spot = relocation_spot(world, entities, &claimed, &new.set, from)?;
         claimed.insert(spot);
         writes.push((spot, cell));
     }
@@ -212,7 +212,6 @@ fn chebyshev_ring(radius: i32) -> Vec<(i32, i32)> {
 
 fn relocation_spot(
     world: &CellWorld,
-    registry: &MaterialRegistry,
     entities: &[ActorAabb],
     claimed: &FxHashSet<CellPos>,
     exclude: &FxHashSet<CellPos>,
@@ -231,18 +230,17 @@ fn relocation_spot(
             }
             let empty = world
                 .get_cell(pos)
-                .is_some_and(|cell| registry.get(cell.material).phase == Phase::Empty);
+                .is_some_and(|cell| content::phase(cell.material) == Phase::Empty);
             if empty {
                 return Some(pos);
             }
         }
     }
-    surface_spot(world, registry, entities, claimed, exclude, from)
+    surface_spot(world, entities, claimed, exclude, from)
 }
 
 fn surface_spot(
     world: &CellWorld,
-    registry: &MaterialRegistry,
     entities: &[ActorAabb],
     claimed: &FxHashSet<CellPos>,
     exclude: &FxHashSet<CellPos>,
@@ -256,7 +254,7 @@ fn surface_spot(
         }
         match world
             .get_cell(pos)
-            .map(|cell| registry.get(cell.material).phase)
+            .map(|cell| content::phase(cell.material))
         {
             Some(Phase::Empty) if !claimed.contains(&pos) => return Some(pos),
             Some(Phase::Empty | Phase::Liquid | Phase::Gas) => {}

@@ -84,10 +84,12 @@ pub fn wanted_regions(tickets: &ChunkTickets) -> FxHashSet<RegionPos> {
         .collect()
 }
 
-fn strip_player_remnants(region: &mut Region, registry: &fallingsand_core::MaterialRegistry) {
+fn strip_player_remnants(region: &mut Region) {
     for chunk in region.chunks_mut().iter_mut() {
         for cell in chunk.cells_mut().iter_mut() {
-            if registry.has_tag(cell.material, fallingsand_core::Tag::Player) {
+            if fallingsand_core::content::tags(cell.material)
+                .contains(fallingsand_core::Tag::Player)
+            {
                 *cell = fallingsand_core::Cell::AIR;
             } else if cell.is_body() {
                 cell.set_body(false);
@@ -149,7 +151,6 @@ pub fn manage_regions(
     mut regions: ResMut<RegionMap>,
     generator: Res<Generator>,
     store: Res<Store>,
-    registry: Res<crate::Registry>,
     tickets: Res<ChunkTickets>,
     mut bodies: ResMut<crate::bodies::PixelBodies>,
 ) {
@@ -179,7 +180,7 @@ pub fn manage_regions(
         });
         let region = match loaded {
             Some(mut region) => {
-                strip_player_remnants(&mut region, &registry.0);
+                strip_player_remnants(&mut region);
                 region
             }
             None => generator.0.generate_region(pos),
@@ -212,7 +213,7 @@ pub fn manage_regions(
                 .any(|&pos| body_overlaps_region(&bodies.bodies[index], pos));
             if unloading {
                 let body = bodies.bodies.swap_remove(index);
-                settle_body(&mut sim.0, &registry.0, &body);
+                settle_body(&mut sim.0, &body);
             } else {
                 index += 1;
             }
@@ -330,14 +331,13 @@ pub fn save_everything(world: &mut bevy_ecs::world::World, final_save: bool) {
     let started = std::time::Instant::now();
 
     if final_save {
-        let registry = world.resource::<crate::Registry>().0.clone();
         let mut bodies = std::mem::take(&mut *world.resource_mut::<crate::bodies::PixelBodies>());
         if !bodies.bodies.is_empty() {
             let mut touched: FxHashSet<RegionPos> = FxHashSet::default();
             {
                 let mut sim = world.resource_mut::<SimWorld>();
                 for body in bodies.bodies.drain(..) {
-                    settle_body(&mut sim.0, &registry, &body);
+                    settle_body(&mut sim.0, &body);
                     let radius =
                         ((body.width() as f32).hypot(body.height() as f32) + 1.0).ceil() as i32;
                     let (cx, cy) = (body.x.floor_cell(), body.y.floor_cell());

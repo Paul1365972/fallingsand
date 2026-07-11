@@ -1,6 +1,7 @@
 use super::{PixelBody, Raster, cell_mass, rasterize_at};
 use crate::world::CellWorld;
-use fallingsand_core::{Cell, CellPos, Fixed, MaterialRegistry, Phase};
+use fallingsand_core::content;
+use fallingsand_core::{Cell, CellPos, Fixed, Phase};
 use rustc_hash::FxHashSet;
 use std::collections::VecDeque;
 
@@ -15,12 +16,7 @@ struct Shape {
     perimeter: Vec<(u8, u8)>,
 }
 
-fn derive_shape(
-    registry: &MaterialRegistry,
-    cells: &[Cell],
-    width: u8,
-    height: u8,
-) -> Option<Shape> {
+fn derive_shape(cells: &[Cell], width: u8, height: u8) -> Option<Shape> {
     let mut mass = 0.0f32;
     let mut com = (0.0f32, 0.0f32);
     let mut restitution = 0.0f32;
@@ -30,11 +26,11 @@ fn derive_shape(
             if cell.is_air() {
                 continue;
             }
-            let m = cell_mass(registry, cell.material);
+            let m = cell_mass(cell.material);
             mass += m;
             com.0 += m * (lx as f32 + 0.5);
             com.1 += m * (ly as f32 + 0.5);
-            restitution += m * registry.get(cell.material).restitution;
+            restitution += m * content::material(cell.material).restitution;
         }
     }
     if mass <= 0.0 {
@@ -52,7 +48,7 @@ fn derive_shape(
             if cell.is_air() {
                 continue;
             }
-            let m = cell_mass(registry, cell.material);
+            let m = cell_mass(cell.material);
             let (dx, dy) = (lx as f32 + 0.5 - com.0, ly as f32 + 0.5 - com.1);
             inertia += m * (dx * dx + dy * dy + 1.0 / 6.0);
             let edge = [(1i16, 0i16), (-1, 0), (0, 1), (0, -1)]
@@ -79,21 +75,17 @@ fn derive_shape(
     })
 }
 
-fn is_rigid(world: &CellWorld, registry: &MaterialRegistry, pos: CellPos) -> Option<Cell> {
+fn is_rigid(world: &CellWorld, pos: CellPos) -> Option<Cell> {
     let cell = world.get_cell(pos)?;
     if cell.is_body() {
         return None;
     }
-    let material = registry.get(cell.material);
-    (material.phase == Phase::Solid && material.rigid_capable).then_some(cell)
+    (content::phase(cell.material) == Phase::Solid && content::is_rigid_capable(cell.material))
+        .then_some(cell)
 }
 
-pub fn detect_island(
-    world: &CellWorld,
-    registry: &MaterialRegistry,
-    seed: CellPos,
-) -> Option<Vec<CellPos>> {
-    is_rigid(world, registry, seed)?;
+pub fn detect_island(world: &CellWorld, seed: CellPos) -> Option<Vec<CellPos>> {
+    is_rigid(world, seed)?;
     let mut visited: FxHashSet<CellPos> = FxHashSet::default();
     let mut queue: VecDeque<CellPos> = VecDeque::new();
     visited.insert(seed);
@@ -103,7 +95,7 @@ pub fn detect_island(
     while let Some(pos) = queue.pop_front() {
         for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
             let next = pos.translated(dx, dy);
-            if visited.contains(&next) || is_rigid(world, registry, next).is_none() {
+            if visited.contains(&next) || is_rigid(world, next).is_none() {
                 continue;
             }
             min_x = min_x.min(next.x);
@@ -123,12 +115,7 @@ pub fn detect_island(
     Some(visited.into_iter().collect())
 }
 
-pub fn register_body(
-    world: &mut CellWorld,
-    registry: &MaterialRegistry,
-    id: u32,
-    island: &[CellPos],
-) -> PixelBody {
+pub fn register_body(world: &mut CellWorld, id: u32, island: &[CellPos]) -> PixelBody {
     let min_x = island.iter().map(|p| p.x).min().unwrap();
     let max_x = island.iter().map(|p| p.x).max().unwrap();
     let min_y = island.iter().map(|p| p.y).min().unwrap();
@@ -144,7 +131,7 @@ pub fn register_body(
         cells[ly * width as usize + lx] = cell;
     }
 
-    let shape = derive_shape(registry, &cells, width, height).expect("island has cells");
+    let shape = derive_shape(&cells, width, height).expect("island has cells");
     let mut body = PixelBody {
         id,
         width,
@@ -178,7 +165,6 @@ pub fn register_body(
 
 pub fn apply_damage(
     world: &mut CellWorld,
-    registry: &MaterialRegistry,
     bodies: &mut Vec<PixelBody>,
     mut notes: Vec<CellPos>,
     mut next_id: impl FnMut() -> u32,
@@ -201,7 +187,7 @@ pub fn apply_damage(
         let world_cell = world.get_cell(pos).unwrap_or(Cell::AIR);
         let adopt = !world_cell.is_air()
             && !world_cell.is_body()
-            && registry.get(world_cell.material).phase == Phase::Solid;
+            && content::phase(world_cell.material) == Phase::Solid;
         if adopt {
             body.cells[local] = world_cell;
             let mut flagged = world_cell;
@@ -219,14 +205,13 @@ pub fn apply_damage(
     touched.sort_unstable_by(|a, b| b.cmp(a));
     for index in touched {
         let body = bodies.swap_remove(index);
-        let parts = split_body(world, registry, body, &mut next_id);
+        let parts = split_body(world, body, &mut next_id);
         bodies.extend(parts);
     }
 }
 
 fn split_body(
     world: &mut CellWorld,
-    registry: &MaterialRegistry,
     body: PixelBody,
     mut next_id: impl FnMut() -> u32,
 ) -> Vec<PixelBody> {
@@ -286,7 +271,7 @@ fn split_body(
             cells[new_local] = body.cells[index];
             remap[index] = Some((parts.len() as u16, new_local as u16));
         }
-        let Some(shape) = derive_shape(registry, &cells, part_w, part_h) else {
+        let Some(shape) = derive_shape(&cells, part_w, part_h) else {
             for slot in remap.iter_mut() {
                 if let Some((owner, _)) = slot
                     && *owner == parts.len() as u16

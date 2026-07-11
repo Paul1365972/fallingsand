@@ -49,11 +49,7 @@ pub fn spawn_slot_widgets(
 ) {
     let (display, color) = match stack {
         Some(stack) => {
-            let c = item_color(
-                &game.registries.items,
-                &game.registries.materials,
-                stack.item,
-            );
+            let c = item_color(&game.registries.items, stack.item);
             (Display::Flex, Color::srgba_u8(c[0], c[1], c[2], c[3]))
         }
         None => (Display::None, Color::NONE),
@@ -98,13 +94,12 @@ pub fn spawn_slot_widgets(
 pub fn sync_slots(
     stack_for: impl Fn(Entity) -> Option<Option<ItemStack>>,
     items: &fallingsand_core::ItemRegistry,
-    materials: &fallingsand_core::MaterialRegistry,
     swatches: &mut Query<(&ChildOf, &mut Node, &mut BackgroundColor), With<SlotSwatch>>,
     counts: &mut Query<(&ChildOf, &mut Text), With<SlotCount>>,
 ) {
     for (child_of, mut node, mut color) in swatches {
         if let Some(stack) = stack_for(child_of.parent()) {
-            apply_swatch(stack, items, materials, &mut node, &mut color);
+            apply_swatch(stack, items, &mut node, &mut color);
         }
     }
     for (child_of, mut text) in counts {
@@ -117,13 +112,12 @@ pub fn sync_slots(
 fn apply_swatch(
     stack: Option<ItemStack>,
     items: &fallingsand_core::ItemRegistry,
-    materials: &fallingsand_core::MaterialRegistry,
     node: &mut Mut<Node>,
     color: &mut Mut<BackgroundColor>,
 ) {
     match stack {
         Some(stack) => {
-            let c = item_color(items, materials, stack.item);
+            let c = item_color(items, stack.item);
             let target = Color::srgba_u8(c[0], c[1], c[2], c[3]);
             if node.display != Display::Flex {
                 node.display = Display::Flex;
@@ -207,7 +201,6 @@ pub fn patch_overlay_slots(
     sync_slots(
         stack_for,
         &game.0.registries.items,
-        &game.0.registries.materials,
         &mut swatches,
         &mut counts,
     );
@@ -386,7 +379,6 @@ fn spawn_overlay(commands: &mut Commands, game: &ClientGame) {
 }
 
 fn build_side_panel(panel: &mut ChildSpawnerCommands, game: &ClientGame, ingame: &InGame) {
-    let materials = &game.registries.materials;
     let items = &game.registries.items;
 
     if ingame.you.mode == GameMode::Creative {
@@ -419,7 +411,7 @@ fn build_side_panel(panel: &mut ChildSpawnerCommands, game: &ClientGame, ingame:
                     BackgroundColor(background),
                 ))
                 .with_children(|entry| {
-                    let color = item_color(items, materials, recipe.output.0);
+                    let color = item_color(items, recipe.output.0);
                     entry.spawn((
                         Node {
                             width: px(20),
@@ -534,11 +526,7 @@ pub fn update_cursor_follow(
             node.display = Display::Flex;
             node.left = px(pos.x - (SLOT - 12.0) / 2.0);
             node.top = px(pos.y - (SLOT - 12.0) / 2.0);
-            let c = item_color(
-                &game.0.registries.items,
-                &game.0.registries.materials,
-                stack.item,
-            );
+            let c = item_color(&game.0.registries.items, stack.item);
             *color = BackgroundColor(Color::srgba_u8(c[0], c[1], c[2], c[3]));
             if let Ok(mut text) = count.single_mut() {
                 **text = if stack.count > 1 {

@@ -1,14 +1,10 @@
 use crate::rules;
 use crate::window::{SimWindow, WINDOW_CHUNKS, WINDOW_SLOTS};
 use crate::world::CellWorld;
-use fallingsand_core::{CHUNK_SIZE, CellPos, Chunk, ChunkPos, DirtyRect, MaterialRegistry};
+use fallingsand_core::{CHUNK_SIZE, CellPos, Chunk, ChunkPos, DirtyRect};
 use rustc_hash::FxHashSet;
 
-pub fn step_scoped(
-    world: &mut CellWorld,
-    registry: &MaterialRegistry,
-    simulate: &(dyn Fn(ChunkPos) -> bool + Sync),
-) {
+pub fn step_scoped(world: &mut CellWorld, simulate: &(dyn Fn(ChunkPos) -> bool + Sync)) {
     world.advance_tick();
     let tick = world.tick();
     let loaded: FxHashSet<ChunkPos> = world.chunk_map_mut().keys().copied().collect();
@@ -21,13 +17,12 @@ pub fn step_scoped(
         chunk.swap_rects();
     }
     for phase in 0..4 {
-        run_phase(world, registry, phase, tick, simulate);
+        run_phase(world, phase, tick, simulate);
     }
 }
 
 fn run_phase(
     world: &mut CellWorld,
-    registry: &MaterialRegistry,
     phase: u32,
     tick: u64,
     simulate: &(dyn Fn(ChunkPos) -> bool + Sync),
@@ -64,11 +59,11 @@ fn run_phase(
         use rayon::prelude::*;
         windows
             .par_iter_mut()
-            .for_each(|window| process_block(window, registry, tick, simulate));
+            .for_each(|window| process_block(window, tick, simulate));
     }
     #[cfg(not(feature = "parallel"))]
     for window in windows.iter_mut() {
-        process_block(window, registry, tick, simulate);
+        process_block(window, tick, simulate);
     }
 
     let mut structural: Vec<CellPos> = Vec::new();
@@ -89,12 +84,7 @@ fn run_phase(
     world.push_damage(damage);
 }
 
-fn process_block(
-    window: &mut SimWindow,
-    registry: &MaterialRegistry,
-    tick: u64,
-    simulate: &(dyn Fn(ChunkPos) -> bool + Sync),
-) {
+fn process_block(window: &mut SimWindow, tick: u64, simulate: &(dyn Fn(ChunkPos) -> bool + Sync)) {
     let mut rects = [[DirtyRect::EMPTY; 2]; 2];
     for oy in 0..2i32 {
         for ox in 0..2i32 {
@@ -127,7 +117,7 @@ fn process_block(
             for i in 0..=(end - start) {
                 let lx = if reverse { end - i } else { start + i };
                 let pos = CellPos::new(origin_cell.x + ox as i32 * size + lx, origin_cell.y + gy);
-                rules::update_cell(window, registry, pos, tick, tick_byte);
+                rules::update_cell(window, pos, tick, tick_byte);
             }
         }
     }

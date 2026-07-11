@@ -1,7 +1,8 @@
 use crate::player::{Air, Burning, Health, Mode, PlayerActor};
-use crate::{MAX_AIR_SECS, MAX_HP, Registry, SimWorld};
+use crate::{MAX_AIR_SECS, MAX_HP, SimWorld};
 use bevy_ecs::prelude::*;
-use fallingsand_core::{CellPos, MaterialRegistry, Phase, TICK_DT, Tag};
+use fallingsand_core::content;
+use fallingsand_core::{CellPos, Phase, TICK_DT, Tag};
 use fallingsand_protocol::GameMode;
 use fallingsand_sim::physics::{Actor, CellSource};
 use rustc_hash::FxHashMap;
@@ -27,22 +28,19 @@ pub struct HazardSample {
     pub head_submerged: bool,
 }
 
-pub fn sample_hazards<W: CellSource>(
-    world: &W,
-    registry: &MaterialRegistry,
-    body: &Actor,
-) -> HazardSample {
+pub fn sample_hazards<W: CellSource>(world: &W, body: &Actor) -> HazardSample {
     let mut sample = HazardSample::default();
     let fp = body.footprint();
     let mut probe = |pos: CellPos| {
         let Some(cell) = world.cell_at(pos) else {
             return;
         };
-        let material = registry.get(cell.material);
-        let hot = material.tags.contains(Tag::Hot);
-        sample.contact_dps = sample.contact_dps.max(material.contact_damage);
+        let hot = content::tags(cell.material).contains(Tag::Hot);
+        sample.contact_dps = sample
+            .contact_dps
+            .max(content::material(cell.material).contact_damage);
         sample.hot |= hot;
-        sample.extinguish |= material.phase == Phase::Liquid && !hot;
+        sample.extinguish |= content::phase(cell.material) == Phase::Liquid && !hot;
     };
     for y in fp.y0 - 1..=fp.y1 + 1 {
         probe(CellPos::new(fp.x0 - 1, y));
@@ -55,7 +53,7 @@ pub fn sample_hazards<W: CellSource>(
     let head = CellPos::new(body.x.floor_cell(), fp.y1 + 1);
     sample.head_submerged = matches!(
         world.cell_at(head),
-        Some(cell) if registry.get(cell.material).phase == Phase::Liquid
+        Some(cell) if content::phase(cell.material) == Phase::Liquid
     );
     sample
 }
@@ -67,7 +65,6 @@ pub fn crush_damage(dv: f32) -> f32 {
 #[allow(clippy::type_complexity)]
 pub fn apply_hazards(
     sim: Res<SimWorld>,
-    registry: Res<Registry>,
     mut crushes: ResMut<CrushEvents>,
     mut query: Query<(
         Entity,
@@ -91,7 +88,7 @@ pub fn apply_hazards(
             burning.secs = 0.0;
             continue;
         }
-        let sample = sample_hazards(&sim.0, &registry.0, &body.0);
+        let sample = sample_hazards(&sim.0, &body.0);
         let mut damage = sample.contact_dps * TICK_DT;
         if sample.hot {
             burning.secs = BURN_SECS;

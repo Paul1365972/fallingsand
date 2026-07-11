@@ -3,6 +3,7 @@ use super::PLAYER_SIZE;
 use super::camera::WORLD_LAYER;
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
+use fallingsand_core::content;
 use fallingsand_core::{Phase, REACH, SURVIVAL_REACH};
 use fallingsand_protocol::GameMode;
 use fallingsand_rng::Rng;
@@ -91,7 +92,6 @@ fn spawn_dig_spray(
         return;
     }
 
-    let registry = &game.registries.materials;
     let radius = ingame.inventory.brush as i32;
     let mut spawned = 0;
     for _ in 0..12 {
@@ -108,12 +108,12 @@ fn spawn_dig_spray(
         let Some(cell) = ingame.world.get_cell(pos) else {
             continue;
         };
-        let material = registry.get(cell.material);
-        if !matches!(material.phase, Phase::Solid | Phase::Powder) {
+        if !matches!(content::phase(cell.material), Phase::Solid | Phase::Powder) {
             continue;
         }
+        let colors = content::material(cell.material).colors;
         let shade = (cell.shade_flags >> 4) as usize;
-        let rgba = material.colors[shade % material.colors.len()];
+        let rgba = colors[shade % colors.len()];
         let color = Color::srgba_u8(rgba[0], rgba[1], rgba[2], 255);
         let angle = std::f32::consts::FRAC_PI_4 + rng.draw().unit() * std::f32::consts::FRAC_PI_2;
         let speed = 25.0 + rng.draw().unit() * 55.0;

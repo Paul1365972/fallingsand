@@ -1,4 +1,4 @@
-use crate::{Registry, SimWorld, TickStats};
+use crate::{SimWorld, TickStats};
 use bevy_ecs::prelude::*;
 use std::time::Instant;
 
@@ -6,12 +6,11 @@ const PEAK_SIM_WINDOW_TICKS: u64 = 2 * crate::TICK_RATE as u64;
 
 pub fn step_simulation(
     mut sim: ResMut<SimWorld>,
-    registry: Res<Registry>,
     tickets: Res<crate::regions::ChunkTickets>,
     mut stats: ResMut<TickStats>,
 ) {
     let start = Instant::now();
-    fallingsand_sim::step_scoped(&mut sim.0, &registry.0, &|pos| tickets.simulates(pos));
+    fallingsand_sim::step_scoped(&mut sim.0, &|pos| tickets.simulates(pos));
     stats.tick = sim.0.tick();
     stats.sim_micros = start.elapsed().as_micros() as u64;
     if stats.tick.is_multiple_of(PEAK_SIM_WINDOW_TICKS) {

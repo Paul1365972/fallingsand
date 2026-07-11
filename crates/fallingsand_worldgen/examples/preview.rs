@@ -41,7 +41,6 @@ fn parse_args() -> Args {
 
 fn main() {
     let args = parse_args();
-    let registry = fallingsand_data::material_registry();
     let generator = WorldGenerator::new(args.seed);
 
     let size = REGION_SIZE_CELLS;
@@ -72,7 +71,7 @@ fn main() {
                 for (cell_index, cell) in chunk.cells().iter().enumerate() {
                     let cell_x = cell_index % 64;
                     let cell_y = cell_index / 64;
-                    let material = registry.get(cell.material);
+                    let material = fallingsand_core::content::material(cell.material);
                     let color = material.colors[cell.shade() as usize % material.colors.len()];
                     let px = origin_x + chunk_x + cell_x;
                     let py = origin_y + (size - 1 - (chunk_y + cell_y));

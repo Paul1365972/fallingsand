@@ -12,7 +12,7 @@ Client→server: one `InputFrame` per client fixed tick — held `InputState` (l
 
 A wire cell is 3 bytes (material + shade flags) — no velocity or timing; the server re-derives them. Each `ChunkOp` cell payload is a paletted container over that state (cell count from context): **uniform**, **paletted** (≤256 first-occurrence entries, `ceil(log2(n))`-bit LSB-first indices, no padding), or **raw** — the encoder picks the smallest. Frame-level lz4 catches cross-chunk palette repetition.
 
-`HelloAck` carries `PROTOCOL_VERSION`; the client rejects on mismatch. The version gates content compatibility too — any change to `fallingsand_data` (materials, items, …) bumps it.
+`HelloAck` carries `PROTOCOL_VERSION`; the client rejects on mismatch. The version gates content compatibility too — any change to `core::content` (materials, items, …) bumps it.
 
 Reliable+ordered is load-bearing: deltas always apply on top of the last state — no per-chunk versioning, no resync, no input sequence numbers. Packet loss costs a retransmit delay, never correctness — fine for ~10-player co-op. Moving hot state to datagrams stays a contained change behind the transport trait.
 

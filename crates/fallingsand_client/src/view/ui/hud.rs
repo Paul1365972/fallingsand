@@ -66,7 +66,6 @@ pub fn patch_hud_slots(
     sync_slots(
         stack_for,
         &game.0.registries.items,
-        &game.0.registries.materials,
         &mut swatches,
         &mut counts,
     );

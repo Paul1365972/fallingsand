@@ -15,6 +15,7 @@ use bevy::render::texture::GpuImage;
 use bevy::render::{ExtractSchedule, MainWorld, Render, RenderApp, RenderSystems};
 use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d};
+use fallingsand_core::content;
 use fallingsand_core::{CHUNK_AREA, CHUNK_SIZE, Cell, CellOffset, ChunkPos, DirtyRect};
 
 const SHADES: u32 = 16;
@@ -128,12 +129,10 @@ pub fn setup_shared(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    game: Res<Game>,
 ) {
-    let materials = &game.0.registries.materials;
-    let width = materials.len().max(1) as u32;
+    let width = content::MATERIAL_COUNT.max(1) as u32;
     let mut data = vec![0u8; (width * SHADES * 4) as usize];
-    for (id, material) in materials.iter() {
+    for (id, material) in content::materials() {
         for shade in 0..SHADES {
             let color = material.colors[shade as usize % material.colors.len()];
             let index = ((shade * width + id.0 as u32) * 4) as usize;

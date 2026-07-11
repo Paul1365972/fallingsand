@@ -5,7 +5,7 @@ use crate::biomes::{
 };
 use crate::features::Clip;
 use fallingsand_core::MaterialId;
-use fallingsand_data::material;
+use fallingsand_core::content::material;
 use fallingsand_rng::{Hash, Rng};
 
 pub(crate) struct StructureCell {

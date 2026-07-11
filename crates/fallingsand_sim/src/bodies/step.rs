@@ -1,13 +1,14 @@
 use super::contact::{Contact, Other, find_contacts};
 use super::{
-    ActorDynamics, PixelBody, REFERENCE_DENSITY, Raster, commit_stamp, quantized_trig,
+    ActorDynamics, PixelBody, REFERENCE_DENSITY_MILLI, Raster, commit_stamp, quantized_trig,
     rasterize_at, relocation_spot, wake_covering,
 };
 use crate::physics::{
     ActorAabb, BOUNCE_MIN_SPEED, FLUID_DRAG_LINEAR, FLUID_DRAG_QUAD, MAX_FLUID_DRAG,
 };
 use crate::world::CellWorld;
-use fallingsand_core::{Cell, CellPos, ChunkPos, Fixed, MaterialRegistry, Phase, TICK_DT};
+use fallingsand_core::content;
+use fallingsand_core::{Cell, CellPos, ChunkPos, Fixed, Phase, TICK_DT};
 use rustc_hash::FxHashSet;
 
 const SLEEP_SECS: f32 = 0.33;
@@ -45,7 +46,6 @@ fn span_simulated(
 
 pub fn step_bodies(
     world: &mut CellWorld,
-    registry: &MaterialRegistry,
     bodies: &mut [PixelBody],
     entities: &[ActorDynamics],
     gravity: Fixed,
@@ -90,7 +90,7 @@ pub fn step_bodies(
         };
         let substeps = {
             let body = &mut bodies[index];
-            apply_buoyancy(world, registry, body, gravity);
+            apply_buoyancy(world, body, gravity);
             body.vy = body.vy.add_vel_f32(gravity.to_f32() * TICK_DT);
 
             let radius = 0.5 * (body.width as f32).hypot(body.height as f32);
@@ -103,7 +103,6 @@ pub fn step_bodies(
         for _ in 0..substeps {
             step_substep(
                 world,
-                registry,
                 bodies,
                 entities,
                 index,
@@ -114,7 +113,6 @@ pub fn step_bodies(
         }
         let vacated = restamp(
             world,
-            registry,
             &entity_boxes,
             &mut bodies[index],
             start_x,
@@ -136,12 +134,7 @@ pub fn step_bodies(
     entity_impulses
 }
 
-fn apply_buoyancy(
-    world: &CellWorld,
-    registry: &MaterialRegistry,
-    body: &mut PixelBody,
-    gravity: Fixed,
-) {
+fn apply_buoyancy(world: &CellWorld, body: &mut PixelBody, gravity: Fixed) {
     const BEARING: [(i32, i32); 3] = [(0, -1), (-1, 0), (1, 0)];
     let (sin, cos) = quantized_trig(body.angle);
     let mut density_sum = 0.0f32;
@@ -158,9 +151,8 @@ fn apply_buoyancy(
             let Some(cell) = world.get_cell(neighbor) else {
                 continue;
             };
-            let material = registry.get(cell.material);
-            if material.phase == Phase::Liquid {
-                density_sum += material.density;
+            if content::phase(cell.material) == Phase::Liquid {
+                density_sum += content::density_milli(cell.material) as f32;
                 samples += 1;
                 bearing = true;
             }
@@ -173,7 +165,8 @@ fn apply_buoyancy(
 
     let count = body.cells.iter().filter(|cell| !cell.is_air()).count();
     let submersion = wet as f32 / body.perimeter.len().max(1) as f32;
-    let buoyant = submersion * count as f32 * (density_sum / samples as f32) / REFERENCE_DENSITY;
+    let buoyant =
+        submersion * count as f32 * (density_sum / samples as f32) / REFERENCE_DENSITY_MILLI;
     body.vy = body
         .vy
         .add_vel_f32(-gravity.to_f32() * buoyant * body.inv_mass * TICK_DT);
@@ -186,10 +179,8 @@ fn apply_buoyancy(
     body.spin *= 1.0 - drag;
 }
 
-#[allow(clippy::too_many_arguments)]
 fn step_substep(
     world: &CellWorld,
-    registry: &MaterialRegistry,
     bodies: &mut [PixelBody],
     entities: &[ActorDynamics],
     index: usize,
@@ -207,7 +198,7 @@ fn step_substep(
         prev
     };
 
-    let contacts = find_contacts(world, registry, entities, bodies, index);
+    let contacts = find_contacts(world, entities, bodies, index);
     let touching = !contacts.is_empty();
     let static_only = contacts.iter().all(|contact| contact.other.is_static());
     let supported = contacts
@@ -366,7 +357,6 @@ fn apply_to_other(
 
 fn restamp(
     world: &mut CellWorld,
-    registry: &MaterialRegistry,
     entities: &[ActorAabb],
     body: &mut PixelBody,
     start_x: Fixed,
@@ -388,7 +378,7 @@ fn restamp(
             body.raster = raster;
             Some(Vec::new())
         } else {
-            plan_and_commit(world, registry, entities, body, raster)
+            plan_and_commit(world, entities, body, raster)
         };
         if let Some(vacated) = committed {
             body.x = x;
@@ -417,7 +407,6 @@ fn restamp(
 
 fn plan_and_commit(
     world: &mut CellWorld,
-    registry: &MaterialRegistry,
     entities: &[ActorAabb],
     body: &mut PixelBody,
     new: Raster,
@@ -427,12 +416,12 @@ fn plan_and_commit(
         cell.set_body(true);
         cell
     };
-    let vacated = commit_stamp(world, registry, entities, &body.raster, &new, &cell_for)?;
+    let vacated = commit_stamp(world, entities, &body.raster, &new, &cell_for)?;
     body.raster = new;
     Some(vacated)
 }
 
-pub fn settle_body(world: &mut CellWorld, registry: &MaterialRegistry, body: &PixelBody) {
+pub fn settle_body(world: &mut CellWorld, body: &PixelBody) {
     let mut winner = vec![false; body.cells.len()];
     for &(_, local) in &body.raster.cells {
         winner[local as usize] = true;
@@ -458,21 +447,18 @@ pub fn settle_body(world: &mut CellWorld, registry: &MaterialRegistry, body: &Pi
                         && world.get_cell(pos).is_some_and(|existing| {
                             !existing.is_body()
                                 && !matches!(
-                                    registry.get(existing.material).phase,
+                                    content::phase(existing.material),
                                     Phase::Solid | Phase::Powder
                                 )
                         })
                 })
-                .or_else(|| {
-                    relocation_spot(world, registry, &[], &claimed, &body.raster.set, base)
-                });
+                .or_else(|| relocation_spot(world, &[], &claimed, &body.raster.set, base));
             let Some(pos) = target else {
                 continue;
             };
             let existing = world.get_cell(pos).expect("settle target is loaded");
             if !existing.is_air() {
-                let Some(spot) =
-                    relocation_spot(world, registry, &[], &claimed, &body.raster.set, pos)
+                let Some(spot) = relocation_spot(world, &[], &claimed, &body.raster.set, pos)
                 else {
                     continue;
                 };

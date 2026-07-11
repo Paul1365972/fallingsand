@@ -1,16 +1,16 @@
+use crate::SimWorld;
 use crate::inventory::{Inventory, ItemReg};
 use crate::player::{DigState, Mode, Player, PlayerActor};
-use crate::{Registry, SimWorld};
 use bevy_ecs::prelude::*;
+use fallingsand_core::content;
 use fallingsand_core::{
-    CellPos, Fixed, ItemId, ItemRegistry, ItemStack, MAX_BRUSH, MaterialId, MaterialRegistry,
-    Phase, REACH, SURVIVAL_REACH, TICK_DT, Tag,
+    CellPos, Fixed, ItemId, ItemRegistry, ItemStack, MAX_BRUSH, MaterialId, Phase, REACH,
+    SURVIVAL_REACH, TICK_DT, Tag,
 };
 use fallingsand_protocol::GameMode;
 
 pub fn apply_player_inputs(
     mut sim: ResMut<SimWorld>,
-    registry: Res<Registry>,
     item_reg: Res<ItemReg>,
     mut bodies: ResMut<crate::bodies::PixelBodies>,
     mut query: Query<(&Player, &PlayerActor, &Mode, &mut DigState, &mut Inventory)>,
@@ -35,24 +35,16 @@ pub fn apply_player_inputs(
         let mut dug = false;
         if input.primary {
             if survival {
-                dug = survival_dig(
-                    &mut sim.0,
-                    &registry.0,
-                    reg,
-                    &mut dig,
-                    &mut inventory,
-                    input.aim,
-                    radius,
-                );
+                dug = survival_dig(&mut sim.0, reg, &mut dig, &mut inventory, input.aim, radius);
             } else {
                 for (_, pos) in brush_cells(input.aim, radius) {
                     let Some(cell) = sim.0.get_cell(pos) else {
                         continue;
                     };
-                    if registry.0.has_tag(cell.material, Tag::Player) {
+                    if content::tags(cell.material).contains(Tag::Player) {
                         continue;
                     }
-                    if registry.0.get(cell.material).phase != Phase::Empty {
+                    if content::phase(cell.material) != Phase::Empty {
                         sim.0.place_material(pos, MaterialId::AIR);
                         dug = true;
                     }
@@ -120,7 +112,6 @@ fn brush_cells(aim: CellPos, radius: i32) -> impl Iterator<Item = (i32, CellPos)
 
 pub fn survival_dig(
     world: &mut fallingsand_sim::CellWorld,
-    registry: &MaterialRegistry,
     item_reg: &ItemRegistry,
     dig: &mut DigState,
     inventory: &mut Inventory,
@@ -130,11 +121,8 @@ pub fn survival_dig(
     let mut candidates: Vec<(i32, i32, i32)> = brush_cells(aim, radius)
         .filter(|&(_, pos)| {
             world.get_cell(pos).is_some_and(|cell| {
-                !registry.has_tag(cell.material, Tag::Player)
-                    && matches!(
-                        registry.get(cell.material).phase,
-                        Phase::Solid | Phase::Powder
-                    )
+                !content::tags(cell.material).contains(Tag::Player)
+                    && matches!(content::phase(cell.material), Phase::Solid | Phase::Powder)
             })
         })
         .map(|(dist_sq, pos)| (dist_sq, pos.y, pos.x))
@@ -146,7 +134,7 @@ pub fn survival_dig(
     };
     let closest_cost = world
         .get_cell(CellPos::new(x, y))
-        .map(|cell| registry.get(cell.material).hardness)
+        .map(|cell| content::material(cell.material).hardness)
         .unwrap_or(0.0);
     dig.budget = (dig.budget + TICK_DT).min(closest_cost + TICK_DT);
     let mut dug = false;
@@ -155,7 +143,7 @@ pub fn survival_dig(
         let Some(cell) = world.get_cell(pos) else {
             continue;
         };
-        let cost = registry.get(cell.material).hardness;
+        let cost = content::material(cell.material).hardness;
         if dig.budget < cost {
             break;
         }

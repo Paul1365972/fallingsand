@@ -1,4 +1,4 @@
-use crate::{MaterialId, MaterialRegistry, Tag};
+use crate::{MaterialId, Tag, content};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ops::Range;
@@ -58,12 +58,10 @@ pub struct ItemRegistry {
 }
 
 impl ItemRegistry {
-    pub fn build(entries: &[ItemEntry], materials: &MaterialRegistry) -> Self {
-        let material_items = materials
-            .iter()
-            .filter(|(id, material)| {
-                material.phase != crate::Phase::Empty
-                    && materials.ember(*id).is_none_or(|ember| ember.is_flame())
+    pub fn build(entries: &[ItemEntry]) -> Self {
+        let material_items = content::materials()
+            .filter(|&(id, _)| {
+                content::phase(id) != crate::Phase::Empty && !content::is_fuel_ember(id)
             })
             .count();
         let total = 1 + entries.len() + material_items;
@@ -97,15 +95,15 @@ impl ItemRegistry {
             items.push(def);
         }
 
-        let mut mat_to_item = vec![ItemId::NONE; materials.len()];
-        for (id, material) in materials.iter() {
-            if material.phase == crate::Phase::Empty
-                || material.tags.contains(Tag::Player)
-                || materials.ember(id).is_some_and(|ember| !ember.is_flame())
+        let mut mat_to_item = vec![ItemId::NONE; content::MATERIAL_COUNT];
+        for (id, info) in content::materials() {
+            if content::phase(id) == crate::Phase::Empty
+                || content::tags(id).contains(Tag::Player)
+                || content::is_fuel_ember(id)
             {
                 continue;
             }
-            let canonical = material.name.to_ascii_lowercase();
+            let canonical = info.name.to_ascii_lowercase();
             let name = format!("mat:{canonical}");
             let def = ItemDef {
                 display: pretty_name(&canonical),
