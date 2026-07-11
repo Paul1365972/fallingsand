@@ -510,6 +510,5 @@ fn phase_label(phase: MaterialPhase) -> &'static str {
         MaterialPhase::Powder => "powder",
         MaterialPhase::Liquid => "liquid",
         MaterialPhase::Gas => "gas",
-        MaterialPhase::Fire => "fire",
     }
 }

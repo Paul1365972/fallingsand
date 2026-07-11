@@ -35,7 +35,7 @@ pub use item::{
     MAIN_SLOTS, MATERIAL_STACK_MAX, PLAYER_SLOTS, Recipe, RecipeRegistry,
 };
 pub use material::{
-    Burn, Dynamics, Material, MaterialId, MaterialRegistry, Operand, Phase, Reaction, ReactionDef,
-    Tag, Tags, per_tick_chance,
+    Dynamics, Ember, Ignition, Material, MaterialId, MaterialRegistry, Operand, Phase, Reaction,
+    ReactionDef, Tag, Tags, per_tick_chance,
 };
 pub use region::{REGION_AREA_CHUNKS, REGION_SIZE_CELLS, REGION_SIZE_CHUNKS, Region};

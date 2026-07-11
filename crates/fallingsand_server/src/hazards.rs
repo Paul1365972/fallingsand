@@ -39,17 +39,8 @@ pub fn sample_hazards<W: CellSource>(
             return;
         };
         let material = registry.get(cell.material);
-        let burning = cell.is_burning();
-        let hot = burning || registry.has_tag(cell.material, Tag::Hot);
-        let contact = if burning {
-            registry
-                .burn(cell.material)
-                .map_or(0.0, |burn| burn.damage)
-                .max(material.contact_damage)
-        } else {
-            material.contact_damage
-        };
-        sample.contact_dps = sample.contact_dps.max(contact);
+        let hot = material.tags.contains(Tag::Hot);
+        sample.contact_dps = sample.contact_dps.max(material.contact_damage);
         sample.hot |= hot;
         sample.extinguish |= material.phase == Phase::Liquid && !hot;
     };

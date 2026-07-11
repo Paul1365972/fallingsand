@@ -14,7 +14,6 @@ pub enum Phase {
     Powder,
     Liquid,
     Gas,
-    Fire,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +50,11 @@ impl Tags {
     pub const fn intersects(self, other: Tags) -> bool {
         self.0 & other.0 != 0
     }
+
+    #[inline]
+    pub const fn union(self, other: Tags) -> Tags {
+        Tags(self.0 | other.0)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -75,9 +79,11 @@ pub struct Material {
     pub tags: Tags,
     pub decay_rate: f32,
     pub decay_into: Option<MaterialId>,
+    pub ember: bool,
     pub flammability: f32,
     pub burn_rate: f32,
     pub burn_emit: f32,
+    pub burn_colors: &'static [[u8; 4]],
     pub smoulder: f32,
     pub residue_into: Option<MaterialId>,
     pub residue_chance: f32,
@@ -106,15 +112,24 @@ impl Material {
         tags: Tags::EMPTY,
         decay_rate: 0.0,
         decay_into: None,
+        ember: false,
         flammability: 0.0,
         burn_rate: 0.0,
         burn_emit: 0.0,
+        burn_colors: &[],
         smoulder: 0.0,
         residue_into: None,
         residue_chance: 0.0,
         burn_damage: 0.0,
     };
 }
+
+pub const EMBER_COLORS: &[[u8; 4]] = &[
+    [255, 190, 60, 255],
+    [255, 150, 36, 255],
+    [255, 220, 90, 255],
+    [236, 120, 24, 255],
+];
 
 #[derive(Debug, Clone, Copy)]
 pub enum Operand {
@@ -147,13 +162,25 @@ pub struct Reaction {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct Burn {
-    pub ignite_chance: f32,
+pub struct Ignition {
+    pub into: MaterialId,
+    pub chance: f32,
+    pub smoulder: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Ember {
     pub burn_chance: f32,
     pub emit_chance: f32,
-    pub smoulder: f32,
     pub residue: Option<(f32, MaterialId)>,
-    pub damage: f32,
+    pub base: Option<MaterialId>,
+}
+
+impl Ember {
+    #[inline]
+    pub fn is_flame(&self) -> bool {
+        self.base.is_none()
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -173,19 +200,15 @@ pub struct MaterialRegistry {
     materials: Vec<Material>,
     reactions: Vec<Option<Reaction>>,
     decays: Vec<Option<(f32, MaterialId)>>,
-    burns: Vec<Option<Burn>>,
+    ignitions: Vec<Option<Ignition>>,
+    embers: Vec<Option<Ember>>,
     reactive: Vec<bool>,
     dynamics: Vec<Dynamics>,
 }
 
 impl MaterialRegistry {
-    pub fn from_materials(materials: &[Material], reaction_defs: &[ReactionDef]) -> Self {
-        let materials = materials.to_vec();
-        assert!(
-            materials.len() <= u16::MAX as usize,
-            "too many materials: {}",
-            materials.len()
-        );
+    pub fn from_materials(defs: &[Material], reaction_defs: &[ReactionDef]) -> Self {
+        let mut materials = defs.to_vec();
         match materials.first() {
             Some(first) if first.phase == Phase::Empty => {}
             first => panic!(
@@ -193,7 +216,42 @@ impl MaterialRegistry {
                 first.map(|m| m.name)
             ),
         }
+
+        let hand_len = materials.len();
+        let mut ignitions: Vec<Option<Ignition>> = vec![None; hand_len];
+        let mut ember_bases: Vec<Option<MaterialId>> = vec![None; hand_len];
+        for index in 0..hand_len {
+            let base = materials[index];
+            if base.ember || base.flammability <= 0.0 {
+                continue;
+            }
+            ignitions[index] = Some(Ignition {
+                into: MaterialId(materials.len() as u16),
+                chance: per_tick_chance(base.flammability),
+                smoulder: base.smoulder.clamp(0.0, 1.0),
+            });
+            materials.push(Material {
+                name: Box::leak(format!("burning_{}", base.name).into_boxed_str()),
+                colors: if base.burn_colors.is_empty() {
+                    EMBER_COLORS
+                } else {
+                    base.burn_colors
+                },
+                contact_damage: base.burn_damage.max(base.contact_damage),
+                tags: base.tags.union(Tags::new(&[Tag::Hot, Tag::Emissive])),
+                ember: true,
+                flammability: 0.0,
+                smoulder: 0.0,
+                burn_colors: &[],
+                decay_rate: 0.0,
+                decay_into: None,
+                ..base
+            });
+            ember_bases.push(Some(MaterialId(index as u16)));
+        }
         let len = materials.len();
+        assert!(len <= u16::MAX as usize, "too many materials: {len}");
+        ignitions.resize(len, None);
 
         for material in materials.iter() {
             assert!(
@@ -215,19 +273,18 @@ impl MaterialRegistry {
             })
             .collect();
 
-        let burns: Vec<Option<Burn>> = materials
+        let embers: Vec<Option<Ember>> = materials
             .iter()
-            .map(|material| {
-                (material.flammability > 0.0).then(|| Burn {
-                    ignite_chance: per_tick_chance(material.flammability),
+            .enumerate()
+            .map(|(index, material)| {
+                material.ember.then(|| Ember {
                     burn_chance: per_tick_chance(material.burn_rate),
                     emit_chance: per_tick_chance(material.burn_emit),
-                    smoulder: material.smoulder.clamp(0.0, 1.0),
                     residue: match (material.residue_into, material.residue_chance) {
                         (Some(id), chance) if chance > 0.0 => Some((chance.clamp(0.0, 1.0), id)),
                         _ => None,
                     },
-                    damage: material.burn_damage,
+                    base: ember_bases[index],
                 })
             })
             .collect();
@@ -288,8 +345,7 @@ impl MaterialRegistry {
 
         let reactive: Vec<bool> = (0..len)
             .map(|index| {
-                materials[index].phase == Phase::Fire
-                    || decays[index].is_some()
+                decays[index].is_some()
                     || reactions[index * len..(index + 1) * len]
                         .iter()
                         .any(|slot| slot.is_some())
@@ -321,7 +377,8 @@ impl MaterialRegistry {
             materials,
             reactions,
             decays,
-            burns,
+            ignitions,
+            embers,
             reactive,
             dynamics,
         }
@@ -363,13 +420,18 @@ impl MaterialRegistry {
     }
 
     #[inline]
-    pub fn burn(&self, id: MaterialId) -> Option<Burn> {
-        self.burns[id.0 as usize]
+    pub fn ignition(&self, id: MaterialId) -> Option<Ignition> {
+        self.ignitions[id.0 as usize]
+    }
+
+    #[inline]
+    pub fn ember(&self, id: MaterialId) -> Option<Ember> {
+        self.embers[id.0 as usize]
     }
 
     #[inline]
     pub fn is_flammable(&self, id: MaterialId) -> bool {
-        self.burns[id.0 as usize].is_some()
+        self.ignitions[id.0 as usize].is_some()
     }
 
     #[inline]

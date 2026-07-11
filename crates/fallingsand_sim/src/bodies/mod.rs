@@ -154,7 +154,7 @@ pub(crate) fn commit_stamp(
         match registry.get(cell.material).phase {
             Phase::Solid | Phase::Powder => return None,
             Phase::Empty => {}
-            Phase::Liquid | Phase::Gas | Phase::Fire => displaced.push((pos, cell)),
+            Phase::Liquid | Phase::Gas => displaced.push((pos, cell)),
         }
         if entities.iter().any(|entity| entity.contains_cell(pos)) {
             return None;
@@ -259,7 +259,7 @@ fn surface_spot(
             .map(|cell| registry.get(cell.material).phase)
         {
             Some(Phase::Empty) if !claimed.contains(&pos) => return Some(pos),
-            Some(Phase::Empty | Phase::Liquid | Phase::Gas | Phase::Fire) => {}
+            Some(Phase::Empty | Phase::Liquid | Phase::Gas) => {}
             _ => return None,
         }
     }

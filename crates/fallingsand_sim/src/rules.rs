@@ -1,7 +1,7 @@
 use crate::window::SimWindow;
 use fallingsand_core::{
-    Cell, CellPos, Dynamics, GRID_GRAVITY, MaterialId, MaterialRegistry, Phase, TICK_DT, Tag,
-    VEL_ONE, per_tick_chance,
+    Cell, CellPos, Dynamics, Ember, GRID_GRAVITY, MaterialId, MaterialRegistry, Phase, TICK_DT,
+    Tag, VEL_ONE, per_tick_chance,
 };
 use fallingsand_data::material;
 use fallingsand_rng::{Hash, Rng};
@@ -34,12 +34,14 @@ pub(crate) fn update_cell(
     let mut rng = Hash::seed(tick).pos(pos.x, pos.y).rng();
 
     let material = registry.get(cell.material);
-    let open_flame = material.phase == Phase::Fire || material.tags.contains(Tag::Hot);
-    let igniter = open_flame || cell.is_burning();
-    if igniter {
+    let ember = registry.ember(cell.material);
+    if material.tags.contains(Tag::Hot) {
+        let open_flame = ember.is_none_or(|ember| ember.is_flame());
         ignite_neighbors(window, registry, pos, &mut rng, tick_byte, open_flame);
     }
-    if cell.is_burning() && burn_step(window, registry, pos, cell, &mut rng, tick_byte) {
+    if let Some(ember) = ember
+        && ember_step(window, registry, pos, cell, ember, &mut rng, tick_byte)
+    {
         return;
     }
     if registry.is_reactive(cell.material)
@@ -49,7 +51,7 @@ pub(crate) fn update_cell(
     }
     match material.phase {
         Phase::Empty | Phase::Solid => {}
-        Phase::Powder | Phase::Liquid | Phase::Gas | Phase::Fire => {
+        Phase::Powder | Phase::Liquid | Phase::Gas => {
             update_dynamic(window, registry, pos, cell, &mut rng, tick_byte)
         }
     }
@@ -81,19 +83,6 @@ fn react(
         }
     }
     if let Some((chance, product)) = registry.decay(cell.material) {
-        if registry.get(cell.material).phase == Phase::Fire
-            && sustained_by_fuel(window, registry, pos)
-        {
-            if rng.draw().chance(*FLICKER_CHANCE) {
-                let mut flicker = cell;
-                flicker.set_shade(rng.draw().bits(4) as u8);
-                flicker.updated = tick_byte;
-                window.set(pos, flicker);
-            } else {
-                window.mark(pos);
-            }
-            return true;
-        }
         if rng.draw().chance(chance) {
             set_product(window, pos, product, rng, tick_byte);
             return true;
@@ -123,7 +112,10 @@ fn note_structural(
 fn sustained_by_fuel(window: &SimWindow, registry: &MaterialRegistry, pos: CellPos) -> bool {
     NEIGHBORS.iter().any(|&(dx, dy)| {
         window.get(pos.translated(dx, dy)).is_some_and(|neighbor| {
-            neighbor.is_burning() || registry.is_flammable(neighbor.material)
+            registry.is_flammable(neighbor.material)
+                || registry
+                    .ember(neighbor.material)
+                    .is_some_and(|ember| !ember.is_flame())
         })
     })
 }
@@ -141,62 +133,81 @@ fn ignite_neighbors(
         let Some(neighbor) = window.get(neighbor_pos) else {
             continue;
         };
-        if neighbor.is_burning() || neighbor.updated == tick_byte {
+        if neighbor.updated == tick_byte {
             continue;
         }
-        let Some(burn) = registry.burn(neighbor.material) else {
+        let Some(ignition) = registry.ignition(neighbor.material) else {
             continue;
         };
-        let mut chance = burn.ignite_chance;
-        if !open_flame && burn.smoulder < 1.0 && !oxygen_exposed(window, registry, neighbor_pos) {
-            chance *= burn.smoulder;
+        let mut chance = ignition.chance;
+        if !open_flame && ignition.smoulder < 1.0 && !oxygen_exposed(window, registry, neighbor_pos)
+        {
+            chance *= ignition.smoulder;
         }
         if chance > 0.0 && rng.draw().chance(chance) {
             let mut lit = neighbor;
-            lit.set_burning(true);
+            lit.material = ignition.into;
             lit.updated = tick_byte;
             window.set(neighbor_pos, lit);
         }
     }
 }
 
-fn burn_step(
+fn ember_step(
     window: &mut SimWindow,
     registry: &MaterialRegistry,
     pos: CellPos,
     cell: Cell,
+    ember: Ember,
     rng: &mut Rng,
     tick_byte: u8,
 ) -> bool {
-    let Some(burn) = registry.burn(cell.material) else {
-        let mut cleared = cell;
-        cleared.set_burning(false);
-        cleared.updated = tick_byte;
-        window.set(pos, cleared);
-        return true;
-    };
     if let Some(water) = adjacent_water(window, pos) {
-        let mut cleared = cell;
-        cleared.set_burning(false);
-        cleared.updated = tick_byte;
-        window.set(pos, cleared);
-        set_product(window, water, material::STEAM, rng, tick_byte);
+        if ember.is_flame() {
+            set_product(window, pos, material::STEAM, rng, tick_byte);
+        } else {
+            burn_out(window, registry, pos, cell.material, ember, rng, tick_byte);
+            set_product(window, water, material::STEAM, rng, tick_byte);
+        }
         return true;
     }
-    if rng.draw().chance(burn.emit_chance) {
+    if rng.draw().chance(ember.emit_chance) {
         emit_into_air(window, pos, material::FIRE, rng, tick_byte);
     }
-    if rng.draw().chance(burn.burn_chance) {
-        note_structural(window, registry, pos, cell.material);
-        let out = match burn.residue {
-            Some((chance, id)) if rng.draw().chance(chance) => id,
-            _ => MaterialId::AIR,
-        };
-        set_product(window, pos, out, rng, tick_byte);
+    if ember.is_flame() && sustained_by_fuel(window, registry, pos) {
+        if rng.draw().chance(*FLICKER_CHANCE) {
+            let mut flicker = cell;
+            flicker.set_shade(rng.draw().bits(4) as u8);
+            flicker.updated = tick_byte;
+            window.set(pos, flicker);
+        } else {
+            window.mark(pos);
+        }
+        return true;
+    }
+    if rng.draw().chance(ember.burn_chance) {
+        burn_out(window, registry, pos, cell.material, ember, rng, tick_byte);
         return true;
     }
     window.mark(pos);
     false
+}
+
+fn burn_out(
+    window: &mut SimWindow,
+    registry: &MaterialRegistry,
+    pos: CellPos,
+    material: MaterialId,
+    ember: Ember,
+    rng: &mut Rng,
+    tick_byte: u8,
+) {
+    note_structural(window, registry, pos, material);
+    let out = match ember.residue {
+        Some((chance, id)) if rng.draw().chance(chance) => id,
+        _ => MaterialId::AIR,
+    };
+    set_product(window, pos, out, rng, tick_byte);
 }
 
 fn emit_into_air(
@@ -231,7 +242,7 @@ fn oxygen_exposed(window: &SimWindow, registry: &MaterialRegistry, pos: CellPos)
         window.get(pos.translated(dx, dy)).is_some_and(|neighbor| {
             matches!(
                 registry.get(neighbor.material).phase,
-                Phase::Empty | Phase::Gas | Phase::Fire
+                Phase::Empty | Phase::Gas
             )
         })
     })
@@ -265,7 +276,7 @@ fn ambient_density(window: &SimWindow, registry: &MaterialRegistry, pos: CellPos
         Some(below)
             if matches!(
                 registry.get(below.material).phase,
-                Phase::Liquid | Phase::Gas | Phase::Fire
+                Phase::Liquid | Phase::Gas
             ) =>
         {
             registry.get(below.material).density
@@ -306,10 +317,7 @@ fn can_enter(
         return false;
     };
     let material = registry.get(cell.material);
-    if !matches!(
-        material.phase,
-        Phase::Empty | Phase::Liquid | Phase::Gas | Phase::Fire
-    ) {
+    if !matches!(material.phase, Phase::Empty | Phase::Liquid | Phase::Gas) {
         return false;
     }
     match dir.1 {

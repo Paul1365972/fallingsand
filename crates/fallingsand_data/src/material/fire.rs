@@ -6,7 +6,7 @@ materials! {
     base: crate::material::base::fire;
 
     FIRE = Material {
-        phase: Fire,
+        phase: Gas,
         density: 0.3,
         colors: &[
             [255, 160, 32, 255],
@@ -16,8 +16,10 @@ materials! {
         ],
         drag: 6.0,
         turbulence: 52.0,
-        decay_rate: 6.3,
-        decay_into: Some(SMOKE),
+        ember: true,
+        burn_rate: 6.3,
+        residue_into: Some(SMOKE),
+        residue_chance: 1.0,
         contact_damage: 8.0,
         tags: Tags::new(&[Hot, Emissive]),
     },

@@ -71,8 +71,7 @@ pub fn scan_emissive(
         while x as f32 <= center.x + half.x {
             let pos = CellPos::new(x, y);
             if let Some(cell) = view.get_cell(pos)
-                && (cell.is_burning()
-                    || registry.has_tag(cell.material, fallingsand_core::Tag::Emissive))
+                && registry.has_tag(cell.material, fallingsand_core::Tag::Emissive)
             {
                 let point = Vec2::new(x as f32, y as f32);
                 let mut merged = false;

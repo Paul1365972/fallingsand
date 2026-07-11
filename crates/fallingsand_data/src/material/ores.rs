@@ -22,6 +22,12 @@ materials! {
         flammability: 0.6,
         burn_rate: 0.04,
         burn_emit: 5.0,
+        burn_colors: &[
+            [240, 96, 28, 255],
+            [208, 68, 18, 255],
+            [255, 128, 44, 255],
+            [176, 48, 12, 255],
+        ],
         smoulder: 0.2,
         residue_into: Some(ASH),
         residue_chance: 0.05,

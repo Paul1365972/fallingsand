@@ -61,7 +61,10 @@ impl ItemRegistry {
     pub fn build(entries: &[ItemEntry], materials: &MaterialRegistry) -> Self {
         let material_items = materials
             .iter()
-            .filter(|(_, material)| material.phase != crate::Phase::Empty)
+            .filter(|(id, material)| {
+                material.phase != crate::Phase::Empty
+                    && materials.ember(*id).is_none_or(|ember| ember.is_flame())
+            })
             .count();
         let total = 1 + entries.len() + material_items;
         assert!(total <= u16::MAX as usize, "too many items: {total}");
@@ -96,7 +99,10 @@ impl ItemRegistry {
 
         let mut mat_to_item = vec![ItemId::NONE; materials.len()];
         for (id, material) in materials.iter() {
-            if material.phase == crate::Phase::Empty || material.tags.contains(Tag::Player) {
+            if material.phase == crate::Phase::Empty
+                || material.tags.contains(Tag::Player)
+                || materials.ember(id).is_some_and(|ember| !ember.is_flame())
+            {
                 continue;
             }
             let canonical = material.name.to_ascii_lowercase();

@@ -47,6 +47,12 @@ materials! {
         flammability: 3.0,
         burn_rate: 0.5,
         burn_emit: 16.0,
+        burn_colors: &[
+            [255, 168, 48, 255],
+            [255, 128, 28, 255],
+            [255, 200, 72, 255],
+            [232, 100, 18, 255],
+        ],
         burn_damage: 8.0,
     },
     LAVA = Material {
