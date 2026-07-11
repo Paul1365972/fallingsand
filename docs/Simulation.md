@@ -38,7 +38,7 @@ Constants are seconds-based, converted per-tick from `TICK_DT`, so behaviour is 
 
 Three stages, all local — combustion state is a per-cell **burning** flag on the fuel (`Cell::is_burning`), driven by that material's *burn profile*. No mirror `burning_*` materials, no per-cell burn timer.
 
-- **Ignite**: an igniter (a `fire` cell, a burning cell, or a `hot` material like lava) sets the burning flag on each adjacent flammable neighbour at that fuel's `flammability` (`oil` fast, `coal` slow). Ignition needs oxygen (an adjacent air/gas/fire cell); each fuel's `smoulder` (0..1) scales ignition *without* one — 0 is surface-only (oil), higher lets a sealed lump burn through (coal).
+- **Ignite**: an igniter (a `fire` cell, a burning cell, or a `hot` material like lava) sets the burning flag on each adjacent flammable neighbour at that fuel's `flammability` (`oil` fast, `coal` slow). An open heat source (`fire` or a `hot` material) ignites at the full rate; a smouldering fuel spreading to sealed like-fuel needs oxygen (an adjacent air/gas/fire cell), and each fuel's `smoulder` (0..1) scales that spread *without* one — 0 is surface-only (oil), higher lets a sealed lump burn through (coal).
 - **Burn**: a burning cell keeps its own material and phase dynamics (burning oil still flows), glows and damages entities (`burn_damage`), emits `fire` into adjacent air at `burn_emit`, and is consumed at `burn_rate` — that rate *is* the burn duration. Consumption mostly gasifies the fuel (air) so the front self-exposes to oxygen; only `residue_chance` leaves solid `ash`.
 - **Flame**: the emitted `fire` is short-lived (licking flames + smoke plume); it is sustained while adjacent to a burning cell, then decays to smoke.
 

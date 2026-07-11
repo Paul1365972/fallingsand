@@ -35,10 +35,10 @@ pub(crate) fn update_cell(
     let mut rng = Hash::seed(tick).pos(pos.x, pos.y).rng();
 
     let material = registry.get(cell.material);
-    let igniter =
-        cell.is_burning() || material.phase == Phase::Fire || material.tags.contains(Tag::Hot);
+    let open_flame = material.phase == Phase::Fire || material.tags.contains(Tag::Hot);
+    let igniter = open_flame || cell.is_burning();
     if igniter {
-        ignite_neighbors(window, registry, pos, &mut rng, tick_byte);
+        ignite_neighbors(window, registry, pos, &mut rng, tick_byte, open_flame);
     }
     if cell.is_burning() && burn_step(window, registry, pos, cell, &mut rng, tick_byte) {
         return;
@@ -135,6 +135,7 @@ fn ignite_neighbors(
     pos: CellPos,
     rng: &mut Rng,
     tick_byte: u8,
+    open_flame: bool,
 ) {
     for (dx, dy) in NEIGHBORS {
         let neighbor_pos = pos.translated(dx, dy);
@@ -148,7 +149,7 @@ fn ignite_neighbors(
             continue;
         };
         let mut chance = burn.ignite_chance;
-        if burn.smoulder < 1.0 && !oxygen_exposed(window, registry, neighbor_pos) {
+        if !open_flame && burn.smoulder < 1.0 && !oxygen_exposed(window, registry, neighbor_pos) {
             chance *= burn.smoulder;
         }
         if chance > 0.0 && rng.draw().chance(chance) {
