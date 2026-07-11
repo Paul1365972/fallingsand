@@ -4,7 +4,7 @@ use super::{
 };
 use fallingsand_core::{CellPos, Fixed, MaterialRegistry, Phase};
 
-const LAUNCH_MIN_SPEED: Fixed = Fixed::from_int(80);
+const LAUNCH_MIN_SPEED: Fixed = Fixed::vel_per_sec(80.0);
 const LEDGE_LAUNCH_K: Fixed = Fixed::from_f32(0.35);
 const STEP_UP_CELLS: i32 = 3;
 const STEP_DOWN_CELLS: i32 = 3;
@@ -68,7 +68,7 @@ impl Blockage {
 }
 
 fn resolve_axis(v: Fixed, e: f32) -> Fixed {
-    if v.abs() > Fixed::from_f32(BOUNCE_MIN_SPEED) {
+    if v.abs() > Fixed::vel_per_sec(BOUNCE_MIN_SPEED) {
         -v.mul(Fixed::from_f32(e))
     } else {
         Fixed::ZERO
@@ -187,8 +187,8 @@ pub fn move_body<W: CellSource>(
     let h = body.half_h.mul_int(2).round_int().max(1);
     let (w_left, w_right) = (w / 2, w - 1 - w / 2);
     let (h_down, h_up) = (h / 2, h - 1 - h / 2);
-    let mut remaining_x = body.vx.per_tick();
-    let remaining_y = body.vy.per_tick();
+    let mut remaining_x = body.vx;
+    let remaining_y = body.vy;
 
     if remaining_x == Fixed::ZERO {
         body.climb_debt = Fixed::ZERO;
@@ -235,7 +235,7 @@ pub fn move_body<W: CellSource>(
                 }
                 let e = solids_bounce(world, registry, &blockage.solids);
                 let after = resolve_axis(body.vx, e);
-                result.record_blocked(&blockage.solids, (body.vx - after).to_f32(), 0.0);
+                result.record_blocked(&blockage.solids, (body.vx - after).vel_f32(), 0.0);
                 body.vx = after;
                 break;
             }
@@ -251,7 +251,7 @@ pub fn move_body<W: CellSource>(
             }
             let e = solids_bounce(world, registry, &blockage.solids);
             let after = resolve_axis(body.vx, e);
-            result.record_blocked(&blockage.solids, (body.vx - after).to_f32(), 0.0);
+            result.record_blocked(&blockage.solids, (body.vx - after).vel_f32(), 0.0);
             let snap = blockage.near_col(dir);
             body.x = match snap {
                 Some(near) if dir > 0 => Fixed::from_cell(near - w_right) - Fixed::SUBUNIT,
@@ -313,7 +313,7 @@ pub fn move_body<W: CellSource>(
                 } else {
                     let e = solids_bounce(world, registry, &blockage.solids);
                     let after = resolve_axis(body.vy, e);
-                    result.record_blocked(&blockage.solids, 0.0, (body.vy - after).to_f32());
+                    result.record_blocked(&blockage.solids, 0.0, (body.vy - after).vel_f32());
                     if dir > 0 {
                         result.hit_ceiling = true;
                     }
@@ -337,7 +337,7 @@ pub fn move_body<W: CellSource>(
                 }
                 let e = solids_bounce(world, registry, &blockage.solids);
                 let after = resolve_axis(body.vy, e);
-                result.record_blocked(&blockage.solids, 0.0, (body.vy - after).to_f32());
+                result.record_blocked(&blockage.solids, 0.0, (body.vy - after).vel_f32());
                 body.y = match blockage.near_row(dir) {
                     Some(near) if dir > 0 => Fixed::from_cell(near - h_up) - Fixed::SUBUNIT,
                     Some(near) => Fixed::from_cell(near + 1 + h_down),

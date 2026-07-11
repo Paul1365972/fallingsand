@@ -5,7 +5,7 @@ pub use movement::{Blocked, MoveResult};
 pub use player::{Controller, PlayerParams, step_player};
 
 use crate::world::CellWorld;
-use fallingsand_core::{Cell, CellPos, Fixed, MaterialRegistry, Phase, VEL_ONE};
+use fallingsand_core::{Cell, CellPos, Fixed, MaterialRegistry, Phase, TICK_RATE, VEL_ONE};
 use rustc_hash::FxHashSet;
 
 pub(crate) const BOUNCE_MIN_SPEED: f32 = 30.0;
@@ -229,7 +229,7 @@ fn ring_submersion<W: CellSource>(
         return Submersion::default();
     }
     let per_cell = 1.0 / liquid as f32;
-    let to_per_sec = 1.0 / VEL_ONE as f32;
+    let to_per_sec = TICK_RATE as f32 / VEL_ONE as f32;
     Submersion {
         fraction: liquid as f32 / total as f32,
         liquid_density: density_sum / liquid as f32,

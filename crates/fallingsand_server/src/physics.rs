@@ -76,8 +76,8 @@ pub fn step_physics(
         if let Some((jx, jy)) = impulses.0.remove(&entity) {
             let dvx = jx / PLAYER_MASS;
             let dvy = jy / PLAYER_MASS;
-            body.0.vx = body.0.vx.add_f32(dvx);
-            body.0.vy = body.0.vy.add_f32(dvy);
+            body.0.vx = body.0.vx.add_vel_f32(dvx);
+            body.0.vy = body.0.vy.add_vel_f32(dvy);
             crushes.0.push((entity, dvx.hypot(dvy)));
         }
 
@@ -134,8 +134,8 @@ pub fn step_physics(
                     }
                     let rx = (Fixed::cell_center(blocked.pos.x) - pixel_body.x).to_f32();
                     let ry = (Fixed::cell_center(blocked.pos.y) - pixel_body.y).to_f32();
-                    pixel_body.vx = pixel_body.vx.add_f32(jx * pixel_body.inv_mass());
-                    pixel_body.vy = pixel_body.vy.add_f32(jy * pixel_body.inv_mass());
+                    pixel_body.vx = pixel_body.vx.add_vel_f32(jx * pixel_body.inv_mass());
+                    pixel_body.vy = pixel_body.vy.add_vel_f32(jy * pixel_body.inv_mass());
                     pixel_body.spin += (rx * jy - ry * jx) * pixel_body.inv_inertia();
                     pixel_body.rest_secs = 0.0;
                     pixel_body.asleep = false;

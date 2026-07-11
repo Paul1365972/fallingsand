@@ -74,8 +74,8 @@ pub fn step_bodies(
         grounded.push(body.0.on_ground);
         entities.push(ActorDynamics {
             bbox: ActorAabb::from_footprint(body.0.footprint()),
-            vx: body.0.vx.to_f32(),
-            vy: body.0.vy.to_f32(),
+            vx: body.0.vx.vel_f32(),
+            vy: body.0.vy.vel_f32(),
             inv_mass: 1.0 / PLAYER_MASS,
         });
     }
@@ -147,7 +147,7 @@ fn transfer_standing_weight(world: &CellWorld, bodies: &mut PixelBodies, dynamic
             continue;
         }
         let rx = (Fixed::cell_center(pos.x) - body.x).to_f32();
-        body.vy = body.vy.add_f32(share * body.inv_mass());
+        body.vy = body.vy.add_vel_f32(share * body.inv_mass());
         body.spin += rx * share * body.inv_inertia();
         body.rest_secs = 0.0;
         body.asleep = false;

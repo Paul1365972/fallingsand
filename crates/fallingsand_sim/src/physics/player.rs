@@ -13,7 +13,7 @@ const CEILING_VAR_JUMP_GRACE: f32 = 0.15;
 const SWIM_CONTROL_MIN_SUBMERSION: f32 = 0.5;
 const BANK_VAULT_MIN_SUBMERSION: f32 = 0.2;
 const BANK_VAULT_MAX_SUBMERSION: f32 = 0.95;
-const BANK_VAULT_MAX_SINK: Fixed = Fixed::from_int(20);
+const BANK_VAULT_MAX_SINK: Fixed = Fixed::vel_per_sec(20.0);
 const BANK_PROBE_CELLS: i32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -43,26 +43,26 @@ pub struct PlayerParams {
 impl Default for PlayerParams {
     fn default() -> Self {
         Self {
-            max_run: Fixed::from_int(90),
-            run_accel: Fixed::from_int(1000),
-            run_reduce: Fixed::from_int(400),
+            max_run: Fixed::vel_per_sec(90.0),
+            run_accel: Fixed::accel_per_sec2(1000.0),
+            run_reduce: Fixed::accel_per_sec2(400.0),
             air_mult: Fixed::from_f32(0.65),
-            duck_friction: Fixed::from_int(500),
+            duck_friction: Fixed::accel_per_sec2(500.0),
             duck_run_mult: Fixed::from_f32(0.4),
-            gravity: Fixed::from_int(900),
-            half_grav_threshold: Fixed::from_int(40),
-            max_fall: Fixed::from_int(160),
-            fast_max_fall: Fixed::from_int(240),
-            fast_max_accel: Fixed::from_int(300),
-            jump_speed: Fixed::from_int(105),
-            jump_h_boost: Fixed::from_int(40),
+            gravity: Fixed::accel_per_sec2(900.0),
+            half_grav_threshold: Fixed::vel_per_sec(40.0),
+            max_fall: Fixed::vel_per_sec(160.0),
+            fast_max_fall: Fixed::vel_per_sec(240.0),
+            fast_max_accel: Fixed::accel_per_sec2(300.0),
+            jump_speed: Fixed::vel_per_sec(105.0),
+            jump_h_boost: Fixed::vel_per_sec(40.0),
             stand_half_h: Fixed::from_f32(crate::player::STAND_ROWS as f32 * 0.5),
             duck_half_h: Fixed::from_f32(crate::player::DUCK_ROWS as f32 * 0.5),
-            swim_thrust: Fixed::from_int(450),
+            swim_thrust: Fixed::accel_per_sec2(450.0),
             density: 1050.0,
             wade_run_mult: Fixed::from_f32(0.5),
-            fly_max: Fixed::from_int(160),
-            fly_accel: Fixed::from_int(1200),
+            fly_max: Fixed::vel_per_sec(160.0),
+            fly_accel: Fixed::accel_per_sec2(1200.0),
         }
     }
 }
@@ -180,16 +180,8 @@ fn fly_update<W: CellSource>(
         unduck(params, body, ctrl);
     }
     let move_y = jump_held as i32 - down_held as i32;
-    body.vx = approach(
-        body.vx,
-        params.fly_max.mul_int(move_x),
-        params.fly_accel.per_tick(),
-    );
-    body.vy = approach(
-        body.vy,
-        params.fly_max.mul_int(move_y),
-        params.fly_accel.per_tick(),
-    );
+    body.vx = approach(body.vx, params.fly_max.mul_int(move_x), params.fly_accel);
+    body.vy = approach(body.vy, params.fly_max.mul_int(move_y), params.fly_accel);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -227,7 +219,7 @@ fn normal_update<W: CellSource>(
         } else {
             params.run_accel
         };
-        body.vx = approach(body.vx, target, rate.mul(grip).per_tick());
+        body.vx = approach(body.vx, target, rate.mul(grip));
     } else {
         let mult = if body.on_ground {
             grip
@@ -243,7 +235,7 @@ fn normal_update<W: CellSource>(
         } else {
             params.run_accel
         };
-        body.vx = approach(body.vx, target, rate.mul(mult).per_tick());
+        body.vx = approach(body.vx, target, rate.mul(mult));
     }
 
     ctrl.max_fall = ctrl.max_fall.max(params.max_fall);
@@ -253,7 +245,7 @@ fn normal_update<W: CellSource>(
     } else {
         params.max_fall
     };
-    ctrl.max_fall = approach(ctrl.max_fall, fall_target, params.fast_max_accel.per_tick());
+    ctrl.max_fall = approach(ctrl.max_fall, fall_target, params.fast_max_accel);
 
     let buoyancy = submersion.fraction * submersion.liquid_density / params.density;
     if !body.on_ground {
@@ -265,9 +257,9 @@ fn normal_update<W: CellSource>(
         let assist = assist + (1.0 - assist) * submersion.fraction;
         let net = params.gravity.mul(Fixed::from_f32(assist - buoyancy));
         if net >= Fixed::ZERO {
-            body.vy = approach(body.vy, -ctrl.max_fall, net.per_tick());
+            body.vy = approach(body.vy, -ctrl.max_fall, net);
         } else {
-            body.vy -= net.per_tick();
+            body.vy -= net;
         }
         let move_y = jump_held as i32 - down_held as i32;
         if move_y != 0 && submersion.fraction > 0.0 {
@@ -275,20 +267,20 @@ fn normal_update<W: CellSource>(
                 .swim_thrust
                 .mul(Fixed::from_f32(submersion.fraction))
                 .mul_int(move_y);
-            body.vy += thrust.per_tick();
+            body.vy += thrust;
         }
     }
 
     if submersion.fraction > 0.0 {
-        let vx = body.vx.to_f32();
-        let vy = body.vy.to_f32();
+        let vx = body.vx.vel_f32();
+        let vy = body.vy.vel_f32();
         let rel_x = vx - submersion.flow_vx;
         let rel_y = vy - submersion.flow_vy;
         let speed = rel_x.hypot(rel_y);
         let drag = ((FLUID_DRAG_LINEAR + FLUID_DRAG_QUAD * speed) * submersion.fraction * TICK_DT)
             .min(MAX_FLUID_DRAG);
-        body.vx = Fixed::from_f32(vx - rel_x * drag);
-        body.vy = Fixed::from_f32(vy - rel_y * drag);
+        body.vx = Fixed::vel_per_sec(vx - rel_x * drag);
+        body.vy = Fixed::vel_per_sec(vy - rel_y * drag);
     }
 
     if ctrl.var_jump_timer > 0.0 {

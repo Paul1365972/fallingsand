@@ -1,7 +1,7 @@
 use crate::window::SimWindow;
 use fallingsand_core::{
-    Cell, CellPos, Dynamics, GRID_GRAVITY, MaterialId, MaterialRegistry, Phase, TICK_DT, TICK_RATE,
-    Tag, VEL_ONE, per_tick_chance,
+    Cell, CellPos, Dynamics, GRID_GRAVITY, MaterialId, MaterialRegistry, Phase, TICK_DT, Tag,
+    VEL_ONE, per_tick_chance,
 };
 use fallingsand_data::material;
 use fallingsand_rng::{Hash, Rng};
@@ -11,13 +11,12 @@ const NEIGHBORS: [(i32, i32); 4] = [(0, -1), (-1, 0), (1, 0), (0, 1)];
 const FLICKER_RATE: f32 = 18.0;
 static FLICKER_CHANCE: LazyLock<f32> = LazyLock::new(|| per_tick_chance(FLICKER_RATE));
 
-const VEL_MAX: i32 = 2000 * VEL_ONE;
-const MAX_STEP: i32 = 32;
-const SETTLE: i32 = (7.5 * VEL_ONE as f32) as i32;
+const VEL_MAX: i32 = 31 * VEL_ONE;
+const MAX_STEP: i32 = 31;
+const SETTLE: i32 = (7.5 * TICK_DT * VEL_ONE as f32) as i32;
 const SUBMERGED_DENSITY: f32 = 100.0;
 const SUBMERGED_DRAG: f32 = 6.0;
-static GRAVITY_DV: LazyLock<i32> =
-    LazyLock::new(|| (GRID_GRAVITY * TICK_DT * VEL_ONE as f32).round() as i32);
+const GRAVITY_DV: i32 = (GRID_GRAVITY * TICK_DT * TICK_DT * VEL_ONE as f32 + 0.5) as i32;
 
 pub(crate) fn update_cell(
     window: &mut SimWindow,
@@ -321,10 +320,9 @@ fn can_enter(
 }
 
 fn step_cells(v: i32, rng: &mut Rng) -> i32 {
-    let denom = VEL_ONE * TICK_RATE as i32;
     let mag = v.abs();
-    let cells =
-        (mag / denom + rng.draw().chance((mag % denom) as f32 / denom as f32) as i32).min(MAX_STEP);
+    let cells = (mag / VEL_ONE + rng.draw().chance((mag % VEL_ONE) as f32 / VEL_ONE as f32) as i32)
+        .min(MAX_STEP);
     cells * v.signum()
 }
 
@@ -366,9 +364,9 @@ fn update_dynamic(
     };
     if sinks {
         let buoy = ((density - ambient) / density).clamp(0.0, 1.0);
-        vy -= (*GRAVITY_DV as f32 * buoy).round() as i32;
+        vy -= (GRAVITY_DV as f32 * buoy).round() as i32;
     } else {
-        vy += *GRAVITY_DV;
+        vy += GRAVITY_DV;
     }
 
     let mut drag_loss = 1.0 - dynamics.drag_keep;

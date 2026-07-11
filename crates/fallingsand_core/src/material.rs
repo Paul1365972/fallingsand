@@ -303,7 +303,10 @@ impl MaterialRegistry {
                 friction_keep: per_tick_keep(material.friction),
                 cohesion: per_tick_chance(material.cohesion),
                 restitution: material.restitution.clamp(0.0, 1.0),
-                turbulence: material.turbulence * crate::TICK_DT.sqrt() * crate::VEL_ONE as f32,
+                turbulence: material.turbulence
+                    * crate::TICK_DT.sqrt()
+                    * crate::TICK_DT
+                    * crate::VEL_ONE as f32,
                 slide_chance: per_tick_chance(material.repose),
                 redirect_keep: material.redirect_keep.clamp(0.0, 1.0),
                 flow_chance: if material.flow_rate > 0.0 {

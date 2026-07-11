@@ -91,10 +91,10 @@ pub fn step_bodies(
         let substeps = {
             let body = &mut bodies[index];
             apply_buoyancy(world, registry, body, gravity);
-            body.vy += gravity.per_tick();
+            body.vy = body.vy.add_vel_f32(gravity.to_f32() * TICK_DT);
 
             let radius = 0.5 * (body.width as f32).hypot(body.height as f32);
-            let (vx, vy) = (body.vx.to_f32(), body.vy.to_f32());
+            let (vx, vy) = (body.vx.vel_f32(), body.vy.vel_f32());
             let travel = ((vx * vx + vy * vy).sqrt() + body.spin.abs() * radius) * TICK_DT;
             ((travel / SUBSTEP_TRAVEL).ceil() as u32).max(1)
         };
@@ -176,8 +176,8 @@ fn apply_buoyancy(
     let buoyant = submersion * count as f32 * (density_sum / samples as f32) / REFERENCE_DENSITY;
     body.vy = body
         .vy
-        .add_f32(-gravity.to_f32() * buoyant * body.inv_mass * TICK_DT);
-    let speed = body.vx.to_f32().hypot(body.vy.to_f32());
+        .add_vel_f32(-gravity.to_f32() * buoyant * body.inv_mass * TICK_DT);
+    let speed = body.vx.vel_f32().hypot(body.vy.vel_f32());
     let drag =
         ((FLUID_DRAG_LINEAR + FLUID_DRAG_QUAD * speed) * submersion * TICK_DT).min(MAX_FLUID_DRAG);
     let keep = Fixed::from_f32(1.0 - drag);
@@ -217,7 +217,7 @@ fn step_substep(
     let mut body_impulses: Vec<(usize, f32, f32, f32)> = Vec::new();
     {
         let body = &mut bodies[index];
-        let (mut vx, mut vy) = (body.vx.to_f32(), body.vy.to_f32());
+        let (mut vx, mut vy) = (body.vx.vel_f32(), body.vy.vel_f32());
         for _ in 0..CONTACT_ITERATIONS {
             for contact in &contacts {
                 let (other_inv_mass, other_inv_inertia, other_vx, other_vy, r2) =
@@ -324,8 +324,8 @@ fn step_substep(
                 body.x = body.x.add_f32(deepest.nx * correction);
                 body.y = body.y.add_f32(deepest.ny * correction);
             }
-            body.vx = Fixed::from_f32(vx);
-            body.vy = Fixed::from_f32(vy);
+            body.vx = Fixed::vel_per_sec(vx);
+            body.vy = Fixed::vel_per_sec(vy);
             body.rest_secs = 0.0;
         }
     }
@@ -335,8 +335,8 @@ fn step_substep(
         let dvx = jx * other.inv_mass;
         let dvy = jy * other.inv_mass;
         let dspin = r_cross_j * other.inv_inertia;
-        other.vx = other.vx.add_f32(dvx);
-        other.vy = other.vy.add_f32(dvy);
+        other.vx = other.vx.add_vel_f32(dvx);
+        other.vy = other.vy.add_vel_f32(dvy);
         other.spin += dspin;
         if dvx.abs() + dvy.abs() > WAKE_SPEED || dspin.abs() > WAKE_SPEED {
             other.rest_secs = 0.0;
