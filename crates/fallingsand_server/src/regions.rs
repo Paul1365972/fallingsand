@@ -85,10 +85,9 @@ pub fn wanted_regions(tickets: &ChunkTickets) -> FxHashSet<RegionPos> {
 }
 
 fn strip_player_remnants(region: &mut Region, registry: &fallingsand_core::MaterialRegistry) {
-    let player_mask = registry.tag_mask("player");
     for chunk in region.chunks_mut().iter_mut() {
         for cell in chunk.cells_mut().iter_mut() {
-            if registry.has_tag(cell.material, player_mask) {
+            if registry.has_tag(cell.material, fallingsand_core::Tag::Player) {
                 *cell = fallingsand_core::Cell::AIR;
             } else if cell.is_body() {
                 cell.set_body(false);

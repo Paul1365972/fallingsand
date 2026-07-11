@@ -1,8 +1,9 @@
 use crate::window::SimWindow;
 use fallingsand_core::{
-    Cell, CellPos, Dynamics, GRID_GRAVITY, MaterialId, MaterialRegistry, Phase, Product, TICK_DT,
-    TICK_RATE, VEL_ONE, per_tick_chance,
+    Cell, CellPos, Dynamics, GRID_GRAVITY, MaterialId, MaterialRegistry, Phase, TICK_DT, TICK_RATE,
+    Tag, VEL_ONE, per_tick_chance,
 };
+use fallingsand_data::material;
 use fallingsand_rng::{Hash, Rng};
 use std::sync::LazyLock;
 
@@ -32,12 +33,21 @@ pub(crate) fn update_cell(
         return;
     }
     let mut rng = Hash::seed(tick).pos(pos.x, pos.y).rng();
+
+    let material = registry.get(cell.material);
+    let igniter =
+        cell.is_burning() || material.phase == Phase::Fire || material.tags.contains(Tag::Hot);
+    if igniter {
+        ignite_neighbors(window, registry, pos, &mut rng, tick_byte);
+    }
+    if cell.is_burning() && burn_step(window, registry, pos, cell, &mut rng, tick_byte) {
+        return;
+    }
     if registry.is_reactive(cell.material)
         && react(window, registry, pos, cell, &mut rng, tick_byte)
     {
         return;
     }
-    let material = registry.get(cell.material);
     match material.phase {
         Phase::Empty | Phase::Solid => {}
         Phase::Powder | Phase::Liquid | Phase::Gas | Phase::Fire => {
@@ -62,42 +72,19 @@ fn react(
         };
         if let Some(reaction) = registry.reaction(cell.material, neighbor.material) {
             keep = true;
-            let factor = ignition_factor(window, registry, pos, cell.material, reaction.becomes)
-                * ignition_factor(
-                    window,
-                    registry,
-                    neighbor_pos,
-                    neighbor.material,
-                    reaction.other_becomes,
-                );
-            if factor > 0.0 && rng.draw().chance(reaction.chance * factor) {
+            if rng.draw().chance(reaction.chance) {
                 note_structural(window, registry, pos, cell.material);
                 note_structural(window, registry, neighbor_pos, neighbor.material);
-                let becomes = resolve_product(registry, reaction.becomes, cell.material, rng);
-                let other_becomes =
-                    resolve_product(registry, reaction.other_becomes, neighbor.material, rng);
-                set_product(window, pos, becomes, rng, tick_byte);
-                set_product(window, neighbor_pos, other_becomes, rng, tick_byte);
+                set_product(window, pos, reaction.becomes, rng, tick_byte);
+                set_product(window, neighbor_pos, reaction.other_becomes, rng, tick_byte);
                 return true;
             }
         }
     }
-    if let Some((chance, product)) = registry.emits(cell.material) {
-        keep = true;
-        if rng.draw().chance(chance) {
-            let (dx, dy) = NEIGHBORS[rng.draw().bits(2) as usize];
-            let target = pos.translated(dx, dy);
-            if window
-                .get(target)
-                .is_some_and(|neighbor| neighbor.material == MaterialId::AIR)
-            {
-                set_product(window, target, product, rng, tick_byte);
-            }
-        }
-    }
-    if let Some((chance, _)) = registry.decay(cell.material) {
-        let material = registry.get(cell.material);
-        if material.phase == Phase::Fire && sustained(window, registry, pos, cell.material) {
+    if let Some((chance, product)) = registry.decay(cell.material) {
+        if registry.get(cell.material).phase == Phase::Fire
+            && sustained_by_fuel(window, registry, pos)
+        {
             if rng.draw().chance(*FLICKER_CHANCE) {
                 let mut flicker = cell;
                 flicker.set_shade(rng.draw().bits(4) as u8);
@@ -109,8 +96,7 @@ fn react(
             return true;
         }
         if rng.draw().chance(chance) {
-            let out = burnout_product(registry, cell.material, rng);
-            set_product(window, pos, out, rng, tick_byte);
+            set_product(window, pos, product, rng, tick_byte);
             return true;
         }
         keep = true;
@@ -135,21 +121,109 @@ fn note_structural(
     }
 }
 
-fn ignition_factor(
-    window: &SimWindow,
+fn sustained_by_fuel(window: &SimWindow, registry: &MaterialRegistry, pos: CellPos) -> bool {
+    NEIGHBORS.iter().any(|&(dx, dy)| {
+        window.get(pos.translated(dx, dy)).is_some_and(|neighbor| {
+            neighbor.is_burning() || registry.is_flammable(neighbor.material)
+        })
+    })
+}
+
+fn ignite_neighbors(
+    window: &mut SimWindow,
     registry: &MaterialRegistry,
     pos: CellPos,
-    from: MaterialId,
-    to: Product,
-) -> f32 {
-    let Product::Material(to) = to else {
-        return 1.0;
-    };
-    if registry.is_ember(to) && !registry.is_ember(from) && !oxygen_exposed(window, registry, pos) {
-        registry.smoulder(to)
-    } else {
-        1.0
+    rng: &mut Rng,
+    tick_byte: u8,
+) {
+    for (dx, dy) in NEIGHBORS {
+        let neighbor_pos = pos.translated(dx, dy);
+        let Some(neighbor) = window.get(neighbor_pos) else {
+            continue;
+        };
+        if neighbor.is_burning() || neighbor.updated == tick_byte {
+            continue;
+        }
+        let Some(burn) = registry.burn(neighbor.material) else {
+            continue;
+        };
+        let mut chance = burn.ignite_chance;
+        if burn.smoulder < 1.0 && !oxygen_exposed(window, registry, neighbor_pos) {
+            chance *= burn.smoulder;
+        }
+        if chance > 0.0 && rng.draw().chance(chance) {
+            let mut lit = neighbor;
+            lit.set_burning(true);
+            lit.updated = tick_byte;
+            window.set(neighbor_pos, lit);
+        }
     }
+}
+
+fn burn_step(
+    window: &mut SimWindow,
+    registry: &MaterialRegistry,
+    pos: CellPos,
+    cell: Cell,
+    rng: &mut Rng,
+    tick_byte: u8,
+) -> bool {
+    let Some(burn) = registry.burn(cell.material) else {
+        let mut cleared = cell;
+        cleared.set_burning(false);
+        cleared.updated = tick_byte;
+        window.set(pos, cleared);
+        return true;
+    };
+    if let Some(water) = adjacent_water(window, pos) {
+        let mut cleared = cell;
+        cleared.set_burning(false);
+        cleared.updated = tick_byte;
+        window.set(pos, cleared);
+        set_product(window, water, material::STEAM, rng, tick_byte);
+        return true;
+    }
+    if rng.draw().chance(burn.emit_chance) {
+        emit_into_air(window, pos, material::FIRE, rng, tick_byte);
+    }
+    if rng.draw().chance(burn.burn_chance) {
+        note_structural(window, registry, pos, cell.material);
+        let out = match burn.residue {
+            Some((chance, id)) if rng.draw().chance(chance) => id,
+            _ => MaterialId::AIR,
+        };
+        set_product(window, pos, out, rng, tick_byte);
+        return true;
+    }
+    window.mark(pos);
+    false
+}
+
+fn emit_into_air(
+    window: &mut SimWindow,
+    pos: CellPos,
+    material: MaterialId,
+    rng: &mut Rng,
+    tick_byte: u8,
+) {
+    let (dx, dy) = NEIGHBORS[rng.draw().bits(2) as usize];
+    let target = pos.translated(dx, dy);
+    if window
+        .get(target)
+        .is_some_and(|neighbor| neighbor.material == MaterialId::AIR)
+    {
+        set_product(window, target, material, rng, tick_byte);
+    }
+}
+
+fn adjacent_water(window: &SimWindow, pos: CellPos) -> Option<CellPos> {
+    NEIGHBORS.iter().find_map(|&(dx, dy)| {
+        let neighbor_pos = pos.translated(dx, dy);
+        window
+            .get(neighbor_pos)
+            .is_some_and(|neighbor| neighbor.material == material::WATER)
+            .then_some(neighbor_pos)
+    })
 }
 
 fn oxygen_exposed(window: &SimWindow, registry: &MaterialRegistry, pos: CellPos) -> bool {
@@ -161,41 +235,6 @@ fn oxygen_exposed(window: &SimWindow, registry: &MaterialRegistry, pos: CellPos)
             )
         })
     })
-}
-
-fn sustained(
-    window: &SimWindow,
-    registry: &MaterialRegistry,
-    pos: CellPos,
-    material: MaterialId,
-) -> bool {
-    NEIGHBORS.iter().any(|&(dx, dy)| {
-        window
-            .get(pos.translated(dx, dy))
-            .is_some_and(|neighbor| registry.sustains(material, neighbor.material))
-    })
-}
-
-fn resolve_product(
-    registry: &MaterialRegistry,
-    product: Product,
-    current: MaterialId,
-    rng: &mut Rng,
-) -> MaterialId {
-    match product {
-        Product::Material(id) => id,
-        Product::Burnout => burnout_product(registry, current, rng),
-    }
-}
-
-fn burnout_product(registry: &MaterialRegistry, material: MaterialId, rng: &mut Rng) -> MaterialId {
-    let decayed = registry
-        .decay(material)
-        .map_or(material, |(_, decayed)| decayed);
-    match registry.residue(material) {
-        Some((chance, residue)) if rng.draw().chance(chance) => residue,
-        _ => decayed,
-    }
 }
 
 fn set_product(

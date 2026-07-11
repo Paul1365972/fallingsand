@@ -184,11 +184,8 @@ impl Net {
     }
 
     #[cfg(not(target_family = "wasm"))]
-    pub fn embedded(
-        registry: std::sync::Arc<fallingsand_core::MaterialRegistry>,
-        world_name: String,
-    ) -> Self {
-        let (session, server) = embedded::launch(registry, world_name);
+    pub fn embedded(world_name: String) -> Self {
+        let (session, server) = embedded::launch(world_name);
         Self {
             session: Some(session),
             supervisor: Supervisor::default(),
@@ -524,10 +521,7 @@ mod embedded {
         }
     }
 
-    pub fn launch(
-        registry: Arc<fallingsand_core::MaterialRegistry>,
-        world_name: String,
-    ) -> (Session, EmbeddedServer) {
+    pub fn launch(world_name: String) -> (Session, EmbeddedServer) {
         let (listener, dialer) = fallingsand_net::memory_listener();
         let control = Arc::new(ServerControl::default());
         let stats = Arc::new(Mutex::new(TickStats::default()));
@@ -541,7 +535,6 @@ mod embedded {
                     .join(&world_name)
                     .join("world.redb");
                 let mut server = Server::new(ServerConfig {
-                    registry,
                     listener: Box::new(listener),
                     stats_sink: Some(thread_stats),
                     world: fallingsand_server::WorldConfig {

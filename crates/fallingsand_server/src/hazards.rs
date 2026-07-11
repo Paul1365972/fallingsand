@@ -1,7 +1,7 @@
 use crate::player::{Air, Burning, Health, Mode, PlayerActor};
 use crate::{MAX_AIR_SECS, MAX_HP, Registry, SimWorld};
 use bevy_ecs::prelude::*;
-use fallingsand_core::{CellPos, MaterialRegistry, Phase, TICK_DT};
+use fallingsand_core::{CellPos, MaterialRegistry, Phase, TICK_DT, Tag};
 use fallingsand_protocol::GameMode;
 use fallingsand_sim::physics::{Actor, CellSource};
 use rustc_hash::FxHashMap;
@@ -30,7 +30,6 @@ pub struct HazardSample {
 pub fn sample_hazards<W: CellSource>(
     world: &W,
     registry: &MaterialRegistry,
-    hot_mask: u32,
     body: &Actor,
 ) -> HazardSample {
     let mut sample = HazardSample::default();
@@ -40,8 +39,17 @@ pub fn sample_hazards<W: CellSource>(
             return;
         };
         let material = registry.get(cell.material);
-        sample.contact_dps = sample.contact_dps.max(material.contact_damage);
-        let hot = registry.has_tag(cell.material, hot_mask);
+        let burning = cell.is_burning();
+        let hot = burning || registry.has_tag(cell.material, Tag::Hot);
+        let contact = if burning {
+            registry
+                .burn(cell.material)
+                .map_or(0.0, |burn| burn.damage)
+                .max(material.contact_damage)
+        } else {
+            material.contact_damage
+        };
+        sample.contact_dps = sample.contact_dps.max(contact);
         sample.hot |= hot;
         sample.extinguish |= material.phase == Phase::Liquid && !hot;
     };
@@ -80,7 +88,6 @@ pub fn apply_hazards(
     )>,
 ) {
     let tick = sim.0.tick();
-    let hot_mask = registry.0.tag_mask("hot");
     let mut crush: FxHashMap<Entity, f32> = FxHashMap::default();
     for (entity, dv) in crushes.0.drain(..) {
         let entry = crush.entry(entity).or_insert(0.0);
@@ -93,7 +100,7 @@ pub fn apply_hazards(
             burning.secs = 0.0;
             continue;
         }
-        let sample = sample_hazards(&sim.0, &registry.0, hot_mask, &body.0);
+        let sample = sample_hazards(&sim.0, &registry.0, &body.0);
         let mut damage = sample.contact_dps * TICK_DT;
         if sample.hot {
             burning.secs = BURN_SECS;

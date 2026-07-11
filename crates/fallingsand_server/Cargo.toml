@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 fallingsand_core = { workspace = true }
+fallingsand_data = { workspace = true }
 fallingsand_sim = { workspace = true, features = ["parallel"] }
 fallingsand_protocol = { workspace = true }
 fallingsand_net = { workspace = true, features = ["wt-native"] }

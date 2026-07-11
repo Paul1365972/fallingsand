@@ -328,7 +328,7 @@ impl ClientGame {
     pub fn start_game_local(&mut self, world: String) {
         #[cfg(not(target_family = "wasm"))]
         {
-            let net = Net::embedded(self.registries.materials.clone(), world);
+            let net = Net::embedded(world);
             self.enter_game(net);
         }
         #[cfg(target_family = "wasm")]

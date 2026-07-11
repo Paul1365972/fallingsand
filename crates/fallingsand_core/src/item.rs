@@ -1,4 +1,4 @@
-use crate::{MaterialId, MaterialRegistry};
+use crate::{MaterialId, MaterialRegistry, Tag};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ops::Range;
@@ -42,36 +42,12 @@ pub struct ItemDef {
     pub place: Option<MaterialId>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-enum IconEntry {
-    Material(String),
-    Atlas(u16),
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct ItemEntry {
-    name: String,
-    display: String,
-    stack_max: u32,
-    #[serde(default)]
-    icon: Option<IconEntry>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct ItemFile {
-    items: Vec<ItemEntry>,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum ItemError {
-    #[error("failed to parse items: {0}")]
-    Parse(#[from] ron::error::SpannedError),
-    #[error("duplicate item name {0:?}")]
-    DuplicateName(String),
-    #[error("item {0:?} references unknown material {1:?}")]
-    UnknownMaterial(String, String),
-    #[error("too many items: {0} (max {max})", max = u16::MAX)]
-    TooMany(usize),
+#[derive(Debug, Clone, Copy)]
+pub struct ItemEntry {
+    pub name: &'static str,
+    pub display: &'static str,
+    pub stack_max: u32,
+    pub icon: IconSpec,
 }
 
 #[derive(Debug, Clone)]
@@ -82,20 +58,13 @@ pub struct ItemRegistry {
 }
 
 impl ItemRegistry {
-    pub fn from_ron(source: &str, materials: &MaterialRegistry) -> Result<Self, ItemError> {
-        let file: ItemFile = ron::from_str(source)?;
-        Self::build(file.items, materials)
-    }
-
-    fn build(entries: Vec<ItemEntry>, materials: &MaterialRegistry) -> Result<Self, ItemError> {
+    pub fn build(entries: &[ItemEntry], materials: &MaterialRegistry) -> Self {
         let material_items = materials
             .iter()
             .filter(|(_, material)| material.phase != crate::Phase::Empty)
             .count();
         let total = 1 + entries.len() + material_items;
-        if total > u16::MAX as usize {
-            return Err(ItemError::TooMany(total));
-        }
+        assert!(total <= u16::MAX as usize, "too many items: {total}");
 
         let mut items: Vec<ItemDef> = Vec::new();
         let mut by_name: HashMap<String, ItemId> = HashMap::new();
@@ -108,61 +77,51 @@ impl ItemRegistry {
             place: None,
         });
 
-        let mat_id = |item_name: &str, mat_name: &str| -> Result<MaterialId, ItemError> {
-            materials
-                .id_of(mat_name)
-                .ok_or_else(|| ItemError::UnknownMaterial(item_name.into(), mat_name.into()))
-        };
-
         for entry in entries {
-            let icon = match entry.icon {
-                Some(IconEntry::Material(ref name)) => {
-                    IconSpec::MaterialSwatch(mat_id(&entry.name, name)?)
-                }
-                Some(IconEntry::Atlas(index)) => IconSpec::Atlas(index),
-                None => IconSpec::Atlas(0),
-            };
             let def = ItemDef {
-                display: entry.display,
+                name: entry.name.to_ascii_lowercase(),
+                display: entry.display.into(),
                 stack_max: entry.stack_max.max(1),
-                icon,
+                icon: entry.icon,
                 place: None,
-                name: entry.name,
             };
             let id = ItemId(items.len() as u16);
-            if by_name.insert(def.name.clone(), id).is_some() {
-                return Err(ItemError::DuplicateName(def.name));
-            }
+            assert!(
+                by_name.insert(def.name.clone(), id).is_none(),
+                "duplicate item name {:?}",
+                def.name
+            );
             items.push(def);
         }
 
-        let player_mask = materials.tag_mask("player");
         let mut mat_to_item = vec![ItemId::NONE; materials.len()];
         for (id, material) in materials.iter() {
-            if material.phase == crate::Phase::Empty || materials.has_tag(id, player_mask) {
+            if material.phase == crate::Phase::Empty || material.tags.contains(Tag::Player) {
                 continue;
             }
-            let name = format!("mat:{}", material.name);
+            let canonical = material.name.to_ascii_lowercase();
+            let name = format!("mat:{canonical}");
             let def = ItemDef {
-                display: pretty_name(&material.name),
+                display: pretty_name(&canonical),
                 stack_max: MATERIAL_STACK_MAX,
                 icon: IconSpec::MaterialSwatch(id),
                 place: Some(id),
                 name: name.clone(),
             };
             let item_id = ItemId(items.len() as u16);
-            if by_name.insert(name.clone(), item_id).is_some() {
-                return Err(ItemError::DuplicateName(name));
-            }
+            assert!(
+                by_name.insert(name.clone(), item_id).is_none(),
+                "duplicate item name {name:?}"
+            );
             mat_to_item[id.0 as usize] = item_id;
             items.push(def);
         }
 
-        Ok(Self {
+        Self {
             items,
             by_name,
             mat_to_item,
-        })
+        }
     }
 
     #[inline]
@@ -402,29 +361,10 @@ impl Inventory {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
-struct RecipeEntry {
-    inputs: Vec<(String, u32)>,
-    output: (String, u32),
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct RecipeFile {
-    recipes: Vec<RecipeEntry>,
-}
-
 #[derive(Debug, Clone)]
 pub struct Recipe {
     pub inputs: Vec<(ItemId, u32)>,
     pub output: (ItemId, u32),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum RecipeError {
-    #[error("failed to parse recipes: {0}")]
-    Parse(#[from] ron::error::SpannedError),
-    #[error("recipe references unknown item {0:?}")]
-    UnknownItem(String),
 }
 
 #[derive(Debug, Clone, Default)]
@@ -433,23 +373,8 @@ pub struct RecipeRegistry {
 }
 
 impl RecipeRegistry {
-    pub fn from_ron(source: &str, items: &ItemRegistry) -> Result<Self, RecipeError> {
-        let file: RecipeFile = ron::from_str(source)?;
-        let resolve = |name: &str| {
-            items
-                .id_of(name)
-                .ok_or(RecipeError::UnknownItem(name.into()))
-        };
-        let mut recipes = Vec::with_capacity(file.recipes.len());
-        for entry in file.recipes {
-            let mut inputs = Vec::with_capacity(entry.inputs.len());
-            for (name, count) in &entry.inputs {
-                inputs.push((resolve(name)?, *count));
-            }
-            let output = (resolve(&entry.output.0)?, entry.output.1);
-            recipes.push(Recipe { inputs, output });
-        }
-        Ok(Self { recipes })
+    pub fn new(recipes: Vec<Recipe>) -> Self {
+        Self { recipes }
     }
 
     pub fn recipes(&self) -> &[Recipe] {

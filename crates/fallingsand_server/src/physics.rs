@@ -2,7 +2,7 @@ use crate::player::{
     Air, Burning, Control, Health, Mode, PLAYER_HALF_H, PLAYER_HALF_W, PLAYER_MASS, Player,
     PlayerActor, PlayerRaster,
 };
-use crate::{Flesh, MAX_AIR_SECS, MAX_HP, Registry, SimWorld, SpawnPoint};
+use crate::{MAX_AIR_SECS, MAX_HP, Registry, SimWorld, SpawnPoint};
 use bevy_ecs::prelude::*;
 use fallingsand_core::{CellPos, Fixed};
 use fallingsand_protocol::GameMode;
@@ -20,7 +20,6 @@ const SPAWN_SEARCH_UP: i32 = 64;
 pub fn step_physics(
     mut sim: ResMut<SimWorld>,
     registry: Res<Registry>,
-    flesh: Res<Flesh>,
     spawn_point: Res<SpawnPoint>,
     mut bodies: ResMut<crate::bodies::PixelBodies>,
     mut impulses: ResMut<crate::PlayerImpulses>,
@@ -65,7 +64,6 @@ pub fn step_physics(
             spawn_stamp(
                 &mut sim.0,
                 &registry.0,
-                flesh.0,
                 &mut raster.0,
                 &mut body.0,
                 &mut control.0,
@@ -111,7 +109,6 @@ pub fn step_physics(
         commit_pose(
             &mut sim.0,
             &registry.0,
-            flesh.0,
             &mut bodies,
             &mut raster.0,
             &mut body.0,
@@ -179,7 +176,6 @@ pub fn step_physics(
 fn commit_pose(
     sim: &mut CellWorld,
     registry: &fallingsand_core::MaterialRegistry,
-    flesh: fallingsand_core::MaterialId,
     bodies: &mut crate::bodies::PixelBodies,
     stamp: &mut fallingsand_sim::PlayerStamp,
     body: &mut Actor,
@@ -196,7 +192,7 @@ fn commit_pose(
     ];
     for (attempt, &(x, y, half_h, duck)) in candidates.iter().enumerate() {
         let fp = footprint_at(x, y, body.half_w, half_h);
-        let Some(vacated) = stamp_player(sim, registry, flesh, stamp, fp, duck, facing_left) else {
+        let Some(vacated) = stamp_player(sim, registry, stamp, fp, duck, facing_left) else {
             continue;
         };
         match attempt {
@@ -248,7 +244,6 @@ fn wake_neighbours(
 fn spawn_stamp(
     sim: &mut CellWorld,
     registry: &fallingsand_core::MaterialRegistry,
-    flesh: fallingsand_core::MaterialId,
     stamp: &mut fallingsand_sim::PlayerStamp,
     body: &mut Actor,
     control: &mut Controller,
@@ -266,13 +261,13 @@ fn spawn_stamp(
             x1: base.x1,
             y1: base.y1 + up,
         };
-        if stamp_player(sim, registry, flesh, stamp, fp, false, false).is_some() {
+        if stamp_player(sim, registry, stamp, fp, false, false).is_some() {
             body.y += Fixed::from_int(up);
             return;
         }
     }
     tracing::warn!("spawn stamp forced at {:?}", (base.x0, base.y0));
-    force_stamp_player(sim, flesh, stamp, base, false, false);
+    force_stamp_player(sim, stamp, base, false, false);
 }
 
 fn footprint_loaded(sim: &CellWorld, fp: Footprint) -> bool {

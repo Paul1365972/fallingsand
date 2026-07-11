@@ -2571,6 +2571,7 @@ dependencies = [
  "chrono",
  "embed-resource",
  "fallingsand_core",
+ "fallingsand_data",
  "fallingsand_net",
  "fallingsand_protocol",
  "fallingsand_rng",
@@ -2587,9 +2588,14 @@ dependencies = [
 name = "fallingsand_core"
 version = "0.2.0"
 dependencies = [
- "ron",
  "serde",
- "thiserror 2.0.18",
+]
+
+[[package]]
+name = "fallingsand_data"
+version = "0.2.0"
+dependencies = [
+ "fallingsand_core",
 ]
 
 [[package]]
@@ -2631,6 +2637,7 @@ dependencies = [
  "ctrlc",
  "dotenvy",
  "fallingsand_core",
+ "fallingsand_data",
  "fallingsand_net",
  "fallingsand_protocol",
  "fallingsand_sim",
@@ -2659,6 +2666,7 @@ name = "fallingsand_sim"
 version = "0.2.0"
 dependencies = [
  "fallingsand_core",
+ "fallingsand_data",
  "fallingsand_rng",
  "rayon",
  "rustc-hash 2.1.3",
@@ -2669,10 +2677,10 @@ name = "fallingsand_worldgen"
 version = "0.2.0"
 dependencies = [
  "fallingsand_core",
+ "fallingsand_data",
  "fallingsand_rng",
  "fastnoise-lite",
  "png",
- "thiserror 2.0.18",
 ]
 
 [[package]]

@@ -12,9 +12,7 @@ pub(crate) mod session;
 pub(crate) mod sim;
 
 use bevy_ecs::prelude::*;
-use fallingsand_core::{
-    Calendar, CellPos, DAY_UNITS, ItemRegistry, MaterialRegistry, RecipeRegistry,
-};
+use fallingsand_core::{Calendar, CellPos, DAY_UNITS, MaterialRegistry};
 use fallingsand_net::Listener;
 use fallingsand_sim::CellWorld;
 use fallingsand_worldgen::WorldGenerator;
@@ -34,9 +32,6 @@ pub(crate) use fallingsand_core::{MAX_AIR_SECS, MAX_HP};
 
 #[derive(Resource)]
 pub(crate) struct SimWorld(pub(crate) CellWorld);
-
-#[derive(Resource, Clone, Copy)]
-pub(crate) struct Flesh(pub(crate) fallingsand_core::MaterialId);
 
 #[derive(Resource, Default)]
 pub(crate) struct PlayerImpulses(pub(crate) rustc_hash::FxHashMap<Entity, (f32, f32)>);
@@ -84,7 +79,6 @@ pub struct WorldConfig {
 }
 
 pub struct ServerConfig {
-    pub registry: Arc<MaterialRegistry>,
     pub listener: Box<dyn Listener>,
     pub stats_sink: Option<Arc<Mutex<TickStats>>>,
     pub world: WorldConfig,
@@ -133,12 +127,6 @@ impl ServerControl {
 pub enum ServerError {
     #[error(transparent)]
     Store(#[from] persistence::StoreError),
-    #[error(transparent)]
-    Gen(#[from] fallingsand_worldgen::GenError),
-    #[error(transparent)]
-    Item(#[from] fallingsand_core::item::ItemError),
-    #[error(transparent)]
-    Recipe(#[from] fallingsand_core::item::RecipeError),
 }
 
 impl Server {
@@ -172,31 +160,19 @@ impl Server {
             }
         };
         let seed = meta.seed;
-        let generator = Arc::new(WorldGenerator::new(seed, &config.registry)?);
-        let item_registry = Arc::new(ItemRegistry::from_ron(
-            include_str!("../../../data/items.ron"),
-            &config.registry,
-        )?);
-        let recipes = Arc::new(RecipeRegistry::from_ron(
-            include_str!("../../../data/recipes.ron"),
-            &item_registry,
-        )?);
+        let generator = Arc::new(WorldGenerator::new(seed));
+        let materials = Arc::new(fallingsand_data::material_registry());
+        let item_registry = Arc::new(fallingsand_data::item_registry(&materials));
+        let recipes = Arc::new(fallingsand_data::recipe_registry(&item_registry));
 
         let spawn_x = 0;
         let spawn = CellPos::new(spawn_x, generator.surface_height(spawn_x) + 12);
 
-        let flesh = Flesh(
-            config
-                .registry
-                .id_of("flesh")
-                .expect("flesh material missing from registry"),
-        );
         let mut cell_world = CellWorld::new();
         cell_world.set_tick(meta.tick);
         let mut world = World::new();
         world.insert_resource(SimWorld(cell_world));
-        world.insert_resource(flesh);
-        world.insert_resource(Registry(config.registry));
+        world.insert_resource(Registry(materials));
         world.insert_resource(inventory::ItemReg(item_registry));
         world.insert_resource(inventory::Recipes(recipes));
         world.insert_resource(inventory::SlotActions::default());

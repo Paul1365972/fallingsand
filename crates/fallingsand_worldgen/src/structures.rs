@@ -1,10 +1,11 @@
 use crate::biomes::{
     ISLAND_ANCHOR_X, ISLAND_ANCHOR_Y, ISLAND_CHANCE, ISLAND_MAX_Y, ISLAND_MIN_Y,
     MINESHAFT_ANCHOR_X, MINESHAFT_ANCHOR_Y, MINESHAFT_CHANCE, MINESHAFT_MAX_Y, MINESHAFT_MIN_Y,
-    Palette, RUIN_ANCHOR_GRID, RUIN_CHANCE, STRUCTURE_MARGIN,
+    RUIN_ANCHOR_GRID, RUIN_CHANCE, STRUCTURE_MARGIN,
 };
 use crate::features::Clip;
 use fallingsand_core::MaterialId;
+use fallingsand_data::material;
 use fallingsand_rng::{Hash, Rng};
 
 pub(crate) struct StructureCell {
@@ -38,10 +39,8 @@ impl Builder<'_> {
 
 const GROUND_SCAN: i32 = 48;
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn structures_for_rect(
     seed: u64,
-    palette: &Palette,
     solid: &dyn Fn(i32, i32) -> bool,
     surface_of: &dyn Fn(i32) -> i32,
     water_top: &dyn Fn(i32) -> i32,
@@ -52,24 +51,14 @@ pub(crate) fn structures_for_rect(
         cells: Vec::new(),
         clip,
     };
-    ruins(
-        seed,
-        palette,
-        solid,
-        surface_of,
-        water_top,
-        covered,
-        &mut builder,
-    );
-    mineshafts(seed, palette, &mut builder);
-    islands(seed, palette, &mut builder);
+    ruins(seed, solid, surface_of, water_top, covered, &mut builder);
+    mineshafts(seed, &mut builder);
+    islands(seed, &mut builder);
     builder.cells
 }
 
-#[allow(clippy::too_many_arguments)]
 fn ruins(
     seed: u64,
-    palette: &Palette,
     solid: &dyn Fn(i32, i32) -> bool,
     surface_of: &dyn Fn(i32) -> i32,
     water_top: &dyn Fn(i32) -> i32,
@@ -96,15 +85,14 @@ fn ruins(
             continue;
         }
         if rng.draw().bit() {
-            shack(palette, &mut rng, center, ground, covered, builder);
+            shack(&mut rng, center, ground, covered, builder);
         } else {
-            tower(palette, &mut rng, center, ground, covered, builder);
+            tower(&mut rng, center, ground, covered, builder);
         }
     }
 }
 
 fn shack(
-    palette: &Palette,
     rng: &mut Rng,
     center: i32,
     ground: i32,
@@ -117,7 +105,7 @@ fn shack(
     for dx in -half_w..=half_w {
         let x = center + dx;
         if rng.draw().unit() > 0.12 {
-            builder.put(x, ground, palette.planks, true);
+            builder.put(x, ground, material::PLANKS, true);
         }
         if dx.abs() < half_w {
             for dy in 1..height {
@@ -134,19 +122,18 @@ fn shack(
                 continue;
             }
             if rng.draw().unit() > 0.18 {
-                builder.put(x, ground + dy, palette.planks, true);
+                builder.put(x, ground + dy, material::PLANKS, true);
             }
         }
     }
     for dx in -(half_w + 1)..=(half_w + 1) {
         if rng.draw().unit() > 0.2 {
-            builder.put(center + dx, ground + height, palette.planks, true);
+            builder.put(center + dx, ground + height, material::PLANKS, true);
         }
     }
 }
 
 fn tower(
-    palette: &Palette,
     rng: &mut Rng,
     center: i32,
     ground: i32,
@@ -167,10 +154,10 @@ fn tower(
                     continue;
                 }
                 if rng.draw().unit() > ruin_chance {
-                    builder.put(x, y, palette.brick, true);
+                    builder.put(x, y, material::BRICK, true);
                 }
             } else if dy > 0 && dy % 8 == 0 {
-                builder.put(x, y, palette.planks, true);
+                builder.put(x, y, material::PLANKS, true);
             } else if dy > 0 && !covered(x, y) {
                 builder.put(x, y, MaterialId::AIR, true);
             }
@@ -179,13 +166,13 @@ fn tower(
     for dy in 1..=2 {
         for dx in -half_w..=half_w {
             if (dx + half_w) % 4 < 2 && rng.draw().unit() > 0.25 {
-                builder.put(center + dx, ground + height + dy, palette.brick, true);
+                builder.put(center + dx, ground + height + dy, material::BRICK, true);
             }
         }
     }
 }
 
-fn mineshafts(seed: u64, palette: &Palette, builder: &mut Builder) {
+fn mineshafts(seed: u64, builder: &mut Builder) {
     let anchor_min_x = (builder.clip.min_x - STRUCTURE_MARGIN).div_euclid(MINESHAFT_ANCHOR_X);
     let anchor_max_x = (builder.clip.max_x + STRUCTURE_MARGIN).div_euclid(MINESHAFT_ANCHOR_X);
     let anchor_min_y = (builder.clip.min_y - 32).div_euclid(MINESHAFT_ANCHOR_Y);
@@ -219,17 +206,17 @@ fn mineshafts(seed: u64, palette: &Palette, builder: &mut Builder) {
                 for dy in 1..=4 {
                     carve.push((x, floor + dy));
                 }
-                furnish.push((x, floor, palette.planks));
+                furnish.push((x, floor, material::PLANKS));
                 if i % 12 == 6 {
                     for dy in 1..=3 {
-                        furnish.push((x, floor + dy, palette.wood));
+                        furnish.push((x, floor + dy, material::WOOD));
                     }
                     for dx in -1..=1 {
-                        furnish.push((x + dx, floor + 4, palette.wood));
+                        furnish.push((x + dx, floor + 4, material::WOOD));
                     }
                 }
                 if rng.draw().unit() < 0.03 {
-                    furnish.push((x, floor + 1, palette.coal));
+                    furnish.push((x, floor + 1, material::COAL));
                 }
             }
             for (x, y) in carve {
@@ -242,7 +229,7 @@ fn mineshafts(seed: u64, palette: &Palette, builder: &mut Builder) {
     }
 }
 
-fn islands(seed: u64, palette: &Palette, builder: &mut Builder) {
+fn islands(seed: u64, builder: &mut Builder) {
     let anchor_min_x = (builder.clip.min_x - STRUCTURE_MARGIN).div_euclid(ISLAND_ANCHOR_X);
     let anchor_max_x = (builder.clip.max_x + STRUCTURE_MARGIN).div_euclid(ISLAND_ANCHOR_X);
     let anchor_min_y = (builder.clip.min_y - 64)
@@ -273,11 +260,11 @@ fn islands(seed: u64, palette: &Palette, builder: &mut Builder) {
                 for dy in -bottom..=top {
                     let from_top = top - dy;
                     let material = if from_top < 1 {
-                        palette.grass
+                        material::GRASS
                     } else if from_top < 5 {
-                        palette.dirt
+                        material::DIRT
                     } else {
-                        palette.stone
+                        material::STONE
                     };
                     builder.put(center_x + dx, center_y + dy, material, false);
                 }
@@ -288,7 +275,7 @@ fn islands(seed: u64, palette: &Palette, builder: &mut Builder) {
                 for dy in -1..=1 {
                     for dx in -1..=1 {
                         if dx * dx + dy * dy <= 2 {
-                            builder.put(gold_x + dx, gold_y + dy, palette.gold_ore, true);
+                            builder.put(gold_x + dx, gold_y + dy, material::GOLD_ORE, true);
                         }
                     }
                 }
@@ -297,13 +284,13 @@ fn islands(seed: u64, palette: &Palette, builder: &mut Builder) {
                 let top = center_y + ry_top;
                 let trunk = rng.draw().range(8, 14);
                 for dy in 1..=trunk {
-                    builder.put(center_x, top + dy, palette.wood, false);
+                    builder.put(center_x, top + dy, material::WOOD, false);
                 }
                 let canopy = rng.draw().range(4, 6);
                 for dy in -canopy..=canopy {
                     for dx in -canopy..=canopy {
                         if dx * dx + dy * dy <= canopy * canopy {
-                            builder.put(center_x + dx, top + trunk + dy, palette.leaves, false);
+                            builder.put(center_x + dx, top + trunk + dy, material::LEAVES, false);
                         }
                     }
                 }

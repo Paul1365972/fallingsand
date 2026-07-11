@@ -64,6 +64,18 @@ impl Cell {
         }
     }
 
+    pub const fn is_burning(self) -> bool {
+        self.shade_flags & 0x01 != 0
+    }
+
+    pub fn set_burning(&mut self, burning: bool) {
+        if burning {
+            self.shade_flags |= 0x01;
+        } else {
+            self.shade_flags &= !0x01;
+        }
+    }
+
     pub const fn is_air(self) -> bool {
         self.material.0 == MaterialId::AIR.0
     }

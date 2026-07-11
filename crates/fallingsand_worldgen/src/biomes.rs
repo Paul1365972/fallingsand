@@ -1,72 +1,5 @@
-﻿use crate::GenError;
-use fallingsand_core::{MaterialId, MaterialRegistry};
-
-pub struct Palette {
-    pub stone: MaterialId,
-    pub dirt: MaterialId,
-    pub grass: MaterialId,
-    pub sand: MaterialId,
-    pub gravel: MaterialId,
-    pub water: MaterialId,
-    pub lava: MaterialId,
-    pub oil: MaterialId,
-    pub wood: MaterialId,
-    pub leaves: MaterialId,
-    pub moss: MaterialId,
-    pub snow: MaterialId,
-    pub ice: MaterialId,
-    pub mud: MaterialId,
-    pub clay: MaterialId,
-    pub sandstone: MaterialId,
-    pub deepstone: MaterialId,
-    pub basalt: MaterialId,
-    pub coal: MaterialId,
-    pub iron_ore: MaterialId,
-    pub gold_ore: MaterialId,
-    pub crystal: MaterialId,
-    pub brick: MaterialId,
-    pub mushroom_stem: MaterialId,
-    pub glowshroom: MaterialId,
-    pub planks: MaterialId,
-}
-
-impl Palette {
-    pub fn resolve(registry: &MaterialRegistry) -> Result<Self, GenError> {
-        let id = |name: &str| {
-            registry
-                .id_of(name)
-                .ok_or_else(|| GenError::UnknownMaterial(name.to_string()))
-        };
-        Ok(Self {
-            stone: id("stone")?,
-            dirt: id("dirt")?,
-            grass: id("grass")?,
-            sand: id("sand")?,
-            gravel: id("gravel")?,
-            water: id("water")?,
-            lava: id("lava")?,
-            oil: id("oil")?,
-            wood: id("wood")?,
-            leaves: id("leaves")?,
-            moss: id("moss")?,
-            snow: id("snow")?,
-            ice: id("ice")?,
-            mud: id("mud")?,
-            clay: id("clay")?,
-            sandstone: id("sandstone")?,
-            deepstone: id("deepstone")?,
-            basalt: id("basalt")?,
-            coal: id("coal")?,
-            iron_ore: id("iron_ore")?,
-            gold_ore: id("gold_ore")?,
-            crystal: id("crystal")?,
-            brick: id("brick")?,
-            mushroom_stem: id("mushroom_stem")?,
-            glowshroom: id("glowshroom")?,
-            planks: id("planks")?,
-        })
-    }
-}
+﻿use fallingsand_core::MaterialId;
+use fallingsand_data::material;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Beach {
@@ -179,14 +112,14 @@ pub const ISLAND_MIN_Y: i32 = 220;
 pub const ISLAND_MAX_Y: i32 = 1400;
 pub const STRUCTURE_MARGIN: i32 = 200;
 
-pub(crate) fn world_def(palette: &Palette) -> WorldDef {
+pub(crate) fn world_def() -> WorldDef {
     WorldDef {
         sea_level: -10,
         biomes: vec![
             Biome {
                 name: "meadow",
-                surface: palette.grass,
-                soil: palette.dirt,
+                surface: material::GRASS,
+                soil: material::DIRT,
                 soil_depth: 14,
                 underlayer: None,
                 height_amplitude: 28.0,
@@ -195,8 +128,8 @@ pub(crate) fn world_def(palette: &Palette) -> WorldDef {
                     density: 0.06,
                     spacing: 11,
                     trunk_height: (14, 26),
-                    wood: palette.wood,
-                    leaves: palette.leaves,
+                    wood: material::WOOD,
+                    leaves: material::LEAVES,
                     canopy: Canopy::Round,
                     snow_capped: false,
                 }),
@@ -209,8 +142,8 @@ pub(crate) fn world_def(palette: &Palette) -> WorldDef {
             },
             Biome {
                 name: "forest",
-                surface: palette.grass,
-                soil: palette.dirt,
+                surface: material::GRASS,
+                soil: material::DIRT,
                 soil_depth: 12,
                 underlayer: None,
                 height_amplitude: 46.0,
@@ -219,8 +152,8 @@ pub(crate) fn world_def(palette: &Palette) -> WorldDef {
                     density: 0.38,
                     spacing: 6,
                     trunk_height: (16, 34),
-                    wood: palette.wood,
-                    leaves: palette.leaves,
+                    wood: material::WOOD,
+                    leaves: material::LEAVES,
                     canopy: Canopy::Round,
                     snow_capped: false,
                 }),
@@ -233,10 +166,10 @@ pub(crate) fn world_def(palette: &Palette) -> WorldDef {
             },
             Biome {
                 name: "desert",
-                surface: palette.sand,
-                soil: palette.sand,
+                surface: material::SAND,
+                soil: material::SAND,
                 soil_depth: 16,
-                underlayer: Some((palette.sandstone, 30)),
+                underlayer: Some((material::SANDSTONE, 30)),
                 height_amplitude: 20.0,
                 ruggedness: 0.18,
                 tree: None,
@@ -249,8 +182,8 @@ pub(crate) fn world_def(palette: &Palette) -> WorldDef {
             },
             Biome {
                 name: "rocklands",
-                surface: palette.stone,
-                soil: palette.gravel,
+                surface: material::STONE,
+                soil: material::GRAVEL,
                 soil_depth: 6,
                 underlayer: None,
                 height_amplitude: 95.0,
@@ -265,8 +198,8 @@ pub(crate) fn world_def(palette: &Palette) -> WorldDef {
             },
             Biome {
                 name: "snowlands",
-                surface: palette.snow,
-                soil: palette.dirt,
+                surface: material::SNOW,
+                soil: material::DIRT,
                 soil_depth: 10,
                 underlayer: None,
                 height_amplitude: 52.0,
@@ -275,8 +208,8 @@ pub(crate) fn world_def(palette: &Palette) -> WorldDef {
                     density: 0.14,
                     spacing: 8,
                     trunk_height: (12, 24),
-                    wood: palette.wood,
-                    leaves: palette.leaves,
+                    wood: material::WOOD,
+                    leaves: material::LEAVES,
                     canopy: Canopy::Conifer,
                     snow_capped: true,
                 }),
@@ -289,25 +222,25 @@ pub(crate) fn world_def(palette: &Palette) -> WorldDef {
             },
             Biome {
                 name: "swamp",
-                surface: palette.grass,
-                soil: palette.mud,
+                surface: material::GRASS,
+                soil: material::MUD,
                 soil_depth: 14,
-                underlayer: Some((palette.clay, 12)),
+                underlayer: Some((material::CLAY, 12)),
                 height_amplitude: 7.0,
                 ruggedness: 0.2,
                 tree: Some(TreeDef {
                     density: 0.2,
                     spacing: 9,
                     trunk_height: (12, 22),
-                    wood: palette.wood,
-                    leaves: palette.leaves,
+                    wood: material::WOOD,
+                    leaves: material::LEAVES,
                     canopy: Canopy::Round,
                     snow_capped: false,
                 }),
                 tuft_chance: 0.32,
                 beach: Beach::Sand,
                 pond_chance: 0.8,
-                shallow_aquifer: Some(palette.oil),
+                shallow_aquifer: Some(material::OIL),
                 snow_cover: false,
                 vine_chance: 0.30,
             },
@@ -316,7 +249,7 @@ pub(crate) fn world_def(palette: &Palette) -> WorldDef {
             Band {
                 name: "crust",
                 floor: Some(-350),
-                stone: palette.stone,
+                stone: material::STONE,
                 cave_threshold: 0.11,
                 cave_depth_bonus: 0.05,
                 lava_pools: false,
@@ -326,7 +259,7 @@ pub(crate) fn world_def(palette: &Palette) -> WorldDef {
             Band {
                 name: "deep",
                 floor: Some(-900),
-                stone: palette.deepstone,
+                stone: material::DEEPSTONE,
                 cave_threshold: 0.13,
                 cave_depth_bonus: 0.04,
                 lava_pools: true,
@@ -336,7 +269,7 @@ pub(crate) fn world_def(palette: &Palette) -> WorldDef {
             Band {
                 name: "molten",
                 floor: None,
-                stone: palette.basalt,
+                stone: material::BASALT,
                 cave_threshold: 0.15,
                 cave_depth_bonus: 0.0,
                 lava_pools: true,
@@ -346,7 +279,7 @@ pub(crate) fn world_def(palette: &Palette) -> WorldDef {
         ],
         ores: vec![
             OreDef {
-                material: palette.coal,
+                material: material::COAL,
                 min_y: -260,
                 max_y: 40,
                 chance: 0.16,
@@ -354,7 +287,7 @@ pub(crate) fn world_def(palette: &Palette) -> WorldDef {
                 radius: (1, 2),
             },
             OreDef {
-                material: palette.iron_ore,
+                material: material::IRON_ORE,
                 min_y: -700,
                 max_y: -120,
                 chance: 0.13,
@@ -362,7 +295,7 @@ pub(crate) fn world_def(palette: &Palette) -> WorldDef {
                 radius: (1, 2),
             },
             OreDef {
-                material: palette.gold_ore,
+                material: material::GOLD_ORE,
                 min_y: i32::MIN,
                 max_y: -480,
                 chance: 0.10,
@@ -370,7 +303,7 @@ pub(crate) fn world_def(palette: &Palette) -> WorldDef {
                 radius: (1, 2),
             },
             OreDef {
-                material: palette.crystal,
+                material: material::CRYSTAL,
                 min_y: -900,
                 max_y: -380,
                 chance: 0.08,
@@ -378,7 +311,7 @@ pub(crate) fn world_def(palette: &Palette) -> WorldDef {
                 radius: (2, 3),
             },
             OreDef {
-                material: palette.dirt,
+                material: material::DIRT,
                 min_y: -320,
                 max_y: 30,
                 chance: 0.22,
@@ -386,7 +319,7 @@ pub(crate) fn world_def(palette: &Palette) -> WorldDef {
                 radius: (2, 3),
             },
             OreDef {
-                material: palette.gravel,
+                material: material::GRAVEL,
                 min_y: -620,
                 max_y: 0,
                 chance: 0.18,
@@ -394,7 +327,7 @@ pub(crate) fn world_def(palette: &Palette) -> WorldDef {
                 radius: (2, 3),
             },
             OreDef {
-                material: palette.clay,
+                material: material::CLAY,
                 min_y: -180,
                 max_y: 15,
                 chance: 0.14,
@@ -402,7 +335,7 @@ pub(crate) fn world_def(palette: &Palette) -> WorldDef {
                 radius: (2, 3),
             },
             OreDef {
-                material: palette.sand,
+                material: material::SAND,
                 min_y: -130,
                 max_y: 25,
                 chance: 0.12,
@@ -410,7 +343,7 @@ pub(crate) fn world_def(palette: &Palette) -> WorldDef {
                 radius: (2, 3),
             },
             OreDef {
-                material: palette.basalt,
+                material: material::BASALT,
                 min_y: -880,
                 max_y: -420,
                 chance: 0.10,

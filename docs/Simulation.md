@@ -36,10 +36,10 @@ Constants are seconds-based, converted per-tick from `TICK_DT`, so behaviour is 
 
 ## Combustion
 
-Three material-driven stages, all local — state lives in the material id, no per-cell burn timer.
+Three stages, all local — combustion state is a per-cell **burning** flag on the fuel (`Cell::is_burning`), driven by that material's *burn profile*. No mirror `burning_*` materials, no per-cell burn timer.
 
-- **Ignite**: a flame or ember reacts with adjacent fuel at that fuel's own rate (`fire + oil` near-instant, `fire + coal` slow), turning it into its `burning_*` variant. Ignition needs oxygen (an adjacent air/gas/fire cell); each fuel's `smoulder` (0..1) scales ignition *without* one — 0 is surface-only (oil), higher lets a sealed lump burn through (coal).
-- **Burn**: the ember stays in place, spreads through adjacent like fuel, glows (`emissive`), burns entities (`hot`), and is consumed by its own `decay` — the decay rate *is* the burn duration. Consumption mostly gasifies the fuel (void/smoke) so the burn front self-exposes to oxygen; only `residue_chance` leaves solid `ash`.
-- **Flame**: an ember `emits` short-lived `fire` into adjacent air (licking flames + smoke plume); fire is `sustained_by` embers, then decays to smoke.
+- **Ignite**: an igniter (a `fire` cell, a burning cell, or a `hot` material like lava) sets the burning flag on each adjacent flammable neighbour at that fuel's `flammability` (`oil` fast, `coal` slow). Ignition needs oxygen (an adjacent air/gas/fire cell); each fuel's `smoulder` (0..1) scales ignition *without* one — 0 is surface-only (oil), higher lets a sealed lump burn through (coal).
+- **Burn**: a burning cell keeps its own material and phase dynamics (burning oil still flows), glows and damages entities (`burn_damage`), emits `fire` into adjacent air at `burn_emit`, and is consumed at `burn_rate` — that rate *is* the burn duration. Consumption mostly gasifies the fuel (air) so the front self-exposes to oxygen; only `residue_chance` leaves solid `ash`.
+- **Flame**: the emitted `fire` is short-lived (licking flames + smoke plume); it is sustained while adjacent to a burning cell, then decays to smoke.
 
-Water quenches an adjacent ember: the water flashes to steam and the ember burns out early (`@burnout`, ash at its own `residue_chance`) — dousing a big fire spends water. Fuels sleep until a hot neighbour wakes them, so an unlit forest costs nothing.
+A `water` neighbour flashes to steam and clears the burning flag — dousing *spends* the water, so a puddle can only smother so much; snow and ice help indirectly, melting to water against the flames. Fuels sleep until a hot neighbour lights them, so an unlit forest costs nothing.

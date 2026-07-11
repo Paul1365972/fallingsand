@@ -14,6 +14,7 @@ pub const TICK_DT: f32 = 1.0 / TICK_RATE as f32;
 pub const fn ticks_from_secs(secs: f32) -> u64 {
     (secs * TICK_RATE as f32 + 0.5) as u64
 }
+
 pub const GRID_GRAVITY: f32 = 600.0;
 pub const MAX_HP: f32 = 100.0;
 pub const MAX_AIR_SECS: f32 = 12.0;
@@ -30,11 +31,11 @@ pub use chunk::{CHUNK_AREA, CHUNK_SIZE, Chunk, DirtyRect};
 pub use coords::{CellOffset, CellPos, ChunkOffset, ChunkPos, RegionPos};
 pub use fixed::Fixed;
 pub use item::{
-    HOTBAR_SLOTS, IconSpec, Inventory, ItemDef, ItemId, ItemRegistry, ItemStack, MAIN_SLOTS,
-    MATERIAL_STACK_MAX, PLAYER_SLOTS, Recipe, RecipeRegistry,
+    HOTBAR_SLOTS, IconSpec, Inventory, ItemDef, ItemEntry, ItemId, ItemRegistry, ItemStack,
+    MAIN_SLOTS, MATERIAL_STACK_MAX, PLAYER_SLOTS, Recipe, RecipeRegistry,
 };
 pub use material::{
-    Dynamics, Material, MaterialId, MaterialRegistry, Phase, Product, Reaction, ReactionDef,
-    per_tick_chance,
+    Burn, Dynamics, Material, MaterialId, MaterialRegistry, Operand, Phase, Reaction, ReactionDef,
+    Tag, Tags, per_tick_chance,
 };
 pub use region::{REGION_AREA_CHUNKS, REGION_SIZE_CELLS, REGION_SIZE_CHUNKS, Region};

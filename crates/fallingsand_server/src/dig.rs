@@ -4,7 +4,7 @@ use crate::{Registry, SimWorld};
 use bevy_ecs::prelude::*;
 use fallingsand_core::{
     CellPos, Fixed, ItemId, ItemRegistry, ItemStack, MAX_BRUSH, MaterialId, MaterialRegistry,
-    Phase, REACH, SURVIVAL_REACH, TICK_DT,
+    Phase, REACH, SURVIVAL_REACH, TICK_DT, Tag,
 };
 use fallingsand_protocol::GameMode;
 
@@ -16,7 +16,6 @@ pub fn apply_player_inputs(
     mut query: Query<(&Player, &PlayerActor, &Mode, &mut DigState, &mut Inventory)>,
 ) {
     let reg = &item_reg.0;
-    let player_mask = registry.0.tag_mask("player");
     for (player, body, mode, mut dig, mut inventory) in &mut query {
         let input = &player.input;
         let survival = mode.0 == GameMode::Survival;
@@ -50,7 +49,7 @@ pub fn apply_player_inputs(
                     let Some(cell) = sim.0.get_cell(pos) else {
                         continue;
                     };
-                    if registry.0.has_tag(cell.material, player_mask) {
+                    if registry.0.has_tag(cell.material, Tag::Player) {
                         continue;
                     }
                     if registry.0.get(cell.material).phase != Phase::Empty {
@@ -128,11 +127,10 @@ pub fn survival_dig(
     aim: CellPos,
     radius: i32,
 ) -> bool {
-    let player_mask = registry.tag_mask("player");
     let mut candidates: Vec<(i32, i32, i32)> = brush_cells(aim, radius)
         .filter(|&(_, pos)| {
             world.get_cell(pos).is_some_and(|cell| {
-                !registry.has_tag(cell.material, player_mask)
+                !registry.has_tag(cell.material, Tag::Player)
                     && matches!(
                         registry.get(cell.material).phase,
                         Phase::Solid | Phase::Powder

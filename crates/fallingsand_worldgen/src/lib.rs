@@ -9,28 +9,22 @@ mod water;
 
 use biomes::{
     BEACH_DEPTH, BEACH_RANGE, Band, Beach, MAX_OVERHANG, MOSS_CHANCE, MOSS_MAX_DEPTH,
-    OVERHANG_AMPLITUDE, OVERHANG_FADE, Palette, SNOW_COVER_DEPTH, SNOW_LINE, WorldDef, world_def,
+    OVERHANG_AMPLITUDE, OVERHANG_FADE, SNOW_COVER_DEPTH, SNOW_LINE, WorldDef, world_def,
 };
 use caves::Caves;
 use fallingsand_core::{
-    Cell, CellOffset, ChunkOffset, DirtyRect, MaterialId, MaterialRegistry, REGION_SIZE_CELLS,
-    REGION_SIZE_CHUNKS, Region, RegionPos,
+    Cell, CellOffset, ChunkOffset, DirtyRect, MaterialId, REGION_SIZE_CELLS, REGION_SIZE_CHUNKS,
+    Region, RegionPos,
 };
+use fallingsand_data::material;
 use fallingsand_rng::Hash;
 use noise::Cached;
 use terrain::Terrain;
 use water::Waters;
 
-#[derive(Debug, thiserror::Error)]
-pub enum GenError {
-    #[error("worldgen references unknown material {0:?}")]
-    UnknownMaterial(String),
-}
-
 pub struct WorldGenerator {
     seed: u64,
     def: WorldDef,
-    palette: Palette,
     terrain: Terrain,
     caves: Caves,
     waters: Waters,
@@ -115,7 +109,6 @@ impl Ctx<'_> {
     fn cell_for(&self, x: i32, y: i32) -> Cell {
         let generator = self.generator;
         let def = &generator.def;
-        let palette = &generator.palette;
         let column = self.column(x);
         let column = &column;
         let biome = &def.biomes[column.biome];
@@ -124,23 +117,23 @@ impl Ctx<'_> {
         if depth <= 0.0 {
             if y <= def.sea_level {
                 if biome.beach == Beach::Ice && y >= def.sea_level - 1 {
-                    return shaded(generator.seed, palette.ice, x, y);
+                    return shaded(generator.seed, material::ICE, x, y);
                 }
-                return shaded(generator.seed, palette.water, x, y);
+                return shaded(generator.seed, material::WATER, x, y);
             }
             if let Some(level) = column.pond_level
                 && y <= level
             {
                 if biome.beach == Beach::Ice && y == level {
-                    return shaded(generator.seed, palette.ice, x, y);
+                    return shaded(generator.seed, material::ICE, x, y);
                 }
-                return shaded(generator.seed, palette.water, x, y);
+                return shaded(generator.seed, material::WATER, x, y);
             }
             if (biome.snow_cover || column.surface > SNOW_LINE)
                 && y <= column.surface + SNOW_COVER_DEPTH
                 && depth > -(SNOW_COVER_DEPTH as f32 + 1.0)
             {
-                return shaded(generator.seed, palette.snow, x, y);
+                return shaded(generator.seed, material::SNOW, x, y);
             }
             if column.tuft_height > 0 && y <= column.surface + column.tuft_height {
                 return shaded(generator.seed, biome.surface, x, y);
@@ -153,8 +146,6 @@ impl Ctx<'_> {
             let filled = water::cave_fill(
                 biome,
                 band,
-                palette.lava,
-                palette.water,
                 self.aquifer.at(x, y),
                 self.lava.at(x, y),
                 y,
@@ -179,7 +170,7 @@ impl Ctx<'_> {
             if (below > 0.0 && self.carved(column, band, x, y - 1, below))
                 || (above > 0.0 && self.carved(column, band, x, y + 1, above))
             {
-                return shaded(generator.seed, palette.moss, x, y);
+                return shaded(generator.seed, material::MOSS, x, y);
             }
         }
 
@@ -189,9 +180,9 @@ impl Ctx<'_> {
         let layered = depth + jitter;
         let material =
             if column.beach && biome.beach == Beach::Sand && layered <= BEACH_DEPTH as f32 {
-                palette.sand
+                material::SAND
             } else if column.surface > SNOW_LINE && layered <= 3.0 {
-                palette.snow
+                material::SNOW
             } else if layered <= 1.5 {
                 if column.surface < def.sea_level {
                     biome.soil
@@ -212,17 +203,14 @@ impl Ctx<'_> {
 }
 
 impl WorldGenerator {
-    pub fn new(seed: u64, registry: &MaterialRegistry) -> Result<Self, GenError> {
-        let palette = Palette::resolve(registry)?;
-        let def = world_def(&palette);
-        Ok(Self {
+    pub fn new(seed: u64) -> Self {
+        Self {
             seed,
+            def: world_def(),
             terrain: Terrain::new(seed),
             caves: Caves::new(seed),
             waters: Waters::new(seed),
-            def,
-            palette,
-        })
+        }
     }
 
     pub fn surface_height(&self, x: i32) -> i32 {
@@ -318,10 +306,10 @@ impl WorldGenerator {
         }
 
         let stones = [
-            self.palette.stone,
-            self.palette.sandstone,
-            self.palette.deepstone,
-            self.palette.basalt,
+            material::STONE,
+            material::SANDSTONE,
+            material::DEEPSTONE,
+            material::BASALT,
         ];
         for vein in ores::veins_for_rect(
             self.seed,
@@ -368,7 +356,6 @@ impl WorldGenerator {
 
         for cell in structures::structures_for_rect(
             self.seed,
-            &self.palette,
             &solid,
             &surface_of,
             &water_top,
@@ -400,22 +387,15 @@ impl WorldGenerator {
         into_air.extend(features::decorations_for_rect(
             self.seed,
             &self.def,
-            &self.palette,
             &self.terrain,
             &solid,
             &surface_of,
             &clip,
         ));
-        into_air.extend(features::mushrooms_for_rect(
-            self.seed,
-            &self.palette,
-            &solid,
-            &clip,
-        ));
+        into_air.extend(features::mushrooms_for_rect(self.seed, &solid, &clip));
         into_air.extend(features::trees_for_rect(
             self.seed,
             &self.def,
-            &self.palette,
             &self.terrain,
             &solid,
             &surface_of,

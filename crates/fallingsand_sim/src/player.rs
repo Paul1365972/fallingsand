@@ -1,7 +1,8 @@
 use crate::bodies::{Raster, commit_stamp};
 use crate::physics::Footprint;
 use crate::world::CellWorld;
-use fallingsand_core::{Cell, CellPos, MaterialId, MaterialRegistry};
+use fallingsand_core::{Cell, CellPos, MaterialRegistry};
+use fallingsand_data::material;
 use rustc_hash::FxHashSet;
 
 pub const PLAYER_COLS: usize = 3;
@@ -75,8 +76,8 @@ fn shade_for(local: u16, ducked: bool, facing_left: bool) -> u8 {
     }
 }
 
-fn flesh_cell(flesh: MaterialId, local: u16, ducked: bool, facing_left: bool) -> Cell {
-    let mut cell = Cell::new(flesh, shade_for(local, ducked, facing_left));
+fn flesh_cell(local: u16, ducked: bool, facing_left: bool) -> Cell {
+    let mut cell = Cell::new(material::FLESH, shade_for(local, ducked, facing_left));
     cell.set_body(true);
     cell
 }
@@ -107,7 +108,6 @@ fn covers_exactly(raster: &Raster, fp: Footprint) -> bool {
 pub fn stamp_player(
     world: &mut CellWorld,
     registry: &MaterialRegistry,
-    flesh: MaterialId,
     stamp: &mut PlayerStamp,
     fp: Footprint,
     ducked: bool,
@@ -124,18 +124,18 @@ pub fn stamp_player(
         let intact = raster.cells.iter().all(|&(pos, _)| {
             world
                 .get_cell(pos)
-                .is_some_and(|cell| cell.material == flesh && cell.is_body())
+                .is_some_and(|cell| cell.material == material::FLESH && cell.is_body())
         });
         if !intact {
             for &(pos, local) in &raster.cells {
-                world.set_cell_raw(pos, flesh_cell(flesh, local, ducked, facing_left));
+                world.set_cell_raw(pos, flesh_cell(local, ducked, facing_left));
             }
         }
         return Some(Vec::new());
     }
 
     let new = player_raster(fp);
-    let cell_for = |local: u16| flesh_cell(flesh, local, ducked, facing_left);
+    let cell_for = |local: u16| flesh_cell(local, ducked, facing_left);
     let empty = Raster::default();
     let old = stamp.raster.as_ref().unwrap_or(&empty);
     let vacated = commit_stamp(world, registry, &[], old, &new, &cell_for)?;
@@ -147,7 +147,6 @@ pub fn stamp_player(
 
 pub fn force_stamp_player(
     world: &mut CellWorld,
-    flesh: MaterialId,
     stamp: &mut PlayerStamp,
     fp: Footprint,
     ducked: bool,
@@ -156,7 +155,7 @@ pub fn force_stamp_player(
     unstamp_player(world, stamp);
     let new = player_raster(fp);
     for &(pos, local) in &new.cells {
-        world.set_cell_raw(pos, flesh_cell(flesh, local, ducked, facing_left));
+        world.set_cell_raw(pos, flesh_cell(local, ducked, facing_left));
     }
     stamp.raster = Some(new);
     stamp.ducked = ducked;

@@ -5,15 +5,9 @@ use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::prelude::*;
 use bevy::render::error_handler::{ErrorType, RenderError, RenderErrorHandler, RenderErrorPolicy};
 use bevy::sprite_render::Material2dPlugin;
-use fallingsand_core::{ItemRegistry, MaterialRegistry, RecipeRegistry};
 use game::{ClientGame, Registries};
 use std::sync::Arc;
 use view::Game;
-
-pub const MATERIALS_RON: &str = include_str!("../../../data/materials.ron");
-pub const REACTIONS_RON: &str = include_str!("../../../data/reactions.ron");
-pub const ITEMS_RON: &str = include_str!("../../../data/items.ron");
-pub const RECIPES_RON: &str = include_str!("../../../data/recipes.ron");
 
 fn render_error_policy(
     error: &RenderError,
@@ -30,16 +24,9 @@ fn render_error_policy(
 }
 
 fn main() {
-    let materials = Arc::new(
-        MaterialRegistry::from_ron(MATERIALS_RON, REACTIONS_RON)
-            .expect("data/materials.ron must be valid"),
-    );
-    let items = Arc::new(
-        ItemRegistry::from_ron(ITEMS_RON, &materials).expect("data/items.ron must be valid"),
-    );
-    let recipes = Arc::new(
-        RecipeRegistry::from_ron(RECIPES_RON, &items).expect("data/recipes.ron must be valid"),
-    );
+    let materials = Arc::new(fallingsand_data::material_registry());
+    let items = Arc::new(fallingsand_data::item_registry(&materials));
+    let recipes = Arc::new(fallingsand_data::recipe_registry(&items));
 
     let mut client = ClientGame::new(Registries {
         materials,

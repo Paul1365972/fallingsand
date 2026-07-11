@@ -4,4 +4,4 @@ A deterministic pure function `(seed, RegionCoords) → Region`. Regions generat
 
 Layout: a surface band at y≈0 (noise heightmap), infinite depth in progressive bands (biome/hazard/loot keyed on Y), infinite sky thinning above. Pipeline: base terrain (fBm + domain warping) → biome → material fill → ore veins → structures (ruins, mineshafts, islands) → vegetation (decorations, mushrooms, trees).
 
-Biome and feature definitions are hardcoded Rust, not data files. `examples/preview.rs` renders to PNG so generation is iterated offline.
+Biome and feature definitions are hardcoded Rust, not data files, and name materials directly through `fallingsand_data::material::*` (UPPER handles like `material::STONE`) — no palette indirection. `examples/preview.rs` renders to PNG so generation is iterated offline.

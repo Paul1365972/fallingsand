@@ -1,6 +1,7 @@
 use crate::biomes::{AQUIFER_MIN_DEPTH, AQUIFER_THRESHOLD, Band, Biome, SHALLOW_AQUIFER_FLOOR};
 use crate::noise::{Field, noise_seed};
 use fallingsand_core::MaterialId;
+use fallingsand_data::material;
 use fastnoise_lite::{FastNoiseLite, FractalType, NoiseType};
 
 pub struct Waters {
@@ -33,20 +34,18 @@ impl Waters {
 pub(crate) fn cave_fill(
     biome: &Biome,
     band: &Band,
-    lava_material: MaterialId,
-    water_material: MaterialId,
     aquifer_value: f32,
     lava_value: f32,
     y: i32,
     depth: f32,
 ) -> Option<MaterialId> {
     if band.lava_pools && lava_value > band.lava_pool_threshold {
-        return Some(lava_material);
+        return Some(material::LAVA);
     }
     if band.aquifers && depth > AQUIFER_MIN_DEPTH && aquifer_value > AQUIFER_THRESHOLD {
         let liquid = match biome.shallow_aquifer {
             Some(liquid) if y > SHALLOW_AQUIFER_FLOOR => liquid,
-            _ => water_material,
+            _ => material::WATER,
         };
         return Some(liquid);
     }

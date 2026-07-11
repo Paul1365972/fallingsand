@@ -11,5 +11,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let cell = textureLoad(cells, vec2<u32>(x, y), 0);
     let material = cell.r | (cell.g << 8u);
     let shade = cell.b >> 4u;
-    return textureLoad(palette, vec2<u32>(material, shade), 0);
+    let color = textureLoad(palette, vec2<u32>(material, shade), 0);
+    if ((cell.b & 1u) != 0u) {
+        let flame = vec3<f32>(1.0, 0.52, 0.14);
+        let glow = 0.45 + 0.06 * f32(shade & 3u);
+        return vec4<f32>(mix(color.rgb, flame, glow), color.a);
+    }
+    return color;
 }

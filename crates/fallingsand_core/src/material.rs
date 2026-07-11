@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct MaterialId(pub u16);
@@ -8,7 +7,7 @@ impl MaterialId {
     pub const AIR: Self = Self(0);
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Phase {
     Empty,
     Solid,
@@ -18,78 +17,118 @@ pub enum Phase {
     Fire,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Tag {
+    Dissolvable,
+    Hot,
+    Emissive,
+    Player,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Tags(u32);
+
+impl Tags {
+    pub const EMPTY: Self = Self(0);
+
+    pub const fn new(tags: &[Tag]) -> Self {
+        let mut bits = 0u32;
+        let mut i = 0;
+        while i < tags.len() {
+            bits |= 1u32 << tags[i] as u32;
+            i += 1;
+        }
+        Self(bits)
+    }
+
+    #[inline]
+    pub const fn contains(self, tag: Tag) -> bool {
+        self.0 & (1u32 << tag as u32) != 0
+    }
+
+    #[inline]
+    pub const fn intersects(self, other: Tags) -> bool {
+        self.0 & other.0 != 0
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct Material {
-    pub name: String,
+    pub name: &'static str,
     pub phase: Phase,
     pub density: f32,
-    pub colors: Vec<[u8; 4]>,
-    #[serde(default)]
+    pub colors: &'static [[u8; 4]],
     pub rigid_capable: bool,
-    #[serde(default)]
     pub drag: f32,
-    #[serde(default)]
     pub friction: f32,
-    #[serde(default)]
     pub repose: f32,
-    #[serde(default = "default_one")]
     pub redirect_keep: f32,
-    #[serde(default = "default_grip")]
     pub surface_grip: f32,
-    #[serde(default)]
     pub cohesion: f32,
-    #[serde(default)]
     pub turbulence: f32,
-    #[serde(default)]
     pub flow_rate: f32,
-    #[serde(default)]
     pub hardness: f32,
-    #[serde(default)]
     pub restitution: f32,
-    #[serde(default)]
     pub surface_bounce: f32,
-    #[serde(default)]
     pub contact_damage: f32,
-    #[serde(default)]
-    pub tags: Vec<String>,
-    #[serde(default)]
+    pub tags: Tags,
     pub decay_rate: f32,
-    #[serde(default)]
-    pub decay_into: Option<String>,
-    #[serde(default)]
-    pub sustained_by: Vec<String>,
-    #[serde(default)]
-    pub emits: Option<String>,
-    #[serde(default)]
-    pub emit_rate: f32,
-    #[serde(default)]
+    pub decay_into: Option<MaterialId>,
+    pub flammability: f32,
+    pub burn_rate: f32,
+    pub burn_emit: f32,
     pub smoulder: f32,
-    #[serde(default)]
-    pub residue_into: Option<String>,
-    #[serde(default)]
+    pub residue_into: Option<MaterialId>,
     pub residue_chance: f32,
+    pub burn_damage: f32,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+impl Material {
+    pub const DEFAULT: Self = Self {
+        name: "",
+        phase: Phase::Empty,
+        density: 0.0,
+        colors: &[],
+        rigid_capable: false,
+        drag: 0.0,
+        friction: 0.0,
+        repose: 0.0,
+        redirect_keep: 1.0,
+        surface_grip: 1.0,
+        cohesion: 0.0,
+        turbulence: 0.0,
+        flow_rate: 0.0,
+        hardness: 0.0,
+        restitution: 0.0,
+        surface_bounce: 0.0,
+        contact_damage: 0.0,
+        tags: Tags::EMPTY,
+        decay_rate: 0.0,
+        decay_into: None,
+        flammability: 0.0,
+        burn_rate: 0.0,
+        burn_emit: 0.0,
+        smoulder: 0.0,
+        residue_into: None,
+        residue_chance: 0.0,
+        burn_damage: 0.0,
+    };
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Operand {
+    Material(MaterialId),
+    Tag(Tag),
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct ReactionDef {
-    pub a: String,
-    pub b: String,
-    pub a_becomes: String,
-    pub b_becomes: String,
-    #[serde(default = "default_rate")]
+    pub a: Operand,
+    pub b: Operand,
+    pub a_becomes: MaterialId,
+    pub b_becomes: MaterialId,
     pub rate: f32,
-}
-
-fn default_rate() -> f32 {
-    f32::INFINITY
-}
-
-fn default_grip() -> f32 {
-    1.0
-}
-
-fn default_one() -> f32 {
-    1.0
 }
 
 pub fn per_tick_chance(rate: f32) -> f32 {
@@ -100,27 +139,21 @@ pub(crate) fn per_tick_keep(rate: f32) -> f32 {
     (-rate * crate::TICK_DT).exp()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct MaterialFile {
-    pub materials: Vec<Material>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ReactionFile {
-    pub reactions: Vec<ReactionDef>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Product {
-    Material(MaterialId),
-    Burnout,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Reaction {
-    pub becomes: Product,
-    pub other_becomes: Product,
+    pub becomes: MaterialId,
+    pub other_becomes: MaterialId,
     pub chance: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Burn {
+    pub ignite_chance: f32,
+    pub burn_chance: f32,
+    pub emit_chance: f32,
+    pub smoulder: f32,
+    pub residue: Option<(f32, MaterialId)>,
+    pub damage: f32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -138,205 +171,85 @@ pub struct Dynamics {
 #[derive(Debug, Clone)]
 pub struct MaterialRegistry {
     materials: Vec<Material>,
-    by_name: HashMap<String, MaterialId>,
-    tag_index: HashMap<String, u32>,
-    tag_bits: Vec<u32>,
-    sustain_bits: Vec<u32>,
     reactions: Vec<Option<Reaction>>,
     decays: Vec<Option<(f32, MaterialId)>>,
-    residues: Vec<Option<(f32, MaterialId)>>,
-    emits: Vec<Option<(f32, MaterialId)>>,
-    ember: Vec<bool>,
-    smoulder: Vec<f32>,
+    burns: Vec<Option<Burn>>,
     reactive: Vec<bool>,
     dynamics: Vec<Dynamics>,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum RegistryError {
-    #[error("failed to parse materials: {0}")]
-    Parse(#[from] ron::error::SpannedError),
-    #[error("material 0 must be named `air` with phase Empty, got {0:?}")]
-    BadAir(String),
-    #[error("duplicate material name {0:?}")]
-    DuplicateName(String),
-    #[error("too many materials: {0} (max {max})", max = u16::MAX)]
-    TooMany(usize),
-    #[error("material {0:?} has no colors")]
-    NoColors(String),
-    #[error("too many distinct tags: {0} (max 32)")]
-    TooManyTags(usize),
-    #[error("unknown material {0:?}")]
-    UnknownMaterial(String),
-    #[error("unknown tag {0:?}")]
-    UnknownTag(String),
-    #[error("ambiguous reactions for pair {0:?} + {1:?}")]
-    AmbiguousReaction(String, String),
-}
-
-enum Operand {
-    Name(MaterialId),
-    Tag(u32),
-}
-
 impl MaterialRegistry {
-    pub fn from_ron(materials_src: &str, reactions_src: &str) -> Result<Self, RegistryError> {
-        let materials: MaterialFile = ron::from_str(materials_src)?;
-        let reactions: ReactionFile = ron::from_str(reactions_src)?;
-        Self::from_materials(materials.materials, reactions.reactions)
-    }
-
-    fn from_materials(
-        materials: Vec<Material>,
-        reaction_defs: Vec<ReactionDef>,
-    ) -> Result<Self, RegistryError> {
-        if materials.len() > u16::MAX as usize {
-            return Err(RegistryError::TooMany(materials.len()));
-        }
+    pub fn from_materials(materials: &[Material], reaction_defs: &[ReactionDef]) -> Self {
+        let materials = materials.to_vec();
+        assert!(
+            materials.len() <= u16::MAX as usize,
+            "too many materials: {}",
+            materials.len()
+        );
         match materials.first() {
-            Some(first) if first.name == "air" && first.phase == Phase::Empty => {}
-            first => {
-                return Err(RegistryError::BadAir(
-                    first.map(|m| m.name.clone()).unwrap_or_default(),
-                ));
-            }
+            Some(first) if first.phase == Phase::Empty => {}
+            first => panic!(
+                "material 0 must be air with phase Empty, got {:?}",
+                first.map(|m| m.name)
+            ),
         }
-        let mut by_name = HashMap::new();
-        for (index, material) in materials.iter().enumerate() {
-            if material.colors.is_empty() {
-                return Err(RegistryError::NoColors(material.name.clone()));
-            }
-            if by_name
-                .insert(material.name.clone(), MaterialId(index as u16))
-                .is_some()
-            {
-                return Err(RegistryError::DuplicateName(material.name.clone()));
-            }
-        }
+        let len = materials.len();
 
-        let mut tag_index: HashMap<&str, u32> = HashMap::new();
-        for material in &materials {
-            for tag in &material.tags {
-                let next = tag_index.len() as u32;
-                tag_index.entry(tag.as_str()).or_insert(next);
-            }
+        for material in materials.iter() {
+            assert!(
+                !material.colors.is_empty(),
+                "material {:?} has no colors",
+                material.name
+            );
         }
-        if tag_index.len() > 32 {
-            return Err(RegistryError::TooManyTags(tag_index.len()));
-        }
-        let tag_bits: Vec<u32> = materials
-            .iter()
-            .map(|material| {
-                material
-                    .tags
-                    .iter()
-                    .map(|tag| 1u32 << tag_index[tag.as_str()])
-                    .fold(0, |bits, bit| bits | bit)
-            })
-            .collect();
-        let sustain_bits: Vec<u32> = materials
-            .iter()
-            .map(|material| {
-                material
-                    .sustained_by
-                    .iter()
-                    .map(|tag| {
-                        tag_index
-                            .get(tag.as_str())
-                            .map(|&index| 1u32 << index)
-                            .ok_or_else(|| RegistryError::UnknownTag(tag.clone()))
-                    })
-                    .try_fold(0u32, |bits, bit| bit.map(|bit| bits | bit))
-            })
-            .collect::<Result<_, _>>()?;
 
         let decays: Vec<Option<(f32, MaterialId)>> = materials
             .iter()
             .map(|material| {
-                if material.decay_rate <= 0.0 {
-                    return Ok(None);
-                }
-                let product = match &material.decay_into {
-                    Some(name) => *by_name
-                        .get(name)
-                        .ok_or_else(|| RegistryError::UnknownMaterial(name.clone()))?,
-                    None => MaterialId::AIR,
-                };
-                Ok(Some((per_tick_chance(material.decay_rate), product)))
+                (material.decay_rate > 0.0).then(|| {
+                    (
+                        per_tick_chance(material.decay_rate),
+                        material.decay_into.unwrap_or(MaterialId::AIR),
+                    )
+                })
             })
-            .collect::<Result<_, RegistryError>>()?;
+            .collect();
 
-        let residues: Vec<Option<(f32, MaterialId)>> = materials
+        let burns: Vec<Option<Burn>> = materials
             .iter()
-            .map(
-                |material| match (&material.residue_into, material.residue_chance) {
-                    (Some(name), chance) if chance > 0.0 => {
-                        let product = *by_name
-                            .get(name)
-                            .ok_or_else(|| RegistryError::UnknownMaterial(name.clone()))?;
-                        Ok(Some((chance.clamp(0.0, 1.0), product)))
-                    }
-                    _ => Ok(None),
-                },
-            )
-            .collect::<Result<_, RegistryError>>()?;
-
-        let emits: Vec<Option<(f32, MaterialId)>> = materials
-            .iter()
-            .map(|material| match (&material.emits, material.emit_rate) {
-                (Some(name), rate) if rate > 0.0 => {
-                    let product = *by_name
-                        .get(name)
-                        .ok_or_else(|| RegistryError::UnknownMaterial(name.clone()))?;
-                    Ok(Some((per_tick_chance(rate), product)))
-                }
-                _ => Ok(None),
+            .map(|material| {
+                (material.flammability > 0.0).then(|| Burn {
+                    ignite_chance: per_tick_chance(material.flammability),
+                    burn_chance: per_tick_chance(material.burn_rate),
+                    emit_chance: per_tick_chance(material.burn_emit),
+                    smoulder: material.smoulder.clamp(0.0, 1.0),
+                    residue: match (material.residue_into, material.residue_chance) {
+                        (Some(id), chance) if chance > 0.0 => Some((chance.clamp(0.0, 1.0), id)),
+                        _ => None,
+                    },
+                    damage: material.burn_damage,
+                })
             })
-            .collect::<Result<_, RegistryError>>()?;
+            .collect();
 
-        let len = materials.len();
-        let resolve = |operand: &str| -> Result<Operand, RegistryError> {
-            if let Some(tag) = operand.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-                let &index = tag_index
-                    .get(tag)
-                    .ok_or_else(|| RegistryError::UnknownTag(tag.to_string()))?;
-                return Ok(Operand::Tag(1u32 << index));
-            }
-            by_name
-                .get(operand)
-                .copied()
-                .map(Operand::Name)
-                .ok_or_else(|| RegistryError::UnknownMaterial(operand.to_string()))
-        };
-        let expand = |operand: &Operand| -> Vec<MaterialId> {
+        let expand = |operand: Operand| -> Vec<MaterialId> {
             match operand {
-                Operand::Name(id) => vec![*id],
-                Operand::Tag(bit) => (0..len)
-                    .filter(|&index| tag_bits[index] & bit != 0)
+                Operand::Material(id) => vec![id],
+                Operand::Tag(tag) => (0..len)
+                    .filter(|&index| materials[index].tags.contains(tag))
                     .map(|index| MaterialId(index as u16))
                     .collect(),
             }
         };
 
         let mut table: Vec<Option<(Reaction, u8)>> = vec![None; len * len];
-        for def in &reaction_defs {
-            let op_a = resolve(&def.a)?;
-            let op_b = resolve(&def.b)?;
-            let product = |becomes: &str| -> Result<Product, RegistryError> {
-                if becomes == "@burnout" {
-                    return Ok(Product::Burnout);
-                }
-                match resolve(becomes)? {
-                    Operand::Name(id) => Ok(Product::Material(id)),
-                    Operand::Tag(_) => Err(RegistryError::UnknownMaterial(becomes.to_string())),
-                }
-            };
-            let becomes_a = product(&def.a_becomes)?;
-            let becomes_b = product(&def.b_becomes)?;
-            let specificity =
-                matches!(op_a, Operand::Name(_)) as u8 + matches!(op_b, Operand::Name(_)) as u8;
-            for a in expand(&op_a) {
-                for b in expand(&op_b) {
+        for def in reaction_defs {
+            let becomes_a = def.a_becomes;
+            let becomes_b = def.b_becomes;
+            let specificity = matches!(def.a, Operand::Material(_)) as u8
+                + matches!(def.b, Operand::Material(_)) as u8;
+            for a in expand(def.a) {
+                for b in expand(def.b) {
                     let entries = if a == b {
                         vec![(a, b, becomes_a, becomes_b)]
                     } else {
@@ -346,10 +259,11 @@ impl MaterialRegistry {
                         let slot = &mut table[from.0 as usize * len + other.0 as usize];
                         match slot {
                             Some((_, existing)) if *existing == specificity => {
-                                return Err(RegistryError::AmbiguousReaction(
-                                    materials[from.0 as usize].name.clone(),
-                                    materials[other.0 as usize].name.clone(),
-                                ));
+                                panic!(
+                                    "ambiguous reactions for pair {:?} + {:?}",
+                                    materials[from.0 as usize].name,
+                                    materials[other.0 as usize].name
+                                );
                             }
                             Some((_, existing)) if *existing > specificity => {}
                             _ => {
@@ -372,24 +286,10 @@ impl MaterialRegistry {
             .map(|slot| slot.map(|(reaction, _)| reaction))
             .collect();
 
-        let ember_mask = tag_index
-            .get("ember")
-            .map(|&index| 1u32 << index)
-            .unwrap_or(0);
-        let ember: Vec<bool> = (0..len)
-            .map(|index| tag_bits[index] & ember_mask != 0)
-            .collect();
-
-        let smoulder: Vec<f32> = materials
-            .iter()
-            .map(|material| material.smoulder.clamp(0.0, 1.0))
-            .collect();
-
         let reactive: Vec<bool> = (0..len)
             .map(|index| {
                 materials[index].phase == Phase::Fire
                     || decays[index].is_some()
-                    || emits[index].is_some()
                     || reactions[index * len..(index + 1) * len]
                         .iter()
                         .any(|slot| slot.is_some())
@@ -414,25 +314,14 @@ impl MaterialRegistry {
             })
             .collect();
 
-        let tag_index = tag_index
-            .into_iter()
-            .map(|(tag, index)| (tag.to_string(), index))
-            .collect();
-        Ok(Self {
+        Self {
             materials,
-            by_name,
-            tag_index,
-            tag_bits,
-            sustain_bits,
             reactions,
             decays,
-            residues,
-            emits,
-            ember,
-            smoulder,
+            burns,
             reactive,
             dynamics,
-        })
+        }
     }
 
     #[inline]
@@ -443,10 +332,6 @@ impl MaterialRegistry {
     #[inline]
     pub fn try_get(&self, id: MaterialId) -> Option<&Material> {
         self.materials.get(id.0 as usize)
-    }
-
-    pub fn id_of(&self, name: &str) -> Option<MaterialId> {
-        self.by_name.get(name).copied()
     }
 
     pub fn len(&self) -> usize {
@@ -475,23 +360,13 @@ impl MaterialRegistry {
     }
 
     #[inline]
-    pub fn residue(&self, id: MaterialId) -> Option<(f32, MaterialId)> {
-        self.residues[id.0 as usize]
+    pub fn burn(&self, id: MaterialId) -> Option<Burn> {
+        self.burns[id.0 as usize]
     }
 
     #[inline]
-    pub fn emits(&self, id: MaterialId) -> Option<(f32, MaterialId)> {
-        self.emits[id.0 as usize]
-    }
-
-    #[inline]
-    pub fn is_ember(&self, id: MaterialId) -> bool {
-        self.ember[id.0 as usize]
-    }
-
-    #[inline]
-    pub fn smoulder(&self, id: MaterialId) -> f32 {
-        self.smoulder[id.0 as usize]
+    pub fn is_flammable(&self, id: MaterialId) -> bool {
+        self.burns[id.0 as usize].is_some()
     }
 
     #[inline]
@@ -505,19 +380,7 @@ impl MaterialRegistry {
     }
 
     #[inline]
-    pub fn sustains(&self, fire: MaterialId, neighbor: MaterialId) -> bool {
-        self.sustain_bits[fire.0 as usize] & self.tag_bits[neighbor.0 as usize] != 0
-    }
-
-    pub fn tag_mask(&self, tag: &str) -> u32 {
-        self.tag_index
-            .get(tag)
-            .map(|&index| 1u32 << index)
-            .unwrap_or(0)
-    }
-
-    #[inline]
-    pub fn has_tag(&self, id: MaterialId, mask: u32) -> bool {
-        self.tag_bits[id.0 as usize] & mask != 0
+    pub fn has_tag(&self, id: MaterialId, tag: Tag) -> bool {
+        self.materials[id.0 as usize].tags.contains(tag)
     }
 }

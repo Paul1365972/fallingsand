@@ -9,10 +9,10 @@ Play the latest web build at [paul1365972.github.io/fallingsand](https://paul136
 
 ```
 assets/                   # Client assets
-data/                     # Hand-authored definitions (materials.ron, ...)
 docs/                     # Design docs
 crates/
 ├── fallingsand_core      # Shared foundation: coords, cells/chunks/regions, material registry
+├── fallingsand_data      # Hardcoded content: materials, reactions, items, recipes + id constants
 ├── fallingsand_sim       # Simulation kernel: CA passes, dirty rects, sleeping, physics
 ├── fallingsand_protocol  # All client↔server messages: serde types, framing, versioning
 ├── fallingsand_net       # Transport trait; backends: WebTransport (native + wasm), in-memory

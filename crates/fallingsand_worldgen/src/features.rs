@@ -1,9 +1,10 @@
 use crate::biomes::{
     Canopy, DECOR_COLUMN_CHANCE, DECOR_SCAN_FLOOR, MUSHROOM_ANCHOR_GRID, MUSHROOM_CHANCE,
-    MUSHROOM_MAX_Y, MUSHROOM_MIN_Y, Palette, TREE_MARGIN, VINE_MAX_DEPTH, WorldDef,
+    MUSHROOM_MAX_Y, MUSHROOM_MIN_Y, TREE_MARGIN, VINE_MAX_DEPTH, WorldDef,
 };
 use crate::terrain::Terrain;
 use fallingsand_core::MaterialId;
+use fallingsand_data::material;
 use fallingsand_rng::Hash;
 
 pub(crate) struct FeatureCell {
@@ -40,7 +41,6 @@ fn ground_of(solid: &dyn Fn(i32, i32) -> bool, surface: i32, x: i32) -> Option<i
 pub(crate) fn trees_for_rect(
     seed: u64,
     def: &WorldDef,
-    palette: &Palette,
     terrain: &Terrain,
     solid: &dyn Fn(i32, i32) -> bool,
     surface_of: &dyn Fn(i32) -> i32,
@@ -134,7 +134,7 @@ pub(crate) fn trees_for_rect(
         }
         if tree.snow_capped {
             for &(cx, top) in &canopy_top {
-                clip.push(&mut cells, cx, top + 1, palette.snow);
+                clip.push(&mut cells, cx, top + 1, material::SNOW);
             }
         }
     }
@@ -145,7 +145,6 @@ pub(crate) fn trees_for_rect(
 pub(crate) fn decorations_for_rect(
     seed: u64,
     def: &WorldDef,
-    palette: &Palette,
     terrain: &Terrain,
     solid: &dyn Fn(i32, i32) -> bool,
     surface_of: &dyn Fn(i32) -> i32,
@@ -172,10 +171,10 @@ pub(crate) fn decorations_for_rect(
         for y in (scan_bottom..=scan_top).rev() {
             let here = solid(x, y);
             if !here && above_solid {
-                ceiling_site(seed, palette, biome, x, y, surface, &mut cells, clip);
+                ceiling_site(seed, biome, x, y, surface, &mut cells, clip);
             }
             if here && !above_solid {
-                floor_site(seed, palette, biome, x, y + 1, surface, &mut cells, clip);
+                floor_site(seed, biome, x, y + 1, surface, &mut cells, clip);
             }
             above_solid = here;
         }
@@ -183,28 +182,21 @@ pub(crate) fn decorations_for_rect(
     cells
 }
 
-fn spike_material(
-    palette: &Palette,
-    biome: &crate::biomes::Biome,
-    y: i32,
-    depth: i32,
-    roll: Hash,
-) -> MaterialId {
+fn spike_material(biome: &crate::biomes::Biome, y: i32, depth: i32, roll: Hash) -> MaterialId {
     if biome.snow_cover && depth < 70 {
-        palette.ice
+        material::ICE
     } else if y < -380 && roll.chance(0.25) {
-        palette.crystal
+        material::CRYSTAL
     } else if y < -350 {
-        palette.deepstone
+        material::DEEPSTONE
     } else {
-        palette.stone
+        material::STONE
     }
 }
 
 #[allow(clippy::too_many_arguments)]
 fn ceiling_site(
     seed: u64,
-    palette: &Palette,
     biome: &crate::biomes::Biome,
     x: i32,
     top_air: i32,
@@ -217,15 +209,15 @@ fn ceiling_site(
     if depth < VINE_MAX_DEPTH && rng.draw().chance(biome.vine_chance) {
         let length = rng.draw().range(3, 10);
         for dy in 0..length {
-            clip.push(cells, x, top_air - dy, palette.moss);
+            clip.push(cells, x, top_air - dy, material::MOSS);
         }
         return;
     }
     if rng.draw().chance(0.45) {
         let length = rng.draw().range(2, 7);
-        let material = spike_material(palette, biome, top_air, depth, rng.draw());
+        let spike = spike_material(biome, top_air, depth, rng.draw());
         for dy in 0..length {
-            clip.push(cells, x, top_air - dy, material);
+            clip.push(cells, x, top_air - dy, spike);
         }
     }
 }
@@ -233,7 +225,6 @@ fn ceiling_site(
 #[allow(clippy::too_many_arguments)]
 fn floor_site(
     seed: u64,
-    palette: &Palette,
     biome: &crate::biomes::Biome,
     x: i32,
     bottom_air: i32,
@@ -245,16 +236,15 @@ fn floor_site(
     if rng.draw().chance(0.35) {
         let length = rng.draw().range(2, 5);
         let depth = surface - bottom_air;
-        let material = spike_material(palette, biome, bottom_air, depth, rng.draw());
+        let spike = spike_material(biome, bottom_air, depth, rng.draw());
         for dy in 0..length {
-            clip.push(cells, x, bottom_air + dy, material);
+            clip.push(cells, x, bottom_air + dy, spike);
         }
     }
 }
 
 pub(crate) fn mushrooms_for_rect(
     seed: u64,
-    palette: &Palette,
     solid: &dyn Fn(i32, i32) -> bool,
     clip: &Clip,
 ) -> Vec<FeatureCell> {
@@ -302,9 +292,9 @@ pub(crate) fn mushrooms_for_rect(
             }
             let wide = rng.draw().bit();
             for dy in 0..stem {
-                clip.push(&mut cells, x, base + dy, palette.mushroom_stem);
+                clip.push(&mut cells, x, base + dy, material::MUSHROOM_STEM);
                 if wide {
-                    clip.push(&mut cells, x + 1, base + dy, palette.mushroom_stem);
+                    clip.push(&mut cells, x + 1, base + dy, material::MUSHROOM_STEM);
                 }
             }
             let cap_center = base + stem;
@@ -313,7 +303,7 @@ pub(crate) fn mushrooms_for_rect(
                     let nx = dx as f32 / cap_rx as f32;
                     let ny = dy as f32 / (cap_ry as f32 + 1.0);
                     if nx * nx + ny * ny <= 1.0 {
-                        clip.push(&mut cells, x + dx, cap_center + dy, palette.glowshroom);
+                        clip.push(&mut cells, x + dx, cap_center + dy, material::GLOWSHROOM);
                     }
                 }
             }

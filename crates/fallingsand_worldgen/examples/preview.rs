@@ -1,11 +1,8 @@
-use fallingsand_core::{MaterialRegistry, REGION_SIZE_CELLS, RegionPos};
+use fallingsand_core::{REGION_SIZE_CELLS, RegionPos};
 use fallingsand_worldgen::WorldGenerator;
 use std::fs::File;
 use std::io::BufWriter;
 use std::time::Instant;
-
-const MATERIALS_RON: &str = include_str!("../../../data/materials.ron");
-const REACTIONS_RON: &str = include_str!("../../../data/reactions.ron");
 
 struct Args {
     seed: u64,
@@ -44,9 +41,8 @@ fn parse_args() -> Args {
 
 fn main() {
     let args = parse_args();
-    let registry =
-        MaterialRegistry::from_ron(MATERIALS_RON, REACTIONS_RON).expect("materials.ron is valid");
-    let generator = WorldGenerator::new(args.seed, &registry).expect("generator");
+    let registry = fallingsand_data::material_registry();
+    let generator = WorldGenerator::new(args.seed);
 
     let size = REGION_SIZE_CELLS;
     let regions_x = (args.max.0 - args.min.0 + 1) as usize;

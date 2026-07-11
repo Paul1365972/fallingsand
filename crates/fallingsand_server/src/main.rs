@@ -1,6 +1,5 @@
 mod cloudflare;
 
-use fallingsand_core::MaterialRegistry;
 use fallingsand_net::wt_native::WtListener;
 use fallingsand_server::{Server, ServerConfig, ServerControl, WorldConfig};
 use rcgen::{CertificateParams, KeyPair};
@@ -46,10 +45,6 @@ fn main() -> anyhow::Result<()> {
     let token = token.or_else(|| std::env::var("CLOUDFLARE_API_TOKEN").ok());
     let domain = domain.or_else(|| std::env::var("FALLINGSAND_DOMAIN").ok());
     let web_client_url = std::env::var("FALLINGSAND_WEB_CLIENT_URL").ok();
-
-    let materials = include_str!("../../../data/materials.ron");
-    let reactions = include_str!("../../../data/reactions.ron");
-    let registry = Arc::new(MaterialRegistry::from_ron(materials, reactions)?);
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -102,7 +97,6 @@ fn main() -> anyhow::Result<()> {
     let listener = WtListener::bind(runtime.handle().clone(), addr, cert_chain, key)?;
 
     let mut server = Server::new(ServerConfig {
-        registry,
         listener: Box::new(listener),
         stats_sink: None,
         world: WorldConfig {
