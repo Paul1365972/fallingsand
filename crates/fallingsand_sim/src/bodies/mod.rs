@@ -13,6 +13,7 @@ use rustc_hash::FxHashSet;
 const ANGLE_STEPS: u32 = 1024;
 const REFERENCE_DENSITY: f32 = 1000.0;
 const RELOCATE_RADIUS: i32 = 8;
+const SURFACE_PROBE: i32 = 256;
 
 fn cell_mass(registry: &MaterialRegistry, material: MaterialId) -> f32 {
     registry.get(material).density / REFERENCE_DENSITY
@@ -234,6 +235,32 @@ fn relocation_spot(
             if empty {
                 return Some(pos);
             }
+        }
+    }
+    surface_spot(world, registry, entities, claimed, exclude, from)
+}
+
+fn surface_spot(
+    world: &CellWorld,
+    registry: &MaterialRegistry,
+    entities: &[ActorAabb],
+    claimed: &FxHashSet<CellPos>,
+    exclude: &FxHashSet<CellPos>,
+    from: CellPos,
+) -> Option<CellPos> {
+    let mut pos = from;
+    for _ in 0..SURFACE_PROBE {
+        pos = pos.translated(0, 1);
+        if exclude.contains(&pos) || entities.iter().any(|entity| entity.contains_cell(pos)) {
+            continue;
+        }
+        match world
+            .get_cell(pos)
+            .map(|cell| registry.get(cell.material).phase)
+        {
+            Some(Phase::Empty) if !claimed.contains(&pos) => return Some(pos),
+            Some(Phase::Empty | Phase::Liquid | Phase::Gas | Phase::Fire) => {}
+            _ => return None,
         }
     }
     None

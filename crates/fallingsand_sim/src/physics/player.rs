@@ -58,9 +58,9 @@ impl Default for PlayerParams {
             jump_h_boost: Fixed::from_int(40),
             stand_half_h: Fixed::from_f32(crate::player::STAND_ROWS as f32 * 0.5),
             duck_half_h: Fixed::from_f32(crate::player::DUCK_ROWS as f32 * 0.5),
-            swim_thrust: Fixed::from_int(600),
+            swim_thrust: Fixed::from_int(450),
             density: 1050.0,
-            wade_run_mult: Fixed::from_f32(0.7),
+            wade_run_mult: Fixed::from_f32(0.5),
             fly_max: Fixed::from_int(160),
             fly_accel: Fixed::from_int(1200),
         }
@@ -236,11 +236,7 @@ fn normal_update<W: CellSource>(
         };
         let wade = Fixed::ONE
             - (Fixed::ONE - params.wade_run_mult).mul(Fixed::from_f32(submersion.fraction));
-        let max_run = if body.on_ground {
-            params.max_run.mul(wade)
-        } else {
-            params.max_run
-        };
+        let max_run = params.max_run.mul(wade);
         let target = max_run.mul_int(move_x);
         let rate = if same_direction(body.vx, move_x) && body.vx.abs() > max_run {
             params.run_reduce
