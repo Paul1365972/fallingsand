@@ -1,5 +1,4 @@
 use super::Game;
-use super::PLAYER_SIZE;
 use super::camera::CameraState;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
@@ -40,7 +39,7 @@ pub fn sync_nametags(
         if Some(player) == local {
             continue;
         }
-        let world = remote.pos + Vec2::new(0.0, PLAYER_SIZE.y / 2.0 + NAMETAG_RISE);
+        let world = remote.pos + Vec2::new(0.0, remote.height as f32 / 2.0 + NAMETAG_RISE);
         let px = ((world - state.pos) * state.k as f32).round();
         let translation = Vec3::new(px.x, px.y, 20.0);
         if let Some(&entity) = visuals.0.get(&player) {
