@@ -246,11 +246,12 @@ pub(super) fn update(game: &mut ClientGame, io: &IoFrame) {
 }
 
 fn drain(ingame: &mut InGame, io: &IoFrame, changes: &mut super::Changes, debug_borders: bool) {
+    let paused = ingame.paused();
     let Some(session) = ingame.net.session.as_mut() else {
         return;
     };
     let closed = matches!(session.status(), ConnectionStatus::Closed { .. });
-    session.since_rx = if ingame.paused || closed {
+    session.since_rx = if paused || closed {
         0.0
     } else {
         session.since_rx + io.dt

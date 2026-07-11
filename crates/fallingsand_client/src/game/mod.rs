@@ -10,15 +10,12 @@ pub mod players;
 pub mod settings;
 pub mod world;
 
-use bevy::input::ButtonInput;
-use bevy::input::keyboard::KeyCode;
-use bevy::input::mouse::MouseButton;
 use bevy::math::Vec2;
 use chat::Chat;
 use clock::WorldClock;
 use debug::DebugState;
 use fallingsand_core::{CellPos, ItemRegistry, RecipeRegistry};
-use input::InputCore;
+use input::{Bindings, InputCore, RawInput};
 use inventory::{Inventory, SlotRegion};
 use menu::MenuState;
 use net::{ConnectTarget, Net};
@@ -115,12 +112,10 @@ pub enum UiEvent {
     Slot { region: SlotRegion, right: bool },
 }
 
-pub struct IoFrame<'a> {
+pub struct IoFrame {
     pub dt: f32,
     pub now: f32,
-    pub keys: &'a ButtonInput<KeyCode>,
-    pub buttons: &'a ButtonInput<MouseButton>,
-    pub scroll: f32,
+    pub raw: RawInput,
     pub zoom_base: u32,
     pub cursor_cell: Option<CellPos>,
     pub over_ui: bool,
@@ -139,10 +134,17 @@ pub enum Phase {
     Playing,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Overlay {
+    Inventory,
+    Chat,
+    Paused,
+}
+
 pub struct InGame {
     pub net: Net,
     pub phase: Phase,
-    paused: bool,
+    overlays: Vec<Overlay>,
     pub world: WorldView,
     pub players: Players,
     pub you: SelfState,
@@ -157,7 +159,7 @@ impl InGame {
         Self {
             net,
             phase: Phase::Connecting,
-            paused: false,
+            overlays: Vec::new(),
             world: WorldView::default(),
             players: Players::default(),
             you: SelfState::default(),
@@ -168,18 +170,44 @@ impl InGame {
         }
     }
 
-    pub fn paused(&self) -> bool {
-        self.paused
+    pub fn overlays(&self) -> &[Overlay] {
+        &self.overlays
     }
 
-    pub fn set_paused(&mut self, paused: bool, input: &mut InputCore) {
-        if self.paused == paused {
+    pub fn overlay_top(&self) -> Option<Overlay> {
+        self.overlays.last().copied()
+    }
+
+    pub fn paused(&self) -> bool {
+        self.overlays.contains(&Overlay::Paused)
+    }
+
+    pub fn chat_open(&self) -> bool {
+        self.overlays.contains(&Overlay::Chat)
+    }
+
+    pub fn inventory_open(&self) -> bool {
+        self.overlays.contains(&Overlay::Inventory)
+    }
+
+    pub fn open_overlay(&mut self, overlay: Overlay, input: &mut InputCore) {
+        if self.overlays.contains(&overlay) {
             return;
         }
-        self.paused = paused;
-        self.net.set_embedded_paused(paused);
-        if paused {
+        self.overlays.push(overlay);
+        if overlay == Overlay::Paused {
+            self.net.set_embedded_paused(true);
             input.release_held(self.net.session.as_mut());
+        }
+    }
+
+    pub fn close_overlay(&mut self, overlay: Overlay) {
+        if !self.overlays.contains(&overlay) {
+            return;
+        }
+        self.overlays.retain(|&open| open != overlay);
+        if overlay == Overlay::Paused {
+            self.net.set_embedded_paused(false);
         }
     }
 
@@ -188,6 +216,7 @@ impl InGame {
         self.players.clear();
         self.you = SelfState::default();
         self.inventory.reset(changes);
+        self.overlays.retain(|&open| open != Overlay::Inventory);
         self.debug.rects.clear();
         self.debug.subscribed = false;
         changes.roster = true;
@@ -201,6 +230,7 @@ pub struct ClientGame {
     pub settings: Settings,
     pub menu: MenuState,
     pub flow: Flow,
+    pub bindings: Bindings,
     pub input: InputCore,
     pub view_prefs: ViewPrefs,
     pub changes: Changes,
@@ -214,6 +244,7 @@ impl ClientGame {
             settings: settings::load(),
             menu: MenuState::scan(),
             flow: Flow::Menu,
+            bindings: Bindings::default(),
             input: InputCore::default(),
             view_prefs: ViewPrefs::default(),
             changes: Changes::default(),
@@ -289,7 +320,7 @@ impl ClientGame {
             UiEvent::QuitApp => self.effects.push(Effect::Quit),
             UiEvent::PauseResume => {
                 if let Flow::InGame(ingame) = &mut self.flow {
-                    ingame.set_paused(false, &mut self.input);
+                    ingame.close_overlay(Overlay::Paused);
                 }
             }
             UiEvent::PauseSave => {
@@ -299,11 +330,9 @@ impl ClientGame {
             }
             UiEvent::PauseQuitToMenu | UiEvent::CancelConnect => self.leave_game(),
             UiEvent::Slot { region, right } => {
-                let shift = io
-                    .keys
-                    .any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+                let shift = io.raw.shift();
                 if let Flow::InGame(ingame) = &mut self.flow
-                    && ingame.inventory.open
+                    && ingame.inventory_open()
                     && let Some(action) = inventory::slot_action(region, right, shift)
                 {
                     self.input

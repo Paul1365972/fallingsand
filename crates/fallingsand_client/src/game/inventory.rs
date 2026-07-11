@@ -16,7 +16,6 @@ pub struct Inventory {
     pub trash: Option<ItemStack>,
     pub selected: usize,
     pub brush: u8,
-    pub open: bool,
 }
 
 impl Default for Inventory {
@@ -27,7 +26,6 @@ impl Default for Inventory {
             trash: None,
             selected: 0,
             brush: BRUSH_RADIUS,
-            open: false,
         }
     }
 }
@@ -65,7 +63,6 @@ impl Inventory {
         self.store.slots.clear();
         self.cursor = None;
         self.trash = None;
-        self.open = false;
     }
 }
 

@@ -159,7 +159,10 @@ pub fn sync_overlay(
     roots: Query<Entity, With<OverlayRoot>>,
     panels: Query<Entity, With<SidePanel>>,
 ) {
-    let should_exist = game.0.playing().is_some_and(|ingame| ingame.inventory.open);
+    let should_exist = game
+        .0
+        .playing()
+        .is_some_and(|ingame| ingame.inventory_open());
     let exists = !roots.is_empty();
     if should_exist && !exists {
         spawn_overlay(&mut commands, &game.0);
@@ -520,7 +523,10 @@ pub fn update_cursor_follow(
     };
     let cursor = window.cursor_position();
     let inventory = game.0.playing().map(|ingame| &ingame.inventory);
-    let open = inventory.is_some_and(|inventory| inventory.open);
+    let open = game
+        .0
+        .playing()
+        .is_some_and(|ingame| ingame.inventory_open());
     match (
         open,
         inventory.and_then(|inventory| inventory.cursor),
@@ -555,7 +561,7 @@ pub fn update_tooltip(
         return;
     };
     let ingame = game.0.playing();
-    let open = ingame.is_some_and(|ingame| ingame.inventory.open);
+    let open = ingame.is_some_and(|ingame| ingame.inventory_open());
     let hovered = if open {
         slots
             .iter()

@@ -3,7 +3,6 @@ const LOG_CAP: usize = 8;
 #[derive(Default)]
 pub struct Chat {
     pub log: Vec<(String, f32)>,
-    pub open: bool,
 }
 
 impl Chat {

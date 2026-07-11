@@ -3,6 +3,7 @@ use super::camera::{CameraState, cursor_to_world};
 use super::ui::chat::ChatInput;
 use super::ui::inventory::UiSlot;
 use super::ui::menu::{CertField, NameField, PlayerNameField, UrlField};
+use crate::game::input::{Button as InputButton, RawInput};
 use crate::game::{Effect, IoFrame, UiEvent};
 use bevy::input::mouse::MouseWheel;
 use bevy::prelude::*;
@@ -13,6 +14,35 @@ use fallingsand_core::CellPos;
 
 #[derive(Resource, Default)]
 pub struct UiInbox(pub Vec<UiEvent>);
+
+const SCROLL_EPSILON: f32 = 0.01;
+
+fn translate_input(
+    keys: &ButtonInput<KeyCode>,
+    buttons: &ButtonInput<MouseButton>,
+    scroll: f32,
+) -> RawInput {
+    fn gather<'a>(
+        keys: impl Iterator<Item = &'a KeyCode>,
+        buttons: impl Iterator<Item = &'a MouseButton>,
+    ) -> Vec<InputButton> {
+        keys.map(|&key| InputButton::Key(key))
+            .chain(buttons.map(|&button| InputButton::Mouse(button)))
+            .collect()
+    }
+
+    let mut raw = RawInput {
+        pressed: gather(keys.get_pressed(), buttons.get_pressed()),
+        just_pressed: gather(keys.get_just_pressed(), buttons.get_just_pressed()),
+        just_released: gather(keys.get_just_released(), buttons.get_just_released()),
+    };
+    if scroll > SCROLL_EPSILON {
+        raw.just_pressed.push(InputButton::ScrollUp);
+    } else if scroll < -SCROLL_EPSILON {
+        raw.just_pressed.push(InputButton::ScrollDown);
+    }
+    raw
+}
 
 #[cfg_attr(target_family = "wasm", allow(dead_code))]
 #[derive(Component, Clone)]
@@ -128,9 +158,7 @@ pub fn drive_game(
     let mut io = IoFrame {
         dt: time.delta_secs().min(0.25),
         now: time.elapsed_secs(),
-        keys: &keys,
-        buttons: &buttons,
-        scroll,
+        raw: translate_input(&keys, &buttons, scroll),
         zoom_base: crate::view::camera::base_scale(window_px),
         cursor_cell,
         over_ui,

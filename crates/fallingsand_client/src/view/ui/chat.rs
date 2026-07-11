@@ -57,7 +57,7 @@ pub fn sync_chat(
     }
 
     let field = input.single().ok();
-    match (ingame.chat.open, field) {
+    match (ingame.chat_open(), field) {
         (true, None) => {
             let Ok(root) = roots.single() else {
                 return;
@@ -146,7 +146,7 @@ fn spawn_chat_input(parent: &mut ChildSpawnerCommands) -> Entity {
 }
 
 pub fn fade_chat(game: Res<Game>, time: Res<Time>, mut rows: Query<(&ChatLine, &mut TextColor)>) {
-    let open = game.0.ingame().is_some_and(|ingame| ingame.chat.open);
+    let open = game.0.ingame().is_some_and(|ingame| ingame.chat_open());
     let now = time.elapsed_secs();
     for (line, mut color) in &mut rows {
         let alpha = if open {
