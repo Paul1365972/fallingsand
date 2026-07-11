@@ -177,7 +177,7 @@ fn ember_step<M: MatSpec>(
     tick_byte: u8,
 ) -> bool {
     if let Some(water) = adjacent_water(window, pos) {
-        if ember.is_flame() {
+        if ember.flame {
             set_product(window, pos, material::STEAM, rng, tick_byte);
         } else {
             burn_out::<M>(window, pos, ember, rng, tick_byte);
@@ -188,7 +188,7 @@ fn ember_step<M: MatSpec>(
     if rng.draw().below(ember.emit) {
         emit_into_air(window, pos, material::FIRE, rng, tick_byte);
     }
-    if ember.is_flame() && sustained_by_fuel(window, pos) {
+    if ember.flame && sustained_by_fuel(window, pos) {
         if rng.draw().below(FLICKER_THRESHOLD) {
             let mut flicker = cell;
             flicker.set_shade(rng.draw().bits(4) as u8);
@@ -221,7 +221,7 @@ fn burn_out<M: MatSpec>(
     }
     let out = match ember.residue {
         Some((threshold, id)) if rng.draw().below(threshold) => id,
-        _ => MaterialId::AIR,
+        _ => ember.burnout,
     };
     set_product(window, pos, out, rng, tick_byte);
 }
@@ -650,7 +650,7 @@ fn ledge_flow<M: MatSpec>(
 ) -> bool {
     let gain = mul_q16(vy.abs(), d.redirect_keep_q16);
     let prefer = prefer_side(*vx, rng);
-    let can_flow = d.flow_threshold == u64::MAX || rng.draw().below(d.flow_threshold);
+    let can_flow = rng.draw().below(d.flow_threshold);
     for side in [prefer, -prefer] {
         let beside = cur.translated(side, 0);
         if !can_enter::<M>(window, (side, 0), beside) {

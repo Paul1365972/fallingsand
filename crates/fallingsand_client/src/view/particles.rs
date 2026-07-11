@@ -1,5 +1,5 @@
 use super::Game;
-use super::PLAYER_SIZE;
+use super::PLAYER_WIDTH;
 use super::camera::WORLD_LAYER;
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
@@ -47,7 +47,7 @@ pub fn spawn_particles(
         if !remote.burning {
             continue;
         }
-        let size = Vec2::new(PLAYER_SIZE.x, remote.height.max(1) as f32);
+        let size = Vec2::new(PLAYER_WIDTH, remote.height.max(1) as f32);
         for _ in 0..2 {
             let offset = Vec2::new(
                 (rng.draw().unit() - 0.5) * size.x,
@@ -66,7 +66,7 @@ pub fn spawn_particles(
                     max_ttl: FLAME_TTL,
                 },
                 Sprite::from_color(color, Vec2::ONE),
-                Transform::from_translation((remote.pos + offset).extend(15.0)),
+                Transform::from_translation((remote.center() + offset).extend(15.0)),
                 RenderLayers::layer(WORLD_LAYER),
             ));
         }

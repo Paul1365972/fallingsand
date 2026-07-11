@@ -19,7 +19,12 @@ fallingsand_rng = { workspace = true }
 fallingsand_protocol = { workspace = true }
 fallingsand_net = { workspace = true }
 bevy = { workspace = true, features = [
-    "default_platform",
+    "std",
+    "bevy_winit",
+    "x11",
+    "wayland",
+    "multi_threaded",
+    "default_font",
     "2d_bevy_render",
     "bevy_ui_render",
     "bevy_ui_widgets",
@@ -43,7 +48,9 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
 bevy = { workspace = true, features = [
-    "default_platform",
+    "std",
+    "bevy_winit",
+    "default_font",
     "2d_bevy_render",
     "bevy_ui_render",
     "bevy_ui_widgets",

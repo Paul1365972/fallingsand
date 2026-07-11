@@ -1,5 +1,5 @@
 #import bevy_sprite::mesh2d_vertex_output::VertexOutput
-#import fallingsand::layer_common::{layer_texel, layer_cell}
+#import fallingsand::layer_common::{layer_texel, layer_cell, pcg}
 #import fallingsand::light_common::{light_params, glow}
 
 struct WallParams {
@@ -8,12 +8,6 @@ struct WallParams {
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(1) var<uniform> wall: WallParams;
-
-fn pcg(v: u32) -> u32 {
-    var x = v * 747796405u + 2891336453u;
-    x = ((x >> ((x >> 28u) + 4u)) ^ x) * 277803737u;
-    return (x >> 22u) ^ x;
-}
 
 fn hash2(p: vec2<f32>) -> f32 {
     let v = vec2<i32>(p);

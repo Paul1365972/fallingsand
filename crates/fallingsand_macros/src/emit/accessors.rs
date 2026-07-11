@@ -35,15 +35,6 @@ pub fn emit(content: &Content) -> TokenStream {
         content.materials.iter().map(|mat| tags_tokens(mat.tags)),
         true,
     );
-    let is_flammable = accessor_fn(
-        "is_flammable",
-        quote!(bool),
-        content.materials.iter().map(|mat| {
-            let value = mat.is_flammable;
-            quote!(#value)
-        }),
-        true,
-    );
     let is_fuel_ember = accessor_fn(
         "is_fuel_ember",
         quote!(bool),
@@ -127,11 +118,15 @@ pub fn emit(content: &Content) -> TokenStream {
         #phase
         #density_milli
         #tags
-        #is_flammable
         #is_fuel_ember
         #is_rigid_capable
         #ignition
         #material
+
+        #[inline]
+        pub const fn is_flammable(id: crate::material::MaterialId) -> bool {
+            ignition(id).is_some()
+        }
 
         const NO_REACTION: crate::material::Reaction = crate::material::Reaction {
             becomes: crate::material::MaterialId(0u16),

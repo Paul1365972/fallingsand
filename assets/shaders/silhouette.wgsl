@@ -1,5 +1,5 @@
 #import bevy_sprite::mesh2d_vertex_output::VertexOutput
-#import fallingsand::layer_common::{layer_texel, layer_cell}
+#import fallingsand::layer_common::{layer_texel, layer_cell, pcg}
 
 struct SilhouetteParams {
     color: vec4<f32>,
@@ -12,12 +12,6 @@ struct SilhouetteParams {
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: SilhouetteParams;
-
-fn pcg(v: u32) -> u32 {
-    var x = v * 747796405u + 2891336453u;
-    x = ((x >> ((x >> 28u) + 4u)) ^ x) * 277803737u;
-    return (x >> 22u) ^ x;
-}
 
 fn hash1(p: f32) -> f32 {
     let x = pcg(bitcast<u32>(i32(p)) ^ (u32(params.seed) * 374761393u));

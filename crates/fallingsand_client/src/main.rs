@@ -61,7 +61,6 @@ fn main() {
     .insert_resource(RenderErrorHandler(render_error_policy))
     .insert_resource(Game(client))
     .init_resource::<view::io::UiInbox>()
-    .init_resource::<view::camera::CameraState>()
     .init_resource::<view::chunks::ChunkVisuals>()
     .init_resource::<view::chunks::ChunkUploadQueue>()
     .init_resource::<view::players::NametagVisuals>()
@@ -72,8 +71,7 @@ fn main() {
     .add_systems(
         Startup,
         (
-            view::camera::setup_camera,
-            view::chunks::setup_shared,
+            (view::chunks::setup_shared, view::camera::setup_camera).chain(),
             view::sky::load_shared_shaders,
             view::ui::debug::setup_overlay,
         ),

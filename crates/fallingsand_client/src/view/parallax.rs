@@ -2,7 +2,7 @@ use super::camera::{
     CameraState, FAR_LAYER, FAR_RATIO, L_FAR, L_NEAR, L_WALL, LayerCamera, NEAR_LAYER, NEAR_RATIO,
     WALL_LAYER, WALL_RATIO, layer_camera,
 };
-use super::sky::{ActiveLights, LightingParams, Sky, sky_color};
+use super::sky::{ActiveLights, LightingParams, Sky};
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderType};
@@ -82,20 +82,16 @@ pub(crate) struct ParallaxSource;
 
 pub fn setup_parallax(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
     mut wall_mats: ResMut<Assets<CaveWallMaterial>>,
     mut silhouette_mats: ResMut<Assets<SilhouetteMaterial>>,
     state: Res<CameraState>,
+    shared: Res<super::chunks::RenderShared>,
     cameras: Query<(Entity, &LayerCamera)>,
 ) {
-    let (Some(far_cam), Some(near_cam), Some(wall_cam)) = (
-        layer_camera(&cameras, L_FAR),
-        layer_camera(&cameras, L_NEAR),
-        layer_camera(&cameras, L_WALL),
-    ) else {
-        return;
-    };
-    let quad = meshes.add(Rectangle::default());
+    let far_cam = layer_camera(&cameras, L_FAR).expect("layer cameras exist");
+    let near_cam = layer_camera(&cameras, L_NEAR).expect("layer cameras exist");
+    let wall_cam = layer_camera(&cameras, L_WALL).expect("layer cameras exist");
+    let quad = shared.quad.clone();
     let native = state.native.as_vec2().extend(1.0);
     let wall = wall_mats.add(CaveWallMaterial {
         wall: WallParams {
@@ -164,11 +160,11 @@ pub fn sync_parallax(
     let native = state.native.as_vec2();
     for (mut transform, mut visibility) in &mut sources {
         transform.scale = native.extend(1.0);
-        *visibility = if sky.synced {
+        visibility.set_if_neq(if sky.synced {
             Visibility::Inherited
         } else {
             Visibility::Hidden
-        };
+        });
     }
     if !sky.synced {
         return;
@@ -182,13 +178,7 @@ pub fn sync_parallax(
         material.wall.world_offset = WALL_RATIO * state.pos;
     }
 
-    let srgb = sky_color(
-        sky.state.light,
-        sky.state.sun_altitude,
-        sky.state.solar_occlusion,
-    );
-    let linear = Color::srgb(srgb.x, srgb.y, srgb.z).to_linear();
-    let sky_linear = Vec3::new(linear.red, linear.green, linear.blue);
+    let sky_linear = sky.color_linear;
 
     for (handle, ratio, haze) in [
         (&assets.far, FAR_RATIO, FAR_HAZE),

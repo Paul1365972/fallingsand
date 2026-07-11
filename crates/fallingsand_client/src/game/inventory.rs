@@ -65,7 +65,6 @@ impl Inventory {
         self.store.slots.clear();
         self.cursor = None;
         self.trash = None;
-        self.selected = 0;
         self.open = false;
     }
 }

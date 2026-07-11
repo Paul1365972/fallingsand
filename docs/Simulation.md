@@ -17,7 +17,7 @@ Every cell carries a velocity, integrated locally each tick — no phase heurist
 - **Accelerate**: gravity (gases/fire rise) minus buoyancy from the displaced fluid, then `drag`; a lighter liquid under a denser one swaps up directly; rising gases get a mean-reverting `turbulence` sway.
 - **Contact friction**: resting on a blocked face bleeds horizontal velocity by `friction`.
 - **Cohesion**: velocity pulls toward the mean of like-phase neighbours — streams form coherent jets.
-- **Traverse**: step cell-by-cell along the velocity (fractional speed by tick-seeded chance; capped at `MAX_STEP` = 32, keeping reach ≤ 64). Steps are cardinal — a diagonal needs an open orthogonal cell, so corners seal for free.
+- **Traverse**: step cell-by-cell along the velocity (fractional speed by tick-seeded chance; capped at `MAX_STEP` = 31, keeping reach ≤ 64). Steps are cardinal — a diagonal needs an open orthogonal cell, so corners seal for free.
 - **Collide & redirect**: a blocked face reflects by `restitution` (near-inelastic); blocked fall that can descend diagonally converts to sideways velocity by `redirect_keep` — ledge jets for liquids, angle-of-repose slides for powders (`repose`). A liquid that can't descend spreads one cell across a level surface with no velocity gain — flattening without injecting energy.
 - **Settle**: velocity into a blocked face dies and sub-threshold velocity snaps to zero, so a supported cell nets no change and its chunk sleeps.
 
@@ -37,8 +37,8 @@ Constants are seconds-based, converted per-tick from `TICK_DT`, so behaviour is 
 
 Burning is an **ember material**: each flammable fuel authors one *burn profile* and gets a synthesized `burning_*` twin (same phase and dynamics, its own palette, `hot`+`emissive`) — nothing hand-mirrored, no per-cell state beyond the id. Three local stages:
 
-- **Ignite**: any `hot` cell transmutes adjacent flammables into their embers at `flammability`, keeping velocity and shade (igniting oil keeps flowing); spread into a sealed neighbour (no adjacent oxygen) scales by `smoulder` — 0 is surface-only (oil), higher burns through a sealed lump (coal).
-- **Burn**: an ember damages entities, emits `fire` into adjacent air at `burn_emit`, and burns out at `burn_rate` — that rate *is* the burn duration; burnout mostly gasifies so the front self-exposes to oxygen, `residue_chance` leaves ash.
+- **Ignite**: any `hot` cell transmutes adjacent flammables into their embers at `flammability`, keeping velocity and shade (igniting oil keeps flowing); ember spread into a sealed neighbour (no adjacent oxygen) scales by `smoulder` — 0 is surface-only (oil), higher burns through a sealed lump (coal) — while open flames (lava, `fire`) ignite sealed fuel at the full rate.
+- **Burn**: an ember damages entities, emits `fire` into adjacent air at `burn_emit`, and burns out at `burn_rate` — that rate *is* the burn duration; `residue_chance` leaves ash, otherwise burnout resolves to `burnout_into` (smoke) so the front self-exposes to oxygen.
 - **Flame**: `fire` is a hand-authored ember with no base fuel — a `hot` gas persisting beside fuel, burning out into `smoke`. One pipeline covers fuel and flame; there is no fire phase.
 
-A `water` neighbour quenches: a fuel ember resolves to its residue (charring is never restored) and the water flashes to steam — dousing *spends* the water, so a puddle can only smother so much. Fuels sleep until lit, so an unlit forest costs nothing.
+A `water` neighbour quenches: a flame just dies to steam, keeping the water; a fuel ember resolves to its residue (charring is never restored) and the water flashes to steam — dousing *spends* the water, so a puddle can only smother so much. Fuels sleep until lit, so an unlit forest costs nothing.

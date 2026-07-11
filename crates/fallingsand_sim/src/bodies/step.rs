@@ -1,7 +1,7 @@
 use super::contact::{Contact, Other, find_contacts};
 use super::{
     ActorDynamics, PixelBody, REFERENCE_DENSITY_MILLI, Raster, commit_stamp, quantized_trig,
-    rasterize_at, relocation_spot, wake_covering,
+    rasterize_at, relocation_spot, vacated_wake_targets, wake_covering,
 };
 use crate::physics::{
     ActorAabb, BOUNCE_MIN_SPEED, FLUID_DRAG_LINEAR, FLUID_DRAG_QUAD, MAX_FLUID_DRAG,
@@ -22,7 +22,6 @@ const FRICTION: f32 = 0.4;
 const CONTACT_ITERATIONS: usize = 4;
 const PENETRATION_CORRECTION: f32 = 0.5;
 const SUBSTEP_TRAVEL: f32 = 0.5;
-const NEIGHBORS: [(i32, i32); 4] = [(0, -1), (-1, 0), (1, 0), (0, 1)];
 
 fn span_simulated(
     world: &CellWorld,
@@ -119,16 +118,10 @@ pub fn step_bodies(
             start_y,
             start_angle,
         );
-        for pos in vacated {
-            for (dx, dy) in NEIGHBORS {
-                let neighbor = pos.translated(dx, dy);
-                if bodies[index].raster.covers(neighbor) {
-                    continue;
-                }
-                if world.get_cell(neighbor).is_some_and(|cell| cell.is_body()) {
-                    wake_covering(bodies, neighbor);
-                }
-            }
+        let targets =
+            vacated_wake_targets(world, &|pos| bodies[index].raster.covers(pos), &vacated);
+        for pos in targets {
+            wake_covering(bodies, pos);
         }
     }
     entity_impulses

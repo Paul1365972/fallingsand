@@ -24,7 +24,6 @@ pub(crate) struct TreeDef {
 }
 
 pub(crate) struct Biome {
-    #[allow(dead_code)]
     pub name: &'static str,
     pub surface: MaterialId,
     pub soil: MaterialId,
@@ -42,7 +41,6 @@ pub(crate) struct Biome {
 }
 
 pub struct Band {
-    #[allow(dead_code)]
     pub name: &'static str,
     pub floor: Option<i32>,
     pub stone: MaterialId,

@@ -285,47 +285,45 @@ fn drain(
                     ingame.phase = Phase::Playing;
                 }
             }
-            Ok(message) => match message {
-                ServerMessage::HelloAck {
-                    protocol_version,
-                    player,
-                    spawn,
-                } => {
-                    if protocol_version != PROTOCOL_VERSION {
-                        error!("server protocol {protocol_version} != {PROTOCOL_VERSION}");
-                        session.conn.close("protocol version mismatch");
-                    } else {
-                        session.player = Some(player);
-                        info!("joined as {player:?}, spawn {spawn:?}");
-                        input.queue(InputAction::SelectSlot(ingame.inventory.selected as u8));
-                        input.queue(InputAction::SetBrush(ingame.inventory.brush));
-                        ingame.debug.subscribed = false;
-                    }
+            Ok(ServerMessage::HelloAck {
+                protocol_version,
+                player,
+                spawn,
+            }) => {
+                if protocol_version != PROTOCOL_VERSION {
+                    error!("server protocol {protocol_version} != {PROTOCOL_VERSION}");
+                    session.conn.close("protocol version mismatch");
+                } else {
+                    session.player = Some(player);
+                    info!("joined as {player:?}, spawn {spawn:?}");
+                    input.queue(InputAction::SelectSlot(ingame.inventory.selected as u8));
+                    input.queue(InputAction::SetBrush(ingame.inventory.brush));
+                    ingame.debug.subscribed = false;
                 }
-                ServerMessage::Reject { reason } => {
-                    error!("server rejected connection: {reason}");
-                    ingame.net.supervisor.target = None;
-                    ingame.net.supervisor.last_error = Some(reason);
-                }
-                ServerMessage::PlayerJoined { player, name } => {
-                    ingame.players.names.insert(player, name);
-                    changes.roster = true;
-                }
-                ServerMessage::PlayerLeft { player } => {
-                    ingame.players.names.remove(&player);
-                    ingame.players.roster.remove(&player);
-                    changes.roster = true;
-                }
-                ServerMessage::Chat { name, text, .. } => {
-                    ingame.chat.push(format!("{name}: {text}"), io.now);
-                    changes.chat = true;
-                }
-                ServerMessage::System { text } => {
-                    ingame.chat.push(text, io.now);
-                    changes.chat = true;
-                }
-                ServerMessage::TickFrame(_) => unreachable!(),
-            },
+            }
+            Ok(ServerMessage::Reject { reason }) => {
+                error!("server rejected connection: {reason}");
+                session.conn.close("rejected");
+                ingame.net.supervisor.target = None;
+                ingame.net.supervisor.last_error = Some(reason);
+            }
+            Ok(ServerMessage::PlayerJoined { player, name }) => {
+                ingame.players.names.insert(player, name);
+                changes.roster = true;
+            }
+            Ok(ServerMessage::PlayerLeft { player }) => {
+                ingame.players.names.remove(&player);
+                ingame.players.roster.remove(&player);
+                changes.roster = true;
+            }
+            Ok(ServerMessage::Chat { name, text, .. }) => {
+                ingame.chat.push(format!("{name}: {text}"), io.now);
+                changes.chat = true;
+            }
+            Ok(ServerMessage::System { text }) => {
+                ingame.chat.push(text, io.now);
+                changes.chat = true;
+            }
             Err(err) => error!("bad message: {err}"),
         }
     }

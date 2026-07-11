@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 pub const REGION_FORMAT_VERSION: u8 = 11;
-pub const WORLD_FORMAT_VERSION: u16 = 15;
+pub const WORLD_FORMAT_VERSION: u16 = 16;
 const CELL_BYTES: usize = 8;
 const RECT_BYTES: usize = 4;
 const REGION_CELL_BYTES: usize = REGION_AREA_CHUNKS * CHUNK_AREA * CELL_BYTES;
@@ -286,8 +286,14 @@ pub fn decode_region(blob: &[u8]) -> Result<Region, StoreError> {
     for chunk in region.chunks_mut().iter_mut() {
         for cell in chunk.cells_mut() {
             let raw_cell = cursor.next().expect("length checked");
+            let material = u16::from_le_bytes([raw_cell[0], raw_cell[1]]);
+            if material as usize >= fallingsand_core::content::MATERIAL_COUNT {
+                return Err(StoreError::CorruptRegion(format!(
+                    "invalid material id {material}"
+                )));
+            }
             *cell = Cell {
-                material: MaterialId(u16::from_le_bytes([raw_cell[0], raw_cell[1]])),
+                material: MaterialId(material),
                 vx: i16::from_le_bytes([raw_cell[2], raw_cell[3]]),
                 vy: i16::from_le_bytes([raw_cell[4], raw_cell[5]]),
                 shade_flags: raw_cell[6],

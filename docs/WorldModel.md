@@ -8,7 +8,7 @@
 
 Cells are 8-byte, heap-free (flat array per chunk): material, per-cell velocity, shade, a body flag, and an `updated` tick byte (a cell moves at most once per tick). Every cell is a particle — velocity drives all grid movement. Burning is a material, not a flag: a lit fuel transmutes to its synthesized `burning_*` ember, and probabilistic burnout *is* the burn duration — no per-cell HP. Heavier per-cell state (e.g. temperature) would be a separate per-chunk plane most chunks skip.
 
-Cell velocity is Q11.4 `i16` cells/s, sim-only: persisted, never on the wire — clients render cell-snapped. Other continuous quantities are `Fixed` Q24.8, exact on the wire and in saves. Cell coordinates are `i32`; storage keys use z-order region coords.
+Cell velocity is Q10 `i16` cells/tick, sim-only: persisted, never on the wire — clients render cell-snapped. Other continuous quantities are `Fixed`, Q10 over `i64`, exact in saves and never on the wire. Cell coordinates are `i32`; storage keys use z-order region coords.
 
 ## Materials are data
 
@@ -22,4 +22,4 @@ The kernel is driven by **phase + properties** (a new powder is a data edit, zer
 
 ### Field units
 
-All tunables are seconds-based, converted per-tick and quantized to integers at compile time. Movement knobs live inside the phase block — `Powder { drag, friction, repose, redirect_keep, cohesion }`, `Liquid { … flow_rate }`, `Gas { … turbulence }`, `Solid { rigid_capable }` — so a field a phase doesn't simulate is a compile error. Top-level fields cover `density`, `restitution`, entity surface feel (`surface_grip`/`surface_bounce`), `hardness`, `contact_damage`, and the burn profile (`flammability`, `burn_rate`, `burn_emit`, `burn_colors`, `smoulder`, `residue_into`/`residue_chance`, `burn_damage`). Rates are strong per-second values: rate `r` fires with `1−e^(−r·dt)` each tick; an outsized rate (`1e9`) fires effectively every tick.
+All tunables are seconds-based, converted per-tick and quantized to integers at compile time. Movement knobs live inside the phase block — `Powder { drag, friction, repose, redirect_keep, cohesion }`, `Liquid { … flow_rate }`, `Gas { … turbulence }`, `Solid { rigid_capable }` — so a field a phase doesn't simulate is a compile error. Top-level fields cover `density`, `restitution`, entity surface feel (`surface_grip`/`surface_bounce`), `hardness`, `contact_damage`, and the burn profile (`flammability`, `burn_rate`, `burn_emit`, `burn_colors`, `smoulder`, `residue_into`/`residue_chance`, `burnout_into`, `burn_damage`). Rates are strong per-second values: rate `r` fires with `1−e^(−r·dt)` each tick; an outsized rate (`1e9`) fires effectively every tick.

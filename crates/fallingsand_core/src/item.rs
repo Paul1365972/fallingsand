@@ -6,7 +6,7 @@ use std::ops::Range;
 pub const HOTBAR_SLOTS: usize = 9;
 pub const MAIN_SLOTS: usize = 27;
 pub const PLAYER_SLOTS: usize = HOTBAR_SLOTS + MAIN_SLOTS;
-pub const MATERIAL_STACK_MAX: u32 = 10_000;
+const MATERIAL_STACK_MAX: u32 = 10_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ItemId(pub u16);
@@ -60,9 +60,7 @@ pub struct ItemRegistry {
 impl ItemRegistry {
     pub fn build(entries: &[ItemEntry]) -> Self {
         let material_items = content::materials()
-            .filter(|&(id, _)| {
-                content::phase(id) != crate::Phase::Empty && !content::is_fuel_ember(id)
-            })
+            .filter(|&(id, _)| is_material_item(id))
             .count();
         let total = 1 + entries.len() + material_items;
         assert!(total <= u16::MAX as usize, "too many items: {total}");
@@ -97,16 +95,12 @@ impl ItemRegistry {
 
         let mut mat_to_item = vec![ItemId::NONE; content::MATERIAL_COUNT];
         for (id, info) in content::materials() {
-            if content::phase(id) == crate::Phase::Empty
-                || content::tags(id).contains(Tag::Player)
-                || content::is_fuel_ember(id)
-            {
+            if !is_material_item(id) {
                 continue;
             }
-            let canonical = info.name.to_ascii_lowercase();
-            let name = format!("mat:{canonical}");
+            let name = format!("mat:{}", info.name);
             let def = ItemDef {
-                display: pretty_name(&canonical),
+                display: pretty_name(info.name),
                 stack_max: MATERIAL_STACK_MAX,
                 icon: IconSpec::MaterialSwatch(id),
                 place: Some(id),
@@ -170,6 +164,12 @@ impl ItemRegistry {
     pub fn stack_max(&self, item: ItemId) -> u32 {
         self.try_get(item).map(|def| def.stack_max).unwrap_or(1)
     }
+}
+
+fn is_material_item(id: MaterialId) -> bool {
+    content::phase(id) != crate::Phase::Empty
+        && !content::tags(id).contains(Tag::Player)
+        && !content::is_fuel_ember(id)
 }
 
 fn pretty_name(raw: &str) -> String {

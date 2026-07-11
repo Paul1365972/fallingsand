@@ -7,7 +7,7 @@
 1. Drain network — sessions, inputs, chat, commands; departing players unstamp
 2. Apply inputs → world edits: commands, dig/place, slot actions + crafting
 3. Load/generate/unload regions per ticket changes
-4. Step CA (4 phases, rayon), then deferred world edits
+4. Step CA (4 phases, rayon)
 5. Step physics: players in `PlayerId` order (sweep, then stamp), then the serial bodies pass
 6. Game logic: health, hazards, crush; advance the world clock
 7. One `TickFrame` per session

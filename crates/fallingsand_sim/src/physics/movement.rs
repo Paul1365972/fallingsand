@@ -102,13 +102,13 @@ fn passage<W: CellSource>(
     for y in next.y0..=next.y1 {
         for x in next.x0..=next.x1 {
             let pos = CellPos::new(x, y);
+            if cur.contains(pos) || own_covers(own, pos) {
+                continue;
+            }
             let Some(cell) = world.cell_at(pos) else {
                 blockage.solid = true;
                 continue;
             };
-            if cur.contains(pos) || own_covers(own, pos) {
-                continue;
-            }
             if matches!(content::phase(cell.material), Phase::Solid | Phase::Powder) {
                 blockage.solid = true;
                 blockage.solids.push(pos);

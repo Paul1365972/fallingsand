@@ -47,6 +47,7 @@ OIL = Material {
         [255, 200, 72, 255],
         [232, 100, 18, 255],
     ],
+    burnout_into: SMOKE,
     burn_damage: 8.0,
 },
 LAVA = Material {

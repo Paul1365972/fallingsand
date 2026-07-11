@@ -41,12 +41,7 @@ impl StatWindow {
 
     fn avg(&mut self, now: f32, value: f32) -> f32 {
         self.push(now, value);
-        let n = self.samples.len();
-        if n == 0 {
-            value
-        } else {
-            self.samples.iter().map(|&(_, v)| v).sum::<f32>() / n as f32
-        }
+        self.samples.iter().map(|&(_, v)| v).sum::<f32>() / self.samples.len() as f32
     }
 
     fn rate(&mut self, now: f32, value: f32) -> f32 {
@@ -95,7 +90,11 @@ fn human_bytes(bytes: u64) -> String {
     format!("{value:>6.1} {unit:>3}")
 }
 
-pub fn setup_overlay(mut commands: Commands) {
+pub fn setup_overlay(mut commands: Commands, mut gizmo_configs: ResMut<GizmoConfigStore>) {
+    gizmo_configs
+        .config_mut::<DefaultGizmoConfigGroup>()
+        .0
+        .depth_bias = -0.1;
     let font = || TextFont {
         font_size: FontSize::Px(13.0),
         ..default()
@@ -312,6 +311,9 @@ fn playing_lines(
             you.pos.y,
             you.mode.label(),
         ));
+        if !you.biome.is_empty() {
+            left_lines.push(format!("biome {} / {}", you.biome, you.band));
+        }
     }
 
     left_lines.push(String::new());

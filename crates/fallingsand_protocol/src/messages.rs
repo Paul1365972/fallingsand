@@ -130,11 +130,13 @@ pub struct ChunkDebugRects {
     pub sim: DirtyRect,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SelfState {
     pub hp: f32,
     pub air: f32,
     pub mode: GameMode,
+    pub biome: String,
+    pub band: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

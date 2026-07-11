@@ -124,7 +124,10 @@ pub struct LayerQuad {
 }
 
 #[derive(Resource)]
-pub struct LayerTargets(pub [Handle<Image>; 6]);
+pub struct LayerTargets {
+    handles: [Handle<Image>; 6],
+    native: UVec2,
+}
 
 #[derive(Resource)]
 pub struct LayerAssets {
@@ -172,6 +175,7 @@ pub struct CameraState {
     pub k: u32,
     pub native: UVec2,
     pub window_px: UVec2,
+    pub star_scroll: Vec2,
 }
 
 impl Default for CameraState {
@@ -181,6 +185,7 @@ impl Default for CameraState {
             k: 1,
             native: UVec2::ONE,
             window_px: UVec2::ONE,
+            star_scroll: Vec2::ZERO,
         }
     }
 }
@@ -211,7 +216,7 @@ pub fn base_scale(window_px: UVec2) -> u32 {
 
 fn pixel_scale(window_px: UVec2, zoom_index: i32) -> (u32, UVec2) {
     let base = base_scale(window_px);
-    let k = (base as i32 + zoom_index).clamp((base / 2).max(1) as i32, (base * 2) as i32) as u32;
+    let k = (base as i32 + crate::game::input::clamp_zoom(base, zoom_index)) as u32;
     let native = UVec2::new(
         (window_px.x.div_ceil(k) + 2).next_multiple_of(2),
         (window_px.y.div_ceil(k) + 2).next_multiple_of(2),
@@ -266,9 +271,9 @@ fn native_camera(order: isize, layer: usize, native: UVec2, target: Handle<Image
 pub fn setup_camera(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
-    mut meshes: ResMut<Assets<Mesh>>,
     mut upscale_mats: ResMut<Assets<UpscaleMaterial>>,
     mut lighting_mats: ResMut<Assets<LightingMaterial>>,
+    shared: Res<super::chunks::RenderShared>,
     window: Single<&Window>,
 ) {
     let window_px = UVec2::new(
@@ -320,7 +325,7 @@ pub fn setup_camera(
         ))
         .id();
 
-    let quad = meshes.add(Rectangle::default());
+    let quad = shared.quad.clone();
     let lighting = lighting_mats.add(LightingMaterial {
         params: LightingParams::default(),
         world: targets[L_WORLD].clone(),
@@ -349,7 +354,10 @@ pub fn setup_camera(
         }
     });
 
-    commands.insert_resource(LayerTargets(targets));
+    commands.insert_resource(LayerTargets {
+        handles: targets,
+        native,
+    });
     commands.insert_resource(LayerAssets { lighting, upscale });
 }
 
@@ -397,12 +405,12 @@ pub fn sync_camera(
         .ingame()
         .map(|ingame| ingame.clock.calendar)
         .unwrap_or_default();
+    state.star_scroll = star_scroll(calendar);
     let size = (state.native * state.k).as_vec2();
     for (quad, mut transform) in &mut quads {
         let (_, remainder_px) = state.layer(quad.ratio);
         let drift_px = if quad.drift {
-            let scroll = star_scroll(calendar);
-            (scroll - scroll.floor()) * state.k as f32
+            (state.star_scroll - state.star_scroll.floor()) * state.k as f32
         } else {
             Vec2::ZERO
         };
@@ -419,20 +427,18 @@ pub fn sync_camera(
 
 pub fn resize_targets(
     state: Res<CameraState>,
-    mut last: Local<UVec2>,
     mut images: ResMut<Assets<Image>>,
     mut targets: ResMut<LayerTargets>,
     mut cameras: Query<(&LayerCamera, &mut Projection, &mut RenderTarget)>,
 ) {
-    if *last == state.native {
+    if targets.native == state.native {
         return;
     }
-    *last = state.native;
+    targets.native = state.native;
 
     for (layer, mut projection, mut target) in &mut cameras {
         let handle = native_target(&mut images, state.native);
-        images.remove(&targets.0[layer.0]);
-        targets.0[layer.0] = handle.clone();
+        targets.handles[layer.0] = handle.clone();
         *projection = fixed_projection(state.native);
         *target = RenderTarget::from(handle);
     }
@@ -440,24 +446,21 @@ pub fn resize_targets(
 
 pub fn rebind_targets(
     targets: Res<LayerTargets>,
-    assets: Option<Res<LayerAssets>>,
+    assets: Res<LayerAssets>,
     mut upscale_mats: ResMut<Assets<UpscaleMaterial>>,
     mut lighting_mats: ResMut<Assets<LightingMaterial>>,
 ) {
     if !targets.is_changed() {
         return;
     }
-    let Some(assets) = assets else {
-        return;
-    };
     if let Some(mut material) = lighting_mats.get_mut(&assets.lighting) {
-        material.world = targets.0[L_WORLD].clone();
+        material.world = targets.handles[L_WORLD].clone();
     }
     for (i, handle) in assets.upscale.iter().enumerate() {
         if let Some(handle) = handle
             && let Some(mut material) = upscale_mats.get_mut(handle)
         {
-            material.texture = targets.0[i].clone();
+            material.texture = targets.handles[i].clone();
         }
     }
 }

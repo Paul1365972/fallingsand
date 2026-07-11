@@ -39,7 +39,7 @@ pub fn sync_nametags(
         if Some(player) == local {
             continue;
         }
-        let world = remote.pos + Vec2::new(0.0, remote.height as f32 / 2.0 + NAMETAG_RISE);
+        let world = Vec2::new(remote.pos.x, remote.top_y() + NAMETAG_RISE);
         let px = ((world - state.pos) * state.k as f32).round();
         let translation = Vec3::new(px.x, px.y, 20.0);
         if let Some(&entity) = visuals.0.get(&player) {

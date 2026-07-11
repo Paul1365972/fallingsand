@@ -7,8 +7,8 @@ Canonical names for the core domain vocabulary. One concept, one name.
 | **Cell / Chunk / Region** | 8-byte grid unit / 64×64 cells (dirty-tracking, sleeping, replication, rendering) / 8×8 chunks (generation, storage, load/unload) |
 | **CellPos / ChunkPos / RegionPos** | `i32` x,y coordinates at each granularity |
 | **sim / change** | per-chunk rects: `sim` (cells to re-sim next tick, feeds scheduling) ⊇ `change` (changed cells, feeds replication + persistence); double-buffered (`prev_`) |
-| **Fixed** | Q24.8 `i32` fixed-point for continuous pose/velocity; on the wire and in saves |
-| **Cell velocity** | `i16` Q11.4 cells/s, sim-only, never on the wire; clamped in-flow to ±2000 (`VEL_MAX`) |
+| **Fixed** | Q54.10 `i64` fixed-point for continuous pose/velocity; saves only, never on the wire |
+| **Cell velocity** | `i16` Q10 cells/tick, sim-only, persisted, never on the wire; clamped in-flow to ±31 cells/tick (`VEL_MAX`) |
 | **Actor** | kinematic controller: players (creatures later) — `Fixed` accumulator pose; observable pose is its integer `Footprint` |
 | **Footprint** | floor-anchored integer cell rect, pure function of `(floor(x), floor(y), extents)`; collision, raster, wire, hazards all read it |
 | **PixelBody** | rigid body made of cells (pose + angle + spin + mass + raster); the only "Body" |

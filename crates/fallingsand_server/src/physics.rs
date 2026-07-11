@@ -7,13 +7,14 @@ use bevy_ecs::prelude::*;
 use fallingsand_core::{CellPos, Fixed};
 use fallingsand_protocol::GameMode;
 use fallingsand_sim::CellWorld;
-use fallingsand_sim::bodies::wake_covering;
+use fallingsand_sim::bodies::{apply_damage, vacated_wake_targets, wake_covering};
 use fallingsand_sim::physics::{
     Actor, Controller, Footprint, PlayerParams, StepInput, footprint_at, grounded, step_player,
 };
 use fallingsand_sim::player::{
     DUCK_ROWS, STAND_ROWS, force_stamp_player, stamp_player, unstamp_player,
 };
+use rustc_hash::FxHashSet;
 
 const SPAWN_SEARCH_UP: i32 = 64;
 
@@ -44,6 +45,12 @@ pub fn step_physics(
         .collect();
     order.sort_unstable();
     let mut shoves: Vec<(CellPos, f32, f32)> = Vec::new();
+    let prior: Vec<(Entity, FxHashSet<CellPos>)> = query
+        .iter()
+        .filter_map(|(entity, _, _, _, raster, ..)| {
+            raster.0.own_cells().map(|set| (entity, set.clone()))
+        })
+        .collect();
 
     for (_, entity) in order {
         let Ok((
@@ -62,7 +69,7 @@ pub fn step_physics(
         };
 
         if !raster.0.is_stamped() {
-            spawn_stamp(&mut sim.0, &mut raster.0, &mut body.0);
+            spawn_stamp(&mut sim.0, &mut bodies, &mut raster.0, &mut body.0);
             if !raster.0.is_stamped() {
                 continue;
             }
@@ -138,7 +145,7 @@ pub fn step_physics(
             health.hp = MAX_HP;
             air.secs = MAX_AIR_SECS;
             burning.secs = 0.0;
-            unstamp_player(&mut sim.0, &mut raster.0);
+            unstamp_and_wake(&mut sim.0, &mut bodies, &mut raster.0);
             body.0 = Actor::new(
                 Fixed::from_cell(spawn_point.0.x),
                 Fixed::from_cell(spawn_point.0.y),
@@ -153,7 +160,12 @@ pub fn step_physics(
     for (pos, jx, jy) in shoves {
         let target = query
             .iter()
-            .find_map(|(entity, _, _, _, raster, ..)| raster.0.covers(pos).then_some(entity));
+            .find_map(|(entity, _, _, _, raster, ..)| raster.0.covers(pos).then_some(entity))
+            .or_else(|| {
+                prior
+                    .iter()
+                    .find_map(|(entity, cells)| cells.contains(&pos).then_some(*entity))
+            });
         if let Some(target) = target {
             let entry = impulses.0.entry(target).or_insert((0.0, 0.0));
             entry.0 += jx;
@@ -210,21 +222,32 @@ fn wake_neighbours(
     stamp: &fallingsand_sim::PlayerStamp,
     vacated: &[CellPos],
 ) {
-    const NEIGHBORS: [(i32, i32); 4] = [(0, -1), (-1, 0), (1, 0), (0, 1)];
-    for &pos in vacated {
-        for (dx, dy) in NEIGHBORS {
-            let neighbor = pos.translated(dx, dy);
-            if stamp.covers(neighbor) {
-                continue;
-            }
-            if sim.get_cell(neighbor).is_some_and(|cell| cell.is_body()) {
-                wake_covering(&mut bodies.bodies, neighbor);
-            }
-        }
+    for pos in vacated_wake_targets(sim, &|pos| stamp.covers(pos), vacated) {
+        wake_covering(&mut bodies.bodies, pos);
     }
 }
 
-fn spawn_stamp(sim: &mut CellWorld, stamp: &mut fallingsand_sim::PlayerStamp, body: &mut Actor) {
+pub(crate) fn unstamp_and_wake(
+    sim: &mut CellWorld,
+    bodies: &mut crate::bodies::PixelBodies,
+    stamp: &mut fallingsand_sim::PlayerStamp,
+) {
+    let vacated: Vec<CellPos> = stamp
+        .own_cells()
+        .map(|set| set.iter().copied().collect())
+        .unwrap_or_default();
+    unstamp_player(sim, stamp);
+    for pos in vacated_wake_targets(sim, &|_| false, &vacated) {
+        wake_covering(&mut bodies.bodies, pos);
+    }
+}
+
+fn spawn_stamp(
+    sim: &mut CellWorld,
+    bodies: &mut crate::bodies::PixelBodies,
+    stamp: &mut fallingsand_sim::PlayerStamp,
+    body: &mut Actor,
+) {
     body.half_h = PLAYER_HALF_H;
     let base = body.footprint();
     if !footprint_loaded(sim, base) {
@@ -255,8 +278,29 @@ fn spawn_stamp(sim: &mut CellWorld, stamp: &mut fallingsand_sim::PlayerStamp, bo
             return;
         }
     }
+    let mut damage: Vec<CellPos> = Vec::new();
+    for y in base.y0..=base.y1 {
+        for x in base.x0..=base.x1 {
+            let pos = CellPos::new(x, y);
+            if !sim.get_cell(pos).is_some_and(|cell| cell.is_body()) {
+                continue;
+            }
+            if bodies.body_at_mut(pos).is_none() {
+                return;
+            }
+            damage.push(pos);
+        }
+    }
     tracing::warn!("spawn stamp forced at {:?}", (base.x0, base.y0));
     force_stamp_player(sim, stamp, base, false);
+    if !damage.is_empty() {
+        let next_id = &mut bodies.next_id;
+        apply_damage(sim, &mut bodies.bodies, damage, || {
+            let id = *next_id;
+            *next_id += 1;
+            id
+        });
+    }
 }
 
 fn footprint_loaded(sim: &CellWorld, fp: Footprint) -> bool {

@@ -74,18 +74,12 @@ impl Hash {
 
     #[inline]
     pub const fn below(self, threshold: u64) -> bool {
-        self.0 < threshold
+        threshold == u64::MAX || self.0 < threshold
     }
 
     #[inline]
     pub fn chance(self, chance: f32) -> bool {
-        if chance.is_nan() || chance <= 0.0 {
-            return false;
-        }
-        if chance >= 1.0 {
-            return true;
-        }
-        self.0 < (f64::from(chance) * 2f64.powi(64)) as u64
+        self.below(chance_threshold(chance))
     }
 
     #[inline]
@@ -108,6 +102,16 @@ impl Default for Hash {
     fn default() -> Self {
         Hash::new()
     }
+}
+
+pub fn chance_threshold(chance: f32) -> u64 {
+    if chance.is_nan() || chance <= 0.0 {
+        return 0;
+    }
+    if chance >= 1.0 {
+        return u64::MAX;
+    }
+    (f64::from(chance) * 2f64.powi(64)) as u64
 }
 
 #[derive(Clone, Debug, Default)]

@@ -11,6 +11,20 @@ pub struct RemotePlayer {
     pub burning: bool,
 }
 
+impl RemotePlayer {
+    fn feet_y(&self) -> f32 {
+        self.pos.y - 0.5 - (self.height as i32 / 2) as f32
+    }
+
+    pub fn top_y(&self) -> f32 {
+        self.feet_y() + self.height.max(1) as f32
+    }
+
+    pub fn center(&self) -> Vec2 {
+        Vec2::new(self.pos.x, self.feet_y() + self.height.max(1) as f32 * 0.5)
+    }
+}
+
 #[derive(Default)]
 pub struct Players {
     pub roster: HashMap<PlayerId, RemotePlayer>,
@@ -50,7 +64,7 @@ impl Players {
                     burning: state.burning,
                 });
         }
-        if let Some(self_state) = tick.self_state {
+        if let Some(self_state) = &tick.self_state {
             if self_state.hp < you.hp - 0.01 && self_state.hp > 0.0 {
                 you.damage_flash = DAMAGE_FLASH_SECS;
             }
@@ -60,11 +74,13 @@ impl Players {
             you.hp = self_state.hp;
             you.air = self_state.air;
             you.mode = self_state.mode;
+            you.biome = self_state.biome.clone();
+            you.band = self_state.band.clone();
         }
     }
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone)]
 pub struct SelfState {
     pub present: bool,
     pub pos: Vec2,
@@ -73,4 +89,6 @@ pub struct SelfState {
     pub burning: bool,
     pub mode: GameMode,
     pub damage_flash: f32,
+    pub biome: String,
+    pub band: String,
 }

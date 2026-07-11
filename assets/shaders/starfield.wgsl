@@ -1,5 +1,5 @@
 #import bevy_sprite::mesh2d_vertex_output::VertexOutput
-#import fallingsand::layer_common::layer_texel
+#import fallingsand::layer_common::{layer_texel, layer_cell}
 
 struct StarfieldParams {
     center: vec2<f32>,
@@ -27,11 +27,11 @@ fn hash(p: vec2<f32>) -> f32 {
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let native = params.native_size;
     let t = layer_texel(in.uv, native);
-    let cell = vec2<f32>(t.x + 0.5 - native.x * 0.5, native.y * 0.5 - t.y - 0.5);
+    let cell = layer_cell(t, vec2<f32>(0.0), native);
     let uv = (cell - params.center + params.scroll) / params.world_scale;
     let sample = textureSample(tex, tex_sampler, uv);
 
-    let gcell = floor(fract(uv) * 512.0);
+    let gcell = floor(fract(uv) * params.world_scale);
     let phase = hash(gcell) * TAU;
     let cycles = round(FLICKER_CYCLES_MIN + FLICKER_CYCLES_SPAN * hash(gcell + vec2<f32>(19.3, 7.1)));
     let flicker = 1.0 - 0.55 * pow(0.5 + 0.5 * sin(params.sidereal * cycles * TAU + phase), 2.0);

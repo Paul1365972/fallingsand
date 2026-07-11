@@ -1,6 +1,7 @@
-use crate::{MOON_PHASES, TICK_RATE};
+use crate::TICK_RATE;
 use std::f32::consts::TAU;
 
+const MOON_PHASES: u32 = 8;
 pub const DAY_UNITS: u64 = 86_400_000;
 const AGE_PER_SEC: u64 = 288_000;
 const AGE_PER_TICK: u64 = AGE_PER_SEC / TICK_RATE as u64;

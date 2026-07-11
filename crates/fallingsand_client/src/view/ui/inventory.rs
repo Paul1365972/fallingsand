@@ -1,5 +1,5 @@
 use super::{format_count, item_color};
-use crate::game::inventory::SlotRegion;
+use crate::game::inventory::{Inventory, SlotRegion};
 use crate::game::{ClientGame, InGame};
 use crate::view::Game;
 use bevy::platform::collections::HashSet;
@@ -9,6 +9,15 @@ use fallingsand_protocol::GameMode;
 
 const SLOT: f32 = 40.0;
 const GAP: f32 = 3.0;
+
+fn region_stack(region: SlotRegion, inventory: &Inventory) -> Option<ItemStack> {
+    match region {
+        SlotRegion::Player(index) => inventory.slot(index),
+        SlotRegion::Trash => inventory.trash,
+        SlotRegion::Palette(id) => Some(ItemStack::new(id, 1)),
+        SlotRegion::Craft(_) => None,
+    }
+}
 
 #[derive(Component)]
 pub(crate) struct OverlayRoot;
@@ -479,12 +488,7 @@ fn spawn_slot(
     game: &ClientGame,
     ingame: &InGame,
 ) {
-    let stack = match region {
-        SlotRegion::Player(index) => ingame.inventory.slot(index),
-        SlotRegion::Trash => ingame.inventory.trash,
-        SlotRegion::Palette(id) => Some(ItemStack::new(id, 1)),
-        SlotRegion::Craft(_) => None,
-    };
+    let stack = region_stack(region, &ingame.inventory);
     parent
         .spawn((
             UiSlot(region),
@@ -562,15 +566,7 @@ pub fn update_tooltip(
     } else {
         None
     };
-    let item = hovered.and_then(|region| {
-        let inventory = &ingame?.inventory;
-        match region {
-            SlotRegion::Player(index) => inventory.slot(index),
-            SlotRegion::Trash => inventory.trash,
-            SlotRegion::Palette(id) => Some(ItemStack::new(id, 1)),
-            SlotRegion::Craft(_) => None,
-        }
-    });
+    let item = hovered.and_then(|region| region_stack(region, &ingame?.inventory));
     match (item, window.cursor_position()) {
         (Some(stack), Some(pos)) => {
             if let Some(def) = game.0.registries.items.try_get(stack.item)

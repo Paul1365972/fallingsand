@@ -22,6 +22,7 @@ COAL = Material {
     smoulder: 0.2,
     residue_into: ASH,
     residue_chance: 0.05,
+    burnout_into: SMOKE,
     burn_damage: 8.0,
 },
 IRON_ORE = Material {

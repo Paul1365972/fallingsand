@@ -22,6 +22,7 @@ WOOD = Material {
     smoulder: 0.05,
     residue_into: ASH,
     residue_chance: 0.35,
+    burnout_into: SMOKE,
     burn_damage: 8.0,
 },
 MOSS = Material {
@@ -41,6 +42,7 @@ MOSS = Material {
     burn_emit: 18.0,
     residue_into: ASH,
     residue_chance: 0.3,
+    burnout_into: SMOKE,
     burn_damage: 7.0,
 },
 LEAVES = Material {

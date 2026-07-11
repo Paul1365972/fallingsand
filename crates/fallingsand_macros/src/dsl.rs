@@ -130,8 +130,8 @@ pub enum OperandAst {
 pub struct ReactionAst {
     pub a: OperandAst,
     pub b: OperandAst,
-    pub a_becomes: Ident,
-    pub b_becomes: Ident,
+    pub a_becomes: OperandAst,
+    pub b_becomes: OperandAst,
     pub rate: f32,
 }
 
@@ -188,9 +188,9 @@ impl Parse for ReactionFileAst {
             input.parse::<Token![+]>()?;
             let b = parse_operand(input)?;
             input.parse::<Token![=>]>()?;
-            let a_becomes: Ident = input.parse()?;
+            let a_becomes = parse_operand(input)?;
             input.parse::<Token![+]>()?;
-            let b_becomes: Ident = input.parse()?;
+            let b_becomes = parse_operand(input)?;
             input.parse::<Token![@]>()?;
             let rate = parse_rate(input)?;
             input.parse::<Token![;]>()?;

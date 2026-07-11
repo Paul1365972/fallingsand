@@ -166,6 +166,7 @@ pub fn drain_network(
     mut rasters: Query<&mut PlayerRaster>,
     item_reg: Res<ItemReg>,
     mut sim: ResMut<SimWorld>,
+    mut bodies: ResMut<crate::bodies::PixelBodies>,
     spawn_point: Res<SpawnPoint>,
     store: Res<Store>,
 ) {
@@ -389,7 +390,7 @@ pub fn drain_network(
     });
     for entity in despawned {
         if let Ok(mut raster) = rasters.get_mut(entity) {
-            fallingsand_sim::player::unstamp_player(&mut sim.0, &mut raster.0);
+            crate::physics::unstamp_and_wake(&mut sim.0, &mut bodies, &mut raster.0);
         }
     }
     if let Some(store) = store.0.as_ref()

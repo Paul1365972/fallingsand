@@ -65,9 +65,6 @@ pub struct ChunkUploadQueue(Vec<ChunkUpload>);
 #[derive(Resource, Default)]
 struct RenderChunkUploads(Vec<ChunkUpload>);
 
-#[derive(Component)]
-pub struct ChunkQuad;
-
 pub fn setup_render_app(app: &mut App) {
     if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
         render_app
@@ -96,7 +93,11 @@ fn upload_chunk_rects(
     uploads.0.retain_mut(|upload| {
         let Some(gpu) = images.get(upload.image) else {
             upload.retries += 1;
-            return upload.retries < UPLOAD_RETRY_FRAMES;
+            if upload.retries >= UPLOAD_RETRY_FRAMES {
+                warn!("dropping chunk upload: GPU image never appeared");
+                return false;
+            }
+            return true;
         };
         queue.write_texture(
             TexelCopyTextureInfo {
@@ -130,7 +131,7 @@ pub fn setup_shared(
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
-    let width = content::MATERIAL_COUNT.max(1) as u32;
+    let width = content::MATERIAL_COUNT as u32;
     let mut data = vec![0u8; (width * SHADES * 4) as usize];
     for (id, material) in content::materials() {
         for shade in 0..SHADES {
@@ -152,16 +153,6 @@ pub fn setup_shared(
     ));
     let quad = meshes.add(Rectangle::default());
     commands.insert_resource(RenderShared { palette, quad });
-}
-
-fn chunk_texture_data(cells: &[Cell; CHUNK_AREA]) -> Vec<u8> {
-    let mut data = Vec::with_capacity(CHUNK_AREA * 4);
-    for cell in cells {
-        data.extend_from_slice(&cell.material.0.to_le_bytes());
-        data.push(cell.shade_flags);
-        data.push(0);
-    }
-    data
 }
 
 fn pack_rect(cells: &[Cell; CHUNK_AREA], rect: DirtyRect) -> Vec<u8> {
@@ -290,7 +281,7 @@ fn full_upload(
         queue.0.push(ChunkUpload {
             image: image.id(),
             rect: DirtyRect::FULL,
-            data: chunk_texture_data(cells),
+            data: pack_rect(cells, DirtyRect::FULL),
             retries: 0,
         });
         return;
@@ -304,7 +295,7 @@ fn full_upload(
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
-        chunk_texture_data(cells),
+        pack_rect(cells, DirtyRect::FULL),
         TextureFormat::Rgba8Uint,
         RenderAssetUsages::RENDER_WORLD,
     ));
@@ -314,7 +305,6 @@ fn full_upload(
     });
     let entity = commands
         .spawn((
-            ChunkQuad,
             Mesh2d(shared.quad.clone()),
             MeshMaterial2d(material),
             Transform::from_xyz(

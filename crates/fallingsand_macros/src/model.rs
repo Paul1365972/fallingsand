@@ -1,8 +1,9 @@
 use crate::dsl::{self, Header, MaterialAst, OperandAst, Sources};
 use fallingsand_material::{
     Dynamics, Ember, GasDynamics, Ignition, LiquidDynamics, MaterialId, Phase, PowderDynamics,
-    Reaction, Tag, Tags, chance_threshold, milli, per_tick_chance, per_tick_keep, q16,
+    Reaction, Tag, Tags, milli, per_tick_chance, per_tick_keep, q16,
 };
+use fallingsand_rng::chance_threshold;
 use std::collections::HashMap;
 use syn::Expr;
 
@@ -66,6 +67,7 @@ struct RawMaterial {
     smoulder: f32,
     residue_into: Option<String>,
     residue_chance: f32,
+    burnout_into: Option<String>,
     burn_damage: f32,
 }
 
@@ -90,6 +92,7 @@ impl RawMaterial {
             smoulder: 0.0,
             residue_into: None,
             residue_chance: 0.0,
+            burnout_into: None,
             burn_damage: 0.0,
         }
     }
@@ -104,7 +107,6 @@ pub struct Mat {
     pub colors: Vec<[u8; 4]>,
     pub tags: Tags,
     pub rigid_capable: bool,
-    pub is_flammable: bool,
     pub is_fuel_ember: bool,
     pub hardness: f32,
     pub restitution: f32,
@@ -173,13 +175,6 @@ pub fn build(header: &Header, sources: &Sources) -> syn::Result<Content> {
     }
     ignitions.resize(len, None);
 
-    let mut ember_bases: Vec<Option<MaterialId>> = vec![None; len];
-    for (base_index, ignition) in ignitions.iter().take(hand_len).enumerate() {
-        if let Some(ignition) = ignition {
-            ember_bases[ignition.into.0 as usize] = Some(MaterialId(base_index as u16));
-        }
-    }
-
     for raw in &raws {
         if raw.colors.is_empty() {
             return Err(dsl::fail(format!("material {} has no colors", raw.name)));
@@ -207,22 +202,23 @@ pub fn build(header: &Header, sources: &Sources) -> syn::Result<Content> {
         }
     };
 
-    let reactions = expand_reactions(sources, &raws, &by_name)?;
+    let file = &header.reactions_file;
+    let reactions = expand_reactions(file, sources, &raws, &by_name)?;
 
     let mut decays: Vec<Option<(u64, MaterialId)>> = vec![None; len];
     for def in &sources.decays {
         let from = def.from.to_string();
         let Some(from) = by_name.get(from.as_str()) else {
-            return Err(dsl::fail(format!("reactions: unknown material `{from}`")));
+            return Err(dsl::fail(format!("{file}: unknown material `{from}`")));
         };
         let into = def.into.to_string();
         let Some(into) = by_name.get(into.as_str()) else {
-            return Err(dsl::fail(format!("reactions: unknown material `{into}`")));
+            return Err(dsl::fail(format!("{file}: unknown material `{into}`")));
         };
         let slot = &mut decays[from.0 as usize];
         if slot.is_some() {
             return Err(dsl::fail(format!(
-                "duplicate decay for {}",
+                "{file}: duplicate decay for {}",
                 raws[from.0 as usize].name
             )));
         }
@@ -245,7 +241,8 @@ pub fn build(header: &Header, sources: &Sources) -> syn::Result<Content> {
                 burn: chance_threshold(per_tick_chance(raw.burn_rate)),
                 emit: chance_threshold(per_tick_chance(raw.burn_emit)),
                 residue,
-                base: ember_bases[index],
+                burnout: resolve(&raw.burnout_into, &raw.name)?.unwrap_or(MaterialId::AIR),
+                flame: index < hand_len,
             })
         } else {
             None
@@ -259,8 +256,8 @@ pub fn build(header: &Header, sources: &Sources) -> syn::Result<Content> {
         let const_name = raw.name.to_ascii_uppercase();
         materials.push(Mat {
             spec_name: camel_case(&const_name),
+            name: raw.name.to_ascii_lowercase(),
             const_name,
-            name: raw.name.clone(),
             phase: raw.phase.tag(),
             density_milli: milli(raw.density),
             colors: raw.colors.clone(),
@@ -271,8 +268,7 @@ pub fn build(header: &Header, sources: &Sources) -> syn::Result<Content> {
                     rigid_capable: true
                 }
             ),
-            is_flammable: ignitions[index].is_some(),
-            is_fuel_ember: raw.ember && ember_bases[index].is_some(),
+            is_fuel_ember: raw.ember && index >= hand_len,
             hardness: raw.hardness,
             restitution: raw.restitution,
             surface_grip: raw.surface_grip,
@@ -494,6 +490,7 @@ fn parse_material(file: &str, ast: &MaterialAst, done: &[RawMaterial]) -> syn::R
             "smoulder" => raw.smoulder = dsl::expr_f32(value, file, &context)?,
             "residue_into" => raw.residue_into = Some(dsl::expr_handle(value, file, &context)?),
             "residue_chance" => raw.residue_chance = dsl::expr_f32(value, file, &context)?,
+            "burnout_into" => raw.burnout_into = Some(dsl::expr_handle(value, file, &context)?),
             "burn_damage" => raw.burn_damage = dsl::expr_f32(value, file, &context)?,
             other @ ("drag" | "friction" | "repose" | "redirect_keep" | "cohesion"
             | "turbulence" | "flow_rate" | "rigid_capable") => {
@@ -528,7 +525,7 @@ fn validate(file: &str, raw: &RawMaterial, ast: &MaterialAst) -> syn::Result<()>
     for (field, _) in &ast.fields {
         let complaint = match field.to_string().as_str() {
             "smoulder" | "burn_colors" | "burn_damage" if !fuel => "needs flammability",
-            "burn_rate" | "burn_emit" | "residue_into" | "residue_chance"
+            "burn_rate" | "burn_emit" | "residue_into" | "residue_chance" | "burnout_into"
                 if !(fuel || raw.ember) =>
             {
                 "needs flammability or ember"
@@ -552,7 +549,23 @@ enum Operand {
     Tag(Tag),
 }
 
+#[derive(Clone, Copy)]
+enum Product {
+    Fixed(MaterialId),
+    Same,
+}
+
+impl Product {
+    fn resolve(self, operand_id: MaterialId) -> MaterialId {
+        match self {
+            Product::Fixed(id) => id,
+            Product::Same => operand_id,
+        }
+    }
+}
+
 fn expand_reactions(
+    file: &str,
     sources: &Sources,
     raws: &[RawMaterial],
     by_name: &HashMap<String, MaterialId>,
@@ -566,22 +579,33 @@ fn expand_reactions(
                     .get(name.as_str())
                     .copied()
                     .map(Operand::Material)
-                    .ok_or_else(|| dsl::fail(format!("reactions: unknown material `{name}`")))
+                    .ok_or_else(|| dsl::fail(format!("{file}: unknown material `{name}`")))
             }
             OperandAst::Tag(ident) => {
                 let name = ident.to_string();
                 Tag::parse(&name)
                     .map(Operand::Tag)
-                    .ok_or_else(|| dsl::fail(format!("reactions: unknown tag `{name}`")))
+                    .ok_or_else(|| dsl::fail(format!("{file}: unknown tag `{name}`")))
             }
         }
     };
-    let resolve_product = |ident: &syn::Ident| -> syn::Result<MaterialId> {
-        let name = ident.to_string();
-        by_name
-            .get(name.as_str())
-            .copied()
-            .ok_or_else(|| dsl::fail(format!("reactions: unknown material `{name}`")))
+    let resolve_product = |ast: &OperandAst, operand: &OperandAst| -> syn::Result<Product> {
+        match ast {
+            OperandAst::Material(ident) => {
+                let name = ident.to_string();
+                by_name
+                    .get(name.as_str())
+                    .copied()
+                    .map(Product::Fixed)
+                    .ok_or_else(|| dsl::fail(format!("{file}: unknown material `{name}`")))
+            }
+            OperandAst::Tag(ident) => match operand {
+                OperandAst::Tag(op) if op == ident => Ok(Product::Same),
+                _ => Err(dsl::fail(format!(
+                    "{file}: product `[{ident}]` must repeat the tag operand on its side"
+                ))),
+            },
+        }
     };
     let expand = |operand: &Operand| -> Vec<MaterialId> {
         match operand {
@@ -597,27 +621,26 @@ fn expand_reactions(
     for def in &sources.reactions {
         let a = resolve_operand(&def.a)?;
         let b = resolve_operand(&def.b)?;
-        let becomes_a = resolve_product(&def.a_becomes)?;
-        let becomes_b = resolve_product(&def.b_becomes)?;
+        let becomes_a = resolve_product(&def.a_becomes, &def.a)?;
+        let becomes_b = resolve_product(&def.b_becomes, &def.b)?;
         let threshold = chance_threshold(per_tick_chance(def.rate));
         let specificity =
             matches!(a, Operand::Material(_)) as u8 + matches!(b, Operand::Material(_)) as u8;
         for a_id in expand(&a) {
             for b_id in expand(&b) {
+                let out_a = becomes_a.resolve(a_id);
+                let out_b = becomes_b.resolve(b_id);
                 let entries = if a_id == b_id {
-                    vec![(a_id, b_id, becomes_a, becomes_b)]
+                    vec![(a_id, b_id, out_a, out_b)]
                 } else {
-                    vec![
-                        (a_id, b_id, becomes_a, becomes_b),
-                        (b_id, a_id, becomes_b, becomes_a),
-                    ]
+                    vec![(a_id, b_id, out_a, out_b), (b_id, a_id, out_b, out_a)]
                 };
                 for (from, other, becomes, other_becomes) in entries {
                     let slot = &mut table[from.0 as usize * len + other.0 as usize];
                     match slot {
                         Some((_, existing)) if *existing == specificity => {
                             return Err(dsl::fail(format!(
-                                "ambiguous reactions for pair {} + {}",
+                                "{file}: ambiguous reactions for pair {} + {}",
                                 raws[from.0 as usize].name, raws[other.0 as usize].name
                             )));
                         }

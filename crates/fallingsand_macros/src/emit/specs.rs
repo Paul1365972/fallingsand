@@ -11,7 +11,7 @@ pub fn emit(content: &Content) -> TokenStream {
         let density_milli = Literal::i32_suffixed(mat.density_milli);
         let is_hot = mat.tags.contains(fallingsand_material::Tag::Hot);
         let open_flame = match &mat.ember {
-            Some(ember) => ember.is_flame(),
+            Some(ember) => ember.flame,
             None => true,
         };
         let ember = match &mat.ember {
@@ -23,13 +23,15 @@ pub fn emit(content: &Content) -> TokenStream {
                     let id = material_id(id);
                     quote!((#threshold, #id))
                 }));
-                let base = option_tokens(ember.base.map(material_id));
+                let burnout = material_id(ember.burnout);
+                let flame = ember.flame;
                 quote! {
                     Some(crate::material::Ember {
                         burn: #burn,
                         emit: #emit,
                         residue: #residue,
-                        base: #base,
+                        burnout: #burnout,
+                        flame: #flame,
                     })
                 }
             }

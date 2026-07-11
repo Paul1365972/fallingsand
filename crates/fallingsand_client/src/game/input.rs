@@ -190,14 +190,17 @@ fn sample(game: &mut ClientGame, io: &IoFrame, gameplay: bool, ctrl: bool) {
     game.input.latched.merge_or(state);
 }
 
+pub fn clamp_zoom(base: u32, index: i32) -> i32 {
+    let base = base as i32;
+    index.clamp((base / 2).max(1) - base, base)
+}
+
 fn global_hotkeys(game: &mut ClientGame, io: &IoFrame, ctrl: bool) {
-    let base = io.zoom_base as i32;
-    let (zoom_min, zoom_max) = ((base / 2).max(1) - base, base);
     let mut zoom = game.view_prefs.zoom_index;
     if ctrl && io.scroll.abs() > SCROLL_EPSILON && zoom_allowed(game.input.context) {
         zoom += io.scroll.signum() as i32;
     }
-    game.view_prefs.zoom_index = zoom.clamp(zoom_min, zoom_max);
+    game.view_prefs.zoom_index = clamp_zoom(io.zoom_base, zoom);
     if io.keys.just_pressed(SCREENSHOT_KEY) {
         game.effects.push(Effect::Screenshot);
     }
@@ -314,15 +317,24 @@ pub(super) fn flush(game: &mut ClientGame, dt: f32) {
         return;
     }
     let input = &mut game.input;
+    let session = ingame
+        .net
+        .session
+        .as_mut()
+        .filter(|session| session.player().is_some());
+    let Some(session) = session else {
+        input.acc = 0.0;
+        input.actions.clear();
+        input.latched = input.held;
+        return;
+    };
     input.acc = (input.acc + dt).min(MAX_CATCHUP_TICKS * TICK_DT);
     while input.acc >= TICK_DT {
         input.acc -= TICK_DT;
-        if let Some(session) = ingame.net.session.as_mut() {
-            session.send(&ClientMessage::Input(InputFrame {
-                state: input.latched,
-                actions: std::mem::take(&mut input.actions),
-            }));
-        }
+        session.send(&ClientMessage::Input(InputFrame {
+            state: input.latched,
+            actions: std::mem::take(&mut input.actions),
+        }));
         input.latched = input.held;
     }
 }

@@ -14,7 +14,8 @@ use rustc_hash::FxHashSet;
 const ANGLE_STEPS: u32 = 1024;
 const REFERENCE_DENSITY_MILLI: f32 = 1_000_000.0;
 const RELOCATE_RADIUS: i32 = 8;
-const SURFACE_PROBE: i32 = 256;
+const SURFACE_PROBE: i32 = 64;
+const NEIGHBORS: [(i32, i32); 4] = [(0, -1), (-1, 0), (1, 0), (0, 1)];
 
 fn cell_mass(material: MaterialId) -> f32 {
     content::density_milli(material) as f32 / REFERENCE_DENSITY_MILLI
@@ -78,6 +79,26 @@ pub fn wake_covering(bodies: &mut [PixelBody], pos: CellPos) {
             return;
         }
     }
+}
+
+pub fn vacated_wake_targets(
+    world: &CellWorld,
+    covers: &dyn Fn(CellPos) -> bool,
+    vacated: &[CellPos],
+) -> Vec<CellPos> {
+    let mut targets = Vec::new();
+    for &pos in vacated {
+        for (dx, dy) in NEIGHBORS {
+            let neighbor = pos.translated(dx, dy);
+            if covers(neighbor) {
+                continue;
+            }
+            if world.get_cell(neighbor).is_some_and(|cell| cell.is_body()) {
+                targets.push(neighbor);
+            }
+        }
+    }
+    targets
 }
 
 impl PixelBody {

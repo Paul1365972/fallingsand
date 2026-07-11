@@ -19,7 +19,6 @@ pub const fn ticks_from_secs(secs: f32) -> u64 {
 pub const GRID_GRAVITY: f32 = 600.0;
 pub const MAX_HP: f32 = 100.0;
 pub const MAX_AIR_SECS: f32 = 12.0;
-pub const MOON_PHASES: u32 = 8;
 pub const REACH: f32 = 80.0;
 pub const SURVIVAL_REACH: f32 = 48.0;
 pub const BRUSH_RADIUS: u8 = 3;
@@ -32,8 +31,8 @@ pub use chunk::{CHUNK_AREA, CHUNK_SIZE, Chunk, DirtyRect};
 pub use coords::{CellOffset, CellPos, ChunkOffset, ChunkPos, RegionPos};
 pub use fixed::Fixed;
 pub use item::{
-    HOTBAR_SLOTS, IconSpec, Inventory, ItemDef, ItemEntry, ItemId, ItemRegistry, ItemStack,
-    MAIN_SLOTS, MATERIAL_STACK_MAX, PLAYER_SLOTS, Recipe, RecipeRegistry,
+    HOTBAR_SLOTS, IconSpec, Inventory, ItemDef, ItemId, ItemRegistry, ItemStack, MAIN_SLOTS,
+    PLAYER_SLOTS, RecipeRegistry,
 };
 pub use material::{
     Dynamics, Ember, GasDynamics, Ignition, LiquidDynamics, MaterialId, MaterialInfo, Phase,

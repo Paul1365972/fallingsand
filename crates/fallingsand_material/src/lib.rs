@@ -19,19 +19,6 @@ pub enum Phase {
     Gas,
 }
 
-impl Phase {
-    pub fn parse(name: &str) -> Option<Self> {
-        Some(match name {
-            "Empty" => Self::Empty,
-            "Solid" => Self::Solid,
-            "Powder" => Self::Powder,
-            "Liquid" => Self::Liquid,
-            "Gas" => Self::Gas,
-            _ => return None,
-        })
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Tag {
@@ -83,11 +70,6 @@ impl Tags {
     }
 
     #[inline]
-    pub const fn intersects(self, other: Tags) -> bool {
-        self.0 & other.0 != 0
-    }
-
-    #[inline]
     pub const fn union(self, other: Tags) -> Tags {
         Tags(self.0 | other.0)
     }
@@ -112,14 +94,8 @@ pub struct Ember {
     pub burn: u64,
     pub emit: u64,
     pub residue: Option<(u64, MaterialId)>,
-    pub base: Option<MaterialId>,
-}
-
-impl Ember {
-    #[inline]
-    pub const fn is_flame(&self) -> bool {
-        self.base.is_none()
-    }
+    pub burnout: MaterialId,
+    pub flame: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -178,16 +154,6 @@ pub fn per_tick_chance(rate: f32) -> f32 {
 
 pub fn per_tick_keep(rate: f32) -> f32 {
     (-rate * (1.0 / TICK_RATE as f32)).exp()
-}
-
-pub fn chance_threshold(chance: f32) -> u64 {
-    if chance.is_nan() || chance <= 0.0 {
-        return 0;
-    }
-    if chance >= 1.0 {
-        return u64::MAX;
-    }
-    (f64::from(chance) * 2f64.powi(64)) as u64
 }
 
 pub fn q16(value: f32) -> u32 {

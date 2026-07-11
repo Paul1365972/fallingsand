@@ -217,6 +217,11 @@ impl WorldGenerator {
         self.terrain.surface_height(&self.def, x)
     }
 
+    pub fn location_names(&self, x: i32, y: i32) -> (&'static str, &'static str) {
+        let biome_index = self.terrain.biome_at(self.def.biomes.len(), x);
+        (self.def.biomes[biome_index].name, self.band_at(x, y).name)
+    }
+
     fn band_at(&self, x: i32, y: i32) -> &Band {
         for (index, band) in self.def.bands.iter().enumerate() {
             let Some(floor) = band.floor else {

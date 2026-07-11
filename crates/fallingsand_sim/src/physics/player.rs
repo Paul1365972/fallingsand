@@ -9,7 +9,6 @@ use fallingsand_core::{CellPos, Fixed, Phase, TICK_DT};
 
 const MIN_GRIP: f32 = 0.06;
 const COYOTE_SECS: f32 = 0.1;
-const DUCK_STEP_SECS: f32 = 0.016;
 const BUFFER_SECS: f32 = 0.1;
 const VAR_JUMP_TIME: f32 = 0.2;
 const CEILING_VAR_JUMP_GRACE: f32 = 0.15;
@@ -73,7 +72,6 @@ pub struct Controller {
     var_jump_timer: f32,
     var_jump_speed: Fixed,
     max_fall: Fixed,
-    duck_step: f32,
 }
 
 fn approach(value: Fixed, target: Fixed, delta: Fixed) -> Fixed {
@@ -129,7 +127,6 @@ pub fn step_player<W: CellSource>(
         (ctrl.coyote - TICK_DT).max(0.0)
     };
     ctrl.var_jump_timer = (ctrl.var_jump_timer - TICK_DT).max(0.0);
-    ctrl.duck_step = (ctrl.duck_step - TICK_DT).max(0.0);
 
     let move_x = input.move_x.clamp(-1, 1) as i32;
     let submersion = ring_submersion(world, body);
@@ -160,7 +157,7 @@ fn fly_update<W: CellSource>(
     ctrl.buffer = 0.0;
     ctrl.coyote = 0.0;
     ctrl.var_jump_timer = 0.0;
-    step_height(world, body, ctrl, STAND_ROWS as i32);
+    step_height(world, body, STAND_ROWS as i32);
     let move_y = jump_held as i32 - down_held as i32;
     body.vx = approach(body.vx, params.fly_max.mul_int(move_x), params.fly_accel);
     body.vy = approach(body.vy, params.fly_max.mul_int(move_y), params.fly_accel);
@@ -183,7 +180,7 @@ fn normal_update<W: CellSource>(
     } else {
         STAND_ROWS as i32
     };
-    step_height(world, body, ctrl, target_rows);
+    step_height(world, body, target_rows);
 
     let grip = if body.on_ground {
         Fixed::from_f32(ground_grip(world, body))
@@ -312,14 +309,9 @@ fn jump(params: &PlayerParams, body: &mut Actor, ctrl: &mut Controller, move_x: 
     ctrl.var_jump_speed = body.vy;
 }
 
-fn step_height<W: CellSource>(
-    world: &W,
-    body: &mut Actor,
-    ctrl: &mut Controller,
-    target_rows: i32,
-) {
+fn step_height<W: CellSource>(world: &W, body: &mut Actor, target_rows: i32) {
     let rows = body.rows();
-    if rows == target_rows || ctrl.duck_step > 0.0 {
+    if rows == target_rows {
         return;
     }
     let next = if target_rows > rows {
@@ -337,5 +329,4 @@ fn step_height<W: CellSource>(
     }
     body.y += Fixed::from_int(next / 2 - rows / 2);
     body.half_h = Fixed::from_int(next).mul(Fixed::HALF);
-    ctrl.duck_step = DUCK_STEP_SECS;
 }

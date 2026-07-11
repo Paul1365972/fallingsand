@@ -20,6 +20,7 @@ pub fn replicate(
     sim: Res<SimWorld>,
     clock: Res<crate::WorldClock>,
     regions: Res<crate::regions::RegionMap>,
+    generator: Res<crate::regions::Generator>,
     mut last_players: ResMut<LastPlayers>,
     mut stats: ResMut<TickStats>,
     query: Query<(
@@ -97,13 +98,18 @@ pub fn replicate(
             Ok(mut inv) => inv.delta(session.fresh),
             Err(_) => (Vec::new(), None, None),
         };
+        let (biome, band) = generator
+            .0
+            .location_names(body.0.x.floor_cell(), body.0.y.floor_cell());
         let current_self = SelfState {
             hp: health.hp,
             air: air.secs,
             mode: mode.0,
+            biome: biome.into(),
+            band: band.into(),
         };
-        let self_state = if session.last_self != Some(current_self) {
-            session.last_self = Some(current_self);
+        let self_state = if session.last_self.as_ref() != Some(&current_self) {
+            session.last_self = Some(current_self.clone());
             Some(current_self)
         } else {
             None

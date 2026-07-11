@@ -13,7 +13,7 @@ fallingsand_server    # Authoritative server: library + dedicated binary
 fallingsand_client    # Plain-Rust game core + bevy IO shell (game/ vs view/); builds native + WASM
 ```
 
-Direction: `material ← {macros, core}`, `macros ← core ← {sim, worldgen, server, client}`, `core ← sim ← server`, `core ← protocol ← {server, client}`; the client reaches the sim only through the embedded server. `fallingsand_material` is the single source of truth the proc macro and the runtime share (enums, content structs, `TICK_RATE`, quantization); `core::material` re-exports it.
+Direction: `material ← {macros, core}`, `rng ← {macros, sim, worldgen, client}`, `macros ← {core, sim}`, `core ← {sim, worldgen, server, client}`, `core ← sim ← server`, `core ← protocol ← {server, client}`; the client reaches the sim only through the embedded server. `fallingsand_material` is the single source of truth the proc macro and the runtime share (enums, content structs, `TICK_RATE`, quantization); `core::material` re-exports it.
 
 - **Content is compiled in**: definition files under `fallingsand_core/content/` feed the single `content!` invocation in `core::content`, which emits id handles, exhaustive-match accessors, and per-material `MatSpec` types — no runtime name lookup, no registry object. See [WorldModel.md](WorldModel.md).
 - **Client stays WASM-clean** — the browser build is join-only; rayon, storage, and the embedded server compile out for wasm. CI builds the client for `wasm32-unknown-unknown`.

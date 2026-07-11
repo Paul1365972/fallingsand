@@ -31,8 +31,7 @@ fn expand_per_tick_threshold(
     input: proc_macro2::TokenStream,
 ) -> syn::Result<proc_macro2::TokenStream> {
     let rate = syn::parse2::<syn::LitFloat>(input)?.base10_parse::<f32>()?;
-    let threshold =
-        fallingsand_material::chance_threshold(fallingsand_material::per_tick_chance(rate));
+    let threshold = fallingsand_rng::chance_threshold(fallingsand_material::per_tick_chance(rate));
     let literal = proc_macro2::Literal::u64_suffixed(threshold);
     Ok(quote::quote!(#literal))
 }

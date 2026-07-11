@@ -29,6 +29,8 @@ pub enum WireError {
     TooLarge(usize),
     #[error("cell payload has invalid length {0}")]
     BadCellPayload(usize),
+    #[error("invalid material id {0}")]
+    InvalidMaterial(u16),
 }
 
 pub fn encode_message<T: Serialize>(message: &T) -> Vec<u8> {
@@ -70,14 +72,18 @@ fn cell_entry(cell: Cell) -> [u8; CELL_WIRE_BYTES] {
     [material[0], material[1], cell.shade_flags]
 }
 
-fn entry_cell(entry: &[u8]) -> Cell {
-    Cell {
-        material: MaterialId(u16::from_le_bytes([entry[0], entry[1]])),
+fn entry_cell(entry: &[u8]) -> Result<Cell, WireError> {
+    let material = u16::from_le_bytes([entry[0], entry[1]]);
+    if material as usize >= fallingsand_core::content::MATERIAL_COUNT {
+        return Err(WireError::InvalidMaterial(material));
+    }
+    Ok(Cell {
+        material: MaterialId(material),
         vx: 0,
         vy: 0,
         shade_flags: entry[2],
         updated: 0,
-    }
+    })
 }
 
 fn index_bits(palette_len: usize) -> u32 {
@@ -155,7 +161,7 @@ pub fn cells_from_wire(bytes: &[u8], count: usize) -> Result<Vec<Cell>, WireErro
             if payload.len() != CELL_WIRE_BYTES {
                 return Err(bad());
             }
-            Ok(vec![entry_cell(payload); count])
+            Ok(vec![entry_cell(payload)?; count])
         }
         CELLS_PALETTE => {
             let (&len_minus_one, rest) = payload.split_first().ok_or_else(bad)?;
@@ -173,7 +179,7 @@ pub fn cells_from_wire(bytes: &[u8], count: usize) -> Result<Vec<Cell>, WireErro
             let palette: Vec<Cell> = palette_bytes
                 .chunks_exact(CELL_WIRE_BYTES)
                 .map(entry_cell)
-                .collect();
+                .collect::<Result<_, _>>()?;
             let mask = (1u32 << bits) - 1;
             let mut cells = Vec::with_capacity(count);
             let mut acc: u32 = 0;
@@ -198,10 +204,10 @@ pub fn cells_from_wire(bytes: &[u8], count: usize) -> Result<Vec<Cell>, WireErro
             if payload.len() != count * CELL_WIRE_BYTES {
                 return Err(bad());
             }
-            Ok(payload
+            payload
                 .chunks_exact(CELL_WIRE_BYTES)
                 .map(entry_cell)
-                .collect())
+                .collect()
         }
         _ => Err(bad()),
     }
