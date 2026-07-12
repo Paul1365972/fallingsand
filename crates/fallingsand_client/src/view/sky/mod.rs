@@ -7,8 +7,10 @@ pub use materials::{LightingMaterial, LightingParams};
 
 use super::Game;
 use super::camera::{
-    CameraState, L_SKY, L_STAR, LayerCamera, SKY_LAYER, STAR_LAYER, STAR_WORLD_TILE, layer_camera,
+    CameraState, CompositeCamera, L_SKY, L_STAR, LayerCamera, SKY_LAYER, STAR_LAYER,
+    STAR_WORLD_TILE, layer_camera,
 };
+use crate::game::RenderMode;
 use bevy::camera::visibility::RenderLayers;
 use bevy::image::{
     ImageAddressMode, ImageFilterMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor,
@@ -81,9 +83,11 @@ pub fn setup_sky(
     asset_server: Res<AssetServer>,
     shared: Res<super::chunks::RenderShared>,
     cameras: Query<(Entity, &LayerCamera)>,
+    composite: Single<Entity, With<CompositeCamera>>,
 ) {
     let sky_camera = layer_camera(&cameras, L_SKY).expect("layer cameras exist");
     let star_camera = layer_camera(&cameras, L_STAR).expect("layer cameras exist");
+    let composite_camera = *composite;
     let quad = shared.quad.clone();
     let sun = sun_mats.add(SunMaterial {
         params: SunParams::default(),
@@ -129,19 +133,19 @@ pub fn setup_sky(
             RenderLayers::layer(SKY_LAYER),
             Visibility::Hidden,
         ));
+    });
+    commands.entity(composite_camera).with_children(|parent| {
         parent.spawn((
             SunVisual,
             Mesh2d(quad.clone()),
             MeshMaterial2d(sun.clone()),
-            Transform::from_xyz(0.0, -1000.0, -50.0),
-            RenderLayers::layer(SKY_LAYER),
+            Transform::from_xyz(0.0, -1000.0, -45.5),
         ));
         parent.spawn((
             MoonVisual,
             Mesh2d(quad.clone()),
             MeshMaterial2d(moon.clone()),
-            Transform::from_xyz(0.0, -1000.0, -49.0),
-            RenderLayers::layer(SKY_LAYER),
+            Transform::from_xyz(0.0, -1000.0, -45.0),
         ));
     });
     commands.insert_resource(SkyAssets {
@@ -204,10 +208,7 @@ pub fn sync_sky(
         let sun_altitude = celestial.sun_altitude;
         let solar_occlusion = celestial.solar_occlusion;
 
-        let moon_size = ((MOON_SIZE * celestial.moon_radius_scale) / 2.0)
-            .round()
-            .max(1.0)
-            * 2.0;
+        let moon_size = (MOON_SIZE * celestial.moon_radius_scale).round().max(1.0);
         let world_to_moon_uv = 2.0 / moon_size;
         let umbra = (shade_position - moon_position) * world_to_moon_uv;
         let umbra_radius = SHADE_DISC_RADIUS * ORBIT_RADIUS * world_to_moon_uv;
@@ -217,9 +218,16 @@ pub fn sync_sky(
         sky.state = celestial;
         sky.color_linear = Vec3::new(linear.red, linear.green, linear.blue);
 
+        let k = state.k as f32;
+        let place = |p: Vec2| match game.0.settings.render_mode {
+            RenderMode::PixelPerfect => (p * k).round(),
+            RenderMode::Smooth => p * k,
+            RenderMode::Retro => p.round() * k,
+        };
+
         if let Ok((mut transform, mut visibility)) = quads.p0().single_mut() {
-            transform.translation = (sun_position + center).round().extend(-50.0);
-            transform.scale = Vec3::new(SUN_SIZE, SUN_SIZE, 1.0);
+            transform.translation = place(sun_position + center).extend(-45.5);
+            transform.scale = Vec3::new(SUN_SIZE * k, SUN_SIZE * k, 1.0);
             *visibility = Visibility::Inherited;
         }
         if let Some(mut material) = sun_mats.get_mut(&assets.sun) {
@@ -228,8 +236,8 @@ pub fn sync_sky(
         }
 
         if let Ok((mut transform, mut visibility)) = quads.p1().single_mut() {
-            transform.translation = (moon_position + center).round().extend(-49.0);
-            transform.scale = Vec3::new(moon_size, moon_size, 1.0);
+            transform.translation = place(moon_position + center).extend(-45.0);
+            transform.scale = Vec3::new(moon_size * k, moon_size * k, 1.0);
             *visibility = Visibility::Inherited;
         }
         if let Some(mut material) = moon_mats.get_mut(&assets.moon) {
@@ -238,6 +246,7 @@ pub fn sync_sky(
             material.params.umbra = umbra;
             material.params.umbra_radius = umbra_radius;
             material.params.sky_color = sky.color_linear.extend(celestial.daylight);
+            material.params.quad_size = moon_size;
         }
 
         clear.0 = Color::srgb(color.x, color.y, color.z);

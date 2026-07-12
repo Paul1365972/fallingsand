@@ -6,19 +6,27 @@ struct MoonParams {
     umbra: vec2<f32>,
     umbra_radius: f32,
     sky_color: vec4<f32>,
+    quad_size: f32,
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: MoonParams;
 @group(#{MATERIAL_BIND_GROUP}) @binding(1) var tex: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(2) var tex_sampler: sampler;
 
+const DISC_RADIUS: f32 = 0.92;
+
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-    let sample = textureSample(tex, tex_sampler, in.uv);
-    let dims = vec2<f32>(textureDimensions(tex));
-    let snapped = (floor(in.uv * dims) + vec2<f32>(0.5, 0.5)) / dims;
-    let p = vec2<f32>(snapped.x - 0.5, 0.5 - snapped.y) * 2.0;
-    let surface = sample.rgb;
+    let n = params.quad_size;
+    let grid = (floor(in.uv * n) + vec2<f32>(0.5, 0.5)) / n;
+    let p = vec2<f32>(grid.x - 0.5, 0.5 - grid.y) * 2.0;
+    let px = 2.0 / n;
+
+    let d = length(p);
+    let cover = clamp((DISC_RADIUS - d) / px + 0.5, 0.0, 1.0);
+    let inner = p * (min(d, DISC_RADIUS - 0.5 * px) / max(d, 1e-5));
+    let suv = vec2<f32>(inner.x * 0.5 + 0.5, 0.5 - inner.y * 0.5);
+    let surface = textureSample(tex, tex_sampler, suv).rgb;
 
     let s = normalize(params.sun_direction + vec2<f32>(1e-5, 0.0));
     let sp = vec2<f32>(-s.y, s.x);
@@ -26,11 +34,10 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let perp = dot(p, sp);
     let hw = sqrt(max(0.81 - perp * perp, 0.0));
     let term = (1.0 - 2.0 * params.illumination) * hw;
-    let texel = 2.0 / dims.x;
-    let lit = smoothstep(-0.5 * texel, 0.5 * texel, along - term);
+    let lit = smoothstep(-0.5 * px, 0.5 * px, along - term);
 
     let ud = length(p - params.umbra);
-    let shade = 1.0 - smoothstep(-0.5 * texel, 0.5 * texel, ud - params.umbra_radius);
+    let shade = 1.0 - smoothstep(-0.5 * px, 0.5 * px, ud - params.umbra_radius);
     let pen = 1.0 - smoothstep(params.umbra_radius, params.umbra_radius + 1.1, ud);
     let core = smoothstep(0.1, 1.2, params.umbra_radius - ud);
     let luma = dot(surface, vec3<f32>(0.333, 0.334, 0.333));
@@ -49,5 +56,5 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let col = mix(night_col, day_col, params.sky_color.a)
         + params.sky_color.rgb * (1.0 - 0.75 * shade);
-    return vec4<f32>(col, sample.a);
+    return vec4<f32>(col, cover);
 }

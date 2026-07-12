@@ -90,6 +90,7 @@ pub struct MoonParams {
     pub umbra: Vec2,
     pub umbra_radius: f32,
     pub sky_color: Vec4,
+    pub quad_size: f32,
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
