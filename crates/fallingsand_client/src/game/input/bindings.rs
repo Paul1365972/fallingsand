@@ -10,6 +10,7 @@ pub enum Context {
     Inventory,
     Chat,
     Paused,
+    Settings,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -33,6 +34,7 @@ pub enum Action {
     SubmitChat,
     Resume,
     CancelConnect,
+    CloseSettings,
     Screenshot,
     ToggleFullscreen,
     ZoomIn,
@@ -40,7 +42,6 @@ pub enum Action {
     ToggleDebugOverlay,
     ToggleDebugBorders,
     CycleGameMode,
-    CycleRenderMode,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -103,6 +104,7 @@ pub struct Bindings {
     pub inventory: Layer,
     pub chat: Layer,
     pub paused: Layer,
+    pub settings: Layer,
 }
 
 impl Bindings {
@@ -114,6 +116,7 @@ impl Bindings {
             Context::Inventory => &self.inventory,
             Context::Chat => &self.chat,
             Context::Paused => &self.paused,
+            Context::Settings => &self.settings,
         }
     }
 }
@@ -236,11 +239,6 @@ impl Default for Bindings {
                     KeyCode::KeyN,
                     Action::CycleGameMode,
                 ),
-                chord(
-                    Modifier::Key(KeyCode::F3),
-                    KeyCode::KeyR,
-                    Action::CycleRenderMode,
-                ),
                 tap(KeyCode::F3, Action::ToggleDebugOverlay),
             ]),
             menu: opaque(Vec::new()),
@@ -249,6 +247,7 @@ impl Default for Bindings {
             inventory: opaque(inventory),
             chat: opaque(chat),
             paused: opaque(vec![bind(KeyCode::Escape, Action::Resume)]),
+            settings: opaque(vec![bind(KeyCode::Escape, Action::CloseSettings)]),
         }
     }
 }

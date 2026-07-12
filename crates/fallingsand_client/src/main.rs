@@ -108,6 +108,7 @@ fn main() {
             view::particles::update_particles,
             view::ui::menu::sync_menu,
             view::ui::pause::sync_pause,
+            view::ui::settings::sync_settings,
             view::ui::connscreen::sync_connscreen,
             view::ui::hud::sync_hud,
             view::ui::hud::patch_hud_slots,

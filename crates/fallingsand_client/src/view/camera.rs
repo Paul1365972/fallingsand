@@ -415,7 +415,7 @@ pub fn sync_camera(
             Vec2::ZERO
         };
         let raw = remainder_px + drift_px;
-        let offset = match game.0.view_prefs.render_mode {
+        let offset = match game.0.settings.render_mode {
             RenderMode::PixelPerfect => -raw.round(),
             RenderMode::Smooth => -raw,
             RenderMode::Retro => Vec2::ZERO,

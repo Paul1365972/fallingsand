@@ -80,8 +80,8 @@ impl InputCore {
     }
 }
 
-fn context_stack(flow: &Flow) -> Vec<Context> {
-    match flow {
+fn context_stack(game: &ClientGame) -> Vec<Context> {
+    let mut stack = match &game.flow {
         Flow::Menu => vec![Context::Menu],
         Flow::InGame(ingame) => match ingame.phase {
             Phase::Connecting => vec![Context::Connecting],
@@ -95,7 +95,11 @@ fn context_stack(flow: &Flow) -> Vec<Context> {
                 stack
             }
         },
+    };
+    if game.settings_open {
+        stack.push(Context::Settings);
     }
+    stack
 }
 
 fn visible_layers<'a>(bindings: &'a Bindings, stack: &[Context]) -> Vec<&'a Layer> {
@@ -121,7 +125,7 @@ fn push_unique(fired: &mut Vec<Action>, action: Action) {
 }
 
 pub(super) fn resolve(game: &mut ClientGame, io: &IoFrame) {
-    let stack = context_stack(&game.flow);
+    let stack = context_stack(game);
     let gameplay = stack.last() == Some(&Context::Gameplay);
 
     {
@@ -344,6 +348,7 @@ fn apply(game: &mut ClientGame, io: &IoFrame, action: Action) {
             }
         }
         Action::CancelConnect => game.leave_game(),
+        Action::CloseSettings => game.settings_open = false,
         Action::Screenshot => game.effects.push(Effect::Screenshot),
         Action::ToggleFullscreen => game.toggle_fullscreen(),
         Action::ZoomIn => game.view_prefs.zoom_index += 1,
@@ -368,7 +373,6 @@ fn apply(game: &mut ClientGame, io: &IoFrame, action: Action) {
                 });
             }
         }
-        Action::CycleRenderMode => game.cycle_render_mode(),
     }
 }
 

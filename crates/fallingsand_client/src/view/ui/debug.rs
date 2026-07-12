@@ -394,7 +394,7 @@ fn playing_lines(
         windows.uploads.rate(now, visuals.uploads as f32),
         human_bytes(windows.upload_bytes.rate(now, visuals.upload_bytes as f32) as u64),
         camera.k,
-        game.view_prefs.render_mode.label()
+        game.settings.render_mode.label()
     ));
 
     if embedded {

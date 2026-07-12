@@ -53,6 +53,10 @@ pub enum Btn {
     Connect,
     ToggleFullscreen,
     ToggleVsync,
+    CycleRenderMode,
+    CycleUiScale,
+    OpenSettings,
+    SettingsBack,
     QuitApp,
     PauseResume,
     PauseSave,
@@ -101,6 +105,10 @@ pub fn collect_ui_events(
             Btn::Delete(world) => inbox.0.push(UiEvent::DeleteWorld(world.clone())),
             Btn::ToggleFullscreen => inbox.0.push(UiEvent::ToggleFullscreen),
             Btn::ToggleVsync => inbox.0.push(UiEvent::ToggleVsync),
+            Btn::CycleRenderMode => inbox.0.push(UiEvent::CycleRenderMode),
+            Btn::CycleUiScale => inbox.0.push(UiEvent::CycleUiScale),
+            Btn::OpenSettings => inbox.0.push(UiEvent::OpenSettings),
+            Btn::SettingsBack => inbox.0.push(UiEvent::CloseSettings),
             Btn::QuitApp => inbox.0.push(UiEvent::QuitApp),
             Btn::PauseResume => inbox.0.push(UiEvent::PauseResume),
             Btn::PauseSave => inbox.0.push(UiEvent::PauseSave),
@@ -135,6 +143,7 @@ pub fn drive_game(
     mut wheel: MessageReader<MouseWheel>,
     camera_state: Res<CameraState>,
     mut window: Single<&mut Window, With<PrimaryWindow>>,
+    mut ui_scale: ResMut<UiScale>,
     interactions: Query<&Interaction>,
     chat_input: Query<&EditableText, With<ChatInput>>,
     mut commands: Commands,
@@ -189,6 +198,7 @@ pub fn drive_game(
                 } else {
                     PresentMode::AutoNoVsync
                 };
+                ui_scale.0 = settings.ui_scale as f32 / 100.0;
             }
             Effect::Quit => {
                 exit.write(AppExit::Success);

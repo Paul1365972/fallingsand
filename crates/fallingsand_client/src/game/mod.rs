@@ -24,40 +24,15 @@ use settings::Settings;
 use std::sync::Arc;
 use world::WorldView;
 
+pub use settings::RenderMode;
+
 pub struct Registries {
     pub items: Arc<ItemRegistry>,
     pub recipes: Arc<RecipeRegistry>,
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
-pub enum RenderMode {
-    #[default]
-    PixelPerfect,
-    Smooth,
-    Retro,
-}
-
-impl RenderMode {
-    pub fn label(self) -> &'static str {
-        match self {
-            RenderMode::PixelPerfect => "pixel-perfect",
-            RenderMode::Smooth => "smooth",
-            RenderMode::Retro => "retro",
-        }
-    }
-
-    fn cycled(self) -> Self {
-        match self {
-            RenderMode::PixelPerfect => RenderMode::Smooth,
-            RenderMode::Smooth => RenderMode::Retro,
-            RenderMode::Retro => RenderMode::PixelPerfect,
-        }
-    }
-}
-
 pub struct ViewPrefs {
     pub zoom_index: i32,
-    pub render_mode: RenderMode,
     pub debug_overlay: bool,
     pub debug_borders: bool,
 }
@@ -66,7 +41,6 @@ impl Default for ViewPrefs {
     fn default() -> Self {
         Self {
             zoom_index: 0,
-            render_mode: RenderMode::default(),
             debug_overlay: true,
             debug_borders: false,
         }
@@ -104,6 +78,10 @@ pub enum UiEvent {
     Connect { url: String, cert_hex: String },
     ToggleFullscreen,
     ToggleVsync,
+    CycleRenderMode,
+    CycleUiScale,
+    OpenSettings,
+    CloseSettings,
     QuitApp,
     PauseResume,
     PauseSave,
@@ -233,6 +211,7 @@ pub struct ClientGame {
     pub bindings: Bindings,
     pub input: InputCore,
     pub view_prefs: ViewPrefs,
+    pub settings_open: bool,
     pub changes: Changes,
     pub effects: Vec<Effect>,
 }
@@ -247,6 +226,7 @@ impl ClientGame {
             bindings: Bindings::default(),
             input: InputCore::default(),
             view_prefs: ViewPrefs::default(),
+            settings_open: false,
             changes: Changes::default(),
             effects: vec![Effect::ApplyWindow],
         }
@@ -317,6 +297,16 @@ impl ClientGame {
                 self.settings.vsync = !self.settings.vsync;
                 self.apply_settings();
             }
+            UiEvent::CycleRenderMode => {
+                self.settings.cycle_render_mode();
+                self.apply_settings();
+            }
+            UiEvent::CycleUiScale => {
+                self.settings.cycle_ui_scale();
+                self.apply_settings();
+            }
+            UiEvent::OpenSettings => self.settings_open = true,
+            UiEvent::CloseSettings => self.settings_open = false,
             UiEvent::QuitApp => self.effects.push(Effect::Quit),
             UiEvent::PauseResume => {
                 if let Flow::InGame(ingame) = &mut self.flow {
@@ -373,6 +363,7 @@ impl ClientGame {
     #[cfg_attr(target_family = "wasm", allow(dead_code))]
     fn enter_game(&mut self, net: Net) {
         self.input.reset();
+        self.settings_open = false;
         self.flow = Flow::InGame(Box::new(InGame::new(net)));
     }
 
@@ -386,11 +377,8 @@ impl ClientGame {
         self.menu.rescan();
         self.changes.worlds = true;
         self.input.reset();
+        self.settings_open = false;
         self.view_prefs.zoom_index = 0;
-    }
-
-    pub(crate) fn cycle_render_mode(&mut self) {
-        self.view_prefs.render_mode = self.view_prefs.render_mode.cycled();
     }
 
     pub(crate) fn player_pos(&self) -> Option<Vec2> {

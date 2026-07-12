@@ -56,6 +56,7 @@ fn spawn_pause_menu(commands: &mut Commands, singleplayer: bool) {
                 },
             ));
             spawn_button(parent, Btn::PauseResume, "Resume", 240.0, BUTTON_BG);
+            spawn_button(parent, Btn::OpenSettings, "Settings", 240.0, BUTTON_BG);
             if singleplayer {
                 spawn_button(parent, Btn::PauseSave, "Save World", 240.0, BUTTON_BG);
             }

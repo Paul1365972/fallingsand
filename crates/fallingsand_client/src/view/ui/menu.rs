@@ -31,15 +31,12 @@ const FIELD_BG: Color = Color::srgb(0.09, 0.1, 0.15);
 #[cfg_attr(target_family = "wasm", allow(dead_code))]
 const PANEL_BG: Color = Color::srgb(0.07, 0.08, 0.12);
 
-#[allow(clippy::too_many_arguments)]
 pub fn sync_menu(
     mut commands: Commands,
     game: Res<Game>,
     roots: Query<Entity, With<MenuRoot>>,
     panel: Query<Entity, With<WorldsPanel>>,
     rows: Query<Entity, With<WorldRow>>,
-    toggles: Query<(&Btn, &Children)>,
-    mut texts: Query<&mut Text>,
 ) {
     let active = matches!(game.0.flow, Flow::Menu);
     if !active {
@@ -63,36 +60,12 @@ pub fn sync_menu(
             spawn_world_rows(panel, &game.0);
         });
     }
-
-    if game.0.changes.settings {
-        for (button, children) in &toggles {
-            let label = match button {
-                Btn::ToggleFullscreen => fullscreen_label(game.0.settings.fullscreen),
-                Btn::ToggleVsync => vsync_label(game.0.settings.vsync),
-                _ => continue,
-            };
-            for &child in children {
-                if let Ok(mut text) = texts.get_mut(child) {
-                    **text = label.clone();
-                }
-            }
-        }
-    }
-}
-
-fn fullscreen_label(on: bool) -> String {
-    format!("Fullscreen: {}", if on { "on" } else { "off" })
-}
-
-fn vsync_label(on: bool) -> String {
-    format!("VSync: {}", if on { "on" } else { "off" })
 }
 
 fn spawn_menu(commands: &mut Commands, game: &ClientGame) {
     let player_name = identity::load_or_create().name;
-    let settings = &game.settings;
     #[cfg(target_family = "wasm")]
-    let _ = settings;
+    let _ = game;
     commands
         .spawn((
             MenuRoot,
@@ -131,29 +104,6 @@ fn spawn_menu(commands: &mut Commands, game: &ClientGame) {
                 })
                 .with_children(|column| {
                     spawn_field(column, PlayerNameField, "name", 220.0, &player_name);
-                    #[cfg(not(target_family = "wasm"))]
-                    column
-                        .spawn(Node {
-                            flex_direction: FlexDirection::Row,
-                            column_gap: px(6),
-                            ..default()
-                        })
-                        .with_children(|row| {
-                            spawn_button(
-                                row,
-                                Btn::ToggleFullscreen,
-                                &fullscreen_label(settings.fullscreen),
-                                160.0,
-                                BUTTON_BG,
-                            );
-                            spawn_button(
-                                row,
-                                Btn::ToggleVsync,
-                                &vsync_label(settings.vsync),
-                                160.0,
-                                BUTTON_BG,
-                            );
-                        });
                 });
 
             #[cfg(not(target_family = "wasm"))]
@@ -208,6 +158,7 @@ fn spawn_menu(commands: &mut Commands, game: &ClientGame) {
                     spawn_button(column, Btn::Connect, "Connect", 120.0, BUTTON_BG);
                 });
 
+            spawn_button(parent, Btn::OpenSettings, "Settings", 220.0, BUTTON_BG);
             #[cfg(not(target_family = "wasm"))]
             spawn_button(parent, Btn::QuitApp, "Quit", 220.0, BUTTON_BG);
         });

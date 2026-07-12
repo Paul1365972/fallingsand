@@ -5,6 +5,7 @@ pub mod hud;
 pub mod inventory;
 pub mod menu;
 pub mod pause;
+pub mod settings;
 
 use super::io::Btn;
 use bevy::prelude::*;
