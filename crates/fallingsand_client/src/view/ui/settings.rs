@@ -34,6 +34,7 @@ pub fn sync_settings(
                 Btn::ToggleVsync => vsync_label(game.0.settings.vsync),
                 Btn::CycleRenderMode => render_mode_label(&game.0),
                 Btn::CycleUiScale => game.0.settings.ui_scale_label(),
+                Btn::CycleCursorMode => game.0.settings.cursor_mode_label(),
                 _ => continue,
             };
             for &child in children {
@@ -115,6 +116,13 @@ fn spawn_settings(commands: &mut Commands, game: &ClientGame) {
                 parent,
                 Btn::CycleUiScale,
                 &settings.ui_scale_label(),
+                260.0,
+                BUTTON_BG,
+            );
+            spawn_button(
+                parent,
+                Btn::CycleCursorMode,
+                &settings.cursor_mode_label(),
                 260.0,
                 BUTTON_BG,
             );

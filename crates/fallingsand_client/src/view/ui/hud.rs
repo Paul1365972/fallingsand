@@ -36,6 +36,13 @@ pub(crate) struct DeathScreen;
 #[derive(Component)]
 pub(crate) struct HotbarSlot(usize);
 
+#[derive(Component)]
+pub(crate) struct CursorModeLabel;
+
+fn cursor_mode_text(game: &ClientGame) -> String {
+    format!("[Ctrl] Cursor: {}", game.settings.cursor_mode.label())
+}
+
 pub fn sync_hud(mut commands: Commands, game: Res<Game>, roots: Query<Entity, With<HudRoot>>) {
     let should_exist = game.0.playing().is_some();
     let exists = !roots.is_empty();
@@ -76,6 +83,18 @@ pub fn patch_hud_slots(
         &mut counts,
         &mut glyphs,
     );
+}
+
+pub fn sync_cursor_hud(game: Res<Game>, mut label: Query<&mut Text, With<CursorModeLabel>>) {
+    if !game.0.changes.settings {
+        return;
+    }
+    let value = cursor_mode_text(&game.0);
+    for mut text in &mut label {
+        if **text != value {
+            **text = value.clone();
+        }
+    }
 }
 
 pub fn sync_death_screen(game: Res<Game>, mut death: Query<&mut Node, With<DeathScreen>>) {
@@ -301,6 +320,24 @@ fn spawn_hud(commands: &mut Commands, game: &ClientGame) {
             BackgroundColor(Color::srgb(0.35, 0.65, 0.95)),
             Pickable::IGNORE,
         ));
+
+    commands.spawn((
+        HudRoot,
+        CursorModeLabel,
+        Text::new(cursor_mode_text(game)),
+        TextFont {
+            font_size: FontSize::Px(12.0),
+            ..default()
+        },
+        TextColor(Color::srgba(0.9, 0.9, 0.95, 0.7)),
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: px(10),
+            right: px(12),
+            ..default()
+        },
+        Pickable::IGNORE,
+    ));
 
     commands.spawn((
         HudRoot,

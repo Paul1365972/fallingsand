@@ -173,6 +173,7 @@ fn sample(game: &mut ClientGame, io: &IoFrame, gameplay: bool) {
         state.down = held(Action::Duck);
         state.primary = held(Action::Primary) && !game.input.blocked_primary;
         state.secondary = held(Action::Secondary) && !game.input.blocked_secondary;
+        state.cursor_mode = game.settings.cursor_mode;
     }
     game.input.held = state;
     game.input.latched.merge_or(state);
@@ -364,6 +365,11 @@ fn apply(game: &mut ClientGame, io: &IoFrame, action: Action) {
         }
         Action::ToggleDebugBorders => {
             game.view_prefs.debug_borders = !game.view_prefs.debug_borders;
+        }
+        Action::ToggleCursorMode => {
+            game.settings.cycle_cursor_mode();
+            super::settings::save(&game.settings);
+            game.changes.settings = true;
         }
         Action::CycleGameMode => {
             if let Flow::InGame(ingame) = &mut game.flow

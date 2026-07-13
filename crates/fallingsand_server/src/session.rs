@@ -439,6 +439,7 @@ pub fn drain_network(
         if tick.saturating_sub(player.last_input_tick) > INPUT_HOLD_TICKS {
             player.input = InputState {
                 aim: player.input.aim,
+                cursor_mode: player.input.cursor_mode,
                 ..Default::default()
             };
         }

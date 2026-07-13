@@ -81,6 +81,7 @@ pub enum UiEvent {
     ToggleVsync,
     CycleRenderMode,
     CycleUiScale,
+    CycleCursorMode,
     OpenSettings,
     CloseSettings,
     QuitApp,
@@ -309,6 +310,11 @@ impl ClientGame {
             UiEvent::CycleUiScale => {
                 self.settings.cycle_ui_scale();
                 self.apply_settings();
+            }
+            UiEvent::CycleCursorMode => {
+                self.settings.cycle_cursor_mode();
+                settings::save(&self.settings);
+                self.changes.settings = true;
             }
             UiEvent::OpenSettings => self.settings_open = true,
             UiEvent::CloseSettings => self.settings_open = false,

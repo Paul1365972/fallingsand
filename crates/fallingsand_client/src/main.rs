@@ -115,6 +115,7 @@ fn main() {
                 view::ui::hud::sync_hud,
                 view::ui::hud::patch_hud_slots,
                 view::ui::hud::hud_status,
+                view::ui::hud::sync_cursor_hud,
                 view::ui::hud::sync_death_screen,
             ),
             view::ui::inventory::sync_overlay,

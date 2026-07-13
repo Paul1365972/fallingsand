@@ -1,3 +1,5 @@
+pub use fallingsand_protocol::CursorMode;
+
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub enum RenderMode {
     #[default]
@@ -59,6 +61,7 @@ pub struct Settings {
     pub vsync: bool,
     pub render_mode: RenderMode,
     pub ui_scale: u32,
+    pub cursor_mode: CursorMode,
 }
 
 impl Default for Settings {
@@ -68,6 +71,7 @@ impl Default for Settings {
             vsync: true,
             render_mode: RenderMode::PixelPerfect,
             ui_scale: 100,
+            cursor_mode: CursorMode::Smart,
         }
     }
 }
@@ -83,6 +87,14 @@ impl Settings {
 
     pub fn ui_scale_label(&self) -> String {
         format!("UI scale: {}%", self.ui_scale)
+    }
+
+    pub fn cycle_cursor_mode(&mut self) {
+        self.cursor_mode = self.cursor_mode.cycled();
+    }
+
+    pub fn cursor_mode_label(&self) -> String {
+        format!("Cursor: {}", self.cursor_mode.label())
     }
 }
 
@@ -112,6 +124,11 @@ pub fn load() -> Settings {
                     settings.ui_scale = snap_ui_scale(scale);
                 }
             }
+            ("cursor_mode", value) => {
+                if let Some(mode) = CursorMode::parse(value) {
+                    settings.cursor_mode = mode;
+                }
+            }
             _ => {}
         }
     }
@@ -122,11 +139,12 @@ pub fn load() -> Settings {
 pub fn save(settings: &Settings) {
     let _ = std::fs::create_dir_all("saves");
     let content = format!(
-        "fullscreen={}\nvsync={}\nrender_mode={}\nui_scale={}\n",
+        "fullscreen={}\nvsync={}\nrender_mode={}\nui_scale={}\ncursor_mode={}\n",
         settings.fullscreen,
         settings.vsync,
         settings.render_mode.label(),
         settings.ui_scale,
+        settings.cursor_mode.label(),
     );
     if let Err(err) = std::fs::write(SETTINGS_PATH, content) {
         bevy::log::warn!("failed to persist settings: {err}");

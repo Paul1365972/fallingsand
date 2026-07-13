@@ -42,6 +42,7 @@ pub enum Action {
     ToggleDebugOverlay,
     ToggleDebugBorders,
     CycleGameMode,
+    ToggleCursorMode,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -203,6 +204,8 @@ impl Default for Bindings {
             bind(KeyCode::KeyE, Action::OpenInventory),
             bind(KeyCode::Enter, Action::OpenChat),
             bind(KeyCode::Escape, Action::Pause),
+            tap(KeyCode::ControlLeft, Action::ToggleCursorMode),
+            tap(KeyCode::ControlRight, Action::ToggleCursorMode),
         ];
         for (index, key) in SLOT_KEYS.into_iter().enumerate() {
             gameplay.push(bind(key, Action::SelectSlot(index as u8)));

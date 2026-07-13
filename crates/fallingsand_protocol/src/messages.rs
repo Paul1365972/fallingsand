@@ -60,6 +60,37 @@ impl GameMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum CursorMode {
+    #[default]
+    Smart,
+    Precise,
+}
+
+impl CursorMode {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Smart => "smart",
+            Self::Precise => "precise",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "smart" => Some(Self::Smart),
+            "precise" => Some(Self::Precise),
+            _ => None,
+        }
+    }
+
+    pub fn cycled(self) -> Self {
+        match self {
+            Self::Smart => Self::Precise,
+            Self::Precise => Self::Smart,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct InputState {
     pub move_x: i8,
@@ -68,6 +99,7 @@ pub struct InputState {
     pub primary: bool,
     pub secondary: bool,
     pub aim: CellPos,
+    pub cursor_mode: CursorMode,
 }
 
 impl Default for InputState {
@@ -79,6 +111,7 @@ impl Default for InputState {
             primary: false,
             secondary: false,
             aim: CellPos::new(0, 0),
+            cursor_mode: CursorMode::Smart,
         }
     }
 }
@@ -93,6 +126,7 @@ impl InputState {
         self.primary |= next.primary;
         self.secondary |= next.secondary;
         self.aim = next.aim;
+        self.cursor_mode = next.cursor_mode;
     }
 }
 

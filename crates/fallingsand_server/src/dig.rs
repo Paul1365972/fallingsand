@@ -7,7 +7,7 @@ use fallingsand_core::{
     CellPos, ItemId, ItemRegistry, ItemStack, MaterialId, Phase, REACH, SURVIVAL_REACH, TICK_DT,
     Tag,
 };
-use fallingsand_protocol::{GameMode, InteractionState, InteractionStatus, LifeState};
+use fallingsand_protocol::{CursorMode, GameMode, InteractionState, InteractionStatus, LifeState};
 
 const BARE_HAND_SPEED: f32 = 0.55;
 
@@ -194,7 +194,7 @@ fn active_place(
         ));
         return;
     };
-    let Some(target) = select_place(world, body, player.input.aim, reach) else {
+    let Some(target) = select_place(world, player, body, reach) else {
         dig.interaction = Some(interaction(
             player.input.aim,
             miss_reason(body, player, reach),
@@ -233,7 +233,7 @@ fn idle_preview(
         .is_some();
 
     if placeable {
-        let target = select_place(world, body, player.input.aim, reach)?;
+        let target = select_place(world, player, body, reach)?;
         return Some(interaction(target, InteractionStatus::Valid, 0.0));
     }
     if survival && inventory.inner.get(slot).is_some() && !is_tool(reg, inventory, slot) {
@@ -320,18 +320,31 @@ fn is_tool(reg: &ItemRegistry, inventory: &Inventory, slot: usize) -> bool {
 }
 
 fn select_dig(world: &World, player: &Player, body: &Actor, reach: f32) -> Option<CellPos> {
-    let target = movement_blocker(world, player, body).or_else(|| {
-        let start = body.cell();
-        let end = clamp_to_reach(start, player.input.aim, reach);
-        first_obstruction(world, start, end)
-    })?;
+    let aim = player.input.aim;
+    let target = match player.input.cursor_mode {
+        CursorMode::Precise => diggable(world, aim).then_some(aim)?,
+        CursorMode::Smart => {
+            let start = body.cell();
+            let end = clamp_to_reach(start, aim, reach);
+            first_obstruction(world, start, end)?
+        }
+    };
     (cell_distance_sq(body, target) <= reach * reach).then_some(target)
 }
 
-fn select_place(world: &World, body: &Actor, aim: CellPos, reach: f32) -> Option<CellPos> {
-    let start = body.cell();
-    let end = clamp_to_reach(start, aim, reach);
-    let target = last_air_before_obstruction(world, start, end)?;
+fn select_place(world: &World, player: &Player, body: &Actor, reach: f32) -> Option<CellPos> {
+    let aim = player.input.aim;
+    let target = match player.input.cursor_mode {
+        CursorMode::Precise => world
+            .get_cell(aim)
+            .filter(|cell| cell.is_air())
+            .map(|_| aim)?,
+        CursorMode::Smart => {
+            let start = body.cell();
+            let end = clamp_to_reach(start, aim, reach);
+            last_air_before_obstruction(world, start, end)?
+        }
+    };
     (cell_distance_sq(body, target) <= reach * reach).then_some(target)
 }
 
@@ -341,34 +354,6 @@ fn miss_reason(body: &Actor, player: &Player, reach: f32) -> InteractionStatus {
     } else {
         InteractionStatus::OutOfReach
     }
-}
-
-fn movement_blocker(world: &World, player: &Player, body: &Actor) -> Option<CellPos> {
-    let fp = body.footprint();
-    if player.input.down {
-        return (fp.x0..=fp.x1)
-            .map(|x| CellPos::new(x, fp.y0 - 1))
-            .filter(|&pos| diggable(world, pos))
-            .min_by_key(|pos| (pos.x - player.input.aim.x).abs());
-    }
-    if player.input.jump {
-        return (fp.x0..=fp.x1)
-            .map(|x| CellPos::new(x, fp.y1 + 1))
-            .filter(|&pos| diggable(world, pos))
-            .min_by_key(|pos| (pos.x - player.input.aim.x).abs());
-    }
-    if player.input.move_x != 0 {
-        let x = if player.input.move_x < 0 {
-            fp.x0 - 1
-        } else {
-            fp.x1 + 1
-        };
-        return (fp.y0..=fp.y1)
-            .map(|y| CellPos::new(x, y))
-            .filter(|&pos| diggable(world, pos))
-            .min_by_key(|pos| (pos.y - player.input.aim.y).abs());
-    }
-    None
 }
 
 fn clamp_to_reach(start: CellPos, aim: CellPos, reach: f32) -> CellPos {
