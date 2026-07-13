@@ -9,7 +9,7 @@ use fallingsand_rng::Rng;
 
 const SPRAY_TTL: f32 = 0.5;
 const SPRAY_GRAVITY: f32 = 260.0;
-const SPRAY_PER_FRAME: usize = 2;
+const SPRAY_CHANCE: f32 = 0.2;
 const FLAME_TTL: f32 = 0.45;
 const FLAME_INTERVAL: f32 = 0.05;
 
@@ -93,7 +93,7 @@ pub fn spawn_particles(
         return;
     }
 
-    spawn_dig_spray(&mut commands, &game.0, ingame, &mut rng);
+    spawn_dig_spray(&mut commands, ingame, &mut rng);
 
     *flame_accum += time.delta_secs();
     if *flame_accum < FLAME_INTERVAL {
@@ -130,46 +130,38 @@ pub fn spawn_particles(
     }
 }
 
-fn spawn_dig_spray(
-    commands: &mut Commands,
-    game: &crate::game::ClientGame,
-    ingame: &crate::game::InGame,
-    rng: &mut Rng,
-) {
+fn spawn_dig_spray(commands: &mut Commands, ingame: &crate::game::InGame, rng: &mut Rng) {
     let you = &ingame.you;
-    if !game.input.held.primary
-        || !you.present
-        || you.interaction.status != InteractionStatus::Valid
-    {
+    if !you.present {
+        return;
+    }
+    let Some(material) = you.interaction.dig_material else {
+        return;
+    };
+    if rng.draw().unit() > SPRAY_CHANCE {
         return;
     }
     let target = you.interaction.target;
     let center = Vec2::new(target.x as f32 + 0.5, target.y as f32 + 0.5);
-    let Some(cell) = ingame.world.get_cell(target) else {
-        return;
-    };
-    let colors = content::material(cell.material).colors;
-    let shade = (cell.shade_flags >> 4) as usize;
-    let rgba = colors[shade % colors.len()];
+    let colors = content::material(material).colors;
+    let rgba = colors[rng.draw().range(0, colors.len() as i32 - 1) as usize];
     let color = Color::srgba_u8(rgba[0], rgba[1], rgba[2], 255);
-    for _ in 0..SPRAY_PER_FRAME {
-        let angle = std::f32::consts::FRAC_PI_4 + rng.draw().unit() * std::f32::consts::FRAC_PI_2;
-        let speed = 25.0 + rng.draw().unit() * 55.0;
-        let velocity = Vec2::from_angle(angle) * speed;
-        let jitter = Vec2::new(rng.draw().unit() - 0.5, rng.draw().unit() - 0.5);
-        let origin = center + jitter;
-        commands.spawn((
-            Particle {
-                velocity,
-                gravity: SPRAY_GRAVITY,
-                ttl: SPRAY_TTL,
-                max_ttl: SPRAY_TTL,
-            },
-            Sprite::from_color(color, Vec2::ONE),
-            Transform::from_xyz(origin.x, origin.y, 15.0),
-            RenderLayers::layer(WORLD_LAYER),
-        ));
-    }
+    let angle = std::f32::consts::FRAC_PI_4 + rng.draw().unit() * std::f32::consts::FRAC_PI_2;
+    let speed = 25.0 + rng.draw().unit() * 55.0;
+    let velocity = Vec2::from_angle(angle) * speed;
+    let jitter = Vec2::new(rng.draw().unit() - 0.5, rng.draw().unit() - 0.5);
+    let origin = center + jitter;
+    commands.spawn((
+        Particle {
+            velocity,
+            gravity: SPRAY_GRAVITY,
+            ttl: SPRAY_TTL,
+            max_ttl: SPRAY_TTL,
+        },
+        Sprite::from_color(color, Vec2::ONE),
+        Transform::from_xyz(origin.x, origin.y, 15.0),
+        RenderLayers::layer(WORLD_LAYER),
+    ));
 }
 
 pub fn update_particles(

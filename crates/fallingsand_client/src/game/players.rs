@@ -125,6 +125,7 @@ impl Default for SelfState {
                 target: fallingsand_core::CellPos::new(0, 0),
                 status: InteractionStatus::None,
                 progress: 0.0,
+                dig_material: None,
             },
         }
     }

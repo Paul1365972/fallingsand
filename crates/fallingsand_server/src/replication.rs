@@ -118,6 +118,7 @@ pub fn replicate(
                 target: body.0.cell(),
                 status: InteractionStatus::None,
                 progress: 0.0,
+                dig_material: None,
             }),
         };
         let self_state = if session.last_self.as_ref() != Some(&current_self) {

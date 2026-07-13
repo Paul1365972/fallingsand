@@ -1,4 +1,4 @@
-use fallingsand_core::{CellPos, ChunkPos, DirtyRect, ItemId, ItemStack};
+use fallingsand_core::{CellPos, ChunkPos, DirtyRect, ItemId, ItemStack, MaterialId};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -185,6 +185,7 @@ pub struct InteractionState {
     pub target: CellPos,
     pub status: InteractionStatus,
     pub progress: f32,
+    pub dig_material: Option<MaterialId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

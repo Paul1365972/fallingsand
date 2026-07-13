@@ -8,7 +8,7 @@ pub use messages::{
 };
 pub use wire::{WireError, cells_from_wire, cells_to_wire, decode_message, encode_message};
 
-pub const PROTOCOL_VERSION: u16 = 35;
+pub const PROTOCOL_VERSION: u16 = 36;
 
 const IDENTITY_DOMAIN: &[u8] = b"fallingsand identity v1\0";
 pub const IDENTITY_MESSAGE_LEN: usize = IDENTITY_DOMAIN.len() + 32;

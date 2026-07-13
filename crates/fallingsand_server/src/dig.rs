@@ -150,7 +150,7 @@ fn active_dig(
         (progress.elapsed / duration).clamp(0.0, 1.0)
     };
     if fraction < 1.0 {
-        dig.interaction = Some(interaction(target, InteractionStatus::Valid, fraction));
+        dig.interaction = Some(dig_interaction(target, fraction, plan.material));
         return;
     }
 
@@ -166,7 +166,7 @@ fn active_dig(
         bodies.candidates.push(target.translated(dx, dy));
     }
     dig.clear_progress();
-    dig.interaction = Some(interaction(target, InteractionStatus::Valid, 1.0));
+    dig.interaction = Some(dig_interaction(target, 1.0, plan.material));
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -321,15 +321,53 @@ fn is_tool(reg: &ItemRegistry, inventory: &Inventory, slot: usize) -> bool {
 
 fn select_dig(world: &World, player: &Player, body: &Actor, reach: f32) -> Option<CellPos> {
     let aim = player.input.aim;
-    let target = match player.input.cursor_mode {
-        CursorMode::Precise => diggable(world, aim).then_some(aim)?,
-        CursorMode::Smart => {
-            let start = body.cell();
-            let end = clamp_to_reach(start, aim, reach);
-            first_obstruction(world, start, end)?
+    match player.input.cursor_mode {
+        CursorMode::Precise => {
+            (diggable(world, aim) && cell_distance_sq(body, aim) <= reach * reach).then_some(aim)
         }
-    };
-    (cell_distance_sq(body, target) <= reach * reach).then_some(target)
+        CursorMode::Smart => smart_dig_target(world, body, aim, reach),
+    }
+}
+
+fn smart_dig_target(world: &World, body: &Actor, aim: CellPos, reach: f32) -> Option<CellPos> {
+    let footprint = body.footprint();
+    let aim_offset_x = aim.x as f32 + 0.5 - body.x.to_f32();
+    let aim_offset_y = aim.y as f32 + 0.5 - body.y.to_f32();
+    let max_distance = reach.ceil() as i32 + 1;
+    let sweep_horizontally = aim_offset_x.abs() >= aim_offset_y.abs();
+    let positive_direction = (if sweep_horizontally {
+        aim_offset_x
+    } else {
+        aim_offset_y
+    }) >= 0.0;
+    let in_reach = |pos: CellPos| cell_distance_sq(body, pos) <= reach * reach;
+    for distance in 1..=max_distance {
+        let nearest_target = if sweep_horizontally {
+            let x = if positive_direction {
+                footprint.x1 + distance
+            } else {
+                footprint.x0 - distance
+            };
+            (footprint.y0..=footprint.y1)
+                .map(|y| CellPos::new(x, y))
+                .filter(|&pos| diggable(world, pos) && in_reach(pos))
+                .min_by_key(|pos| (pos.y - aim.y).abs())
+        } else {
+            let y = if positive_direction {
+                footprint.y1 + distance
+            } else {
+                footprint.y0 - distance
+            };
+            (footprint.x0..=footprint.x1)
+                .map(|x| CellPos::new(x, y))
+                .filter(|&pos| diggable(world, pos) && in_reach(pos))
+                .min_by_key(|pos| (pos.x - aim.x).abs())
+        };
+        if let Some(target) = nearest_target {
+            return Some(target);
+        }
+    }
+    None
 }
 
 fn select_place(world: &World, player: &Player, body: &Actor, reach: f32) -> Option<CellPos> {
@@ -398,22 +436,6 @@ fn ray_cells(start: CellPos, end: CellPos) -> impl Iterator<Item = CellPos> {
     })
 }
 
-fn first_obstruction(world: &World, start: CellPos, end: CellPos) -> Option<CellPos> {
-    for pos in ray_cells(start, end) {
-        let cell = world.get_cell(pos)?;
-        if content::tags(cell.material).contains(Tag::Player) {
-            continue;
-        }
-        if !matches!(
-            content::phase(cell.material),
-            Phase::Empty | Phase::Gas | Phase::Liquid
-        ) {
-            return Some(pos);
-        }
-    }
-    None
-}
-
 fn last_air_before_obstruction(world: &World, start: CellPos, end: CellPos) -> Option<CellPos> {
     let mut last = None;
     for pos in ray_cells(start, end) {
@@ -447,5 +469,15 @@ fn interaction(target: CellPos, status: InteractionStatus, progress: f32) -> Int
         target,
         status,
         progress,
+        dig_material: None,
+    }
+}
+
+fn dig_interaction(target: CellPos, progress: f32, material: MaterialId) -> InteractionState {
+    InteractionState {
+        target,
+        status: InteractionStatus::Valid,
+        progress,
+        dig_material: Some(material),
     }
 }

@@ -19,8 +19,8 @@ pub const fn ticks_from_secs(secs: f32) -> u64 {
 pub const GRID_GRAVITY: f32 = 600.0;
 pub const MAX_HP: f32 = 100.0;
 pub const MAX_AIR_SECS: f32 = 12.0;
-pub const REACH: f32 = 80.0;
-pub const SURVIVAL_REACH: f32 = 48.0;
+pub const REACH: f32 = 100.0;
+pub const SURVIVAL_REACH: f32 = 20.0;
 
 pub use calendar::{Calendar, DAY_UNITS, SEASON_DAYS, Season};
 pub use celestial::{CelestialState, smoothstep};
