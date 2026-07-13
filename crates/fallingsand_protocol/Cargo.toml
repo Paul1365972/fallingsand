@@ -6,7 +6,9 @@ edition.workspace = true
 [dependencies]
 fallingsand_core = { workspace = true }
 serde = { workspace = true }
+serde-big-array = { workspace = true }
 postcard = { workspace = true }
 lz4_flex = { workspace = true }
 thiserror = { workspace = true }
 rustc-hash = { workspace = true }
+sha2 = { workspace = true }

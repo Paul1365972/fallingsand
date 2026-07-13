@@ -297,6 +297,10 @@ fn playing_lines(
         moon_name(clock.calendar.synodic_fraction()),
         eclipse
     ));
+    left_lines.push(format!(
+        "brightness {:.3} daylight {:.3}",
+        sky.state.light, sky.state.daylight
+    ));
 
     if you.present {
         let burning = if you.burning { " burning" } else { "" };

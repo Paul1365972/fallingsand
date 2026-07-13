@@ -91,11 +91,9 @@ pub fn setup_sky(
     let quad = shared.quad.clone();
     let sun = sun_mats.add(SunMaterial {
         params: SunParams::default(),
-        texture: asset_server.load("sky/sun.png"),
     });
     let moon = moon_mats.add(MoonMaterial {
         params: MoonParams::default(),
-        texture: asset_server.load("sky/moon.png"),
     });
     let starfield = star_mats.add(StarfieldMaterial {
         params: StarfieldParams::default(),

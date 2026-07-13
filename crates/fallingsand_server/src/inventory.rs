@@ -1,9 +1,9 @@
-use crate::player::{Mode, Player};
+use crate::player::{Life, Mode, Player};
 use bevy_ecs::prelude::*;
 use fallingsand_core::{
     Inventory as CoreInventory, ItemId, ItemRegistry, ItemStack, RecipeRegistry,
 };
-use fallingsand_protocol::{GameMode, SlotAction};
+use fallingsand_protocol::{GameMode, LifeState, SlotAction};
 use std::sync::Arc;
 
 type InventoryDiff = (
@@ -18,8 +18,14 @@ pub struct ItemReg(pub Arc<ItemRegistry>);
 #[derive(Resource, Clone)]
 pub struct Recipes(pub Arc<RecipeRegistry>);
 
+pub struct QueuedSlotAction {
+    pub entity: Entity,
+    pub generation: u64,
+    pub action: SlotAction,
+}
+
 #[derive(Resource, Default)]
-pub struct SlotActions(pub Vec<(Entity, SlotAction)>);
+pub struct SlotActions(pub Vec<QueuedSlotAction>);
 
 #[derive(Component)]
 pub struct Inventory {
@@ -100,13 +106,17 @@ pub fn apply_slot_actions(
     mut actions: ResMut<SlotActions>,
     item_reg: Res<ItemReg>,
     recipes: Res<Recipes>,
-    mut players: Query<(&Mode, &mut Inventory), With<Player>>,
+    mut players: Query<(&Player, &Life, &Mode, &mut Inventory)>,
 ) {
     let reg = &item_reg.0;
-    for (entity, action) in actions.0.drain(..) {
-        let Ok((mode, mut pinv)) = players.get_mut(entity) else {
+    for queued in actions.0.drain(..) {
+        let Ok((player, life, mode, mut pinv)) = players.get_mut(queued.entity) else {
             continue;
         };
+        if player.session_generation != queued.generation || life.0 != LifeState::Alive {
+            continue;
+        }
+        let action = queued.action;
         let creative = mode.0 == GameMode::Creative;
         match action {
             SlotAction::LeftClick { slot } => {

@@ -52,6 +52,7 @@ pub struct Changes {
     pub slots: Vec<usize>,
     pub trash: bool,
     pub chat: bool,
+    pub chat_draft: bool,
     pub roster: bool,
     pub mode: bool,
     pub worlds: bool,
@@ -87,6 +88,7 @@ pub enum UiEvent {
     PauseSave,
     PauseQuitToMenu,
     CancelConnect,
+    Revive,
     Slot { region: SlotRegion, right: bool },
 }
 
@@ -173,6 +175,9 @@ impl InGame {
             return;
         }
         self.overlays.push(overlay);
+        if overlay == Overlay::Chat {
+            self.chat.begin_history();
+        }
         if overlay == Overlay::Paused {
             self.net.set_embedded_paused(true);
             input.release_held(self.net.session.as_mut());
@@ -319,6 +324,7 @@ impl ClientGame {
                 }
             }
             UiEvent::PauseQuitToMenu | UiEvent::CancelConnect => self.leave_game(),
+            UiEvent::Revive => self.input.queue(fallingsand_protocol::InputAction::Revive),
             UiEvent::Slot { region, right } => {
                 let shift = io.raw.shift();
                 if let Flow::InGame(ingame) = &mut self.flow

@@ -8,7 +8,9 @@ Each subsystem rides the frame with its own change signal (no generic differ):
 - **players** — change-gated `PlayerState` snapshots — anchor only, for nametag, flames, and camera.
 - **inventory + self** — per-slot deltas and private `self_state`, each sent only when changed.
 
-Client→server: one `InputFrame` per client fixed tick — held `InputState` (latest-wins, OR-merged when frames coalesce) plus ordered one-shot `InputAction`s (never coalesced, validated server-side); held input decays to neutral after 0.5 s without frames. A new discrete input is a new `InputAction` variant, never a new message.
+Client→server: one `InputFrame` per client fixed tick — held `InputState` (latest-wins, OR-merged when frames coalesce) plus ordered one-shot `InputAction`s (never coalesced, validated server-side); held input decays to neutral after 0.5 s without frames. Queued work carries the entity's session generation, so reconnect takeover cannot execute stale commands or inventory actions. A new discrete input is a new `InputAction` variant, never a new message.
+
+Persistent identity is an Ed25519 key, not a client-asserted UUID. Each connection starts with a random server challenge; the client signs the domain-separated nonce, the server verifies it, and `PlayerUuid` is derived from the public-key hash. The private key remains client-side. The server returns the authenticated player's persisted chat/command history after `HelloAck`.
 
 A wire cell is 3 bytes (material + shade flags) — no velocity or timing; the server re-derives them. Chunk payloads are paletted containers (uniform / paletted / raw, smallest wins).
 

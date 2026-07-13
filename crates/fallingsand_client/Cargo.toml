@@ -37,14 +37,15 @@ bevy = { workspace = true, features = [
     "png",
 ] }
 chrono = "0.4"
+ed25519-dalek = { workspace = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 fallingsand_server = { workspace = true }
 fallingsand_net = { workspace = true, features = ["wt-native"] }
-getrandom = "0.3"
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 winit = { version = "0.30", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png"] }
+getrandom = { workspace = true }
 
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
 bevy = { workspace = true, features = [
@@ -65,6 +66,6 @@ bevy = { workspace = true, features = [
     "png",
 ] }
 fallingsand_net = { workspace = true, features = ["wt-wasm"] }
-getrandom = { version = "0.3", features = ["wasm_js"] }
+getrandom = { workspace = true, features = ["wasm_js"] }
 web-sys = { version = "0.3", features = ["Window", "Location", "Storage"] }
 js-sys = "0.3"

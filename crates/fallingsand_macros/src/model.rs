@@ -129,6 +129,7 @@ pub struct Content {
     pub materials: Vec<Mat>,
     pub ignitions: Vec<Option<Ignition>>,
     pub reactions: Vec<Option<Reaction>>,
+    pub item_source: Vec<Option<MaterialId>>,
 }
 
 pub fn build(header: &Header, sources: &Sources) -> syn::Result<Content> {
@@ -296,10 +297,31 @@ pub fn build(header: &Header, sources: &Sources) -> syn::Result<Content> {
         });
     }
 
+    let mut ember_base = vec![None; len];
+    for (base, ignition) in ignitions.iter().enumerate() {
+        if let Some(ignition) = ignition {
+            ember_base[ignition.into.0 as usize] = Some(MaterialId(base as u16));
+        }
+    }
+    let item_source = materials
+        .iter()
+        .enumerate()
+        .map(|(index, mat)| {
+            if mat.is_fuel_ember {
+                ember_base[index]
+            } else if matches!(mat.phase, Phase::Empty) || mat.tags.contains(Tag::Player) {
+                None
+            } else {
+                Some(MaterialId(index as u16))
+            }
+        })
+        .collect();
+
     Ok(Content {
         materials,
         ignitions,
         reactions,
+        item_source,
     })
 }
 

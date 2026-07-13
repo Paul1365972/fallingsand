@@ -1,6 +1,8 @@
 use super::Changes;
 use bevy::math::Vec2;
-use fallingsand_protocol::{GameMode, PlayerId, TickFrame};
+use fallingsand_protocol::{
+    GameMode, InteractionState, InteractionStatus, LifeState, PlayerId, TickFrame,
+};
 use std::collections::HashMap;
 
 const DAMAGE_FLASH_SECS: f32 = 0.35;
@@ -45,6 +47,14 @@ impl Players {
         changes: &mut Changes,
     ) {
         for state in &tick.players {
+            if state.life == LifeState::Dead {
+                self.roster.remove(&state.player);
+                if local == Some(state.player) {
+                    you.present = false;
+                    you.burning = false;
+                }
+                continue;
+            }
             let pos = Vec2::new(state.cx as f32 + 0.5, state.cy as f32 + 0.5);
             if local == Some(state.player) {
                 you.pos = pos;
@@ -72,23 +82,50 @@ impl Players {
                 changes.mode = true;
             }
             you.hp = self_state.hp;
+            you.life = self_state.life;
+            you.present = self_state.life == LifeState::Alive;
             you.air = self_state.air;
             you.mode = self_state.mode;
             you.biome = self_state.biome.clone();
             you.band = self_state.band.clone();
+            you.interaction = self_state.interaction;
         }
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct SelfState {
     pub present: bool,
     pub pos: Vec2,
     pub hp: f32,
+    pub life: LifeState,
     pub air: f32,
     pub burning: bool,
     pub mode: GameMode,
     pub damage_flash: f32,
     pub biome: String,
     pub band: String,
+    pub interaction: InteractionState,
+}
+
+impl Default for SelfState {
+    fn default() -> Self {
+        Self {
+            present: false,
+            pos: Vec2::ZERO,
+            hp: 0.0,
+            life: LifeState::Alive,
+            air: 0.0,
+            burning: false,
+            mode: GameMode::default(),
+            damage_flash: 0.0,
+            biome: String::new(),
+            band: String::new(),
+            interaction: InteractionState {
+                target: fallingsand_core::CellPos::new(0, 0),
+                status: InteractionStatus::None,
+                progress: 0.0,
+            },
+        }
+    }
 }

@@ -148,10 +148,27 @@ pub struct MaterialInfo {
     pub name: &'static str,
     pub colors: &'static [[u8; 4]],
     pub hardness: f32,
+    pub mining_tier: u8,
     pub restitution: f32,
     pub surface_grip: f32,
     pub surface_bounce: f32,
     pub contact_damage: f32,
+}
+
+pub const TIER0_MAX_HARDNESS: f32 = 0.35;
+pub const TIER1_MAX_HARDNESS: f32 = 1.0;
+pub const TIER2_MAX_HARDNESS: f32 = 2.0;
+
+pub const fn mining_tier_from_hardness(hardness: f32) -> u8 {
+    if hardness <= TIER0_MAX_HARDNESS {
+        0
+    } else if hardness <= TIER1_MAX_HARDNESS {
+        1
+    } else if hardness <= TIER2_MAX_HARDNESS {
+        2
+    } else {
+        3
+    }
 }
 
 pub fn per_tick_chance(rate: f32) -> f32 {

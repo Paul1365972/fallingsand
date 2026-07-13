@@ -34,7 +34,8 @@ recipes! {
     1 material::IRON_ORE, 1 material::COAL => 1 item::IRON_INGOT;
     1 material::GOLD_ORE, 1 material::COAL => 1 item::GOLD_INGOT;
     3 material::PLANKS, 2 item::STICK => 1 item::WOODEN_PICKAXE;
-    2 item::STICK, 3 item::IRON_INGOT => 1 item::STONE_PICKAXE;
+    3 material::STONE, 2 item::STICK => 1 item::STONE_PICKAXE;
+    3 item::IRON_INGOT, 2 item::STICK => 1 item::IRON_PICKAXE;
     4 material::SAND => 1 material::SANDSTONE;
     2 material::GRAVEL, 1 material::WATER => 1 material::CLAY;
 }

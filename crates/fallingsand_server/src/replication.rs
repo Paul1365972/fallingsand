@@ -1,12 +1,13 @@
+use crate::dig::DigState;
 use crate::inventory::Inventory;
-use crate::player::{Air, Burning, Health, Mode, Player, PlayerActor, PlayerRaster};
+use crate::player::{Air, Burning, Health, Life, Mode, Player, PlayerActor, PlayerRaster};
 use crate::session::{SessionState, Sessions};
 use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y, SimWorld, TickStats};
 use bevy_ecs::prelude::*;
 use fallingsand_core::{CellOffset, ChunkPos};
 use fallingsand_protocol::{
-    ChunkDebugRects, ChunkOp, PlayerId, PlayerState, SelfState, ServerMessage, TickFrame,
-    cells_to_wire,
+    ChunkDebugRects, ChunkOp, InteractionState, InteractionStatus, LifeState, PlayerId,
+    PlayerState, SelfState, ServerMessage, TickFrame, cells_to_wire,
 };
 use rustc_hash::FxHashSet;
 
@@ -28,9 +29,11 @@ pub fn replicate(
         &PlayerActor,
         &PlayerRaster,
         &Health,
+        &Life,
         &Mode,
         &Burning,
         &Air,
+        &DigState,
     )>,
     mut inventories: Query<&mut Inventory>,
 ) {
@@ -39,14 +42,17 @@ pub fn replicate(
 
     let mut all_players: Vec<PlayerState> = query
         .iter()
-        .map(|(player, body, raster, _, _, burning, _)| PlayerState {
-            player: player.id,
-            cx: body.0.x.floor_cell(),
-            cy: body.0.y.floor_cell(),
-            height: body.0.rows() as u8,
-            burning: burning.active(),
-            facing_left: raster.0.facing_left(),
-        })
+        .map(
+            |(player, body, raster, _, life, _, burning, _, _)| PlayerState {
+                player: player.id,
+                life: life.0,
+                cx: body.0.x.floor_cell(),
+                cy: body.0.y.floor_cell(),
+                height: body.0.rows() as u8,
+                burning: life.0 == LifeState::Alive && burning.active(),
+                facing_left: raster.0.facing_left(),
+            },
+        )
         .collect();
     all_players.sort_unstable_by_key(|state| state.player.0);
     let changed_players: Vec<PlayerState> = all_players
@@ -66,7 +72,7 @@ pub fn replicate(
         let Some(entity) = session.entity else {
             continue;
         };
-        let Ok((_, body, _, health, mode, _, air)) = query.get(entity) else {
+        let Ok((_, body, _, health, life, mode, _, air, dig)) = query.get(entity) else {
             continue;
         };
 
@@ -102,11 +108,17 @@ pub fn replicate(
             .0
             .location_names(body.0.x.floor_cell(), body.0.y.floor_cell());
         let current_self = SelfState {
+            life: life.0,
             hp: health.hp,
             air: air.secs,
             mode: mode.0,
             biome: biome.into(),
             band: band.into(),
+            interaction: dig.interaction.unwrap_or(InteractionState {
+                target: body.0.cell(),
+                status: InteractionStatus::None,
+                progress: 0.0,
+            }),
         };
         let self_state = if session.last_self.as_ref() != Some(&current_self) {
             session.last_self = Some(current_self.clone());

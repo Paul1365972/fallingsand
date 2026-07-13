@@ -62,6 +62,7 @@ pub enum Btn {
     PauseSave,
     PauseQuitToMenu,
     CancelConnect,
+    Revive,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -114,6 +115,7 @@ pub fn collect_ui_events(
             Btn::PauseSave => inbox.0.push(UiEvent::PauseSave),
             Btn::PauseQuitToMenu => inbox.0.push(UiEvent::PauseQuitToMenu),
             Btn::CancelConnect => inbox.0.push(UiEvent::CancelConnect),
+            Btn::Revive => inbox.0.push(UiEvent::Revive),
         }
     }
 

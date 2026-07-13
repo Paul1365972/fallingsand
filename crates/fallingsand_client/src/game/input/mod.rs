@@ -6,7 +6,7 @@ pub use keys::{Button, RawInput};
 
 use super::{ClientGame, Effect, Flow, IoFrame, Overlay, Phase};
 use bevy::input::mouse::MouseButton;
-use fallingsand_core::{HOTBAR_SLOTS, MAX_BRUSH, TICK_RATE};
+use fallingsand_core::{HOTBAR_SLOTS, TICK_RATE};
 use fallingsand_protocol::{ClientMessage, GameMode, InputAction, InputFrame, InputState};
 
 const DOUBLE_TAP_SECS: f32 = 0.3;
@@ -305,17 +305,6 @@ fn apply(game: &mut ClientGame, io: &IoFrame, action: Action) {
                     .queue(InputAction::SelectSlot(ingame.inventory.selected as u8));
             }
         }
-        Action::BrushShrink | Action::BrushGrow => {
-            if let Flow::InGame(ingame) = &mut game.flow {
-                ingame.inventory.brush = if action == Action::BrushShrink {
-                    ingame.inventory.brush.saturating_sub(1)
-                } else {
-                    (ingame.inventory.brush + 1).min(MAX_BRUSH)
-                };
-                game.input
-                    .queue(InputAction::SetBrush(ingame.inventory.brush));
-            }
-        }
         Action::OpenInventory => open_overlay(game, Overlay::Inventory),
         Action::OpenChat => open_overlay(game, Overlay::Chat),
         Action::Pause => open_overlay(game, Overlay::Paused),
@@ -337,9 +326,26 @@ fn apply(game: &mut ClientGame, io: &IoFrame, action: Action) {
                 if !text.is_empty()
                     && let Some(session) = ingame.net.session.as_mut()
                 {
+                    ingame.chat.record(&text);
                     session.send(&ClientMessage::Chat { text });
                 }
                 ingame.close_overlay(Overlay::Chat);
+            }
+        }
+        Action::HistoryPrev => {
+            if let Flow::InGame(ingame) = &mut game.flow
+                && ingame
+                    .chat
+                    .previous(io.chat_text.as_deref().unwrap_or_default())
+            {
+                game.changes.chat_draft = true;
+            }
+        }
+        Action::HistoryNext => {
+            if let Flow::InGame(ingame) = &mut game.flow
+                && ingame.chat.next()
+            {
+                game.changes.chat_draft = true;
             }
         }
         Action::Resume => {

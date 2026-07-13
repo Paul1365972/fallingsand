@@ -1,4 +1,4 @@
-use crate::{MaterialId, Tag, content};
+use crate::{MaterialId, content};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ops::Range;
@@ -30,7 +30,7 @@ impl ItemStack {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IconSpec {
     MaterialSwatch(MaterialId),
-    Atlas(u16),
+    Glyph { art: &'static str, tint: [u8; 4] },
 }
 
 #[derive(Debug, Clone)]
@@ -40,6 +40,13 @@ pub struct ItemDef {
     pub stack_max: u32,
     pub icon: IconSpec,
     pub place: Option<MaterialId>,
+    pub tool: Option<ToolSpec>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ToolSpec {
+    pub tier: u8,
+    pub speed: f32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -48,6 +55,7 @@ pub struct ItemEntry {
     pub display: &'static str,
     pub stack_max: u32,
     pub icon: IconSpec,
+    pub tool: Option<ToolSpec>,
 }
 
 #[derive(Debug, Clone)]
@@ -60,7 +68,7 @@ pub struct ItemRegistry {
 impl ItemRegistry {
     pub fn build(entries: &[ItemEntry]) -> Self {
         let material_items = content::materials()
-            .filter(|&(id, _)| is_material_item(id))
+            .filter(|&(id, _)| content::item_source(id) == Some(id))
             .count();
         let total = 1 + entries.len() + material_items;
         assert!(total <= u16::MAX as usize, "too many items: {total}");
@@ -74,6 +82,7 @@ impl ItemRegistry {
             stack_max: 0,
             icon: IconSpec::MaterialSwatch(MaterialId::AIR),
             place: None,
+            tool: None,
         });
 
         for entry in entries {
@@ -83,6 +92,7 @@ impl ItemRegistry {
                 stack_max: entry.stack_max.max(1),
                 icon: entry.icon,
                 place: None,
+                tool: entry.tool,
             };
             let id = ItemId(items.len() as u16);
             assert!(
@@ -93,9 +103,9 @@ impl ItemRegistry {
             items.push(def);
         }
 
-        let mut mat_to_item = vec![ItemId::NONE; content::MATERIAL_COUNT];
+        let mut material_item = [ItemId::NONE; content::MATERIAL_COUNT];
         for (id, info) in content::materials() {
-            if !is_material_item(id) {
+            if content::item_source(id) != Some(id) {
                 continue;
             }
             let name = format!("mat:{}", info.name);
@@ -104,6 +114,7 @@ impl ItemRegistry {
                 stack_max: MATERIAL_STACK_MAX,
                 icon: IconSpec::MaterialSwatch(id),
                 place: Some(id),
+                tool: None,
                 name: name.clone(),
             };
             let item_id = ItemId(items.len() as u16);
@@ -111,8 +122,15 @@ impl ItemRegistry {
                 by_name.insert(name.clone(), item_id).is_none(),
                 "duplicate item name {name:?}"
             );
-            mat_to_item[id.0 as usize] = item_id;
+            material_item[id.0 as usize] = item_id;
             items.push(def);
+        }
+
+        let mut mat_to_item = vec![ItemId::NONE; content::MATERIAL_COUNT];
+        for (id, _) in content::materials() {
+            if let Some(source) = content::item_source(id) {
+                mat_to_item[id.0 as usize] = material_item[source.0 as usize];
+            }
         }
 
         Self {
@@ -164,12 +182,6 @@ impl ItemRegistry {
     pub fn stack_max(&self, item: ItemId) -> u32 {
         self.try_get(item).map(|def| def.stack_max).unwrap_or(1)
     }
-}
-
-fn is_material_item(id: MaterialId) -> bool {
-    content::phase(id) != crate::Phase::Empty
-        && !content::tags(id).contains(Tag::Player)
-        && !content::is_fuel_ember(id)
 }
 
 fn pretty_name(raw: &str) -> String {
@@ -267,6 +279,26 @@ impl Inventory {
     pub fn insert_first_fit(&mut self, stack: ItemStack, reg: &ItemRegistry) -> Option<ItemStack> {
         let range = 0..self.slots.len();
         self.insert_into_range(stack, range, reg)
+    }
+
+    pub fn can_insert(&self, stack: ItemStack, reg: &ItemRegistry) -> bool {
+        if stack.item == ItemId::NONE || stack.count == 0 {
+            return true;
+        }
+        let max = reg.stack_max(stack.item);
+        let mut remaining = stack.count;
+        for slot in &self.slots {
+            let capacity = match slot {
+                Some(existing) if existing.item == stack.item => max.saturating_sub(existing.count),
+                None => max,
+                Some(_) => 0,
+            };
+            remaining = remaining.saturating_sub(capacity);
+            if remaining == 0 {
+                return true;
+            }
+        }
+        false
     }
 
     fn count_item(&self, item: ItemId) -> u64 {

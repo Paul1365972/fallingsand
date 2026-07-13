@@ -1,6 +1,6 @@
 use crate::inventory::{Inventory, ItemReg};
 use crate::persistence::{PlayerRecord, WorldMeta, WorldStore, encode_region};
-use crate::player::{Air, Burning, Health, Mode, PlayerActor, player_record};
+use crate::player::{Air, Burning, ChatHistory, Health, Life, Mode, PlayerActor, player_record};
 use crate::session::Sessions;
 use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y, SimWorld, WorldClock, WorldInfo};
 use bevy_ecs::prelude::*;
@@ -55,7 +55,11 @@ impl ChunkTickets {
     }
 }
 
-pub fn compute_tickets(mut tickets: ResMut<ChunkTickets>, query: Query<&PlayerActor>) {
+pub fn compute_tickets(
+    mut tickets: ResMut<ChunkTickets>,
+    spawn: Res<crate::SpawnPoint>,
+    query: Query<&PlayerActor>,
+) {
     let ChunkTickets { active, border } = &mut *tickets;
     active.clear();
     border.clear();
@@ -70,6 +74,12 @@ pub fn compute_tickets(mut tickets: ResMut<ChunkTickets>, query: Query<&PlayerAc
                     border.insert(pos);
                 }
             }
+        }
+    }
+    let center = spawn.0.chunk();
+    for dy in -INTEREST_RADIUS_Y..=INTEREST_RADIUS_Y {
+        for dx in -INTEREST_RADIUS_X..=INTEREST_RADIUS_X {
+            active.insert(center.translated(dx, dy));
         }
     }
     border.retain(|pos| !active.contains(pos));
@@ -263,10 +273,12 @@ pub fn autosave(
         &crate::player::Player,
         &PlayerActor,
         &Health,
+        &Life,
         &Mode,
         &Air,
         &Burning,
         &Inventory,
+        &ChatHistory,
     )>,
 ) {
     let Some(store) = store.0.as_ref() else {
@@ -289,7 +301,8 @@ pub fn autosave(
         .iter()
         .filter_map(|session| {
             let entity = session.entity?;
-            let (player, body, health, mode, air, burning, inventory) = query.get(entity).ok()?;
+            let (player, body, health, life, mode, air, burning, inventory, history) =
+                query.get(entity).ok()?;
             Some((
                 player.uuid,
                 player_record(
@@ -297,10 +310,12 @@ pub fn autosave(
                     player,
                     &body.0,
                     health,
+                    life,
                     mode,
                     air,
                     burning,
                     inventory,
+                    history,
                 ),
             ))
         })
@@ -374,16 +389,21 @@ pub fn save_everything(world: &mut bevy_ecs::world::World, final_save: bool) {
             &crate::player::Player,
             &PlayerActor,
             &Health,
+            &Life,
             &Mode,
             &Air,
             &Burning,
             &Inventory,
+            &ChatHistory,
         )>();
-        for (player, body, health, mode, air, burning, inventory) in query.iter(world) {
+        for (player, body, health, life, mode, air, burning, inventory, history) in
+            query.iter(world)
+        {
             players.push((
                 player.uuid,
                 player_record(
-                    &item_reg, player, &body.0, health, mode, air, burning, inventory,
+                    &item_reg, player, &body.0, health, life, mode, air, burning, inventory,
+                    history,
                 ),
             ));
         }

@@ -180,23 +180,6 @@ pub fn stamp_player(
     Some(vacated)
 }
 
-pub fn force_stamp_player(
-    world: &mut CellWorld,
-    stamp: &mut PlayerStamp,
-    fp: Footprint,
-    facing_left: bool,
-) {
-    unstamp_player(world, stamp);
-    let rows = (fp.y1 - fp.y0 + 1) as u8;
-    let new = player_raster(fp);
-    for &(pos, local) in &new.cells {
-        world.set_cell_raw(pos, flesh_cell(local, rows, facing_left));
-    }
-    stamp.raster = Some(new);
-    stamp.rows = rows;
-    stamp.facing_left = facing_left;
-}
-
 pub fn unstamp_player(world: &mut CellWorld, stamp: &mut PlayerStamp) {
     if let Some(raster) = stamp.raster.take() {
         for &(pos, _) in &raster.cells {

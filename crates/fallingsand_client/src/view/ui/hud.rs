@@ -1,10 +1,11 @@
-use super::inventory::{SlotCount, SlotSwatch, spawn_slot_widgets, sync_slots};
+use super::inventory::{SlotCount, SlotGlyph, SlotSwatch, spawn_slot_widgets, sync_slots};
 use crate::game::ClientGame;
 use crate::view::Game;
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
 use fallingsand_core::{HOTBAR_SLOTS, ItemStack, MAX_AIR_SECS, MAX_HP};
 use fallingsand_protocol::GameMode;
+use fallingsand_protocol::LifeState;
 
 const SLOT_SIZE: f32 = 42.0;
 const HEALTH_WIDTH: f32 = 180.0;
@@ -30,6 +31,9 @@ pub(crate) struct AirFill;
 pub(crate) struct DamageFlash;
 
 #[derive(Component)]
+pub(crate) struct DeathScreen;
+
+#[derive(Component)]
 pub(crate) struct HotbarSlot(usize);
 
 pub fn sync_hud(mut commands: Commands, game: Res<Game>, roots: Query<Entity, With<HudRoot>>) {
@@ -44,11 +48,13 @@ pub fn sync_hud(mut commands: Commands, game: Res<Game>, roots: Query<Entity, Wi
     }
 }
 
+#[allow(clippy::type_complexity)]
 pub fn patch_hud_slots(
     game: Res<Game>,
     slots: Query<&HotbarSlot>,
     mut swatches: Query<(&ChildOf, &mut Node, &mut BackgroundColor), With<SlotSwatch>>,
-    mut counts: Query<(&ChildOf, &mut Text), With<SlotCount>>,
+    mut counts: Query<(&ChildOf, &mut Text), (With<SlotCount>, Without<SlotGlyph>)>,
+    mut glyphs: Query<(&ChildOf, &mut Text, &mut TextColor), (With<SlotGlyph>, Without<SlotCount>)>,
 ) {
     if game.0.changes.slots.is_empty() {
         return;
@@ -68,7 +74,24 @@ pub fn patch_hud_slots(
         &game.0.registries.items,
         &mut swatches,
         &mut counts,
+        &mut glyphs,
     );
+}
+
+pub fn sync_death_screen(game: Res<Game>, mut death: Query<&mut Node, With<DeathScreen>>) {
+    let Some(ingame) = game.0.playing() else {
+        return;
+    };
+    let display = if ingame.you.life == LifeState::Dead {
+        Display::Flex
+    } else {
+        Display::None
+    };
+    for mut node in &mut death {
+        if node.display != display {
+            node.display = display;
+        }
+    }
 }
 
 #[allow(clippy::type_complexity)]
@@ -292,4 +315,40 @@ fn spawn_hud(commands: &mut Commands, game: &ClientGame) {
         GlobalZIndex(50),
         Pickable::IGNORE,
     ));
+
+    commands
+        .spawn((
+            HudRoot,
+            DeathScreen,
+            Node {
+                position_type: PositionType::Absolute,
+                width: percent(100),
+                height: percent(100),
+                display: Display::None,
+                flex_direction: FlexDirection::Column,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                row_gap: px(18),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.08, 0.0, 0.0, 0.78)),
+            GlobalZIndex(60),
+        ))
+        .with_children(|screen| {
+            screen.spawn((
+                Text::new("You died"),
+                TextFont {
+                    font_size: FontSize::Px(36.0),
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+            ));
+            super::spawn_button(
+                screen,
+                crate::view::io::Btn::Revive,
+                "Revive",
+                180.0,
+                super::BUTTON_BG,
+            );
+        });
 }

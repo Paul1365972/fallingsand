@@ -4,13 +4,12 @@ use super::camera::WORLD_LAYER;
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 use fallingsand_core::content;
-use fallingsand_core::{Phase, REACH, SURVIVAL_REACH};
-use fallingsand_protocol::GameMode;
+use fallingsand_protocol::{InteractionStatus, LifeState};
 use fallingsand_rng::Rng;
 
 const SPRAY_TTL: f32 = 0.5;
 const SPRAY_GRAVITY: f32 = 260.0;
-const SPRAY_PER_FRAME: usize = 3;
+const SPRAY_PER_FRAME: usize = 2;
 const FLAME_TTL: f32 = 0.45;
 const FLAME_INTERVAL: f32 = 0.05;
 
@@ -20,6 +19,64 @@ pub struct Particle {
     gravity: f32,
     ttl: f32,
     max_ttl: f32,
+}
+
+#[derive(Component)]
+pub struct TargetHighlight;
+
+pub fn sync_target(
+    mut commands: Commands,
+    game: Res<Game>,
+    mut query: Query<(&mut Transform, &mut Sprite, &mut Visibility), With<TargetHighlight>>,
+) {
+    let shown = game
+        .0
+        .playing()
+        .filter(|ingame| ingame.you.life == LifeState::Alive)
+        .map(|ingame| ingame.you.interaction)
+        .and_then(|state| status_color(state.status, state.progress).map(|color| (state, color)));
+
+    if query.is_empty() {
+        commands.spawn((
+            TargetHighlight,
+            Sprite::from_color(shown.map_or(Color::NONE, |(_, color)| color), Vec2::ONE),
+            Transform::from_xyz(0.0, 0.0, 14.0),
+            RenderLayers::layer(WORLD_LAYER),
+            if shown.is_some() {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            },
+        ));
+        return;
+    }
+    for (mut transform, mut sprite, mut visibility) in &mut query {
+        let Some((state, color)) = shown else {
+            *visibility = Visibility::Hidden;
+            continue;
+        };
+        *visibility = Visibility::Inherited;
+        transform.translation.x = state.target.x as f32 + 0.5;
+        transform.translation.y = state.target.y as f32 + 0.5;
+        sprite.color = color;
+    }
+}
+
+fn status_color(status: InteractionStatus, progress: f32) -> Option<Color> {
+    Some(match status {
+        InteractionStatus::Valid => Color::srgba(0.3, 1.0, 0.4, 0.32 + progress * 0.35),
+        InteractionStatus::OutOfReach | InteractionStatus::NoTarget => {
+            Color::srgba(0.55, 0.55, 0.6, 0.32)
+        }
+        InteractionStatus::Occupied | InteractionStatus::Undiggable => {
+            Color::srgba(1.0, 0.25, 0.2, 0.45)
+        }
+        InteractionStatus::WrongTool | InteractionStatus::NotPlaceable => {
+            Color::srgba(1.0, 0.55, 0.12, 0.48)
+        }
+        InteractionStatus::InventoryFull => Color::srgba(0.75, 0.2, 1.0, 0.5),
+        InteractionStatus::None => return None,
+    })
 }
 
 pub fn spawn_particles(
@@ -79,45 +136,28 @@ fn spawn_dig_spray(
     ingame: &crate::game::InGame,
     rng: &mut Rng,
 ) {
-    let held = game.input.held;
-    if !held.primary || !ingame.you.present {
+    let you = &ingame.you;
+    if !game.input.held.primary
+        || !you.present
+        || you.interaction.status != InteractionStatus::Valid
+    {
         return;
     }
-    let aim = Vec2::new(held.aim.x as f32, held.aim.y as f32);
-    let reach = match ingame.you.mode {
-        GameMode::Survival => SURVIVAL_REACH,
-        GameMode::Creative => REACH,
+    let target = you.interaction.target;
+    let center = Vec2::new(target.x as f32 + 0.5, target.y as f32 + 0.5);
+    let Some(cell) = ingame.world.get_cell(target) else {
+        return;
     };
-    if ingame.you.pos.distance_squared(aim) > reach * reach {
-        return;
-    }
-
-    let radius = ingame.inventory.brush as i32;
-    let mut spawned = 0;
-    for _ in 0..12 {
-        if spawned >= SPRAY_PER_FRAME {
-            break;
-        }
-        let span = (2 * radius + 1) as f32;
-        let ox = (rng.draw().unit() * span) as i32 - radius;
-        let oy = (rng.draw().unit() * span) as i32 - radius;
-        if ox * ox + oy * oy > radius * radius {
-            continue;
-        }
-        let pos = held.aim.translated(ox, oy);
-        let Some(cell) = ingame.world.get_cell(pos) else {
-            continue;
-        };
-        if !matches!(content::phase(cell.material), Phase::Solid | Phase::Powder) {
-            continue;
-        }
-        let colors = content::material(cell.material).colors;
-        let shade = (cell.shade_flags >> 4) as usize;
-        let rgba = colors[shade % colors.len()];
-        let color = Color::srgba_u8(rgba[0], rgba[1], rgba[2], 255);
+    let colors = content::material(cell.material).colors;
+    let shade = (cell.shade_flags >> 4) as usize;
+    let rgba = colors[shade % colors.len()];
+    let color = Color::srgba_u8(rgba[0], rgba[1], rgba[2], 255);
+    for _ in 0..SPRAY_PER_FRAME {
         let angle = std::f32::consts::FRAC_PI_4 + rng.draw().unit() * std::f32::consts::FRAC_PI_2;
         let speed = 25.0 + rng.draw().unit() * 55.0;
         let velocity = Vec2::from_angle(angle) * speed;
+        let jitter = Vec2::new(rng.draw().unit() - 0.5, rng.draw().unit() - 0.5);
+        let origin = center + jitter;
         commands.spawn((
             Particle {
                 velocity,
@@ -126,10 +166,9 @@ fn spawn_dig_spray(
                 max_ttl: SPRAY_TTL,
             },
             Sprite::from_color(color, Vec2::ONE),
-            Transform::from_xyz(pos.x as f32 + 0.5, pos.y as f32 + 0.5, 15.0),
+            Transform::from_xyz(origin.x, origin.y, 15.0),
             RenderLayers::layer(WORLD_LAYER),
         ));
-        spawned += 1;
     }
 }
 

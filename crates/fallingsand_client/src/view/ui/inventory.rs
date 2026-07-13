@@ -1,4 +1,4 @@
-use super::{format_count, item_color};
+use super::{format_count, item_color, item_glyph};
 use crate::game::inventory::{Inventory, SlotRegion};
 use crate::game::{ClientGame, InGame};
 use crate::view::Game;
@@ -49,6 +49,9 @@ pub struct SlotSwatch;
 #[derive(Component)]
 pub struct SlotCount;
 
+#[derive(Component)]
+pub struct SlotGlyph;
+
 pub fn spawn_slot_widgets(
     slot: &mut ChildSpawnerCommands,
     size: f32,
@@ -56,10 +59,20 @@ pub fn spawn_slot_widgets(
     stack: Option<ItemStack>,
     game: &ClientGame,
 ) {
+    let glyph = stack
+        .map(|stack| item_glyph(&game.registries.items, stack.item))
+        .unwrap_or("");
     let (display, color) = match stack {
         Some(stack) => {
             let c = item_color(&game.registries.items, stack.item);
-            (Display::Flex, Color::srgba_u8(c[0], c[1], c[2], c[3]))
+            (
+                if glyph.is_empty() {
+                    Display::Flex
+                } else {
+                    Display::None
+                },
+                Color::srgba_u8(c[0], c[1], c[2], c[3]),
+            )
         }
         None => (Display::None, Color::NONE),
     };
@@ -81,6 +94,30 @@ pub fn spawn_slot_widgets(
         BackgroundColor(color),
         Pickable::IGNORE,
     ));
+    let glyph_color = stack
+        .map(|stack| item_color(&game.registries.items, stack.item))
+        .unwrap_or([255; 4]);
+    slot.spawn((
+        SlotGlyph,
+        Text::new(glyph),
+        TextFont {
+            font_size: FontSize::Px(5.0),
+            ..default()
+        },
+        TextColor(Color::srgba_u8(
+            glyph_color[0],
+            glyph_color[1],
+            glyph_color[2],
+            glyph_color[3],
+        )),
+        Node {
+            position_type: PositionType::Absolute,
+            left: px(inset + 2.0),
+            top: px(inset),
+            ..default()
+        },
+        Pickable::IGNORE,
+    ));
     slot.spawn((
         SlotCount,
         Text::new(count),
@@ -100,11 +137,16 @@ pub fn spawn_slot_widgets(
     ));
 }
 
+#[allow(clippy::type_complexity)]
 pub fn sync_slots(
     stack_for: impl Fn(Entity) -> Option<Option<ItemStack>>,
     items: &fallingsand_core::ItemRegistry,
     swatches: &mut Query<(&ChildOf, &mut Node, &mut BackgroundColor), With<SlotSwatch>>,
-    counts: &mut Query<(&ChildOf, &mut Text), With<SlotCount>>,
+    counts: &mut Query<(&ChildOf, &mut Text), (With<SlotCount>, Without<SlotGlyph>)>,
+    glyphs: &mut Query<
+        (&ChildOf, &mut Text, &mut TextColor),
+        (With<SlotGlyph>, Without<SlotCount>),
+    >,
 ) {
     for (child_of, mut node, mut color) in swatches {
         if let Some(stack) = stack_for(child_of.parent()) {
@@ -114,6 +156,18 @@ pub fn sync_slots(
     for (child_of, mut text) in counts {
         if let Some(stack) = stack_for(child_of.parent()) {
             apply_count(stack, &mut text);
+        }
+    }
+    for (child_of, mut text, mut color) in glyphs {
+        if let Some(stack) = stack_for(child_of.parent()) {
+            let glyph = stack
+                .map(|stack| item_glyph(items, stack.item))
+                .unwrap_or("");
+            text.0 = glyph.into();
+            if let Some(stack) = stack {
+                let rgba = item_color(items, stack.item);
+                color.0 = Color::srgba_u8(rgba[0], rgba[1], rgba[2], rgba[3]);
+            }
         }
     }
 }
@@ -128,8 +182,13 @@ fn apply_swatch(
         Some(stack) => {
             let c = item_color(items, stack.item);
             let target = Color::srgba_u8(c[0], c[1], c[2], c[3]);
-            if node.display != Display::Flex {
-                node.display = Display::Flex;
+            let display = if item_glyph(items, stack.item).is_empty() {
+                Display::Flex
+            } else {
+                Display::None
+            };
+            if node.display != display {
+                node.display = display;
             }
             if color.0 != target {
                 color.0 = target;
@@ -186,11 +245,13 @@ pub fn sync_overlay(
     }
 }
 
+#[allow(clippy::type_complexity)]
 pub fn patch_overlay_slots(
     game: Res<Game>,
     slots: Query<&UiSlot>,
     mut swatches: Query<(&ChildOf, &mut Node, &mut BackgroundColor), With<SlotSwatch>>,
-    mut counts: Query<(&ChildOf, &mut Text), With<SlotCount>>,
+    mut counts: Query<(&ChildOf, &mut Text), (With<SlotCount>, Without<SlotGlyph>)>,
+    mut glyphs: Query<(&ChildOf, &mut Text, &mut TextColor), (With<SlotGlyph>, Without<SlotCount>)>,
 ) {
     let changes = &game.0.changes;
     if changes.slots.is_empty() && !changes.trash {
@@ -215,6 +276,7 @@ pub fn patch_overlay_slots(
         &game.0.registries.items,
         &mut swatches,
         &mut counts,
+        &mut glyphs,
     );
 }
 

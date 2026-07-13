@@ -2,13 +2,13 @@ use fallingsand_core::{
     CHUNK_AREA, CHUNK_SIZE, Cell, DirtyRect, Fixed, Inventory as CoreInventory, ItemId,
     ItemRegistry, ItemStack, MaterialId, PLAYER_SLOTS, REGION_AREA_CHUNKS, Region, RegionPos,
 };
-use fallingsand_protocol::{GameMode, PlayerUuid};
+use fallingsand_protocol::{GameMode, LifeState, PlayerUuid};
 use redb::{Database, ReadableDatabase, TableDefinition};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 pub const REGION_FORMAT_VERSION: u8 = 11;
-pub const WORLD_FORMAT_VERSION: u16 = 17;
+pub const WORLD_FORMAT_VERSION: u16 = 18;
 const CELL_BYTES: usize = 8;
 const RECT_BYTES: usize = 4;
 const REGION_CELL_BYTES: usize = REGION_AREA_CHUNKS * CHUNK_AREA * CELL_BYTES;
@@ -27,32 +27,44 @@ pub struct WorldMeta {
     pub tick: u64,
 }
 
-pub type SlotRecord = Option<(String, u32)>;
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StackRecord {
+    pub item: String,
+    pub count: u32,
+}
+
+pub type SlotRecord = Option<StackRecord>;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlayerRecord {
     pub x: Fixed,
     pub y: Fixed,
     pub hp: f32,
+    pub life: LifeState,
+    pub vx: Fixed,
+    pub vy: Fixed,
     pub mode: GameMode,
     pub air: f32,
     pub burning: f32,
     pub flying: bool,
     pub selected: u8,
-    pub brush: u8,
     pub inventory: Vec<SlotRecord>,
     pub cursor: SlotRecord,
     pub trash: SlotRecord,
+    pub history: Vec<String>,
 }
 
 pub fn stack_to_record(reg: &ItemRegistry, stack: Option<ItemStack>) -> SlotRecord {
     let stack = stack.filter(|s| s.count > 0)?;
     let name = reg.try_get(stack.item)?.name.clone();
-    Some((name, stack.count))
+    Some(StackRecord {
+        item: name,
+        count: stack.count,
+    })
 }
 
 pub fn stack_from_record(reg: &ItemRegistry, record: &SlotRecord) -> Option<ItemStack> {
-    let (name, count) = record.as_ref()?;
+    let StackRecord { item: name, count } = record.as_ref()?;
     if *count == 0 {
         return None;
     }

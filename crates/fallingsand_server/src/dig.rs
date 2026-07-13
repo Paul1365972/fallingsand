@@ -1,166 +1,466 @@
 use crate::SimWorld;
 use crate::inventory::{Inventory, ItemReg};
-use crate::player::{DigState, Mode, Player, PlayerActor};
+use crate::player::{Life, Mode, Player, PlayerActor};
 use bevy_ecs::prelude::*;
 use fallingsand_core::content;
 use fallingsand_core::{
-    CellPos, Fixed, ItemId, ItemRegistry, ItemStack, MAX_BRUSH, MaterialId, Phase, REACH,
-    SURVIVAL_REACH, TICK_DT, Tag,
+    CellPos, ItemId, ItemRegistry, ItemStack, MaterialId, Phase, REACH, SURVIVAL_REACH, TICK_DT,
+    Tag,
 };
-use fallingsand_protocol::GameMode;
+use fallingsand_protocol::{GameMode, InteractionState, InteractionStatus, LifeState};
+
+const BARE_HAND_SPEED: f32 = 0.55;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MiningMethod {
+    Hands,
+    Tool(ItemId),
+}
+
+struct DigProgress {
+    target: CellPos,
+    material: MaterialId,
+    method: MiningMethod,
+    elapsed: f32,
+}
+
+#[derive(Component, Default)]
+pub struct DigState {
+    progress: Option<DigProgress>,
+    pub interaction: Option<InteractionState>,
+}
+
+impl DigState {
+    fn clear_progress(&mut self) {
+        self.progress = None;
+    }
+}
+
+type Actor = fallingsand_sim::physics::Actor;
+type World = fallingsand_sim::CellWorld;
 
 pub fn apply_player_inputs(
     mut sim: ResMut<SimWorld>,
     item_reg: Res<ItemReg>,
     mut bodies: ResMut<crate::bodies::PixelBodies>,
-    mut query: Query<(&Player, &PlayerActor, &Mode, &mut DigState, &mut Inventory)>,
+    mut query: Query<(
+        &Player,
+        &PlayerActor,
+        &Life,
+        &Mode,
+        &mut DigState,
+        &mut Inventory,
+    )>,
 ) {
     let reg = &item_reg.0;
-    for (player, body, mode, mut dig, mut inventory) in &mut query {
-        let input = &player.input;
+    for (player, body, life, mode, mut dig, mut inventory) in &mut query {
+        if life.0 != LifeState::Alive {
+            *dig = DigState::default();
+            continue;
+        }
         let survival = mode.0 == GameMode::Survival;
-        let radius = player.brush_radius.min(MAX_BRUSH) as i32;
-        if !input.primary {
-            dig.budget = 0.0;
-        }
-        if !input.primary && !input.secondary {
-            continue;
-        }
         let reach = if survival { SURVIVAL_REACH } else { REACH };
-        let dx = (Fixed::from_cell(input.aim.x) - body.0.x).to_f32();
-        let dy = (Fixed::from_cell(input.aim.y) - body.0.y).to_f32();
-        if dx * dx + dy * dy > reach * reach {
-            continue;
-        }
-        let mut dug = false;
-        if input.primary {
-            if survival {
-                dug = survival_dig(&mut sim.0, reg, &mut dig, &mut inventory, input.aim, radius);
-            } else {
-                for (_, pos) in brush_cells(input.aim, radius) {
-                    let Some(cell) = sim.0.get_cell(pos) else {
-                        continue;
-                    };
-                    if content::tags(cell.material).contains(Tag::Player) {
-                        continue;
-                    }
-                    if content::phase(cell.material) != Phase::Empty {
-                        sim.0.place_material(pos, MaterialId::AIR);
-                        dug = true;
-                    }
-                }
-            }
-        } else if input.secondary {
-            let slot = player.selected_slot as usize;
-            if slot < fallingsand_core::HOTBAR_SLOTS
-                && let Some(stack) = inventory.inner.get(slot)
-                && let Some(material) = reg.try_get(stack.item).and_then(|def| def.place)
-            {
-                let mut placed = 0u32;
-                let budget = if survival { stack.count } else { u32::MAX };
-                for (_, pos) in brush_cells(input.aim, radius) {
-                    if placed >= budget {
-                        break;
-                    }
-                    let Some(cell) = sim.0.get_cell(pos) else {
-                        continue;
-                    };
-                    if !cell.is_air() {
-                        continue;
-                    }
-                    sim.0.place_material(pos, material);
-                    placed += 1;
-                }
-                if survival && placed > 0 {
-                    consume_slot(&mut inventory, slot, placed);
-                }
-            }
-        }
-        if dug {
-            let ring = radius + 1;
-            for oy in -ring..=ring {
-                for ox in -ring..=ring {
-                    let dist_sq = ox * ox + oy * oy;
-                    if dist_sq <= radius * radius || dist_sq > ring * ring {
-                        continue;
-                    }
-                    bodies.candidates.push(input.aim.translated(ox, oy));
-                }
-            }
+        let body = &body.0;
+
+        if player.input.primary {
+            active_dig(
+                &mut sim.0,
+                reg,
+                &mut bodies,
+                player,
+                body,
+                survival,
+                &mut dig,
+                &mut inventory,
+                reach,
+            );
+        } else if player.input.secondary {
+            active_place(
+                &mut sim.0,
+                reg,
+                player,
+                body,
+                survival,
+                &mut dig,
+                &mut inventory,
+                reach,
+            );
+        } else {
+            dig.clear_progress();
+            dig.interaction = idle_preview(&sim.0, reg, player, body, survival, &inventory, reach);
         }
     }
 }
 
-fn consume_slot(inventory: &mut Inventory, slot: usize, amount: u32) {
-    if let Some(stack) = inventory.inner.get(slot) {
-        let count = stack.count.saturating_sub(amount);
-        inventory
+#[allow(clippy::too_many_arguments)]
+fn active_dig(
+    world: &mut World,
+    reg: &ItemRegistry,
+    bodies: &mut crate::bodies::PixelBodies,
+    player: &Player,
+    body: &Actor,
+    survival: bool,
+    dig: &mut DigState,
+    inventory: &mut Inventory,
+    reach: f32,
+) {
+    let Some(target) = select_dig(world, player, body, reach) else {
+        dig.clear_progress();
+        dig.interaction = Some(interaction(
+            player.input.aim,
+            miss_reason(body, player, reach),
+            0.0,
+        ));
+        return;
+    };
+    let plan = match classify_dig(
+        world,
+        reg,
+        inventory,
+        player.selected_slot,
+        survival,
+        target,
+    ) {
+        Ok(plan) => plan,
+        Err(status) => {
+            dig.clear_progress();
+            dig.interaction = Some(interaction(target, status, 0.0));
+            return;
+        }
+    };
+
+    let matches_progress = dig.progress.as_ref().is_some_and(|p| {
+        p.target == target && p.material == plan.material && p.method == plan.method
+    });
+    if !matches_progress {
+        dig.progress = Some(DigProgress {
+            target,
+            material: plan.material,
+            method: plan.method,
+            elapsed: 0.0,
+        });
+    }
+    let progress = dig.progress.as_mut().unwrap();
+    progress.elapsed += TICK_DT;
+    let hardness = content::material(plan.material).hardness.max(0.01);
+    let duration = if survival { hardness / plan.speed } else { 0.0 };
+    let fraction = if duration <= 0.0 {
+        1.0
+    } else {
+        (progress.elapsed / duration).clamp(0.0, 1.0)
+    };
+    if fraction < 1.0 {
+        dig.interaction = Some(interaction(target, InteractionStatus::Valid, fraction));
+        return;
+    }
+
+    if survival {
+        let leftover = inventory
             .inner
-            .set(slot, Some(ItemStack::new(stack.item, count)));
+            .insert_first_fit(ItemStack::new(plan.item, 1), reg);
+        debug_assert!(leftover.is_none());
+        inventory.dirty = true;
     }
-    inventory.dirty = true;
+    world.place_material(target, MaterialId::AIR);
+    for (dx, dy) in [(0, -1), (-1, 0), (1, 0), (0, 1)] {
+        bodies.candidates.push(target.translated(dx, dy));
+    }
+    dig.clear_progress();
+    dig.interaction = Some(interaction(target, InteractionStatus::Valid, 1.0));
 }
 
-fn brush_cells(aim: CellPos, radius: i32) -> impl Iterator<Item = (i32, CellPos)> {
-    (-radius..=radius).flat_map(move |oy| {
-        (-radius..=radius).filter_map(move |ox| {
-            let dist_sq = ox * ox + oy * oy;
-            (dist_sq <= radius * radius).then_some((dist_sq, aim.translated(ox, oy)))
-        })
+#[allow(clippy::too_many_arguments)]
+fn active_place(
+    world: &mut World,
+    reg: &ItemRegistry,
+    player: &Player,
+    body: &Actor,
+    survival: bool,
+    dig: &mut DigState,
+    inventory: &mut Inventory,
+    reach: f32,
+) {
+    dig.clear_progress();
+    let slot = player.selected_slot as usize;
+    let Some(material) = inventory
+        .inner
+        .get(slot)
+        .and_then(|stack| reg.try_get(stack.item).and_then(|def| def.place))
+    else {
+        dig.interaction = Some(interaction(
+            player.input.aim,
+            InteractionStatus::NotPlaceable,
+            0.0,
+        ));
+        return;
+    };
+    let Some(target) = select_place(world, body, player.input.aim, reach) else {
+        dig.interaction = Some(interaction(
+            player.input.aim,
+            miss_reason(body, player, reach),
+            0.0,
+        ));
+        return;
+    };
+
+    world.place_material(target, material);
+    if survival {
+        let stack = inventory.inner.get(slot).expect("placeable slot occupied");
+        let count = stack.count.saturating_sub(1);
+        inventory.inner.set(
+            slot,
+            (count > 0).then_some(ItemStack::new(stack.item, count)),
+        );
+        inventory.dirty = true;
+    }
+    dig.interaction = Some(interaction(target, InteractionStatus::Valid, 1.0));
+}
+
+fn idle_preview(
+    world: &World,
+    reg: &ItemRegistry,
+    player: &Player,
+    body: &Actor,
+    survival: bool,
+    inventory: &Inventory,
+    reach: f32,
+) -> Option<InteractionState> {
+    let slot = player.selected_slot as usize;
+    let placeable = inventory
+        .inner
+        .get(slot)
+        .and_then(|stack| reg.try_get(stack.item).and_then(|def| def.place))
+        .is_some();
+
+    if placeable {
+        let target = select_place(world, body, player.input.aim, reach)?;
+        return Some(interaction(target, InteractionStatus::Valid, 0.0));
+    }
+    if survival && inventory.inner.get(slot).is_some() && !is_tool(reg, inventory, slot) {
+        return None;
+    }
+    let target = select_dig(world, player, body, reach)?;
+    match classify_dig(
+        world,
+        reg,
+        inventory,
+        player.selected_slot,
+        survival,
+        target,
+    ) {
+        Ok(_) => Some(interaction(target, InteractionStatus::Valid, 0.0)),
+        Err(_) => None,
+    }
+}
+
+struct DigPlan {
+    method: MiningMethod,
+    speed: f32,
+    item: ItemId,
+    material: MaterialId,
+}
+
+fn classify_dig(
+    world: &World,
+    reg: &ItemRegistry,
+    inventory: &Inventory,
+    selected_slot: u8,
+    survival: bool,
+    target: CellPos,
+) -> Result<DigPlan, InteractionStatus> {
+    let Some(cell) = world.get_cell(target) else {
+        return Err(InteractionStatus::OutOfReach);
+    };
+    let material = cell.material;
+    if content::tags(material).contains(Tag::Player)
+        || !matches!(content::phase(material), Phase::Solid | Phase::Powder)
+    {
+        return Err(InteractionStatus::Occupied);
+    }
+    let item = reg.item_for_material(material);
+    if item == ItemId::NONE {
+        return Err(InteractionStatus::Undiggable);
+    }
+    let slot = selected_slot as usize;
+    let held = inventory.inner.get(slot);
+    let (method, speed, tier) = match held.and_then(|stack| {
+        reg.try_get(stack.item)
+            .and_then(|def| def.tool.map(|t| (stack.item, t)))
+    }) {
+        Some((id, tool)) => (MiningMethod::Tool(id), tool.speed, tool.tier),
+        None => {
+            if survival && held.is_some() {
+                return Err(InteractionStatus::WrongTool);
+            }
+            (MiningMethod::Hands, BARE_HAND_SPEED, 0)
+        }
+    };
+    if survival {
+        if tier < content::material(material).mining_tier {
+            return Err(InteractionStatus::WrongTool);
+        }
+        if !inventory.inner.can_insert(ItemStack::new(item, 1), reg) {
+            return Err(InteractionStatus::InventoryFull);
+        }
+    }
+    Ok(DigPlan {
+        method,
+        speed,
+        item,
+        material,
     })
 }
 
-pub fn survival_dig(
-    world: &mut fallingsand_sim::CellWorld,
-    item_reg: &ItemRegistry,
-    dig: &mut DigState,
-    inventory: &mut Inventory,
-    aim: CellPos,
-    radius: i32,
-) -> bool {
-    let mut candidates: Vec<(i32, i32, i32)> = brush_cells(aim, radius)
-        .filter(|&(_, pos)| {
-            world.get_cell(pos).is_some_and(|cell| {
-                !content::tags(cell.material).contains(Tag::Player)
-                    && matches!(content::phase(cell.material), Phase::Solid | Phase::Powder)
-            })
-        })
-        .map(|(dist_sq, pos)| (dist_sq, pos.y, pos.x))
-        .collect();
-    candidates.sort_unstable();
-    let Some(&(_, y, x)) = candidates.first() else {
-        dig.budget = 0.0;
-        return false;
-    };
-    let closest_cost = world
-        .get_cell(CellPos::new(x, y))
-        .map(|cell| content::material(cell.material).hardness)
-        .unwrap_or(0.0);
-    dig.budget = (dig.budget + TICK_DT).min(closest_cost + TICK_DT);
-    let mut dug = false;
-    for &(_, y, x) in &candidates {
-        let pos = CellPos::new(x, y);
-        let Some(cell) = world.get_cell(pos) else {
-            continue;
+fn is_tool(reg: &ItemRegistry, inventory: &Inventory, slot: usize) -> bool {
+    inventory
+        .inner
+        .get(slot)
+        .and_then(|stack| reg.try_get(stack.item))
+        .is_some_and(|def| def.tool.is_some())
+}
+
+fn select_dig(world: &World, player: &Player, body: &Actor, reach: f32) -> Option<CellPos> {
+    let target = movement_blocker(world, player, body).or_else(|| {
+        let start = body.cell();
+        let end = clamp_to_reach(start, player.input.aim, reach);
+        first_obstruction(world, start, end)
+    })?;
+    (cell_distance_sq(body, target) <= reach * reach).then_some(target)
+}
+
+fn select_place(world: &World, body: &Actor, aim: CellPos, reach: f32) -> Option<CellPos> {
+    let start = body.cell();
+    let end = clamp_to_reach(start, aim, reach);
+    let target = last_air_before_obstruction(world, start, end)?;
+    (cell_distance_sq(body, target) <= reach * reach).then_some(target)
+}
+
+fn miss_reason(body: &Actor, player: &Player, reach: f32) -> InteractionStatus {
+    if cell_distance_sq(body, player.input.aim) <= reach * reach {
+        InteractionStatus::NoTarget
+    } else {
+        InteractionStatus::OutOfReach
+    }
+}
+
+fn movement_blocker(world: &World, player: &Player, body: &Actor) -> Option<CellPos> {
+    let fp = body.footprint();
+    if player.input.down {
+        return (fp.x0..=fp.x1)
+            .map(|x| CellPos::new(x, fp.y0 - 1))
+            .filter(|&pos| diggable(world, pos))
+            .min_by_key(|pos| (pos.x - player.input.aim.x).abs());
+    }
+    if player.input.jump {
+        return (fp.x0..=fp.x1)
+            .map(|x| CellPos::new(x, fp.y1 + 1))
+            .filter(|&pos| diggable(world, pos))
+            .min_by_key(|pos| (pos.x - player.input.aim.x).abs());
+    }
+    if player.input.move_x != 0 {
+        let x = if player.input.move_x < 0 {
+            fp.x0 - 1
+        } else {
+            fp.x1 + 1
         };
-        let cost = content::material(cell.material).hardness;
-        if dig.budget < cost {
+        return (fp.y0..=fp.y1)
+            .map(|y| CellPos::new(x, y))
+            .filter(|&pos| diggable(world, pos))
+            .min_by_key(|pos| (pos.y - player.input.aim.y).abs());
+    }
+    None
+}
+
+fn clamp_to_reach(start: CellPos, aim: CellPos, reach: f32) -> CellPos {
+    let dx = (aim.x as i64 - start.x as i64) as f64;
+    let dy = (aim.y as i64 - start.y as i64) as f64;
+    let dist = (dx * dx + dy * dy).sqrt();
+    let max = reach as f64 + 1.0;
+    if dist <= max || dist == 0.0 {
+        return aim;
+    }
+    let scale = max / dist;
+    CellPos::new(
+        start.x + (dx * scale).round() as i32,
+        start.y + (dy * scale).round() as i32,
+    )
+}
+
+fn ray_cells(start: CellPos, end: CellPos) -> impl Iterator<Item = CellPos> {
+    let ex = end.x as i64;
+    let ey = end.y as i64;
+    let dx = (ex - start.x as i64).abs();
+    let dy = -(ey - start.y as i64).abs();
+    let sx: i64 = if start.x < end.x { 1 } else { -1 };
+    let sy: i64 = if start.y < end.y { 1 } else { -1 };
+    let mut x = start.x as i64;
+    let mut y = start.y as i64;
+    let mut error = dx + dy;
+    std::iter::from_fn(move || {
+        if x == ex && y == ey {
+            return None;
+        }
+        let twice = 2 * error;
+        if twice >= dy {
+            error += dy;
+            x += sx;
+        }
+        if twice <= dx {
+            error += dx;
+            y += sy;
+        }
+        Some(CellPos::new(x as i32, y as i32))
+    })
+}
+
+fn first_obstruction(world: &World, start: CellPos, end: CellPos) -> Option<CellPos> {
+    for pos in ray_cells(start, end) {
+        let cell = world.get_cell(pos)?;
+        if content::tags(cell.material).contains(Tag::Player) {
+            continue;
+        }
+        if !matches!(
+            content::phase(cell.material),
+            Phase::Empty | Phase::Gas | Phase::Liquid
+        ) {
+            return Some(pos);
+        }
+    }
+    None
+}
+
+fn last_air_before_obstruction(world: &World, start: CellPos, end: CellPos) -> Option<CellPos> {
+    let mut last = None;
+    for pos in ray_cells(start, end) {
+        let Some(cell) = world.get_cell(pos) else {
+            break;
+        };
+        if cell.is_air() {
+            last = Some(pos);
+        } else if !content::tags(cell.material).contains(Tag::Player) {
             break;
         }
-        let item = item_reg.item_for_material(cell.material);
-        if item != ItemId::NONE {
-            if inventory
-                .inner
-                .insert_first_fit(ItemStack::new(item, 1), item_reg)
-                .is_some()
-            {
-                continue;
-            }
-            inventory.dirty = true;
-        }
-        dig.budget -= cost;
-        world.place_material(pos, MaterialId::AIR);
-        dug = true;
     }
-    dug
+    last
+}
+
+fn diggable(world: &World, pos: CellPos) -> bool {
+    world.get_cell(pos).is_some_and(|cell| {
+        !content::tags(cell.material).contains(Tag::Player)
+            && matches!(content::phase(cell.material), Phase::Solid | Phase::Powder)
+    })
+}
+
+fn cell_distance_sq(body: &Actor, pos: CellPos) -> f32 {
+    let dx = pos.x as f32 + 0.5 - body.x.to_f32();
+    let dy = pos.y as f32 + 0.5 - body.y.to_f32();
+    dx * dx + dy * dy
+}
+
+fn interaction(target: CellPos, status: InteractionStatus, progress: f32) -> InteractionState {
+    InteractionState {
+        target,
+        status,
+        progress,
+    }
 }

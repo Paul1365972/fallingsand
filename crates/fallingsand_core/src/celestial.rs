@@ -16,6 +16,7 @@ const STARS_FULL: f32 = -0.2756;
 const STARS_LIGHT_BEGIN: f32 = 0.30;
 const STARS_LIGHT_FULL: f32 = 0.08;
 const MOON_STAR_WASH: f32 = 0.6;
+const SEASON_PHASE: f32 = 0.125;
 
 pub fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
@@ -69,7 +70,7 @@ impl CelestialState {
 
 impl Calendar {
     pub fn celestial(self) -> CelestialState {
-        let hub = HUB_AMPLITUDE * (self.year_fraction() * TAU).sin();
+        let hub = HUB_AMPLITUDE * ((self.year_fraction() - SEASON_PHASE) * TAU).sin();
         let hour_angle = (self.day_fraction() - 0.5) * TAU;
         let (sin_h, cos_h) = hour_angle.sin_cos();
         let sun_position = [sin_h, hub + TRACK_FLATTEN * cos_h];

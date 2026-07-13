@@ -1,16 +1,18 @@
 use crate::commands::{PendingCommand, PendingCommands};
-use crate::inventory::{Inventory, ItemReg, SlotActions};
+use crate::inventory::{Inventory, ItemReg, QueuedSlotAction, SlotActions};
 use crate::player::{
-    Air, Burning, Health, Mode, Player, PlayerActor, PlayerRaster, player_record, spawn_player,
+    Air, Burning, ChatHistory, Health, Life, Mode, Player, PlayerActor, PlayerRaster,
+    player_record, spawn_player,
 };
 use crate::regions::Store;
 use crate::{NetListener, SimWorld, SpawnPoint};
 use bevy_ecs::prelude::*;
-use fallingsand_core::{BRUSH_RADIUS, CellPos, ChunkPos, HOTBAR_SLOTS, MAX_BRUSH};
+use ed25519_dalek::{Signature, VerifyingKey};
+use fallingsand_core::{CellPos, ChunkPos, HOTBAR_SLOTS};
 use fallingsand_net::Connection;
 use fallingsand_protocol::{
-    ClientMessage, GameMode, InputAction, InputState, PROTOCOL_VERSION, PlayerId, PlayerUuid,
-    SelfState, ServerMessage, decode_message, encode_message,
+    ClientMessage, GameMode, InputAction, InputState, LifeState, PROTOCOL_VERSION, PlayerId,
+    PlayerUuid, SelfState, ServerMessage, decode_message, encode_message,
 };
 use rustc_hash::FxHashSet;
 
@@ -19,6 +21,9 @@ const CHAT_RATE_SECS: f32 = 0.25;
 const CHAT_RATE_TICKS: u64 = fallingsand_core::ticks_from_secs(CHAT_RATE_SECS);
 const INPUT_HOLD_SECS: f32 = 0.5;
 const INPUT_HOLD_TICKS: u64 = fallingsand_core::ticks_from_secs(INPUT_HOLD_SECS);
+const HISTORY_CAP: usize = 100;
+const NAME_MAX_CHARS: usize = 24;
+const HELLO_FRAME_LIMIT: usize = 512;
 
 pub enum SessionState {
     AwaitingHello,
@@ -37,10 +42,13 @@ pub struct Session {
     pub sent_bytes: u64,
     pub last_chat_tick: u64,
     pub debug: bool,
+    pub nonce: [u8; 32],
 }
 
 impl Session {
     pub fn new(conn: Box<dyn Connection>) -> Self {
+        let mut nonce = [0u8; 32];
+        getrandom::fill(&mut nonce).expect("secure randomness unavailable");
         Self {
             conn,
             state: SessionState::AwaitingHello,
@@ -53,6 +61,7 @@ impl Session {
             sent_bytes: 0,
             last_chat_tick: 0,
             debug: false,
+            nonce,
         }
     }
 
@@ -67,6 +76,7 @@ impl Session {
 pub struct Sessions {
     pub sessions: Vec<Session>,
     pub next_player: u32,
+    pub next_generation: u64,
 }
 
 type PlayerQuery<'w, 's> = Query<
@@ -76,10 +86,12 @@ type PlayerQuery<'w, 's> = Query<
         &'static mut Player,
         &'static PlayerActor,
         &'static Health,
+        &'static Life,
         &'static Mode,
         &'static Air,
         &'static Burning,
         &'static mut Inventory,
+        &'static mut ChatHistory,
     ),
 >;
 
@@ -112,6 +124,7 @@ fn supersede_sessions(
     taken_entity
 }
 
+#[allow(clippy::too_many_arguments)]
 fn take_over(
     commands: &mut Commands,
     players: &mut PlayerQuery,
@@ -119,9 +132,10 @@ fn take_over(
     id: PlayerId,
     name: &str,
     tick: u64,
+    generation: u64,
     despawned: &mut Vec<Entity>,
-) -> Option<(Entity, CellPos, u8, u8)> {
-    let Ok((mut existing, body, ..)) = players.get_mut(entity) else {
+) -> Option<(Entity, CellPos, u8, Vec<String>)> {
+    let Ok((mut existing, body, _, _, _, _, _, _, history)) = players.get_mut(entity) else {
         despawned.push(entity);
         commands.entity(entity).despawn();
         return None;
@@ -131,11 +145,13 @@ fn take_over(
     existing.input = Default::default();
     existing.jump_pressed = false;
     existing.last_input_tick = tick;
+    existing.session_generation = generation;
+    existing.revive_requested = false;
     Some((
         entity,
         CellPos::new(body.0.x.floor_cell(), body.0.y.floor_cell()),
         existing.selected_slot,
-        existing.brush_radius,
+        history.0.clone(),
     ))
 }
 
@@ -171,7 +187,11 @@ pub fn drain_network(
     store: Res<Store>,
 ) {
     while let Some(conn) = listener.0.poll_accept() {
-        sessions.sessions.push(Session::new(conn));
+        let mut session = Session::new(conn);
+        session.send(&ServerMessage::Challenge {
+            nonce: session.nonce,
+        });
+        sessions.sessions.push(session);
     }
 
     let sessions = &mut *sessions;
@@ -184,6 +204,15 @@ pub fn drain_network(
     for index in 0..sessions.sessions.len() {
         let mut fresh_input = true;
         while let Some(bytes) = sessions.sessions[index].conn.poll() {
+            if matches!(sessions.sessions[index].state, SessionState::AwaitingHello)
+                && bytes.len() > HELLO_FRAME_LIMIT
+            {
+                tracing::warn!("closing connection: oversized handshake frame");
+                sessions.sessions[index]
+                    .conn
+                    .close("oversized handshake frame");
+                break;
+            }
             let Ok(message) = decode_message::<ClientMessage>(&bytes) else {
                 tracing::warn!("closing connection: malformed message");
                 sessions.sessions[index].conn.close("malformed message");
@@ -193,11 +222,14 @@ pub fn drain_network(
                 ClientMessage::Hello {
                     protocol_version,
                     uuid,
+                    public_key,
+                    signature,
                     name,
                 } => {
                     if !matches!(sessions.sessions[index].state, SessionState::AwaitingHello) {
                         continue;
                     }
+                    let name = clamp_name(name);
                     if protocol_version != PROTOCOL_VERSION {
                         tracing::warn!(
                             "rejected {name}: protocol {protocol_version} != {PROTOCOL_VERSION}"
@@ -211,8 +243,25 @@ pub fn drain_network(
                         session.conn.close("protocol version mismatch");
                         continue;
                     }
+                    let authenticated = authenticate_identity(
+                        sessions.sessions[index].nonce,
+                        uuid,
+                        public_key,
+                        &signature,
+                    );
+                    if !authenticated {
+                        tracing::warn!("rejected unauthenticated identity for {name}");
+                        let session = &mut sessions.sessions[index];
+                        session.send(&ServerMessage::Reject {
+                            reason: "identity authentication failed".into(),
+                        });
+                        session.conn.close("identity authentication failed");
+                        continue;
+                    }
                     let player = PlayerId(sessions.next_player);
                     sessions.next_player += 1;
+                    sessions.next_generation = sessions.next_generation.wrapping_add(1).max(1);
+                    let generation = sessions.next_generation;
 
                     let taken_entity = supersede_sessions(
                         &mut sessions.sessions,
@@ -229,10 +278,11 @@ pub fn drain_network(
                             player,
                             &name,
                             tick,
+                            generation,
                             &mut despawned,
                         )
                     });
-                    let (entity, spawn, selected, brush) = match takeover {
+                    let (entity, spawn, selected, history) = match takeover {
                         Some(takeover) => takeover,
                         None => {
                             let restored = store
@@ -249,10 +299,10 @@ pub fn drain_network(
                                 .as_ref()
                                 .map(|r| r.selected.min(HOTBAR_SLOTS as u8 - 1))
                                 .unwrap_or(0);
-                            let brush = restored
+                            let history = restored
                                 .as_ref()
-                                .map(|r| r.brush.min(MAX_BRUSH))
-                                .unwrap_or(BRUSH_RADIUS);
+                                .map(|record| record.history.clone())
+                                .unwrap_or_default();
                             let entity = spawn_player(
                                 &mut commands,
                                 &item_reg.0,
@@ -260,10 +310,11 @@ pub fn drain_network(
                                 uuid,
                                 name.clone(),
                                 tick,
+                                generation,
                                 restored.as_ref(),
                                 spawn,
                             );
-                            (entity, spawn, selected, brush)
+                            (entity, spawn, selected, history)
                         }
                     };
 
@@ -277,26 +328,38 @@ pub fn drain_network(
                         player,
                         spawn,
                         selected,
-                        brush,
                     });
+                    session.send(&ServerMessage::History { entries: history });
                     announce_join(session, &players, player, &name);
                     tracing::info!("{name} ({uuid}) joined as player {}", player.0);
                     joined.push((player, name));
                 }
                 ClientMessage::Input(frame) => {
                     if let Some(entity) = sessions.sessions[index].entity
-                        && let Ok((mut player, _, _, mode, ..)) = players.get_mut(entity)
+                        && let Ok((mut player, _, _, life, mode, ..)) = players.get_mut(entity)
                     {
+                        let generation = player.session_generation;
                         if fresh_input {
-                            player.input = frame.state;
+                            player.input = if life.0 == LifeState::Alive {
+                                frame.state
+                            } else {
+                                InputState::default()
+                            };
                             fresh_input = false;
                         } else {
                             player.input.merge_or(frame.state);
                         }
                         player.last_input_tick = tick;
                         for action in frame.actions {
+                            if life.0 == LifeState::Dead {
+                                if matches!(action, InputAction::Revive) {
+                                    player.revive_requested = true;
+                                }
+                                continue;
+                            }
                             match action {
                                 InputAction::Jump => player.jump_pressed = true,
+                                InputAction::Revive => {}
                                 InputAction::ToggleFlight => {
                                     if mode.0 == GameMode::Creative {
                                         player.flying = !player.flying;
@@ -307,13 +370,17 @@ pub fn drain_network(
                                         player.selected_slot = slot;
                                     }
                                 }
-                                InputAction::SetBrush(radius) => {
-                                    player.brush_radius = radius.min(MAX_BRUSH);
-                                }
                                 InputAction::Slot(action) => {
-                                    slot_actions.0.push((entity, action));
+                                    slot_actions.0.push(QueuedSlotAction {
+                                        entity,
+                                        generation,
+                                        action,
+                                    });
                                 }
                             }
+                        }
+                        if life.0 == LifeState::Dead {
+                            player.input = InputState::default();
                         }
                     }
                 }
@@ -335,8 +402,25 @@ pub fn drain_network(
                         continue;
                     }
                     session.last_chat_tick = tick;
+                    if let Ok((.., mut history)) = players.get_mut(entity)
+                        && history.0.last() != Some(&text)
+                    {
+                        history.0.push(text.clone());
+                        if history.0.len() > HISTORY_CAP {
+                            let excess = history.0.len() - HISTORY_CAP;
+                            history.0.drain(..excess);
+                        }
+                    }
                     if text.starts_with('/') {
-                        pending.0.push(PendingCommand { entity, text });
+                        let generation = players
+                            .get(entity)
+                            .map(|(player, ..)| player.session_generation)
+                            .unwrap_or_default();
+                        pending.0.push(PendingCommand {
+                            entity,
+                            generation,
+                            text,
+                        });
                     } else if let Ok((sender, ..)) = players.get(entity) {
                         chats.push((player, sender.name.clone(), text));
                     }
@@ -367,7 +451,7 @@ pub fn drain_network(
     sessions.sessions.retain(|session| {
         if let fallingsand_net::ConnectionStatus::Closed { reason } = session.conn.status() {
             if let Some(entity) = session.entity {
-                if let Ok((player, body, health, mode, air, burning, inventory)) =
+                if let Ok((player, body, health, life, mode, air, burning, inventory, history)) =
                     players.get(entity)
                 {
                     tracing::info!("{} left: {reason}", player.name);
@@ -379,10 +463,12 @@ pub fn drain_network(
                                 player,
                                 &body.0,
                                 health,
+                                life,
                                 mode,
                                 air,
                                 burning,
                                 inventory,
+                                history,
                             ),
                         ));
                     }
@@ -432,4 +518,25 @@ pub fn drain_network(
             });
         }
     }
+}
+
+fn authenticate_identity(
+    nonce: [u8; 32],
+    uuid: PlayerUuid,
+    public_key: [u8; 32],
+    signature: &[u8; 64],
+) -> bool {
+    if uuid != PlayerUuid::from_public_key(&public_key) {
+        return false;
+    }
+    let Ok(key) = VerifyingKey::from_bytes(&public_key) else {
+        return false;
+    };
+    let signature = Signature::from_bytes(signature);
+    key.verify_strict(&fallingsand_protocol::identity_message(nonce), &signature)
+        .is_ok()
+}
+
+fn clamp_name(name: String) -> String {
+    name.trim().chars().take(NAME_MAX_CHARS).collect()
 }

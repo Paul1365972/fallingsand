@@ -21,8 +21,6 @@ pub const MAX_HP: f32 = 100.0;
 pub const MAX_AIR_SECS: f32 = 12.0;
 pub const REACH: f32 = 80.0;
 pub const SURVIVAL_REACH: f32 = 48.0;
-pub const BRUSH_RADIUS: u8 = 3;
-pub const MAX_BRUSH: u8 = 6;
 
 pub use calendar::{Calendar, DAY_UNITS, SEASON_DAYS, Season};
 pub use celestial::{CelestialState, smoothstep};
@@ -32,7 +30,7 @@ pub use coords::{CellOffset, CellPos, ChunkOffset, ChunkPos, RegionPos};
 pub use fixed::Fixed;
 pub use item::{
     HOTBAR_SLOTS, IconSpec, Inventory, ItemDef, ItemId, ItemRegistry, ItemStack, MAIN_SLOTS,
-    PLAYER_SLOTS, RecipeRegistry,
+    PLAYER_SLOTS, RecipeRegistry, ToolSpec,
 };
 pub use material::{
     Dynamics, Ember, EmberKind, GasDynamics, Ignition, LiquidDynamics, MaterialId, MaterialInfo,

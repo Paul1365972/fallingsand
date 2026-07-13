@@ -175,6 +175,7 @@ const SHADE_DISC_RADIUS = 0.125;
 const SHADE_TRACK = 1.06;
 const TRACK_FLATTEN = 0.62;
 const HUB_AMPLITUDE = 0.30;
+const SEASON_PHASE = 0.125;
 const MOON_ECCENTRE = 0.48;
 const MOON_BREATH = 0.2;
 const MOON_LIGHT_MAX = 0.5;
@@ -227,7 +228,7 @@ function coveredFraction(sunR, moonR, d) {
 
 function celestial(age) {
   const c = calendar(age);
-  const hub = HUB_AMPLITUDE * Math.sin(c.yearFrac * TAU);
+  const hub = HUB_AMPLITUDE * Math.sin((c.yearFrac - SEASON_PHASE) * TAU);
   const hour = (c.dayFrac - 0.5) * TAU;
   const sunPos = [Math.sin(hour), hub + TRACK_FLATTEN * Math.cos(hour)];
   const sunAlt = clamp(sunPos[1], -1, 1);

@@ -1,5 +1,5 @@
 use super::Changes;
-use fallingsand_core::{BRUSH_RADIUS, Inventory as CoreInventory, ItemId, ItemStack};
+use fallingsand_core::{Inventory as CoreInventory, ItemId, ItemStack};
 use fallingsand_protocol::{SlotAction, TickFrame};
 
 #[derive(Clone, Copy, PartialEq)]
@@ -15,7 +15,6 @@ pub struct Inventory {
     pub cursor: Option<ItemStack>,
     pub trash: Option<ItemStack>,
     pub selected: usize,
-    pub brush: u8,
 }
 
 impl Default for Inventory {
@@ -25,7 +24,6 @@ impl Default for Inventory {
             cursor: None,
             trash: None,
             selected: 0,
-            brush: BRUSH_RADIUS,
         }
     }
 }

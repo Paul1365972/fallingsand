@@ -1,9 +1,10 @@
-use crate::player::{Air, Burning, Health, Mode, PlayerActor};
+use crate::player::{Air, Burning, Health, Life, Mode, PlayerActor};
 use crate::{MAX_AIR_SECS, MAX_HP, SimWorld};
 use bevy_ecs::prelude::*;
 use fallingsand_core::content;
 use fallingsand_core::{CellPos, Phase, TICK_DT, Tag};
 use fallingsand_protocol::GameMode;
+use fallingsand_protocol::LifeState;
 use fallingsand_sim::physics::{Actor, CellSource};
 use rustc_hash::FxHashMap;
 
@@ -68,6 +69,7 @@ pub fn apply_hazards(
     mut crushes: ResMut<CrushEvents>,
     mut query: Query<(
         Entity,
+        &Life,
         &Mode,
         &PlayerActor,
         &mut Health,
@@ -82,7 +84,10 @@ pub fn apply_hazards(
         *entry = entry.max(dv);
     }
 
-    for (entity, mode, body, mut health, mut air, mut burning) in &mut query {
+    for (entity, life, mode, body, mut health, mut air, mut burning) in &mut query {
+        if life.0 != LifeState::Alive {
+            continue;
+        }
         if mode.0 != GameMode::Survival {
             air.secs = MAX_AIR_SECS;
             burning.secs = 0.0;

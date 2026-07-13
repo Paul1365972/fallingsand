@@ -1,6 +1,6 @@
 use super::{ClientGame, Flow, InGame, IoFrame, Phase};
 use bevy::log::{error, info, warn};
-use fallingsand_core::{HOTBAR_SLOTS, MAX_BRUSH};
+use fallingsand_core::HOTBAR_SLOTS;
 use fallingsand_net::{Connection, ConnectionStatus};
 use fallingsand_protocol::{
     ClientMessage, PROTOCOL_VERSION, PlayerId, ServerMessage, Stats, decode_message, encode_message,
@@ -30,8 +30,7 @@ pub struct Session {
 
 impl Session {
     fn new(conn: Box<dyn Connection>) -> Self {
-        let identity = super::identity::load_or_create();
-        let mut session = Self {
+        Self {
             conn,
             player: None,
             rx_bytes: 0,
@@ -40,13 +39,7 @@ impl Session {
             handshake_secs: 0.0,
             window: 0.0,
             window_bytes: 0,
-        };
-        session.send(&ClientMessage::Hello {
-            protocol_version: PROTOCOL_VERSION,
-            uuid: identity.uuid,
-            name: identity.name,
-        });
-        session
+        }
     }
 
     pub fn send(&mut self, message: &ClientMessage) {
@@ -262,6 +255,17 @@ fn drain(ingame: &mut InGame, io: &IoFrame, changes: &mut super::Changes, debug_
         session.rx_bytes += bytes.len() as u64;
         session.window_bytes += bytes.len() as u64;
         match decode_message::<ServerMessage>(&bytes) {
+            Ok(ServerMessage::Challenge { nonce }) => {
+                let identity = super::identity::load_or_create();
+                let (public_key, signature) = super::identity::authenticate(&identity, nonce);
+                session.send(&ClientMessage::Hello {
+                    protocol_version: PROTOCOL_VERSION,
+                    uuid: identity.uuid,
+                    public_key,
+                    signature,
+                    name: identity.name,
+                });
+            }
             Ok(ServerMessage::TickFrame(tick)) => {
                 ingame.world.apply(&tick);
                 ingame.inventory.apply(&tick, changes);
@@ -279,7 +283,6 @@ fn drain(ingame: &mut InGame, io: &IoFrame, changes: &mut super::Changes, debug_
                 player,
                 spawn,
                 selected,
-                brush,
             }) => {
                 if protocol_version != PROTOCOL_VERSION {
                     error!("server protocol {protocol_version} != {PROTOCOL_VERSION}");
@@ -288,7 +291,6 @@ fn drain(ingame: &mut InGame, io: &IoFrame, changes: &mut super::Changes, debug_
                     session.player = Some(player);
                     info!("joined as {player:?}, spawn {spawn:?}");
                     ingame.inventory.selected = (selected as usize).min(HOTBAR_SLOTS - 1);
-                    ingame.inventory.brush = brush.min(MAX_BRUSH);
                     ingame.debug.subscribed = false;
                 }
             }
@@ -314,6 +316,9 @@ fn drain(ingame: &mut InGame, io: &IoFrame, changes: &mut super::Changes, debug_
             Ok(ServerMessage::System { text }) => {
                 ingame.chat.push(text, io.now);
                 changes.chat = true;
+            }
+            Ok(ServerMessage::History { entries }) => {
+                ingame.chat.history = entries;
             }
             Err(err) => error!("bad message: {err}"),
         }

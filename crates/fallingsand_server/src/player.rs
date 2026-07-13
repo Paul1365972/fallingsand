@@ -1,11 +1,12 @@
+use crate::dig::DigState;
 use crate::inventory::Inventory;
 use crate::persistence::{
     PlayerRecord, player_slots_from_record, slots_to_record, stack_from_record, stack_to_record,
 };
 use crate::{MAX_AIR_SECS, MAX_HP};
 use bevy_ecs::prelude::*;
-use fallingsand_core::{BRUSH_RADIUS, CellPos, Fixed, HOTBAR_SLOTS, ItemRegistry, MAX_BRUSH};
-use fallingsand_protocol::{GameMode, InputState, PlayerId, PlayerUuid};
+use fallingsand_core::{CellPos, Fixed, HOTBAR_SLOTS, ItemRegistry};
+use fallingsand_protocol::{GameMode, InputState, LifeState, PlayerId, PlayerUuid};
 use fallingsand_sim::PlayerStamp;
 use fallingsand_sim::physics::{Actor, Controller};
 
@@ -22,7 +23,8 @@ pub struct Player {
     pub jump_pressed: bool,
     pub flying: bool,
     pub selected_slot: u8,
-    pub brush_radius: u8,
+    pub session_generation: u64,
+    pub revive_requested: bool,
     pub last_input_tick: u64,
 }
 
@@ -41,6 +43,9 @@ pub struct Health {
     pub last_damage_tick: u64,
 }
 
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+pub struct Life(pub LifeState);
+
 impl Default for Health {
     fn default() -> Self {
         Self {
@@ -48,11 +53,6 @@ impl Default for Health {
             last_damage_tick: 0,
         }
     }
-}
-
-#[derive(Component, Default)]
-pub struct DigState {
-    pub budget: f32,
 }
 
 #[derive(Component, Default, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +74,9 @@ pub struct Burning {
     pub secs: f32,
 }
 
+#[derive(Component, Default)]
+pub struct ChatHistory(pub Vec<String>);
+
 impl Burning {
     pub fn active(&self) -> bool {
         self.secs > 0.0
@@ -88,6 +91,7 @@ pub fn spawn_player(
     uuid: PlayerUuid,
     name: String,
     tick: u64,
+    session_generation: u64,
     record: Option<&PlayerRecord>,
     spawn: CellPos,
 ) -> Entity {
@@ -103,27 +107,34 @@ pub fn spawn_player(
                 selected_slot: record
                     .map(|r| r.selected.min(HOTBAR_SLOTS as u8 - 1))
                     .unwrap_or(0),
-                brush_radius: record
-                    .map(|r| r.brush.min(MAX_BRUSH))
-                    .unwrap_or(BRUSH_RADIUS),
+                session_generation,
+                revive_requested: false,
                 last_input_tick: tick,
             },
-            PlayerActor(Actor::new(
-                record.map(|r| r.x).unwrap_or(Fixed::from_cell(spawn.x)),
-                record.map(|r| r.y).unwrap_or(Fixed::from_cell(spawn.y)),
-                PLAYER_HALF_W,
-                PLAYER_HALF_H,
-            )),
+            PlayerActor({
+                let mut actor = Actor::new(
+                    record.map(|r| r.x).unwrap_or(Fixed::from_cell(spawn.x)),
+                    record.map(|r| r.y).unwrap_or(Fixed::from_cell(spawn.y)),
+                    PLAYER_HALF_W,
+                    PLAYER_HALF_H,
+                );
+                if let Some(record) = record {
+                    actor.vx = record.vx;
+                    actor.vy = record.vy;
+                }
+                actor
+            }),
             PlayerRaster::default(),
             Control::default(),
             Health {
                 hp: record
                     .map(|r| r.hp)
-                    .filter(|hp| hp.is_finite() && *hp > 0.0)
+                    .filter(|hp| hp.is_finite())
                     .unwrap_or(MAX_HP)
-                    .min(MAX_HP),
+                    .clamp(0.0, MAX_HP),
                 last_damage_tick: 0,
             },
+            Life(record.map(|r| r.life).unwrap_or_default()),
             DigState::default(),
             Mode(record.map(|r| r.mode).unwrap_or_default()),
             Air {
@@ -140,6 +151,7 @@ pub fn spawn_player(
                     .unwrap_or(0.0)
                     .max(0.0),
             },
+            ChatHistory(record.map(|r| r.history.clone()).unwrap_or_default()),
             Inventory::with(
                 player_slots_from_record(
                     item_reg,
@@ -158,24 +170,29 @@ pub fn player_record(
     player: &Player,
     body: &Actor,
     health: &Health,
+    life: &Life,
     mode: &Mode,
     air: &Air,
     burning: &Burning,
     inventory: &Inventory,
+    history: &ChatHistory,
 ) -> PlayerRecord {
     PlayerRecord {
         x: body.x,
         y: body.y
             + Fixed::from_int(fallingsand_sim::player::STAND_ROWS as i32 / 2 - body.rows() / 2),
         hp: health.hp,
+        life: life.0,
+        vx: body.vx,
+        vy: body.vy,
         mode: mode.0,
         air: air.secs,
         burning: burning.secs,
         flying: player.flying,
         selected: player.selected_slot,
-        brush: player.brush_radius,
         inventory: slots_to_record(item_reg, &inventory.inner),
         cursor: stack_to_record(item_reg, inventory.cursor),
         trash: stack_to_record(item_reg, inventory.trash),
+        history: history.0.clone(),
     }
 }

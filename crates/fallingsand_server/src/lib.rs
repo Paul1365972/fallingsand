@@ -3,6 +3,7 @@ pub(crate) mod commands;
 pub(crate) mod dig;
 pub(crate) mod hazards;
 pub(crate) mod inventory;
+pub(crate) mod lifecycle;
 pub(crate) mod persistence;
 pub(crate) mod physics;
 pub(crate) mod player;
@@ -207,6 +208,7 @@ impl Server {
                     physics::step_physics,
                     bodies::step_bodies,
                     hazards::apply_hazards,
+                    lifecycle::resolve_lifecycle,
                     replication::advance_clock,
                     replication::replicate,
                     regions::autosave,

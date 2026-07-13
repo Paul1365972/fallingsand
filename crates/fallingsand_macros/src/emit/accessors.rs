@@ -76,6 +76,9 @@ pub fn emit(content: &Content) -> TokenStream {
             let name = &mat.name;
             let colors = colors_tokens(&mat.colors);
             let hardness = Literal::f32_suffixed(mat.hardness);
+            let mining_tier = Literal::u8_suffixed(
+                fallingsand_material::mining_tier_from_hardness(mat.hardness),
+            );
             let restitution = Literal::f32_suffixed(mat.restitution);
             let surface_grip = Literal::f32_suffixed(mat.surface_grip);
             let surface_bounce = Literal::f32_suffixed(mat.surface_bounce);
@@ -85,6 +88,7 @@ pub fn emit(content: &Content) -> TokenStream {
                     name: #name,
                     colors: #colors,
                     hardness: #hardness,
+                    mining_tier: #mining_tier,
                     restitution: #restitution,
                     surface_grip: #surface_grip,
                     surface_bounce: #surface_bounce,
@@ -93,6 +97,18 @@ pub fn emit(content: &Content) -> TokenStream {
             }
         }),
         false,
+    );
+    let item_source = accessor_fn(
+        "item_source",
+        quote!(Option<crate::material::MaterialId>),
+        content.item_source.iter().map(|slot| match slot {
+            Some(id) => {
+                let id = material_id(*id);
+                quote!(Some(#id))
+            }
+            None => quote!(None),
+        }),
+        true,
     );
 
     let mut row_consts = Vec::new();
@@ -122,6 +138,7 @@ pub fn emit(content: &Content) -> TokenStream {
         #is_rigid_capable
         #ignition
         #material
+        #item_source
 
         #[inline]
         pub const fn is_flammable(id: crate::material::MaterialId) -> bool {

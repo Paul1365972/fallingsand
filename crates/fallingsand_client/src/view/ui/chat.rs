@@ -57,6 +57,14 @@ pub fn sync_chat(
     }
 
     let field = input.single().ok();
+    if game.0.changes.chat_draft
+        && let Some(field) = field
+        && let Some(ingame) = game.0.ingame()
+    {
+        commands
+            .entity(field)
+            .insert(EditableText::new(ingame.chat.recall.clone()));
+    }
     match (ingame.chat_open(), field) {
         (true, None) => {
             let Ok(root) = roots.single() else {

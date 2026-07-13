@@ -68,9 +68,6 @@ pub struct SunParams {
 pub struct SunMaterial {
     #[uniform(0)]
     pub params: SunParams,
-    #[texture(1)]
-    #[sampler(2)]
-    pub texture: Handle<Image>,
 }
 
 impl Material2d for SunMaterial {
@@ -97,9 +94,6 @@ pub struct MoonParams {
 pub struct MoonMaterial {
     #[uniform(0)]
     pub params: MoonParams,
-    #[texture(1)]
-    #[sampler(2)]
-    pub texture: Handle<Image>,
 }
 
 impl Material2d for MoonMaterial {

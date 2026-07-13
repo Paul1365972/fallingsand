@@ -25,13 +25,13 @@ pub enum Action {
     SelectSlot(u8),
     SlotPrev,
     SlotNext,
-    BrushShrink,
-    BrushGrow,
     OpenInventory,
     OpenChat,
     Pause,
     CloseOverlay,
     SubmitChat,
+    HistoryPrev,
+    HistoryNext,
     Resume,
     CancelConnect,
     CloseSettings,
@@ -200,10 +200,6 @@ impl Default for Bindings {
             double_tap(KeyCode::Space, Action::ToggleFlight),
             bind(Button::ScrollUp, Action::SlotPrev),
             bind(Button::ScrollDown, Action::SlotNext),
-            bind(KeyCode::BracketLeft, Action::BrushShrink),
-            bind(KeyCode::Minus, Action::BrushShrink),
-            bind(KeyCode::BracketRight, Action::BrushGrow),
-            bind(KeyCode::Equal, Action::BrushGrow),
             bind(KeyCode::KeyE, Action::OpenInventory),
             bind(KeyCode::Enter, Action::OpenChat),
             bind(KeyCode::Escape, Action::Pause),
@@ -222,6 +218,8 @@ impl Default for Bindings {
         let mut chat = vec![
             bind(KeyCode::Enter, Action::SubmitChat),
             bind(KeyCode::Escape, Action::CloseOverlay),
+            bind(KeyCode::ArrowUp, Action::HistoryPrev),
+            bind(KeyCode::ArrowDown, Action::HistoryNext),
         ];
         chat.extend(zoom_chords());
 

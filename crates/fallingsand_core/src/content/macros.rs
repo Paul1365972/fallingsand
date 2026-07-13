@@ -1,23 +1,56 @@
 macro_rules! items {
-    ( $( $name:ident $display:literal $stack:literal $icon:expr );* $(;)? ) => {
-        pub(crate) const ENTRIES: &[crate::item::ItemEntry] = &[
-            $( crate::item::ItemEntry {
-                name: stringify!($name),
-                display: $display,
-                stack_max: $stack,
-                icon: crate::item::IconSpec::MaterialSwatch($icon),
-            } ),*
-        ];
-
+    (@munch [$($entries:tt)*] [$($handles:tt)*] $idx:expr; ) => {
+        pub(crate) const ENTRIES: &[crate::item::ItemEntry] = &[$($entries)*];
         pub mod item {
-            crate::content::macros::items!(@handles 0u16; $( $name, )*);
+            $($handles)*
         }
     };
 
-    (@handles $idx:expr; ) => {};
-    (@handles $idx:expr; $name:ident, $( $rest:ident, )* ) => {
-        pub const $name: crate::item::ItemId = crate::item::ItemId(1 + $idx);
-        crate::content::macros::items!(@handles $idx + 1u16; $( $rest, )*);
+    (@munch [$($entries:tt)*] [$($handles:tt)*] $idx:expr;
+        $name:ident $display:literal $stack:literal
+        glyph($art:expr, $tint:expr)
+        $(tool(tier: $tier:literal, speed: $speed:literal))?
+        ; $($rest:tt)*
+    ) => {
+        crate::content::macros::items!(@munch
+            [$($entries)* crate::item::ItemEntry {
+                name: stringify!($name),
+                display: $display,
+                stack_max: $stack,
+                icon: crate::item::IconSpec::Glyph { art: $art, tint: $tint },
+                tool: crate::content::macros::items!(@tool $($tier, $speed)?),
+            },]
+            [$($handles)*
+                pub const $name: crate::item::ItemId = crate::item::ItemId(1 + $idx);]
+            $idx + 1u16; $($rest)*);
+    };
+
+    (@munch [$($entries:tt)*] [$($handles:tt)*] $idx:expr;
+        $name:ident $display:literal $stack:literal
+        swatch($material:expr)
+        $(tool(tier: $tier:literal, speed: $speed:literal))?
+        ; $($rest:tt)*
+    ) => {
+        crate::content::macros::items!(@munch
+            [$($entries)* crate::item::ItemEntry {
+                name: stringify!($name),
+                display: $display,
+                stack_max: $stack,
+                icon: crate::item::IconSpec::MaterialSwatch($material),
+                tool: crate::content::macros::items!(@tool $($tier, $speed)?),
+            },]
+            [$($handles)*
+                pub const $name: crate::item::ItemId = crate::item::ItemId(1 + $idx);]
+            $idx + 1u16; $($rest)*);
+    };
+
+    (@tool) => { None };
+    (@tool $tier:literal, $speed:literal) => {
+        Some(crate::item::ToolSpec { tier: $tier, speed: $speed })
+    };
+
+    ( $($body:tt)* ) => {
+        crate::content::macros::items!(@munch [] [] 0u16; $($body)*);
     };
 }
 pub(crate) use items;

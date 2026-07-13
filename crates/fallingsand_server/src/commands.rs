@@ -6,6 +6,7 @@ use fallingsand_protocol::{GameMode, ServerMessage};
 
 pub struct PendingCommand {
     pub entity: Entity,
+    pub generation: u64,
     pub text: String,
 }
 
@@ -21,7 +22,26 @@ pub struct CommandSpec {
     pub run: CommandRun,
 }
 
-pub const COMMANDS: &[CommandSpec] = &[GAMEMODE, TIME];
+pub const COMMANDS: &[CommandSpec] = &[HELP, GAMEMODE, TIME];
+
+const HELP: CommandSpec = CommandSpec {
+    name: "help",
+    aliases: &["?"],
+    usage: "/help [command]",
+    run: |_world, _entity, args| match args {
+        [] => Ok(Some(
+            COMMANDS
+                .iter()
+                .map(|command| command.usage)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )),
+        [name] => lookup(name)
+            .map(|command| Some(command.usage.to_string()))
+            .ok_or_else(|| format!("unknown command: /{name}")),
+        _ => Err("usage: /help [command]".into()),
+    },
+};
 
 const GAMEMODE: CommandSpec = CommandSpec {
     name: "gamemode",
@@ -96,6 +116,15 @@ pub fn lookup(name: &str) -> Option<&'static CommandSpec> {
 pub fn run_commands(world: &mut World) {
     let pending = std::mem::take(&mut world.resource_mut::<PendingCommands>().0);
     for command in pending {
+        let valid = world
+            .get::<crate::player::Player>(command.entity)
+            .is_some_and(|player| player.session_generation == command.generation)
+            && world
+                .get::<crate::player::Life>(command.entity)
+                .is_some_and(|life| life.0 == fallingsand_protocol::LifeState::Alive);
+        if !valid {
+            continue;
+        }
         let Some((name, args)) = parse(&command.text) else {
             continue;
         };

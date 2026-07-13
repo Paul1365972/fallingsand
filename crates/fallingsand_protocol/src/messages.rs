@@ -20,6 +20,14 @@ impl PlayerUuid {
         }
         u128::from_str_radix(text, 16).ok().map(Self)
     }
+
+    pub fn from_public_key(public_key: &[u8; 32]) -> Self {
+        use sha2::{Digest, Sha256};
+        let digest = Sha256::digest(public_key);
+        let mut bytes = [0u8; 16];
+        bytes.copy_from_slice(&digest[..16]);
+        Self(u128::from_le_bytes(bytes))
+    }
 }
 
 impl fmt::Display for PlayerUuid {
@@ -91,9 +99,9 @@ impl InputState {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum InputAction {
     Jump,
+    Revive,
     ToggleFlight,
     SelectSlot(u8),
-    SetBrush(u8),
     Slot(SlotAction),
 }
 
@@ -116,11 +124,40 @@ pub enum SlotAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlayerState {
     pub player: PlayerId,
+    pub life: LifeState,
     pub cx: i32,
     pub cy: i32,
     pub height: u8,
     pub burning: bool,
     pub facing_left: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum LifeState {
+    #[default]
+    Alive,
+    Dead,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum InteractionStatus {
+    #[default]
+    None,
+    Valid,
+    OutOfReach,
+    NoTarget,
+    Occupied,
+    WrongTool,
+    Undiggable,
+    InventoryFull,
+    NotPlaceable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct InteractionState {
+    pub target: CellPos,
+    pub status: InteractionStatus,
+    pub progress: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -132,11 +169,13 @@ pub struct ChunkDebugRects {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SelfState {
+    pub life: LifeState,
     pub hp: f32,
     pub air: f32,
     pub mode: GameMode,
     pub biome: String,
     pub band: String,
+    pub interaction: InteractionState,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -173,6 +212,9 @@ pub enum ClientMessage {
     Hello {
         protocol_version: u16,
         uuid: PlayerUuid,
+        public_key: [u8; 32],
+        #[serde(with = "serde_big_array::BigArray")]
+        signature: [u8; 64],
         name: String,
     },
     Input(InputFrame),
@@ -187,12 +229,14 @@ pub enum ClientMessage {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ServerMessage {
+    Challenge {
+        nonce: [u8; 32],
+    },
     HelloAck {
         protocol_version: u16,
         player: PlayerId,
         spawn: CellPos,
         selected: u8,
-        brush: u8,
     },
     Reject {
         reason: String,
@@ -211,6 +255,9 @@ pub enum ServerMessage {
     },
     System {
         text: String,
+    },
+    History {
+        entries: Vec<String>,
     },
     TickFrame(TickFrame),
 }

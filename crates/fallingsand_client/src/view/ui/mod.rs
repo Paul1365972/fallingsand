@@ -20,7 +20,15 @@ pub fn item_color(item_reg: &ItemRegistry, item: ItemId) -> [u8; 4] {
         Some(IconSpec::MaterialSwatch(material)) => {
             fallingsand_core::content::material(material).colors[0]
         }
-        _ => [180, 180, 190, 255],
+        Some(IconSpec::Glyph { tint, .. }) => tint,
+        None => [180, 180, 190, 255],
+    }
+}
+
+pub fn item_glyph(item_reg: &ItemRegistry, item: ItemId) -> &'static str {
+    match item_reg.try_get(item).map(|def| def.icon) {
+        Some(IconSpec::Glyph { art, .. }) => art,
+        _ => "",
     }
 }
 

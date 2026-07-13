@@ -21,7 +21,7 @@ Every cell carries a velocity, integrated locally each tick — no phase heurist
 - **Collide & redirect**: a blocked face reflects by `restitution` (near-inelastic); blocked fall that can descend diagonally converts to sideways velocity by `redirect_keep` — ledge jets for liquids, angle-of-repose slides for powders (`repose`). A liquid that can't descend spreads one cell across a level surface with no velocity gain — flattening without injecting energy.
 - **Settle**: velocity into a blocked face dies and sub-threshold velocity snaps to zero, so a supported cell nets no change and its chunk sleeps.
 
-Leveling and pressure propagate as local waves over ticks; steam condenses back to water so gas pockets resolve — no mass created or destroyed.
+Leveling and pressure propagate as local waves over ticks. Steam condenses back to water so gas pockets resolve — no mass created or destroyed.
 
 ## Sleeping
 

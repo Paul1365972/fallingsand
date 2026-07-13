@@ -1,19 +1,16 @@
+use crate::SimWorld;
 use crate::player::{
-    Air, Burning, Control, Health, Mode, PLAYER_HALF_H, PLAYER_HALF_W, PLAYER_MASS, Player,
-    PlayerActor, PlayerRaster,
+    Control, Health, Life, Mode, PLAYER_HALF_H, PLAYER_MASS, Player, PlayerActor, PlayerRaster,
 };
-use crate::{MAX_AIR_SECS, MAX_HP, SimWorld, SpawnPoint};
 use bevy_ecs::prelude::*;
 use fallingsand_core::{CellPos, Fixed};
-use fallingsand_protocol::GameMode;
+use fallingsand_protocol::{GameMode, LifeState};
 use fallingsand_sim::CellWorld;
-use fallingsand_sim::bodies::{apply_damage, vacated_wake_targets, wake_covering};
+use fallingsand_sim::bodies::{vacated_wake_targets, wake_covering};
 use fallingsand_sim::physics::{
-    Actor, Controller, Footprint, PlayerParams, StepInput, footprint_at, grounded, step_player,
+    Actor, Footprint, PlayerParams, StepInput, footprint_at, grounded, step_player,
 };
-use fallingsand_sim::player::{
-    DUCK_ROWS, STAND_ROWS, force_stamp_player, stamp_player, unstamp_player,
-};
+use fallingsand_sim::player::{DUCK_ROWS, STAND_ROWS, stamp_player, unstamp_player};
 use rustc_hash::FxHashSet;
 
 const SPAWN_SEARCH_UP: i32 = 64;
@@ -22,20 +19,18 @@ const SPAWN_SEARCH_UP: i32 = 64;
 #[allow(clippy::too_many_arguments)]
 pub fn step_physics(
     mut sim: ResMut<SimWorld>,
-    spawn_point: Res<SpawnPoint>,
     mut bodies: ResMut<crate::bodies::PixelBodies>,
     mut impulses: ResMut<crate::PlayerImpulses>,
     mut crushes: ResMut<crate::hazards::CrushEvents>,
     mut query: Query<(
         Entity,
         &mut Player,
+        &Life,
+        &mut Health,
         &Mode,
         &mut PlayerActor,
         &mut PlayerRaster,
         &mut Control,
-        &mut Health,
-        &mut Air,
-        &mut Burning,
     )>,
 ) {
     let params = PlayerParams::default();
@@ -47,31 +42,30 @@ pub fn step_physics(
     let mut shoves: Vec<(CellPos, f32, f32)> = Vec::new();
     let prior: Vec<(Entity, FxHashSet<CellPos>)> = query
         .iter()
-        .filter_map(|(entity, _, _, _, raster, ..)| {
+        .filter_map(|(entity, _, _, _, _, _, raster, ..)| {
             raster.0.own_cells().map(|set| (entity, set.clone()))
         })
         .collect();
 
     for (_, entity) in order {
-        let Ok((
-            entity,
-            mut player,
-            mode,
-            mut body,
-            mut raster,
-            mut control,
-            mut health,
-            mut air,
-            mut burning,
-        )) = query.get_mut(entity)
+        let Ok((entity, mut player, life, mut health, mode, mut body, mut raster, mut control)) =
+            query.get_mut(entity)
         else {
             continue;
         };
 
+        if life.0 != LifeState::Alive {
+            continue;
+        }
+
         if !raster.0.is_stamped() {
-            spawn_stamp(&mut sim.0, &mut bodies, &mut raster.0, &mut body.0);
-            if !raster.0.is_stamped() {
-                continue;
+            match spawn_stamp(&mut sim.0, &mut raster.0, &mut body.0) {
+                StampResult::Stamped => {}
+                StampResult::Deferred => continue,
+                StampResult::Blocked => {
+                    health.hp = 0.0;
+                    continue;
+                }
             }
         }
 
@@ -140,27 +134,13 @@ pub fn step_physics(
                 None => shoves.push((blocked.pos, jx, jy)),
             }
         }
-
-        if health.hp <= 0.0 {
-            health.hp = MAX_HP;
-            air.secs = MAX_AIR_SECS;
-            burning.secs = 0.0;
-            unstamp_and_wake(&mut sim.0, &mut bodies, &mut raster.0);
-            body.0 = Actor::new(
-                Fixed::from_cell(spawn_point.0.x),
-                Fixed::from_cell(spawn_point.0.y),
-                PLAYER_HALF_W,
-                PLAYER_HALF_H,
-            );
-            control.0 = Controller::default();
-        }
     }
 
     impulses.0.clear();
     for (pos, jx, jy) in shoves {
         let target = query
             .iter()
-            .find_map(|(entity, _, _, _, raster, ..)| raster.0.covers(pos).then_some(entity))
+            .find_map(|(entity, _, _, _, _, _, raster, ..)| raster.0.covers(pos).then_some(entity))
             .or_else(|| {
                 prior
                     .iter()
@@ -242,16 +222,21 @@ pub(crate) fn unstamp_and_wake(
     }
 }
 
-fn spawn_stamp(
+pub(crate) enum StampResult {
+    Stamped,
+    Deferred,
+    Blocked,
+}
+
+pub(crate) fn spawn_stamp(
     sim: &mut CellWorld,
-    bodies: &mut crate::bodies::PixelBodies,
     stamp: &mut fallingsand_sim::PlayerStamp,
     body: &mut Actor,
-) {
+) -> StampResult {
     body.half_h = PLAYER_HALF_H;
     let base = body.footprint();
     if !footprint_loaded(sim, base) {
-        return;
+        return StampResult::Deferred;
     }
     for rows in (DUCK_ROWS as i32..=STAND_ROWS as i32).rev() {
         let fp = Footprint {
@@ -263,7 +248,7 @@ fn spawn_stamp(
         if stamp_player(sim, stamp, fp, false).is_some() {
             body.y += Fixed::from_int(rows / 2 - STAND_ROWS as i32 / 2);
             body.half_h = Fixed::from_int(rows).mul(Fixed::HALF);
-            return;
+            return StampResult::Stamped;
         }
     }
     for up in 1..=SPAWN_SEARCH_UP {
@@ -275,32 +260,10 @@ fn spawn_stamp(
         };
         if stamp_player(sim, stamp, fp, false).is_some() {
             body.y += Fixed::from_int(up);
-            return;
+            return StampResult::Stamped;
         }
     }
-    let mut damage: Vec<CellPos> = Vec::new();
-    for y in base.y0..=base.y1 {
-        for x in base.x0..=base.x1 {
-            let pos = CellPos::new(x, y);
-            if !sim.get_cell(pos).is_some_and(|cell| cell.is_body()) {
-                continue;
-            }
-            if bodies.body_at_mut(pos).is_none() {
-                return;
-            }
-            damage.push(pos);
-        }
-    }
-    tracing::warn!("spawn stamp forced at {:?}", (base.x0, base.y0));
-    force_stamp_player(sim, stamp, base, false);
-    if !damage.is_empty() {
-        let next_id = &mut bodies.next_id;
-        apply_damage(sim, &mut bodies.bodies, damage, || {
-            let id = *next_id;
-            *next_id += 1;
-            id
-        });
-    }
+    StampResult::Blocked
 }
 
 fn footprint_loaded(sim: &CellWorld, fp: Footprint) -> bool {

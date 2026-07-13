@@ -4,14 +4,14 @@
 
 ## Tick order
 
-1. Drain network — sessions, inputs, chat, commands; departing players unstamp
-2. Apply inputs → world edits: commands, dig/place, slot actions + crafting
-3. Load/generate/unload regions per ticket changes
-4. Step CA (4 phases, rayon)
-5. Step physics: players in `PlayerId` order (sweep, then stamp), then the serial bodies pass
-6. Game logic: health, hazards, crush; advance the world clock
-7. One `TickFrame` per session
-8. Periodic persistence flush + autosave
+1. Drain network: authenticate sessions, neutralize stale input, generation-tag queued actions, persist departures, and unstamp departing rasters
+2. Apply alive-player commands, single-cell dig/place, inventory actions, and crafting
+3. Recompute tickets, then load/generate/unload regions
+4. Step the CA in four phases
+5. Step alive players in `PlayerId` order, reconcile body damage, then step pixel bodies
+6. Apply hazards and crush damage, then resolve every lethal transition and validated revive in the same tick
+7. Advance the calendar and emit one `TickFrame` per session
+8. Flush dirty regions, authenticated player records, and world metadata when due
 
 Budget ~16 ms/tick, sim ≤8 ms; sleeping keeps ~2000 active chunks inside it.
 
@@ -25,4 +25,5 @@ redb, server-side only: `regions` (z-order → lz4 blob), `players`, `meta`; wri
 
 - Pixel bodies persist as their grid cells; unload settles them, load strips leftover flags — a crash degrades in-flight bodies to plain terrain. Stale flesh is voided on load; the player record keeps its `Fixed` pose.
 - Each chunk saves a **resume rect** restored as a keep-alive on load, so in-flight processes continue after reload.
-- Inventories are per-slot in the player record ([Inventory.md](Inventory.md)).
+- Player records preserve lifecycle, pose, velocity, inventory, and the latest 100 submitted chat/command lines. A dead record reconnects dead; disconnect is not a revive.
+- Spawn and revive stamp transactionally, never overwriting terrain, bodies, or player cells: `Alive` only on a complete commit, deferring while spawn chunks are unloaded, staying dead when no legal footprint exists. An alive player that cannot stamp drops to zero health and dies the same tick rather than replicating a rasterless body.
