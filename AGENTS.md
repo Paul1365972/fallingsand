@@ -35,3 +35,5 @@ When relevant code and docs disagree, establish the intended behavior and update
 ## Verification
 
 Run `cargo fmt --all` and `cargo clippy --workspace --all-targets --locked -- -D warnings`.
+
+Commit once at the end of a task (separate packets only when clearly separable): conventional subject, no body, no co-author; don't push; leave the user's parallel WIP untouched.
