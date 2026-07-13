@@ -29,8 +29,8 @@ pub use chunk::{CHUNK_AREA, CHUNK_SIZE, Chunk, DirtyRect};
 pub use coords::{CellOffset, CellPos, ChunkOffset, ChunkPos, RegionPos};
 pub use fixed::Fixed;
 pub use item::{
-    HOTBAR_SLOTS, IconSpec, Inventory, ItemDef, ItemId, ItemRegistry, ItemStack, MAIN_SLOTS,
-    PLAYER_SLOTS, RecipeRegistry, ToolSpec,
+    HOTBAR_SLOTS, Inventory, ItemDef, ItemId, ItemRegistry, ItemStack, MAIN_SLOTS, PLAYER_SLOTS,
+    RecipeRegistry, ToolSpec,
 };
 pub use material::{
     Dynamics, Ember, EmberKind, GasDynamics, Ignition, LiquidDynamics, MaterialId, MaterialInfo,

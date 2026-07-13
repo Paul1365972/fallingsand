@@ -8,7 +8,6 @@ macro_rules! items {
 
     (@munch [$($entries:tt)*] [$($handles:tt)*] $idx:expr;
         $name:ident $display:literal $stack:literal
-        glyph($art:expr, $tint:expr)
         $(tool(tier: $tier:literal, speed: $speed:literal))?
         ; $($rest:tt)*
     ) => {
@@ -17,26 +16,6 @@ macro_rules! items {
                 name: stringify!($name),
                 display: $display,
                 stack_max: $stack,
-                icon: crate::item::IconSpec::Glyph { art: $art, tint: $tint },
-                tool: crate::content::macros::items!(@tool $($tier, $speed)?),
-            },]
-            [$($handles)*
-                pub const $name: crate::item::ItemId = crate::item::ItemId(1 + $idx);]
-            $idx + 1u16; $($rest)*);
-    };
-
-    (@munch [$($entries:tt)*] [$($handles:tt)*] $idx:expr;
-        $name:ident $display:literal $stack:literal
-        swatch($material:expr)
-        $(tool(tier: $tier:literal, speed: $speed:literal))?
-        ; $($rest:tt)*
-    ) => {
-        crate::content::macros::items!(@munch
-            [$($entries)* crate::item::ItemEntry {
-                name: stringify!($name),
-                display: $display,
-                stack_max: $stack,
-                icon: crate::item::IconSpec::MaterialSwatch($material),
                 tool: crate::content::macros::items!(@tool $($tier, $speed)?),
             },]
             [$($handles)*

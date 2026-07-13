@@ -1,4 +1,5 @@
-use super::{format_count, item_color, item_glyph};
+use super::format_count;
+use super::icons::ItemIcons;
 use crate::game::inventory::{Inventory, SlotRegion};
 use crate::game::{ClientGame, InGame};
 use crate::view::Game;
@@ -44,44 +45,29 @@ pub(crate) struct SidePanel;
 pub struct UiSlot(pub SlotRegion);
 
 #[derive(Component)]
-pub struct SlotSwatch;
+pub struct SlotIcon;
 
 #[derive(Component)]
 pub struct SlotCount;
-
-#[derive(Component)]
-pub struct SlotGlyph;
 
 pub fn spawn_slot_widgets(
     slot: &mut ChildSpawnerCommands,
     size: f32,
     inset: f32,
     stack: Option<ItemStack>,
-    game: &ClientGame,
+    icons: &ItemIcons,
 ) {
-    let glyph = stack
-        .map(|stack| item_glyph(&game.registries.items, stack.item))
-        .unwrap_or("");
-    let (display, color) = match stack {
-        Some(stack) => {
-            let c = item_color(&game.registries.items, stack.item);
-            (
-                if glyph.is_empty() {
-                    Display::Flex
-                } else {
-                    Display::None
-                },
-                Color::srgba_u8(c[0], c[1], c[2], c[3]),
-            )
-        }
-        None => (Display::None, Color::NONE),
+    let (image, display) = match stack {
+        Some(stack) => (icons.get(stack.item), Display::Flex),
+        None => (icons.missing(), Display::None),
     };
     let count = match stack {
         Some(stack) if stack.count > 1 => format_count(stack.count),
         _ => String::new(),
     };
     slot.spawn((
-        SlotSwatch,
+        SlotIcon,
+        ImageNode::new(image),
         Node {
             position_type: PositionType::Absolute,
             left: px(inset),
@@ -89,31 +75,6 @@ pub fn spawn_slot_widgets(
             width: px(size - 2.0 * inset),
             height: px(size - 2.0 * inset),
             display,
-            ..default()
-        },
-        BackgroundColor(color),
-        Pickable::IGNORE,
-    ));
-    let glyph_color = stack
-        .map(|stack| item_color(&game.registries.items, stack.item))
-        .unwrap_or([255; 4]);
-    slot.spawn((
-        SlotGlyph,
-        Text::new(glyph),
-        TextFont {
-            font_size: FontSize::Px(5.0),
-            ..default()
-        },
-        TextColor(Color::srgba_u8(
-            glyph_color[0],
-            glyph_color[1],
-            glyph_color[2],
-            glyph_color[3],
-        )),
-        Node {
-            position_type: PositionType::Absolute,
-            left: px(inset + 2.0),
-            top: px(inset),
             ..default()
         },
         Pickable::IGNORE,
@@ -132,25 +93,19 @@ pub fn spawn_slot_widgets(
             bottom: px(0),
             ..default()
         },
-        GlobalZIndex(super::depth::ITEM_COUNT),
         Pickable::IGNORE,
     ));
 }
 
-#[allow(clippy::type_complexity)]
 pub fn sync_slots(
     stack_for: impl Fn(Entity) -> Option<Option<ItemStack>>,
-    items: &fallingsand_core::ItemRegistry,
-    swatches: &mut Query<(&ChildOf, &mut Node, &mut BackgroundColor), With<SlotSwatch>>,
-    counts: &mut Query<(&ChildOf, &mut Text), (With<SlotCount>, Without<SlotGlyph>)>,
-    glyphs: &mut Query<
-        (&ChildOf, &mut Text, &mut TextColor),
-        (With<SlotGlyph>, Without<SlotCount>),
-    >,
+    icons: &ItemIcons,
+    slot_icons: &mut Query<(&ChildOf, &mut ImageNode, &mut Node), With<SlotIcon>>,
+    counts: &mut Query<(&ChildOf, &mut Text), With<SlotCount>>,
 ) {
-    for (child_of, mut node, mut color) in swatches {
+    for (child_of, mut image, mut node) in slot_icons {
         if let Some(stack) = stack_for(child_of.parent()) {
-            apply_swatch(stack, items, &mut node, &mut color);
+            apply_icon(stack, icons, &mut image, &mut node);
         }
     }
     for (child_of, mut text) in counts {
@@ -158,40 +113,22 @@ pub fn sync_slots(
             apply_count(stack, &mut text);
         }
     }
-    for (child_of, mut text, mut color) in glyphs {
-        if let Some(stack) = stack_for(child_of.parent()) {
-            let glyph = stack
-                .map(|stack| item_glyph(items, stack.item))
-                .unwrap_or("");
-            text.0 = glyph.into();
-            if let Some(stack) = stack {
-                let rgba = item_color(items, stack.item);
-                color.0 = Color::srgba_u8(rgba[0], rgba[1], rgba[2], rgba[3]);
-            }
-        }
-    }
 }
 
-fn apply_swatch(
+fn apply_icon(
     stack: Option<ItemStack>,
-    items: &fallingsand_core::ItemRegistry,
+    icons: &ItemIcons,
+    image: &mut Mut<ImageNode>,
     node: &mut Mut<Node>,
-    color: &mut Mut<BackgroundColor>,
 ) {
     match stack {
         Some(stack) => {
-            let c = item_color(items, stack.item);
-            let target = Color::srgba_u8(c[0], c[1], c[2], c[3]);
-            let display = if item_glyph(items, stack.item).is_empty() {
-                Display::Flex
-            } else {
-                Display::None
-            };
-            if node.display != display {
-                node.display = display;
+            let handle = icons.get(stack.item);
+            if image.image != handle {
+                image.image = handle;
             }
-            if color.0 != target {
-                color.0 = target;
+            if node.display != Display::Flex {
+                node.display = Display::Flex;
             }
         }
         None => {
@@ -215,6 +152,7 @@ fn apply_count(stack: Option<ItemStack>, text: &mut Mut<Text>) {
 pub fn sync_overlay(
     mut commands: Commands,
     game: Res<Game>,
+    icons: Res<ItemIcons>,
     roots: Query<Entity, With<OverlayRoot>>,
     panels: Query<Entity, With<SidePanel>>,
 ) {
@@ -224,7 +162,7 @@ pub fn sync_overlay(
         .is_some_and(|ingame| ingame.inventory_open());
     let exists = !roots.is_empty();
     if should_exist && !exists {
-        spawn_overlay(&mut commands, &game.0);
+        spawn_overlay(&mut commands, &game.0, &icons);
         return;
     }
     if !should_exist && exists {
@@ -240,18 +178,17 @@ pub fn sync_overlay(
     {
         commands.entity(panel).despawn_related::<Children>();
         commands.entity(panel).with_children(|panel| {
-            build_side_panel(panel, &game.0, ingame);
+            build_side_panel(panel, &game.0, ingame, &icons);
         });
     }
 }
 
-#[allow(clippy::type_complexity)]
 pub fn patch_overlay_slots(
     game: Res<Game>,
+    icons: Res<ItemIcons>,
     slots: Query<&UiSlot>,
-    mut swatches: Query<(&ChildOf, &mut Node, &mut BackgroundColor), With<SlotSwatch>>,
-    mut counts: Query<(&ChildOf, &mut Text), (With<SlotCount>, Without<SlotGlyph>)>,
-    mut glyphs: Query<(&ChildOf, &mut Text, &mut TextColor), (With<SlotGlyph>, Without<SlotCount>)>,
+    mut slot_icons: Query<(&ChildOf, &mut ImageNode, &mut Node), With<SlotIcon>>,
+    mut counts: Query<(&ChildOf, &mut Text), With<SlotCount>>,
 ) {
     let changes = &game.0.changes;
     if changes.slots.is_empty() && !changes.trash {
@@ -271,13 +208,7 @@ pub fn patch_overlay_slots(
             _ => None,
         }
     };
-    sync_slots(
-        stack_for,
-        &game.0.registries.items,
-        &mut swatches,
-        &mut counts,
-        &mut glyphs,
-    );
+    sync_slots(stack_for, &icons, &mut slot_icons, &mut counts);
 }
 
 pub fn sync_craftable(
@@ -339,7 +270,7 @@ fn craft_colors(ok: bool) -> (Color, Color) {
     }
 }
 
-fn spawn_overlay(commands: &mut Commands, game: &ClientGame) {
+fn spawn_overlay(commands: &mut Commands, game: &ClientGame, icons: &ItemIcons) {
     let Some(ingame) = game.playing() else {
         return;
     };
@@ -366,7 +297,7 @@ fn spawn_overlay(commands: &mut Commands, game: &ClientGame) {
                     panel.spawn(row_node()).with_children(|r| {
                         for col in 0..9 {
                             let index = HOTBAR_SLOTS + row * 9 + col;
-                            spawn_slot(r, SlotRegion::Player(index), game, ingame);
+                            spawn_slot(r, SlotRegion::Player(index), ingame, icons);
                         }
                     });
                 }
@@ -376,7 +307,7 @@ fn spawn_overlay(commands: &mut Commands, game: &ClientGame) {
                 });
                 panel.spawn(row_node()).with_children(|r| {
                     for index in 0..HOTBAR_SLOTS {
-                        spawn_slot(r, SlotRegion::Player(index), game, ingame);
+                        spawn_slot(r, SlotRegion::Player(index), ingame, icons);
                     }
                 });
                 panel.spawn(Node {
@@ -385,13 +316,13 @@ fn spawn_overlay(commands: &mut Commands, game: &ClientGame) {
                 });
                 panel.spawn(label_node("Trash"));
                 panel.spawn(row_node()).with_children(|r| {
-                    spawn_slot(r, SlotRegion::Trash, game, ingame);
+                    spawn_slot(r, SlotRegion::Trash, ingame, icons);
                 });
             });
             overlay
                 .spawn((SidePanel, panel_node()))
                 .with_children(|panel| {
-                    build_side_panel(panel, game, ingame);
+                    build_side_panel(panel, game, ingame, icons);
                 });
         });
 
@@ -423,6 +354,7 @@ fn spawn_overlay(commands: &mut Commands, game: &ClientGame) {
     commands.spawn((
         OverlayRoot,
         CursorFollow,
+        ImageNode::new(icons.missing()),
         Node {
             position_type: PositionType::Absolute,
             width: px(SLOT - 12.0),
@@ -430,7 +362,6 @@ fn spawn_overlay(commands: &mut Commands, game: &ClientGame) {
             display: Display::None,
             ..default()
         },
-        BackgroundColor(Color::srgba(0.6, 0.6, 0.6, 0.9)),
         GlobalZIndex(super::depth::INVENTORY_CURSOR),
         Pickable::IGNORE,
         children![(
@@ -452,7 +383,12 @@ fn spawn_overlay(commands: &mut Commands, game: &ClientGame) {
     ));
 }
 
-fn build_side_panel(panel: &mut ChildSpawnerCommands, game: &ClientGame, ingame: &InGame) {
+fn build_side_panel(
+    panel: &mut ChildSpawnerCommands,
+    game: &ClientGame,
+    ingame: &InGame,
+    icons: &ItemIcons,
+) {
     let items = &game.registries.items;
 
     if ingame.you.mode == GameMode::Creative {
@@ -461,7 +397,7 @@ fn build_side_panel(panel: &mut ChildSpawnerCommands, game: &ClientGame, ingame:
         for chunk in all.chunks(9) {
             panel.spawn(row_node()).with_children(|r| {
                 for &id in chunk {
-                    spawn_slot(r, SlotRegion::Palette(id), game, ingame);
+                    spawn_slot(r, SlotRegion::Palette(id), ingame, icons);
                 }
             });
         }
@@ -485,14 +421,13 @@ fn build_side_panel(panel: &mut ChildSpawnerCommands, game: &ClientGame, ingame:
                     BackgroundColor(background),
                 ))
                 .with_children(|entry| {
-                    let color = item_color(items, recipe.output.0);
                     entry.spawn((
+                        ImageNode::new(icons.get(recipe.output.0)),
                         Node {
                             width: px(20),
                             height: px(20),
                             ..default()
                         },
-                        BackgroundColor(Color::srgba_u8(color[0], color[1], color[2], color[3])),
                         Pickable::IGNORE,
                     ));
                     let name = items
@@ -550,8 +485,8 @@ fn row_node() -> Node {
 fn spawn_slot(
     parent: &mut ChildSpawnerCommands,
     region: SlotRegion,
-    game: &ClientGame,
     ingame: &InGame,
+    icons: &ItemIcons,
 ) {
     let stack = region_stack(region, &ingame.inventory);
     parent
@@ -571,19 +506,25 @@ fn spawn_slot(
                 Color::srgba(0.0, 0.0, 0.0, 0.6)
             }),
         ))
-        .with_children(|slot| spawn_slot_widgets(slot, SLOT, 6.0, stack, game));
+        .with_children(|slot| spawn_slot_widgets(slot, SLOT, 6.0, stack, icons));
+}
+
+fn cursor_ui_pos(cursor: Option<Vec2>, ui_scale: &UiScale) -> Option<Vec2> {
+    cursor.map(|p| p / ui_scale.0.max(f32::EPSILON))
 }
 
 pub fn update_cursor_follow(
     game: Res<Game>,
+    icons: Res<ItemIcons>,
+    ui_scale: Res<UiScale>,
     window: Single<&Window>,
-    mut follow: Query<(&mut Node, &mut BackgroundColor), With<CursorFollow>>,
+    mut follow: Query<(&mut Node, &mut ImageNode), With<CursorFollow>>,
     mut count: Query<&mut Text, With<CursorFollowCount>>,
 ) {
-    let Ok((mut node, mut color)) = follow.single_mut() else {
+    let Ok((mut node, mut image)) = follow.single_mut() else {
         return;
     };
-    let cursor = window.cursor_position();
+    let cursor = cursor_ui_pos(window.cursor_position(), &ui_scale);
     let inventory = game.0.playing().map(|ingame| &ingame.inventory);
     let open = game
         .0
@@ -598,8 +539,7 @@ pub fn update_cursor_follow(
             node.display = Display::Flex;
             node.left = px(pos.x - (SLOT - 12.0) / 2.0);
             node.top = px(pos.y - (SLOT - 12.0) / 2.0);
-            let c = item_color(&game.0.registries.items, stack.item);
-            *color = BackgroundColor(Color::srgba_u8(c[0], c[1], c[2], c[3]));
+            image.image = icons.get(stack.item);
             if let Ok(mut text) = count.single_mut() {
                 **text = if stack.count > 1 {
                     format_count(stack.count)
@@ -614,6 +554,7 @@ pub fn update_cursor_follow(
 
 pub fn update_tooltip(
     game: Res<Game>,
+    ui_scale: Res<UiScale>,
     window: Single<&Window>,
     slots: Query<(&UiSlot, &Interaction)>,
     mut tooltip: Query<&mut Node, With<Tooltip>>,
@@ -635,7 +576,7 @@ pub fn update_tooltip(
         None
     };
     let item = hovered.and_then(|region| region_stack(region, &ingame?.inventory));
-    match (item, window.cursor_position()) {
+    match (item, cursor_ui_pos(window.cursor_position(), &ui_scale)) {
         (Some(stack), Some(pos)) => {
             if let Some(def) = game.0.registries.items.try_get(stack.item)
                 && let Ok(mut text) = text.single_mut()

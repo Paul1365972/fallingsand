@@ -1,4 +1,5 @@
-use super::inventory::{SlotCount, SlotGlyph, SlotSwatch, spawn_slot_widgets, sync_slots};
+use super::icons::ItemIcons;
+use super::inventory::{SlotCount, SlotIcon, spawn_slot_widgets, sync_slots};
 use crate::game::{ClientGame, InGame};
 use crate::view::Game;
 use bevy::platform::collections::HashSet;
@@ -79,11 +80,16 @@ fn death_presentation(ingame: &InGame) -> DeathPresentation {
     }
 }
 
-pub fn sync_hud(mut commands: Commands, game: Res<Game>, roots: Query<Entity, With<HudRoot>>) {
+pub fn sync_hud(
+    mut commands: Commands,
+    game: Res<Game>,
+    icons: Res<ItemIcons>,
+    roots: Query<Entity, With<HudRoot>>,
+) {
     let should_exist = game.0.playing().is_some();
     let exists = !roots.is_empty();
     if should_exist && !exists {
-        spawn_hud(&mut commands, &game.0);
+        spawn_hud(&mut commands, &game.0, &icons);
     } else if !should_exist && exists {
         for entity in &roots {
             commands.entity(entity).despawn();
@@ -91,13 +97,12 @@ pub fn sync_hud(mut commands: Commands, game: Res<Game>, roots: Query<Entity, Wi
     }
 }
 
-#[allow(clippy::type_complexity)]
 pub fn patch_hud_slots(
     game: Res<Game>,
+    icons: Res<ItemIcons>,
     slots: Query<&HotbarSlot>,
-    mut swatches: Query<(&ChildOf, &mut Node, &mut BackgroundColor), With<SlotSwatch>>,
-    mut counts: Query<(&ChildOf, &mut Text), (With<SlotCount>, Without<SlotGlyph>)>,
-    mut glyphs: Query<(&ChildOf, &mut Text, &mut TextColor), (With<SlotGlyph>, Without<SlotCount>)>,
+    mut slot_icons: Query<(&ChildOf, &mut ImageNode, &mut Node), With<SlotIcon>>,
+    mut counts: Query<(&ChildOf, &mut Text), With<SlotCount>>,
 ) {
     if game.0.changes.slots.is_empty() {
         return;
@@ -112,13 +117,7 @@ pub fn patch_hud_slots(
             .contains(&slot.0)
             .then(|| ingame.inventory.slot(slot.0))
     };
-    sync_slots(
-        stack_for,
-        &game.0.registries.items,
-        &mut swatches,
-        &mut counts,
-        &mut glyphs,
-    );
+    sync_slots(stack_for, &icons, &mut slot_icons, &mut counts);
 }
 
 pub fn sync_cursor_hud(game: Res<Game>, mut label: Query<&mut Text, With<CursorModeLabel>>) {
@@ -222,7 +221,7 @@ pub fn hud_status(
     }
 }
 
-fn spawn_hud(commands: &mut Commands, game: &ClientGame) {
+fn spawn_hud(commands: &mut Commands, game: &ClientGame, icons: &ItemIcons) {
     let ingame = game.playing().expect("HUD requires a playing game");
     let death = death_presentation(ingame);
     commands
@@ -285,7 +284,7 @@ fn spawn_hud(commands: &mut Commands, game: &ClientGame) {
                             SLOT_SIZE,
                             9.0,
                             ingame.inventory.slot(index),
-                            game,
+                            icons,
                         );
                     });
                 }

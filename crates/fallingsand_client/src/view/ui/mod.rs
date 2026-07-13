@@ -3,6 +3,7 @@ pub mod connscreen;
 pub mod debug;
 pub mod game_menu;
 pub mod hud;
+pub mod icons;
 pub mod inventory;
 pub mod menu;
 pub mod settings;
@@ -10,14 +11,12 @@ pub mod settings;
 use super::io::Btn;
 use bevy::prelude::*;
 use bevy::text::TextCursorStyle;
-use fallingsand_core::{IconSpec, ItemId, ItemRegistry};
 
 pub const BUTTON_BG: Color = Color::srgb(0.14, 0.16, 0.22);
 pub const BUTTON_HOVER: Color = Color::srgb(0.22, 0.25, 0.33);
 
 pub mod depth {
     pub const HUD_LABEL: i32 = 1;
-    pub const ITEM_COUNT: i32 = 2;
     pub const CHAT: i32 = 20;
     pub const INVENTORY: i32 = 30;
     pub const INVENTORY_CURSOR: i32 = 40;
@@ -28,23 +27,6 @@ pub mod depth {
     pub const GAME_MENU: i32 = 70;
     pub const SETTINGS: i32 = 80;
     pub const DEBUG: i32 = 100;
-}
-
-pub fn item_color(item_reg: &ItemRegistry, item: ItemId) -> [u8; 4] {
-    match item_reg.try_get(item).map(|def| def.icon) {
-        Some(IconSpec::MaterialSwatch(material)) => {
-            fallingsand_core::content::material(material).colors[0]
-        }
-        Some(IconSpec::Glyph { tint, .. }) => tint,
-        None => [180, 180, 190, 255],
-    }
-}
-
-pub fn item_glyph(item_reg: &ItemRegistry, item: ItemId) -> &'static str {
-    match item_reg.try_get(item).map(|def| def.icon) {
-        Some(IconSpec::Glyph { art, .. }) => art,
-        _ => "",
-    }
 }
 
 pub fn format_count(count: u32) -> String {

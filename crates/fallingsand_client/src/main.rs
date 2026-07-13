@@ -74,6 +74,7 @@ fn main() {
             (view::chunks::setup_shared, view::camera::setup_camera).chain(),
             view::sky::load_shared_shaders,
             view::ui::debug::setup_overlay,
+            view::ui::icons::load_item_icons,
         ),
     )
     .add_systems(

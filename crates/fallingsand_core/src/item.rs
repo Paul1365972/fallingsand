@@ -27,18 +27,12 @@ impl ItemStack {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IconSpec {
-    MaterialSwatch(MaterialId),
-    Glyph { art: &'static str, tint: [u8; 4] },
-}
-
 #[derive(Debug, Clone)]
 pub struct ItemDef {
     pub name: String,
     pub display: String,
     pub stack_max: u32,
-    pub icon: IconSpec,
+    pub sprite: String,
     pub place: Option<MaterialId>,
     pub tool: Option<ToolSpec>,
 }
@@ -54,7 +48,6 @@ pub struct ItemEntry {
     pub name: &'static str,
     pub display: &'static str,
     pub stack_max: u32,
-    pub icon: IconSpec,
     pub tool: Option<ToolSpec>,
 }
 
@@ -80,7 +73,7 @@ impl ItemRegistry {
             name: "none".into(),
             display: "None".into(),
             stack_max: 0,
-            icon: IconSpec::MaterialSwatch(MaterialId::AIR),
+            sprite: String::new(),
             place: None,
             tool: None,
         });
@@ -90,7 +83,7 @@ impl ItemRegistry {
                 name: entry.name.to_ascii_lowercase(),
                 display: entry.display.into(),
                 stack_max: entry.stack_max.max(1),
-                icon: entry.icon,
+                sprite: entry.name.to_ascii_lowercase(),
                 place: None,
                 tool: entry.tool,
             };
@@ -112,7 +105,7 @@ impl ItemRegistry {
             let def = ItemDef {
                 display: pretty_name(info.name),
                 stack_max: MATERIAL_STACK_MAX,
-                icon: IconSpec::MaterialSwatch(id),
+                sprite: format!("materials/{}", info.name),
                 place: Some(id),
                 tool: None,
                 name: name.clone(),
