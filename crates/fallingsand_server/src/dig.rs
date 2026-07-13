@@ -201,9 +201,6 @@ fn idle_preview(
         let target = select_place(world, &context.input, body, context.reach)?;
         return Some(interaction(target, InteractionStatus::Valid, 0.0));
     }
-    if context.survival && inventory.inner.get(slot).is_some() && !is_tool(inventory, slot) {
-        return None;
-    }
     let target = select_dig(world, &context.input, body, context.reach)?;
     match classify_dig(world, inventory, context, target) {
         Ok(_) => Some(interaction(target, InteractionStatus::Valid, 0.0)),
@@ -243,12 +240,7 @@ fn classify_dig(
         content::try_item(stack.item).and_then(|info| info.tool.map(|t| (stack.item, t)))
     }) {
         Some((id, tool)) => (MiningMethod::Tool(id), tool.speed, tool.tier),
-        None => {
-            if context.survival && held.is_some() {
-                return Err(InteractionStatus::WrongTool);
-            }
-            (MiningMethod::Hands, BARE_HAND_SPEED, 0)
-        }
+        None => (MiningMethod::Hands, BARE_HAND_SPEED, 0),
     };
     if context.survival {
         if tier < content::material(material).mining_tier {
@@ -264,14 +256,6 @@ fn classify_dig(
         item,
         material,
     })
-}
-
-fn is_tool(inventory: &Inventory, slot: usize) -> bool {
-    inventory
-        .inner
-        .get(slot)
-        .and_then(|stack| content::try_item(stack.item))
-        .is_some_and(|info| info.tool.is_some())
 }
 
 fn select_dig(world: &World, input: &InputState, body: &Actor, reach: f32) -> Option<CellPos> {
