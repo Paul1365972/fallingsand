@@ -56,6 +56,13 @@ struct DeathPresentation {
 }
 
 fn death_presentation(ingame: &InGame) -> DeathPresentation {
+    if ingame.game_menu_open() {
+        return DeathPresentation {
+            screen: Display::None,
+            title: "You died",
+            revive: Display::None,
+        };
+    }
     match ingame.you.life {
         SelfLife::Dead if ingame.revive_request_pending => DeathPresentation {
             screen: Display::Flex,

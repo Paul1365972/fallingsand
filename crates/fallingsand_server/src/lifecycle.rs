@@ -40,7 +40,6 @@ pub fn resolve_lethal(
         let PlayerLife::Alive(avatar) = &mut player.life else {
             continue;
         };
-        avatar.health.hp = 0.0;
         unstamp_and_wake(sim, bodies, &mut avatar.stamp);
         player.die(anchor, tick);
     }
@@ -54,27 +53,15 @@ pub fn advance_materializations(
 ) -> Vec<(PlayerId, String)> {
     let mut failures = Vec::new();
     for (&id, player) in players.iter_mut() {
-        let result = match &mut player.life {
-            PlayerLife::Entering(entering) => {
-                let materialization = &mut entering.materialization;
-                advance_search(
-                    sim,
-                    bodies,
-                    &materialization.template,
-                    &mut materialization.search,
-                )
-            }
-            PlayerLife::Reviving(reviving) => {
-                let materialization = &mut reviving.materialization;
-                advance_search(
-                    sim,
-                    bodies,
-                    &materialization.template,
-                    &mut materialization.search,
-                )
-            }
-            PlayerLife::Alive(_) | PlayerLife::Dead(_) => continue,
+        let Some(materialization) = player.life.materialization_mut() else {
+            continue;
         };
+        let result = advance_search(
+            sim,
+            bodies,
+            &materialization.template,
+            &mut materialization.search,
+        );
         match result {
             SearchResult::Waiting => {}
             SearchResult::Found(avatar) => {
@@ -125,13 +112,12 @@ fn advance_search(
 }
 
 fn footprint_inside_window(candidate: CellPos, window: SearchWindow) -> bool {
-    let actor = fallingsand_sim::physics::Actor::new(
+    let fp = fallingsand_sim::physics::footprint_at(
         fallingsand_core::Fixed::from_cell(candidate.x),
         fallingsand_core::Fixed::from_cell(candidate.y),
         crate::player::PLAYER_HALF_W,
         crate::player::PLAYER_HALF_H,
     );
-    let fp = actor.footprint();
     window.contains(CellPos::new(fp.x0, fp.y0)) && window.contains(CellPos::new(fp.x1, fp.y1))
 }
 
@@ -145,6 +131,5 @@ fn window_loaded(sim: &CellWorld, window: SearchWindow) -> bool {
             }
         }
     }
-    debug_assert_eq!(CHUNK_SIZE as i32, 64);
     true
 }

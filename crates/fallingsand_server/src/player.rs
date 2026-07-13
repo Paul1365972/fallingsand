@@ -150,6 +150,24 @@ impl Materialization {
     }
 }
 
+impl PlayerLife {
+    pub fn materialization(&self) -> Option<&Materialization> {
+        match self {
+            PlayerLife::Entering(entering) => Some(&entering.materialization),
+            PlayerLife::Reviving(reviving) => Some(&reviving.materialization),
+            PlayerLife::Alive(_) | PlayerLife::Dead(_) => None,
+        }
+    }
+
+    pub fn materialization_mut(&mut self) -> Option<&mut Materialization> {
+        match self {
+            PlayerLife::Entering(entering) => Some(&mut entering.materialization),
+            PlayerLife::Reviving(reviving) => Some(&mut reviving.materialization),
+            PlayerLife::Alive(_) | PlayerLife::Dead(_) => None,
+        }
+    }
+}
+
 pub struct Avatar {
     pub actor: Actor,
     pub stamp: PlayerStamp,

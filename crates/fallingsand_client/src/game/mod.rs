@@ -472,6 +472,13 @@ impl ClientGame {
     }
 
     pub(crate) fn player_pos(&self) -> Option<Vec2> {
-        self.ingame()?.local_avatar().map(|avatar| avatar.pos)
+        let ingame = self.ingame()?;
+        if let Some(avatar) = ingame.local_avatar() {
+            return Some(avatar.pos);
+        }
+        ingame
+            .you
+            .anchor
+            .map(|cell| Vec2::new(cell.x as f32 + 0.5, cell.y as f32 + 0.5))
     }
 }

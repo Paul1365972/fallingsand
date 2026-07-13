@@ -207,6 +207,7 @@ pub struct ChunkDebugRects {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SelfState {
     pub life: SelfLife,
+    pub anchor: Option<CellPos>,
     pub mode: GameMode,
     pub biome: String,
     pub band: String,

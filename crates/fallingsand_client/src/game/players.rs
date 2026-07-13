@@ -1,5 +1,6 @@
 use super::Changes;
 use bevy::math::Vec2;
+use fallingsand_core::CellPos;
 use fallingsand_protocol::{GameMode, PlayerId, SelfLife, TickFrame};
 use std::collections::HashMap;
 
@@ -67,6 +68,7 @@ impl Players {
                 changes.mode = true;
             }
             you.life = self_state.life;
+            you.anchor = self_state.anchor;
             you.mode = self_state.mode;
             you.biome = self_state.biome.clone();
             you.band = self_state.band.clone();
@@ -77,6 +79,7 @@ impl Players {
 #[derive(Clone)]
 pub struct SelfState {
     pub life: SelfLife,
+    pub anchor: Option<CellPos>,
     pub mode: GameMode,
     pub damage_flash: f32,
     pub biome: String,
@@ -87,6 +90,7 @@ impl Default for SelfState {
     fn default() -> Self {
         Self {
             life: SelfLife::Entering,
+            anchor: None,
             mode: GameMode::default(),
             damage_flash: 0.0,
             biome: String::new(),

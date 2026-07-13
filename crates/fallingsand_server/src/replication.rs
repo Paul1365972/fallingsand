@@ -170,6 +170,7 @@ fn self_state(player: &crate::player::Player, biome: &str, band: &str) -> SelfSt
     };
     SelfState {
         life,
+        anchor: (!player.is_alive()).then(|| player.view_anchor()),
         mode: player.profile.mode,
         biome: biome.into(),
         band: band.into(),

@@ -1,6 +1,6 @@
 use crate::bodies::PixelBodies;
 use crate::persistence::{Persistence, StoreError, encode_region};
-use crate::player::{PlayerLife, Players, SearchWindow};
+use crate::player::{Players, SearchWindow};
 use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y};
 use fallingsand_core::{CellPos, ChunkPos, REGION_SIZE_CELLS, Region, RegionPos};
 use fallingsand_sim::bodies::settle_body;
@@ -48,13 +48,8 @@ pub fn compute_tickets(tickets: &mut ChunkTickets, spawn: CellPos, players: &Pla
     tickets.border.clear();
     for (_, player) in players.iter() {
         add_view(tickets, player.view_anchor().chunk());
-        let search = match &player.life {
-            PlayerLife::Entering(entering) => Some(entering.materialization.search.window()),
-            PlayerLife::Reviving(reviving) => Some(reviving.materialization.search.window()),
-            PlayerLife::Alive(_) | PlayerLife::Dead(_) => None,
-        };
-        if let Some(window) = search {
-            add_search_window(tickets, window);
+        if let Some(materialization) = player.life.materialization() {
+            add_search_window(tickets, materialization.search.window());
         }
     }
     let center = spawn.chunk();
