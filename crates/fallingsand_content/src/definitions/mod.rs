@@ -1,5 +1,7 @@
+mod items;
 mod materials;
 mod reactions;
+mod tuning;
 
 use crate::Catalog;
 
@@ -12,5 +14,7 @@ pub fn catalog() -> Catalog {
     ]);
     materials::define(&mut catalog);
     reactions::define(&mut catalog);
+    items::define(&mut catalog);
+    tuning::define(&mut catalog);
     catalog
 }

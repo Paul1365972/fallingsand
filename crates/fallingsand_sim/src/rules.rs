@@ -1,14 +1,12 @@
 use crate::window::SimWindow;
-use fallingsand_core::content::{self, MatSpec, material};
+use fallingsand_core::content::{self, FLICKER_THRESHOLD, MatSpec, material};
 use fallingsand_core::{
     Cell, CellPos, Dynamics, Ember, EmberKind, GRID_GRAVITY, GasDynamics, LiquidDynamics,
     MaterialId, Phase, PowderDynamics, TICK_DT, VEL_ONE,
 };
-use fallingsand_macros::per_tick_threshold;
 use fallingsand_rng::{Hash, Rng};
 
 const NEIGHBORS: [(i32, i32); 4] = [(0, -1), (-1, 0), (1, 0), (0, 1)];
-const FLICKER_THRESHOLD: u64 = per_tick_threshold!(18.0);
 
 const VEL_MAX: i32 = 31 * VEL_ONE;
 const MAX_STEP: i32 = 31;

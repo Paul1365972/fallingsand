@@ -1,4 +1,5 @@
-use super::MATERIAL_COUNT;
+use super::{ITEM_COUNT, MATERIAL_COUNT};
+use crate::item::{ItemId, ItemInfo, Recipe};
 use crate::material::{MaterialId, MaterialInfo};
 
 pub fn materials() -> impl Iterator<Item = (MaterialId, &'static MaterialInfo)> {
@@ -8,10 +9,17 @@ pub fn materials() -> impl Iterator<Item = (MaterialId, &'static MaterialInfo)> 
     })
 }
 
-pub fn item_registry() -> crate::item::ItemRegistry {
-    crate::item::ItemRegistry::build(super::items::ENTRIES)
+pub fn items() -> impl Iterator<Item = (ItemId, &'static ItemInfo)> {
+    (1..ITEM_COUNT).map(|index| {
+        let id = ItemId(index as u16);
+        (id, super::item(id))
+    })
 }
 
-pub fn recipe_registry(items: &crate::item::ItemRegistry) -> crate::item::RecipeRegistry {
-    super::recipes::recipes(items)
+pub fn try_item(id: ItemId) -> Option<&'static ItemInfo> {
+    ((id.0 as usize) < ITEM_COUNT).then(|| super::item(id))
+}
+
+pub fn recipes() -> &'static [Recipe] {
+    super::RECIPES
 }

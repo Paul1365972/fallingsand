@@ -9,3 +9,6 @@ serde = { workspace = true }
 
 [build-dependencies]
 fallingsand_content = { workspace = true }
+
+[dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }

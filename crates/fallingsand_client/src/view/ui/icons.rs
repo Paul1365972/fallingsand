@@ -1,6 +1,5 @@
-use crate::view::Game;
 use bevy::prelude::*;
-use fallingsand_core::ItemId;
+use fallingsand_core::{ItemId, content};
 
 #[derive(Resource)]
 pub struct ItemIcons {
@@ -21,16 +20,15 @@ impl ItemIcons {
     }
 }
 
-pub fn load_item_icons(mut commands: Commands, game: Res<Game>, assets: Res<AssetServer>) {
-    let items = &game.0.registries.items;
+pub fn load_item_icons(mut commands: Commands, assets: Res<AssetServer>) {
     let missing = assets.load("items/missing.png");
-    let handles = (0..items.len())
+    let handles = (0..content::ITEM_COUNT)
         .map(|id| {
-            let def = items.get(ItemId(id as u16));
-            if def.sprite.is_empty() {
+            let info = content::item(ItemId(id as u16));
+            if info.sprite.is_empty() {
                 missing.clone()
             } else {
-                assets.load(format!("items/{}.png", def.sprite))
+                assets.load(format!("items/{}.png", info.sprite))
             }
         })
         .collect();

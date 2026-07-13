@@ -9,7 +9,6 @@ parallel = ["dep:rayon"]
 
 [dependencies]
 fallingsand_core = { workspace = true }
-fallingsand_macros = { workspace = true }
 fallingsand_rng = { workspace = true }
 rustc-hash = { workspace = true }
 rayon = { workspace = true, optional = true }

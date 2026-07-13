@@ -96,18 +96,6 @@ pub fn emit(content: &Content) -> TokenStream {
         }),
         false,
     );
-    let item_source = accessor_fn(
-        "item_source",
-        quote!(Option<crate::material::MaterialId>),
-        content.item_source.iter().map(|slot| match slot {
-            Some(id) => {
-                let id = material_id(*id);
-                quote!(Some(#id))
-            }
-            None => quote!(None),
-        }),
-        true,
-    );
     let mut row_consts = Vec::new();
     for index in 0..len {
         let row = &content.reactions[index * len..(index + 1) * len];
@@ -135,7 +123,6 @@ pub fn emit(content: &Content) -> TokenStream {
         #is_rigid_capable
         #ignition
         #material
-        #item_source
 
         #[inline]
         pub const fn is_flammable(id: crate::material::MaterialId) -> bool {

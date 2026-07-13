@@ -5,8 +5,7 @@ use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::prelude::*;
 use bevy::render::error_handler::{ErrorType, RenderError, RenderErrorHandler, RenderErrorPolicy};
 use bevy::sprite_render::Material2dPlugin;
-use game::{ClientGame, Registries};
-use std::sync::Arc;
+use game::ClientGame;
 use view::Game;
 
 fn render_error_policy(
@@ -24,10 +23,7 @@ fn render_error_policy(
 }
 
 fn main() {
-    let items = Arc::new(fallingsand_core::content::item_registry());
-    let recipes = Arc::new(fallingsand_core::content::recipe_registry(&items));
-
-    let mut client = ClientGame::new(Registries { items, recipes });
+    let mut client = ClientGame::new();
     if let Some(world) = game::net::cli_world_name() {
         client.start_game_local(world);
     }

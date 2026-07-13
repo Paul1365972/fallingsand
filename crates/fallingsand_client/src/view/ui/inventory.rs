@@ -5,7 +5,7 @@ use crate::game::{ClientGame, InGame};
 use crate::view::Game;
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
-use fallingsand_core::{HOTBAR_SLOTS, ItemId, ItemStack, MAIN_SLOTS};
+use fallingsand_core::{HOTBAR_SLOTS, ItemId, ItemStack, MAIN_SLOTS, content};
 use fallingsand_protocol::GameMode;
 
 const SLOT: f32 = 40.0;
@@ -178,7 +178,7 @@ pub fn sync_overlay(
     {
         commands.entity(panel).despawn_related::<Children>();
         commands.entity(panel).with_children(|panel| {
-            build_side_panel(panel, &game.0, ingame, &icons);
+            build_side_panel(panel, ingame, &icons);
         });
     }
 }
@@ -223,7 +223,7 @@ pub fn sync_craftable(
     let Some(ingame) = game.0.playing() else {
         return;
     };
-    let craftable = craftable_flags(&game.0, ingame);
+    let craftable = craftable_flags(ingame);
 
     for (slot, mut background) in &mut rows {
         let SlotRegion::Craft(i) = slot.0 else {
@@ -250,12 +250,10 @@ pub fn sync_craftable(
     }
 }
 
-fn craftable_flags(game: &ClientGame, ingame: &InGame) -> Vec<bool> {
-    let recipes = &game.registries.recipes;
-    recipes
-        .recipes()
+fn craftable_flags(ingame: &InGame) -> Vec<bool> {
+    content::recipes()
         .iter()
-        .map(|recipe| recipes.can_craft(recipe, ingame.inventory.store()))
+        .map(|recipe| recipe.can_craft(ingame.inventory.store()))
         .collect()
 }
 
@@ -322,7 +320,7 @@ fn spawn_overlay(commands: &mut Commands, game: &ClientGame, icons: &ItemIcons) 
             overlay
                 .spawn((SidePanel, panel_node()))
                 .with_children(|panel| {
-                    build_side_panel(panel, game, ingame, icons);
+                    build_side_panel(panel, ingame, icons);
                 });
         });
 
@@ -383,17 +381,10 @@ fn spawn_overlay(commands: &mut Commands, game: &ClientGame, icons: &ItemIcons) 
     ));
 }
 
-fn build_side_panel(
-    panel: &mut ChildSpawnerCommands,
-    game: &ClientGame,
-    ingame: &InGame,
-    icons: &ItemIcons,
-) {
-    let items = &game.registries.items;
-
+fn build_side_panel(panel: &mut ChildSpawnerCommands, ingame: &InGame, icons: &ItemIcons) {
     if ingame.you.mode == GameMode::Creative {
         panel.spawn(label_node("Items"));
-        let all: Vec<ItemId> = items.iter().map(|(id, _)| id).collect();
+        let all: Vec<ItemId> = content::items().map(|(id, _)| id).collect();
         for chunk in all.chunks(9) {
             panel.spawn(row_node()).with_children(|r| {
                 for &id in chunk {
@@ -403,8 +394,8 @@ fn build_side_panel(
         }
     } else {
         panel.spawn(label_node("Crafting"));
-        let craftable = craftable_flags(game, ingame);
-        for (i, recipe) in game.registries.recipes.recipes().iter().enumerate() {
+        let craftable = craftable_flags(ingame);
+        for (i, recipe) in content::recipes().iter().enumerate() {
             let ok = craftable.get(i).copied().unwrap_or(false);
             let (background, text_color) = craft_colors(ok);
             panel
@@ -430,9 +421,8 @@ fn build_side_panel(
                         },
                         Pickable::IGNORE,
                     ));
-                    let name = items
-                        .try_get(recipe.output.0)
-                        .map(|d| d.display.clone())
+                    let name = content::try_item(recipe.output.0)
+                        .map(|info| info.display)
                         .unwrap_or_default();
                     entry.spawn((
                         CraftName,
@@ -578,10 +568,10 @@ pub fn update_tooltip(
     let item = hovered.and_then(|region| region_stack(region, &ingame?.inventory));
     match (item, cursor_ui_pos(window.cursor_position(), &ui_scale)) {
         (Some(stack), Some(pos)) => {
-            if let Some(def) = game.0.registries.items.try_get(stack.item)
+            if let Some(info) = content::try_item(stack.item)
                 && let Ok(mut text) = text.single_mut()
             {
-                **text = def.display.clone();
+                **text = info.display.to_string();
             }
             node.display = Display::Flex;
             node.left = px(pos.x + 14.0);

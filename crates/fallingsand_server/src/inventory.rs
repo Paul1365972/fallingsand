@@ -1,7 +1,5 @@
 use crate::player::Players;
-use fallingsand_core::{
-    Inventory as CoreInventory, ItemId, ItemRegistry, ItemStack, RecipeRegistry,
-};
+use fallingsand_core::{Inventory as CoreInventory, ItemId, ItemStack, content};
 use fallingsand_protocol::{GameMode, SlotAction};
 
 pub struct Inventory {
@@ -26,7 +24,7 @@ impl Default for Inventory {
     }
 }
 
-pub fn apply_slot_actions(players: &mut Players, reg: &ItemRegistry, recipes: &RecipeRegistry) {
+pub fn apply_slot_actions(players: &mut Players) {
     for (_, player) in players.iter_mut() {
         let actions = std::mem::take(&mut player.control.pending_slot_actions);
         if !player.is_alive() || actions.is_empty() {
@@ -34,34 +32,22 @@ pub fn apply_slot_actions(players: &mut Players, reg: &ItemRegistry, recipes: &R
         }
         let creative = player.profile.mode == GameMode::Creative;
         for action in actions {
-            apply_action(
-                action,
-                creative,
-                &mut player.profile.inventory,
-                reg,
-                recipes,
-            );
+            apply_action(action, creative, &mut player.profile.inventory);
         }
     }
 }
 
-fn apply_action(
-    action: SlotAction,
-    creative: bool,
-    inventory: &mut Inventory,
-    reg: &ItemRegistry,
-    recipes: &RecipeRegistry,
-) {
+fn apply_action(action: SlotAction, creative: bool, inventory: &mut Inventory) {
     match action {
         SlotAction::LeftClick { slot } => {
             inventory
                 .inner
-                .left_click(slot as usize, &mut inventory.cursor, reg);
+                .left_click(slot as usize, &mut inventory.cursor);
         }
         SlotAction::RightClick { slot } => {
             inventory
                 .inner
-                .right_click(slot as usize, &mut inventory.cursor, reg);
+                .right_click(slot as usize, &mut inventory.cursor);
         }
         SlotAction::QuickMove { slot } => {
             let slot = slot as usize;
@@ -71,7 +57,7 @@ fn apply_action(
                 } else {
                     0..fallingsand_core::HOTBAR_SLOTS
                 };
-                let leftover = inventory.inner.insert_into_range(stack, dst, reg);
+                let leftover = inventory.inner.insert_into_range(stack, dst);
                 inventory.inner.set(slot, leftover);
             }
         }
@@ -83,19 +69,19 @@ fn apply_action(
             }
         }
         SlotAction::Craft { recipe, all } => {
-            let Some(recipe) = recipes.get(recipe as usize).cloned() else {
+            let Some(recipe) = content::recipes().get(recipe as usize) else {
                 return;
             };
             loop {
-                if !recipes.can_craft(&recipe, &inventory.inner) {
+                if !recipe.can_craft(&inventory.inner) {
                     break;
                 }
                 let mut trial = inventory.inner.clone();
-                for &(item, count) in &recipe.inputs {
+                for &(item, count) in recipe.inputs {
                     trial.remove_item(item, count);
                 }
                 let output = ItemStack::new(recipe.output.0, recipe.output.1);
-                if trial.insert_first_fit(output, reg).is_some() {
+                if trial.insert_first_fit(output).is_some() {
                     break;
                 }
                 inventory.inner = trial;
@@ -107,9 +93,9 @@ fn apply_action(
         SlotAction::CreativeGrab { item } => {
             if creative
                 && item != ItemId::NONE
-                && let Some(def) = reg.try_get(item)
+                && let Some(info) = content::try_item(item)
             {
-                inventory.cursor = Some(ItemStack::new(item, def.stack_max));
+                inventory.cursor = Some(ItemStack::new(item, info.stack_max));
             }
         }
     }

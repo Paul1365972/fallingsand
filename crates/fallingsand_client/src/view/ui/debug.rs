@@ -337,13 +337,9 @@ fn playing_lines(
     let selected = ingame
         .inventory
         .slot(ingame.inventory.selected)
-        .and_then(|stack| {
-            game.registries
-                .items
-                .try_get(stack.item)
-                .map(|def| def.display.clone())
-        })
-        .unwrap_or_else(|| "empty".to_string());
+        .and_then(|stack| content::try_item(stack.item).map(|info| info.display))
+        .unwrap_or("empty")
+        .to_string();
     left_lines.push(format!("selected: {selected}"));
 
     if embedded {

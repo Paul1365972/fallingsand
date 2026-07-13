@@ -1,12 +1,10 @@
 use crate::{MaterialId, content};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::ops::Range;
 
 pub const HOTBAR_SLOTS: usize = 9;
 pub const MAIN_SLOTS: usize = 27;
 pub const PLAYER_SLOTS: usize = HOTBAR_SLOTS + MAIN_SLOTS;
-const MATERIAL_STACK_MAX: u32 = 10_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ItemId(pub u16);
@@ -27,12 +25,14 @@ impl ItemStack {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct ItemDef {
-    pub name: String,
-    pub display: String,
+/// Static per-item data emitted by the content compiler; reach it via
+/// [`content::item`](crate::content::item).
+#[derive(Debug, Clone, Copy)]
+pub struct ItemInfo {
+    pub name: &'static str,
+    pub display: &'static str,
     pub stack_max: u32,
-    pub sprite: String,
+    pub sprite: &'static str,
     pub place: Option<MaterialId>,
     pub tool: Option<ToolSpec>,
 }
@@ -43,153 +43,25 @@ pub struct ToolSpec {
     pub speed: f32,
 }
 
+/// Compile-time crafting recipe over concrete item ids, from
+/// [`content::RECIPES`](crate::content::RECIPES).
 #[derive(Debug, Clone, Copy)]
-pub struct ItemEntry {
-    pub name: &'static str,
-    pub display: &'static str,
-    pub stack_max: u32,
-    pub tool: Option<ToolSpec>,
+pub struct Recipe {
+    pub inputs: &'static [(ItemId, u32)],
+    pub output: (ItemId, u32),
 }
 
-#[derive(Debug, Clone)]
-pub struct ItemRegistry {
-    items: Vec<ItemDef>,
-    by_name: HashMap<String, ItemId>,
-    mat_to_item: Vec<ItemId>,
-}
-
-impl ItemRegistry {
-    pub fn build(entries: &[ItemEntry]) -> Self {
-        let material_items = content::materials()
-            .filter(|&(id, _)| content::item_source(id) == Some(id))
-            .count();
-        let total = 1 + entries.len() + material_items;
-        assert!(total <= u16::MAX as usize, "too many items: {total}");
-
-        let mut items: Vec<ItemDef> = Vec::new();
-        let mut by_name: HashMap<String, ItemId> = HashMap::new();
-
-        items.push(ItemDef {
-            name: "none".into(),
-            display: "None".into(),
-            stack_max: 0,
-            sprite: String::new(),
-            place: None,
-            tool: None,
-        });
-
-        for entry in entries {
-            let def = ItemDef {
-                name: entry.name.to_ascii_lowercase(),
-                display: entry.display.into(),
-                stack_max: entry.stack_max.max(1),
-                sprite: entry.name.to_ascii_lowercase(),
-                place: None,
-                tool: entry.tool,
-            };
-            let id = ItemId(items.len() as u16);
-            assert!(
-                by_name.insert(def.name.clone(), id).is_none(),
-                "duplicate item name {:?}",
-                def.name
-            );
-            items.push(def);
-        }
-
-        let mut material_item = [ItemId::NONE; content::MATERIAL_COUNT];
-        for (id, info) in content::materials() {
-            if content::item_source(id) != Some(id) {
-                continue;
-            }
-            let name = format!("mat:{}", info.name);
-            let def = ItemDef {
-                display: pretty_name(info.name),
-                stack_max: MATERIAL_STACK_MAX,
-                sprite: format!("materials/{}", info.name),
-                place: Some(id),
-                tool: None,
-                name: name.clone(),
-            };
-            let item_id = ItemId(items.len() as u16);
-            assert!(
-                by_name.insert(name.clone(), item_id).is_none(),
-                "duplicate item name {name:?}"
-            );
-            material_item[id.0 as usize] = item_id;
-            items.push(def);
-        }
-
-        let mut mat_to_item = vec![ItemId::NONE; content::MATERIAL_COUNT];
-        for (id, _) in content::materials() {
-            if let Some(source) = content::item_source(id) {
-                mat_to_item[id.0 as usize] = material_item[source.0 as usize];
-            }
-        }
-
-        Self {
-            items,
-            by_name,
-            mat_to_item,
-        }
-    }
-
-    #[inline]
-    pub fn get(&self, id: ItemId) -> &ItemDef {
-        &self.items[id.0 as usize]
-    }
-
-    #[inline]
-    pub fn try_get(&self, id: ItemId) -> Option<&ItemDef> {
-        self.items.get(id.0 as usize)
-    }
-
-    pub fn id_of(&self, name: &str) -> Option<ItemId> {
-        self.by_name.get(name).copied()
-    }
-
-    #[inline]
-    pub fn item_for_material(&self, material: MaterialId) -> ItemId {
-        self.mat_to_item
-            .get(material.0 as usize)
-            .copied()
-            .unwrap_or(ItemId::NONE)
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = (ItemId, &ItemDef)> {
-        self.items
+impl Recipe {
+    pub fn can_craft(&self, inventory: &Inventory) -> bool {
+        self.inputs
             .iter()
-            .enumerate()
-            .skip(1)
-            .map(|(i, def)| (ItemId(i as u16), def))
-    }
-
-    pub fn len(&self) -> usize {
-        self.items.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.items.len() <= 1
-    }
-
-    #[inline]
-    pub fn stack_max(&self, item: ItemId) -> u32 {
-        self.try_get(item).map(|def| def.stack_max).unwrap_or(1)
+            .all(|&(item, count)| inventory.count_item(item) >= count as u64)
     }
 }
 
-fn pretty_name(raw: &str) -> String {
-    let mut out = String::with_capacity(raw.len());
-    for (i, word) in raw.split('_').enumerate() {
-        if i > 0 {
-            out.push(' ');
-        }
-        let mut chars = word.chars();
-        if let Some(first) = chars.next() {
-            out.extend(first.to_uppercase());
-            out.push_str(chars.as_str());
-        }
-    }
-    out
+#[inline]
+fn stack_limit(item: ItemId) -> u32 {
+    content::item(item).stack_max
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -237,12 +109,11 @@ impl Inventory {
         &mut self,
         mut stack: ItemStack,
         range: Range<usize>,
-        reg: &ItemRegistry,
     ) -> Option<ItemStack> {
         if stack.item == ItemId::NONE || stack.count == 0 {
             return None;
         }
-        let max = reg.stack_max(stack.item);
+        let max = stack_limit(stack.item);
         for slot in &mut self.slots[range.clone()] {
             if let Some(existing) = slot
                 && existing.item == stack.item
@@ -269,16 +140,16 @@ impl Inventory {
         Some(stack)
     }
 
-    pub fn insert_first_fit(&mut self, stack: ItemStack, reg: &ItemRegistry) -> Option<ItemStack> {
+    pub fn insert_first_fit(&mut self, stack: ItemStack) -> Option<ItemStack> {
         let range = 0..self.slots.len();
-        self.insert_into_range(stack, range, reg)
+        self.insert_into_range(stack, range)
     }
 
-    pub fn can_insert(&self, stack: ItemStack, reg: &ItemRegistry) -> bool {
+    pub fn can_insert(&self, stack: ItemStack) -> bool {
         if stack.item == ItemId::NONE || stack.count == 0 {
             return true;
         }
-        let max = reg.stack_max(stack.item);
+        let max = stack_limit(stack.item);
         let mut remaining = stack.count;
         for slot in &self.slots {
             let capacity = match slot {
@@ -325,7 +196,7 @@ impl Inventory {
         false
     }
 
-    pub fn left_click(&mut self, index: usize, cursor: &mut Option<ItemStack>, reg: &ItemRegistry) {
+    pub fn left_click(&mut self, index: usize, cursor: &mut Option<ItemStack>) {
         let Some(slot) = self.slots.get_mut(index) else {
             return;
         };
@@ -337,7 +208,7 @@ impl Inventory {
                 *cursor = slot.take();
             }
             (Some(s), Some(c)) if s.item == c.item => {
-                let max = reg.stack_max(s.item);
+                let max = stack_limit(s.item);
                 let space = max.saturating_sub(s.count);
                 let moved = space.min(c.count);
                 s.count += moved;
@@ -351,12 +222,7 @@ impl Inventory {
         }
     }
 
-    pub fn right_click(
-        &mut self,
-        index: usize,
-        cursor: &mut Option<ItemStack>,
-        reg: &ItemRegistry,
-    ) {
+    pub fn right_click(&mut self, index: usize, cursor: &mut Option<ItemStack>) {
         let Some(slot) = self.slots.get_mut(index) else {
             return;
         };
@@ -378,7 +244,7 @@ impl Inventory {
                     *cursor = None;
                 }
             }
-            (Some(s), Some(c)) if s.item == c.item && s.count < reg.stack_max(s.item) => {
+            (Some(s), Some(c)) if s.item == c.item && s.count < stack_limit(s.item) => {
                 s.count += 1;
                 c.count -= 1;
                 if c.count == 0 {
@@ -387,37 +253,5 @@ impl Inventory {
             }
             _ => {}
         }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Recipe {
-    pub inputs: Vec<(ItemId, u32)>,
-    pub output: (ItemId, u32),
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct RecipeRegistry {
-    recipes: Vec<Recipe>,
-}
-
-impl RecipeRegistry {
-    pub fn new(recipes: Vec<Recipe>) -> Self {
-        Self { recipes }
-    }
-
-    pub fn recipes(&self) -> &[Recipe] {
-        &self.recipes
-    }
-
-    pub fn get(&self, index: usize) -> Option<&Recipe> {
-        self.recipes.get(index)
-    }
-
-    pub fn can_craft(&self, recipe: &Recipe, inv: &Inventory) -> bool {
-        recipe
-            .inputs
-            .iter()
-            .all(|&(item, count)| inv.count_item(item) >= count as u64)
     }
 }

@@ -1,6 +1,6 @@
 use crate::{
-    BurningDef, Catalog, EmberDef, Error, MaterialDef, MaterialKey, OperandDef, PhaseDef,
-    ProductDef,
+    BurningDef, Catalog, EmberDef, Error, GasDef, IngredientDef, ItemKey, LiquidDef, MaterialDef,
+    MaterialKey, OperandDef, PhaseDef, PowderDef, ProductDef, SolidDef,
 };
 use fallingsand_material::{
     Dynamics, Ember, EmberKind, GasDynamics, Ignition, LiquidDynamics, MaterialId, Phase,
@@ -9,131 +9,20 @@ use fallingsand_material::{
 use fallingsand_rng::chance_threshold;
 use std::collections::HashMap;
 
-#[derive(Clone)]
-enum RawPhase {
-    Empty,
-    Solid {
-        rigid_capable: bool,
-    },
-    Powder {
-        drag: f32,
-        friction: f32,
-        repose: f32,
-        redirect_keep: f32,
-        cohesion: f32,
-    },
-    Liquid {
-        drag: f32,
-        friction: f32,
-        redirect_keep: f32,
-        cohesion: f32,
-        flow_rate: f32,
-    },
-    Gas {
-        drag: f32,
-        cohesion: f32,
-        turbulence: f32,
-        redirect_keep: f32,
-    },
-}
-
-impl RawPhase {
-    fn tag(&self) -> Phase {
-        match self {
-            Self::Empty => Phase::Empty,
-            Self::Solid { .. } => Phase::Solid,
-            Self::Powder { .. } => Phase::Powder,
-            Self::Liquid { .. } => Phase::Liquid,
-            Self::Gas { .. } => Phase::Gas,
-        }
-    }
-}
-
-impl From<PhaseDef> for RawPhase {
-    fn from(value: PhaseDef) -> Self {
-        match value {
-            PhaseDef::Empty => Self::Empty,
-            PhaseDef::Solid(def) => Self::Solid {
-                rigid_capable: def.rigid_capable,
-            },
-            PhaseDef::Powder(def) => Self::Powder {
-                drag: def.drag,
-                friction: def.friction,
-                repose: def.repose,
-                redirect_keep: def.redirect_keep,
-                cohesion: def.cohesion,
-            },
-            PhaseDef::Liquid(def) => Self::Liquid {
-                drag: def.drag,
-                friction: def.friction,
-                redirect_keep: def.redirect_keep,
-                cohesion: def.cohesion,
-                flow_rate: def.flow_rate,
-            },
-            PhaseDef::Gas(def) => Self::Gas {
-                drag: def.drag,
-                cohesion: def.cohesion,
-                turbulence: def.turbulence,
-                redirect_keep: def.redirect_keep,
-            },
-        }
-    }
-}
-
-#[derive(Clone, Default)]
-struct RawBurn {
-    ignite: f32,
-    smoulder: f32,
-    rate: f32,
-    emit: f32,
-    colors: Vec<[u8; 4]>,
-    residue: Option<MaterialKey>,
-    residue_chance: f32,
-    burnout: Option<MaterialKey>,
-    damage: f32,
-}
-
-impl From<BurningDef> for RawBurn {
-    fn from(value: BurningDef) -> Self {
-        Self {
-            ignite: value.ignite,
-            smoulder: value.smoulder,
-            rate: value.rate,
-            emit: value.emit,
-            colors: value.colors,
-            residue: value.residue,
-            residue_chance: value.residue_chance,
-            burnout: value.burnout,
-            damage: value.damage,
-        }
-    }
-}
-
-#[derive(Clone, Default)]
-struct RawEmber {
-    rate: f32,
-    emit: f32,
-    residue: Option<MaterialKey>,
-    residue_chance: f32,
-    burnout: Option<MaterialKey>,
-}
-
-impl From<EmberDef> for RawEmber {
-    fn from(value: EmberDef) -> Self {
-        Self {
-            rate: value.rate,
-            emit: value.emit,
-            residue: value.residue,
-            residue_chance: value.residue_chance,
-            burnout: value.burnout,
-        }
+fn phase_tag(phase: PhaseDef) -> Phase {
+    match phase {
+        PhaseDef::Empty => Phase::Empty,
+        PhaseDef::Solid(_) => Phase::Solid,
+        PhaseDef::Powder(_) => Phase::Powder,
+        PhaseDef::Liquid(_) => Phase::Liquid,
+        PhaseDef::Gas(_) => Phase::Gas,
     }
 }
 
 #[derive(Clone)]
 struct RawMaterial {
     name: String,
-    phase: RawPhase,
+    phase: PhaseDef,
     density: f32,
     colors: Vec<[u8; 4]>,
     surface_grip: f32,
@@ -142,15 +31,15 @@ struct RawMaterial {
     surface_bounce: f32,
     contact_damage: f32,
     tags: Tags,
-    burn: Option<RawBurn>,
-    ember: Option<RawEmber>,
+    burn: Option<BurningDef>,
+    ember: Option<EmberDef>,
 }
 
 impl RawMaterial {
     fn defaults(name: String) -> Self {
         Self {
             name,
-            phase: RawPhase::Empty,
+            phase: PhaseDef::Empty,
             density: 0.0,
             colors: Vec::new(),
             surface_grip: 1.0,
@@ -186,18 +75,37 @@ pub struct Mat {
     pub dynamics: Dynamics,
 }
 
+pub struct ItemOut {
+    pub name: String,
+    pub display: String,
+    pub stack_max: u32,
+    pub sprite: String,
+    pub place: Option<MaterialId>,
+    pub tool: Option<(u8, f32)>,
+}
+
+pub struct RecipeOut {
+    pub inputs: Vec<(u16, u32)>,
+    pub output: (u16, u32),
+}
+
 pub struct Content {
     pub materials: Vec<Mat>,
     pub ignitions: Vec<Option<Ignition>>,
     pub reactions: Vec<Option<Reaction>>,
-    pub item_source: Vec<Option<MaterialId>>,
+    pub items: Vec<ItemOut>,
+    pub recipes: Vec<RecipeOut>,
+    pub item_for_material: Vec<u16>,
+    pub thresholds: Vec<(String, u64)>,
 }
+
+const MATERIAL_STACK_MAX: u32 = 10_000;
 
 pub fn build(catalog: &Catalog) -> Result<Content, Error> {
     let mut raws = build_materials(catalog)?;
 
     match raws.first() {
-        Some(first) if matches!(first.phase, RawPhase::Empty) => {}
+        Some(first) if matches!(first.phase, PhaseDef::Empty) => {}
         Some(first) => {
             return Err(fail(format!(
                 "material 0 must be air with phase Empty, got {}",
@@ -230,7 +138,7 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
             },
             contact_damage: burn.damage.max(base.contact_damage),
             tags: base.tags.union(Tags::new(&[Tag::Hot, Tag::Emissive])),
-            ember: Some(RawEmber {
+            ember: Some(EmberDef {
                 rate: burn.rate,
                 emit: burn.emit,
                 residue: burn.residue.clone(),
@@ -333,15 +241,15 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
             spec_name: camel_case(&const_name),
             name: raw.name.to_ascii_lowercase(),
             const_name,
-            phase: raw.phase.tag(),
+            phase: phase_tag(raw.phase),
             density_milli: milli(raw.density),
             colors: raw.colors.clone(),
             tags: raw.tags,
             rigid_capable: matches!(
                 raw.phase,
-                RawPhase::Solid {
+                PhaseDef::Solid(SolidDef {
                     rigid_capable: true
-                }
+                })
             ),
             is_fuel_ember: raw.ember.is_some() && index >= hand_len,
             hardness: raw.hardness,
@@ -362,7 +270,7 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
             ember_base[ignition.into.0 as usize] = Some(MaterialId(base as u16));
         }
     }
-    let item_source = materials
+    let item_source: Vec<Option<MaterialId>> = materials
         .iter()
         .enumerate()
         .map(|(index, mat)| {
@@ -376,12 +284,170 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
         })
         .collect();
 
+    let (items, item_for_material) = build_items(catalog, &materials, &item_source)?;
+    let recipes = build_recipes(catalog, &by_name, &item_for_material)?;
+    let thresholds = build_thresholds(catalog)?;
+
     Ok(Content {
         materials,
         ignitions,
         reactions,
-        item_source,
+        items,
+        recipes,
+        item_for_material,
+        thresholds,
     })
+}
+
+fn build_items(
+    catalog: &Catalog,
+    materials: &[Mat],
+    item_source: &[Option<MaterialId>],
+) -> Result<(Vec<ItemOut>, Vec<u16>), Error> {
+    let mut items = vec![ItemOut {
+        name: "none".to_owned(),
+        display: "None".to_owned(),
+        stack_max: 0,
+        sprite: String::new(),
+        place: None,
+        tool: None,
+    }];
+
+    let mut by_key: HashMap<String, u16> = HashMap::new();
+    for (key, def) in &catalog.items {
+        validate_item_key(key)?;
+        let name = key.as_str().to_ascii_lowercase();
+        let id = items.len() as u16;
+        if by_key.insert(key.as_str().to_owned(), id).is_some() {
+            return Err(fail(format!("duplicate item key `{key}`")));
+        }
+        items.push(ItemOut {
+            display: def.display.clone(),
+            stack_max: def.stack.max(1),
+            sprite: name.clone(),
+            place: None,
+            tool: def.tool,
+            name,
+        });
+    }
+
+    let mut material_item = vec![0u16; materials.len()];
+    for (index, mat) in materials.iter().enumerate() {
+        if item_source[index] != Some(MaterialId(index as u16)) {
+            continue;
+        }
+        let id = items.len() as u16;
+        items.push(ItemOut {
+            name: format!("mat:{}", mat.name),
+            display: pretty_name(&mat.name),
+            stack_max: MATERIAL_STACK_MAX,
+            sprite: format!("materials/{}", mat.name),
+            place: Some(MaterialId(index as u16)),
+            tool: None,
+        });
+        material_item[index] = id;
+    }
+
+    if items.len() > u16::MAX as usize {
+        return Err(fail(format!("too many items: {}", items.len())));
+    }
+
+    // Every item id maps through its source material, so digging a fuel ember
+    // or a variant yields the base material's item.
+    let mut item_for_material = vec![0u16; materials.len()];
+    for (index, source) in item_source.iter().enumerate() {
+        if let Some(source) = source {
+            item_for_material[index] = material_item[source.0 as usize];
+        }
+    }
+
+    Ok((items, item_for_material))
+}
+
+fn build_recipes(
+    catalog: &Catalog,
+    by_name: &HashMap<String, MaterialId>,
+    item_for_material: &[u16],
+) -> Result<Vec<RecipeOut>, Error> {
+    let by_key: HashMap<&str, u16> = catalog
+        .items
+        .iter()
+        .enumerate()
+        .map(|(index, (key, _))| (key.as_str(), index as u16 + 1))
+        .collect();
+
+    let resolve = |ingredient: &IngredientDef| -> Result<u16, Error> {
+        match ingredient {
+            IngredientDef::Item(key) => by_key
+                .get(key.as_str())
+                .copied()
+                .ok_or_else(|| fail(format!("recipes: unknown item `{key}`"))),
+            IngredientDef::Material(key) => {
+                let mat = by_name
+                    .get(key.as_str())
+                    .ok_or_else(|| fail(format!("recipes: unknown material `{key}`")))?;
+                let item = item_for_material[mat.0 as usize];
+                if item == 0 {
+                    Err(fail(format!("recipes: material `{key}` has no item form")))
+                } else {
+                    Ok(item)
+                }
+            }
+        }
+    };
+
+    let mut recipes = Vec::with_capacity(catalog.recipes.len());
+    for def in &catalog.recipes {
+        let mut inputs = Vec::with_capacity(def.inputs.len());
+        for (ingredient, count) in &def.inputs {
+            inputs.push((resolve(ingredient)?, *count));
+        }
+        let output = (resolve(&def.output.0)?, def.output.1);
+        recipes.push(RecipeOut { inputs, output });
+    }
+    Ok(recipes)
+}
+
+fn build_thresholds(catalog: &Catalog) -> Result<Vec<(String, u64)>, Error> {
+    let mut thresholds = Vec::with_capacity(catalog.thresholds.len());
+    for def in &catalog.thresholds {
+        validate_number(&format!("threshold {}", def.name), def.rate)?;
+        thresholds.push((
+            def.name.clone(),
+            chance_threshold(per_tick_chance(def.rate)),
+        ));
+    }
+    Ok(thresholds)
+}
+
+fn validate_item_key(key: &ItemKey) -> Result<(), Error> {
+    let name = key.as_str();
+    if name.is_empty()
+        || !name.as_bytes()[0].is_ascii_uppercase()
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+    {
+        return Err(fail(format!(
+            "item key `{key}` must be an UPPER_SNAKE_CASE Rust identifier"
+        )));
+    }
+    Ok(())
+}
+
+fn pretty_name(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for (index, word) in raw.split('_').enumerate() {
+        if index > 0 {
+            out.push(' ');
+        }
+        let mut chars = word.chars();
+        if let Some(first) = chars.next() {
+            out.extend(first.to_uppercase());
+            out.push_str(chars.as_str());
+        }
+    }
+    out
 }
 
 fn build_materials(catalog: &Catalog) -> Result<Vec<RawMaterial>, Error> {
@@ -414,7 +480,7 @@ fn build_materials(catalog: &Catalog) -> Result<Vec<RawMaterial>, Error> {
 
 fn apply_definition(raw: &mut RawMaterial, definition: &MaterialDef) {
     if let Some(phase) = definition.phase {
-        raw.phase = phase.into();
+        raw.phase = phase;
     }
     if let Some(value) = definition.density {
         raw.density = value;
@@ -441,10 +507,10 @@ fn apply_definition(raw: &mut RawMaterial, definition: &MaterialDef) {
         raw.tags = Tags::new(value);
     }
     if let Some(value) = &definition.burn {
-        raw.burn = Some(value.clone().into());
+        raw.burn = Some(value.clone());
     }
     if let Some(value) = &definition.ember {
-        raw.ember = Some(value.clone().into());
+        raw.ember = Some(value.clone());
     }
 }
 
@@ -470,7 +536,7 @@ fn validate_material(raw: &RawMaterial) -> Result<(), Error> {
             "{context}: an ember cannot author a burning variant"
         )));
     }
-    if !matches!(raw.phase, RawPhase::Empty | RawPhase::Solid { .. }) && raw.density <= 0.0 {
+    if !matches!(raw.phase, PhaseDef::Empty | PhaseDef::Solid(_)) && raw.density <= 0.0 {
         return Err(fail(format!("{context}: moving phases need density > 0")));
     }
     for (field, value) in [
@@ -484,14 +550,14 @@ fn validate_material(raw: &RawMaterial) -> Result<(), Error> {
         validate_number(&format!("{context}: {field}"), value)?;
     }
     match raw.phase {
-        RawPhase::Empty | RawPhase::Solid { .. } => {}
-        RawPhase::Powder {
+        PhaseDef::Empty | PhaseDef::Solid(_) => {}
+        PhaseDef::Powder(PowderDef {
             drag,
             friction,
             repose,
             redirect_keep,
             cohesion,
-        } => validate_numbers(
+        }) => validate_numbers(
             &context,
             &[
                 ("drag", drag),
@@ -501,13 +567,13 @@ fn validate_material(raw: &RawMaterial) -> Result<(), Error> {
                 ("cohesion", cohesion),
             ],
         )?,
-        RawPhase::Liquid {
+        PhaseDef::Liquid(LiquidDef {
             drag,
             friction,
             redirect_keep,
             cohesion,
             flow_rate,
-        } => validate_numbers(
+        }) => validate_numbers(
             &context,
             &[
                 ("drag", drag),
@@ -517,12 +583,12 @@ fn validate_material(raw: &RawMaterial) -> Result<(), Error> {
                 ("flow_rate", flow_rate),
             ],
         )?,
-        RawPhase::Gas {
+        PhaseDef::Gas(GasDef {
             drag,
             cohesion,
             turbulence,
             redirect_keep,
-        } => validate_numbers(
+        }) => validate_numbers(
             &context,
             &[
                 ("drag", drag),
@@ -588,14 +654,14 @@ fn drag_keeps(drag: f32) -> (u32, u32) {
 fn quantize_dynamics(raw: &RawMaterial) -> Dynamics {
     let restitution_q16 = q16(raw.restitution.clamp(0.0, 1.0));
     match raw.phase {
-        RawPhase::Empty | RawPhase::Solid { .. } => Dynamics::None,
-        RawPhase::Powder {
+        PhaseDef::Empty | PhaseDef::Solid(_) => Dynamics::None,
+        PhaseDef::Powder(PowderDef {
             drag,
             friction,
             repose,
             redirect_keep,
             cohesion,
-        } => {
+        }) => {
             let (drag_keep_q16, drag_keep_submerged_q16) = drag_keeps(drag);
             Dynamics::Powder(PowderDynamics {
                 drag_keep_q16,
@@ -607,13 +673,13 @@ fn quantize_dynamics(raw: &RawMaterial) -> Dynamics {
                 slide_threshold: chance_threshold(per_tick_chance(repose)),
             })
         }
-        RawPhase::Liquid {
+        PhaseDef::Liquid(LiquidDef {
             drag,
             friction,
             redirect_keep,
             cohesion,
             flow_rate,
-        } => {
+        }) => {
             let (drag_keep_q16, drag_keep_submerged_q16) = drag_keeps(drag);
             Dynamics::Liquid(LiquidDynamics {
                 drag_keep_q16,
@@ -629,12 +695,12 @@ fn quantize_dynamics(raw: &RawMaterial) -> Dynamics {
                 },
             })
         }
-        RawPhase::Gas {
+        PhaseDef::Gas(GasDef {
             drag,
             cohesion,
             turbulence,
             redirect_keep,
-        } => Dynamics::Gas(GasDynamics {
+        }) => Dynamics::Gas(GasDynamics {
             drag_keep_q16: drag_keeps(drag).0,
             cohesion_q16: q16(per_tick_chance(cohesion)),
             restitution_q16,

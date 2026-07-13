@@ -2,7 +2,7 @@ use crate::persistence::{Persistence, restore_player};
 use crate::player::{Player, PlayerLife, Players};
 use crate::replication::SessionReplication;
 use ed25519_dalek::{Signature, VerifyingKey};
-use fallingsand_core::{HOTBAR_SLOTS, ItemRegistry};
+use fallingsand_core::HOTBAR_SLOTS;
 use fallingsand_net::{Connection, ConnectionStatus, Listener};
 use fallingsand_protocol::{
     ClientMessage, GameMode, InputAction, InputState, MAX_INPUT_ACTIONS_PER_FRAME,
@@ -123,7 +123,6 @@ pub fn drain_network(
     listener: &mut dyn Listener,
     sessions: &mut Sessions,
     players: &mut Players,
-    item_reg: &ItemRegistry,
     spawn: fallingsand_core::CellPos,
     tick: u64,
     persistence: &mut Persistence,
@@ -165,7 +164,6 @@ pub fn drain_network(
                     if !handle_hello(
                         sessions,
                         players,
-                        item_reg,
                         persistence,
                         id,
                         protocol_version,
@@ -330,7 +328,6 @@ fn poll_messages(sessions: &mut Sessions, id: SessionId) -> Vec<ClientMessage> {
 fn handle_hello(
     sessions: &mut Sessions,
     players: &mut Players,
-    item_reg: &ItemRegistry,
     persistence: &mut Persistence,
     session_id: SessionId,
     protocol_version: u16,
@@ -397,7 +394,7 @@ fn handle_hello(
                     return false;
                 }
             };
-            let restored = restored.map(|record| restore_player(item_reg, record));
+            let restored = restored.map(restore_player);
             players.insert(Player::new(
                 player_id,
                 uuid,

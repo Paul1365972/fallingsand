@@ -16,7 +16,9 @@ Content lives in `fallingsand_content` as ordinary typed Rust grouped by domain.
 
 The host-only compiler validates names, references, inheritance, reactions, and units; synthesizes fuel embers; converts per-second tuning to integer tick constants; and generates dense ids, UPPER runtime handles, exhaustive accessors, reaction rows, item sources, and one `MatSpec` per material. Combustion is not a reaction: a flammable definition authors one burning block and receives a synthesized ember twin (see [Simulation.md](Simulation.md)).
 
-The kernel is driven by **phase + properties** (a new powder is a data edit, zero engine code) but freely names specific materials where identity is clearest. The generated zero-sized spec types keep kernels monomorphized. The authoring crate is not linked into either binary; both consume the same generated core registry. Items and recipes layer on top; see [Inventory.md](Inventory.md).
+Items and recipes are authored the same way in the same crate: typed builders fill the catalog, and the compiler assigns the whole item-id space (explicit items then one auto-item per itemizable material), emits static `ItemInfo`/`Recipe` tables and `item`/`item_for_material`/`item_id_of` accessors, and resolves recipes to concrete ids. There is no runtime registry object; item queries are plain generated functions like materials.
+
+The kernel is driven by **phase + properties** (a new powder is a data edit, zero engine code) but freely names specific materials where identity is clearest. The generated zero-sized spec types keep kernels monomorphized. The authoring crate is not linked into either binary; both consume the same generated core content. See [Inventory.md](Inventory.md).
 
 `FLESH` is the player's body material: inert, undiggable, never auto-itemized, voided on region load as a crash artifact; its shade palette is the pixel-person pattern.
 

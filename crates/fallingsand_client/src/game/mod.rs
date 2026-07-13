@@ -15,7 +15,7 @@ use bevy::math::Vec2;
 use chat::Chat;
 use clock::WorldClock;
 use debug::DebugState;
-use fallingsand_core::{CellPos, ItemRegistry, RecipeRegistry};
+use fallingsand_core::CellPos;
 use fallingsand_protocol::{InputAction, SelfLife};
 use input::{Bindings, Context, InputCore, RawInput};
 use inventory::{Inventory, SlotRegion};
@@ -23,15 +23,9 @@ use menu::MenuState;
 use net::{ConnectTarget, Net};
 use players::{Players, SelfState};
 use settings::Settings;
-use std::sync::Arc;
 use world::WorldView;
 
 pub use settings::RenderMode;
-
-pub struct Registries {
-    pub items: Arc<ItemRegistry>,
-    pub recipes: Arc<RecipeRegistry>,
-}
 
 pub struct ViewPrefs {
     pub zoom_index: i32,
@@ -230,7 +224,6 @@ impl InGame {
 }
 
 pub struct ClientGame {
-    pub registries: Registries,
     pub settings: Settings,
     pub menu: MenuState,
     pub flow: Flow,
@@ -242,10 +235,15 @@ pub struct ClientGame {
     pub effects: Vec<Effect>,
 }
 
+impl Default for ClientGame {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ClientGame {
-    pub fn new(registries: Registries) -> Self {
+    pub fn new() -> Self {
         Self {
-            registries,
             settings: settings::load(),
             menu: MenuState::scan(),
             flow: Flow::Menu,

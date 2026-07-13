@@ -12,7 +12,7 @@ pub(crate) mod replication;
 pub(crate) mod session;
 pub(crate) mod sim;
 
-use fallingsand_core::{Calendar, CellPos, DAY_UNITS, ItemRegistry, RecipeRegistry};
+use fallingsand_core::{Calendar, CellPos, DAY_UNITS};
 use fallingsand_net::Listener;
 use fallingsand_sim::CellWorld;
 use fallingsand_worldgen::WorldGenerator;
@@ -57,8 +57,6 @@ struct ServerState {
     players: Players,
     sessions: Sessions,
     bodies: bodies::PixelBodies,
-    item_registry: ItemRegistry,
-    recipes: RecipeRegistry,
     generator: WorldGenerator,
     regions: RegionMap,
     tickets: ChunkTickets,
@@ -132,8 +130,6 @@ impl Server {
         };
         let seed = meta.seed;
         let generator = WorldGenerator::new(seed);
-        let item_registry = fallingsand_core::content::item_registry();
-        let recipes = fallingsand_core::content::recipe_registry(&item_registry);
         let spawn_x = 0;
         let spawn = CellPos::new(spawn_x, generator.surface_height(spawn_x) + 12);
         let mut sim = CellWorld::new();
@@ -145,8 +141,6 @@ impl Server {
                 players: Players::default(),
                 sessions: Sessions::default(),
                 bodies: bodies::PixelBodies::default(),
-                item_registry,
-                recipes,
                 generator,
                 regions: RegionMap::default(),
                 tickets: ChunkTickets::default(),
@@ -210,7 +204,6 @@ impl ServerState {
             &mut *self.listener,
             &mut self.sessions,
             &mut self.players,
-            &self.item_registry,
             self.spawn,
             self.sim.tick(),
             &mut self.persistence,
@@ -222,13 +215,8 @@ impl ServerState {
                 &fallingsand_protocol::ServerMessage::System { text },
             );
         }
-        dig::apply_player_inputs(
-            &mut self.sim,
-            &self.item_registry,
-            &mut self.bodies,
-            &mut self.players,
-        );
-        inventory::apply_slot_actions(&mut self.players, &self.item_registry, &self.recipes);
+        dig::apply_player_inputs(&mut self.sim, &mut self.bodies, &mut self.players);
+        inventory::apply_slot_actions(&mut self.players);
         lifecycle::begin_revives(&mut self.players, self.spawn, self.sim.tick());
         regions::compute_tickets(&mut self.tickets, self.spawn, &self.players);
         regions::manage_regions(
@@ -276,7 +264,6 @@ impl ServerState {
         persistence::autosave(
             &self.sim,
             &mut self.regions,
-            &self.item_registry,
             &self.world,
             &self.clock,
             &self.players,
@@ -291,7 +278,6 @@ impl ServerState {
             &mut self.regions,
             &mut self.bodies,
             &self.players,
-            &self.item_registry,
             &mut self.persistence,
             &self.world,
             &self.clock,
@@ -304,7 +290,7 @@ impl ServerState {
             let Some(mut player) = self.players.remove(id) else {
                 continue;
             };
-            let record = persistence::snapshot_player(&self.item_registry, &player);
+            let record = persistence::snapshot_player(&player);
             if let Some(avatar) = player.avatar_mut() {
                 physics::unstamp_and_wake(&mut self.sim, &mut self.bodies, &mut avatar.stamp);
             }

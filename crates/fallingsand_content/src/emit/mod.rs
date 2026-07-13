@@ -1,4 +1,5 @@
 mod accessors;
+mod items;
 mod specs;
 
 use crate::model::Content;
@@ -8,9 +9,11 @@ use quote::quote;
 
 pub fn emit(content: &Content) -> TokenStream {
     let accessors = accessors::emit(content);
+    let items = items::emit(content);
     let specs = specs::emit(content);
     quote! {
         #accessors
+        #items
         #specs
     }
 }

@@ -5,8 +5,8 @@ use crate::player::{AvatarSnapshot, Player, PlayerLife, Players, RestoredPlayer,
 use crate::regions::{RegionMap, collect_dirty_saves, mark_changed_regions, mark_saved};
 use fallingsand_core::{
     CHUNK_AREA, CHUNK_SIZE, Calendar, Cell, CellPos, DirtyRect, Fixed, HOTBAR_SLOTS,
-    Inventory as CoreInventory, ItemId, ItemRegistry, ItemStack, MaterialId, PLAYER_SLOTS,
-    REGION_AREA_CHUNKS, Region, RegionPos,
+    Inventory as CoreInventory, ItemId, ItemStack, MaterialId, PLAYER_SLOTS, REGION_AREA_CHUNKS,
+    Region, RegionPos, content,
 };
 use fallingsand_protocol::{GameMode, PlayerUuid};
 use fallingsand_sim::CellWorld;
@@ -110,21 +110,21 @@ impl From<&AvatarSnapshot> for AvatarRecord {
     }
 }
 
-pub fn stack_to_record(reg: &ItemRegistry, stack: Option<ItemStack>) -> SlotRecord {
+pub fn stack_to_record(stack: Option<ItemStack>) -> SlotRecord {
     let stack = stack.filter(|s| s.count > 0)?;
-    let name = reg.try_get(stack.item)?.name.clone();
+    let name = content::try_item(stack.item)?.name.to_owned();
     Some(StackRecord {
         item: name,
         count: stack.count,
     })
 }
 
-pub fn stack_from_record(reg: &ItemRegistry, record: &SlotRecord) -> Option<ItemStack> {
+pub fn stack_from_record(record: &SlotRecord) -> Option<ItemStack> {
     let StackRecord { item: name, count } = record.as_ref()?;
     if *count == 0 {
         return None;
     }
-    match reg.id_of(name) {
+    match content::item_id_of(name) {
         Some(id) if id != ItemId::NONE => Some(ItemStack::new(id, *count)),
         _ => {
             tracing::warn!("dropping {count} of unknown item {name:?}");
@@ -133,22 +133,22 @@ pub fn stack_from_record(reg: &ItemRegistry, record: &SlotRecord) -> Option<Item
     }
 }
 
-pub fn slots_to_record(reg: &ItemRegistry, inv: &CoreInventory) -> Vec<SlotRecord> {
+pub fn slots_to_record(inv: &CoreInventory) -> Vec<SlotRecord> {
     inv.slots
         .iter()
-        .map(|slot| stack_to_record(reg, *slot))
+        .map(|slot| stack_to_record(*slot))
         .collect()
 }
 
-pub fn player_slots_from_record(reg: &ItemRegistry, list: &[SlotRecord]) -> CoreInventory {
+pub fn player_slots_from_record(list: &[SlotRecord]) -> CoreInventory {
     let mut inv = CoreInventory::with_capacity(PLAYER_SLOTS);
     for (slot, record) in inv.slots.iter_mut().zip(list) {
-        *slot = stack_from_record(reg, record);
+        *slot = stack_from_record(record);
     }
     inv
 }
 
-pub fn restore_player(reg: &ItemRegistry, record: PlayerRecord) -> RestoredPlayer {
+pub fn restore_player(record: PlayerRecord) -> RestoredPlayer {
     let resume = match record.resume {
         ResumeState::Alive(record) => ResumeSnapshot::Alive(record.into()),
         ResumeState::Dead { view_anchor } => ResumeSnapshot::Dead { view_anchor },
@@ -157,16 +157,16 @@ pub fn restore_player(reg: &ItemRegistry, record: PlayerRecord) -> RestoredPlaye
         mode: record.mode,
         selected_slot: record.selected.min(HOTBAR_SLOTS as u8 - 1),
         inventory: Inventory::with(
-            player_slots_from_record(reg, &record.inventory),
-            stack_from_record(reg, &record.cursor),
-            stack_from_record(reg, &record.trash),
+            player_slots_from_record(&record.inventory),
+            stack_from_record(&record.cursor),
+            stack_from_record(&record.trash),
         ),
         history: record.history,
         resume,
     }
 }
 
-pub fn snapshot_player(reg: &ItemRegistry, player: &Player) -> PlayerRecord {
+pub fn snapshot_player(player: &Player) -> PlayerRecord {
     let resume = match &player.life {
         PlayerLife::Entering(entering) => {
             ResumeState::Alive(AvatarRecord::from(&entering.materialization.template))
@@ -185,9 +185,9 @@ pub fn snapshot_player(reg: &ItemRegistry, player: &Player) -> PlayerRecord {
     PlayerRecord {
         mode: player.profile.mode,
         selected: player.profile.selected_slot,
-        inventory: slots_to_record(reg, &player.profile.inventory.inner),
-        cursor: stack_to_record(reg, player.profile.inventory.cursor),
-        trash: stack_to_record(reg, player.profile.inventory.trash),
+        inventory: slots_to_record(&player.profile.inventory.inner),
+        cursor: stack_to_record(player.profile.inventory.cursor),
+        trash: stack_to_record(player.profile.inventory.trash),
         history: player.profile.history.clone(),
         resume,
     }
@@ -456,7 +456,6 @@ impl WorldStore {
 pub fn autosave(
     sim: &CellWorld,
     regions: &mut RegionMap,
-    item_reg: &ItemRegistry,
     info: &WorldInfo,
     clock: &Calendar,
     players: &Players,
@@ -481,7 +480,7 @@ pub fn autosave(
     }
 
     for (_, player) in players.iter() {
-        persistence.stage_player(player.uuid, snapshot_player(item_reg, player));
+        persistence.stage_player(player.uuid, snapshot_player(player));
     }
     if let Err(err) = persistence.flush_players() {
         tracing::error!("player autosave failed: {err}");
@@ -498,7 +497,6 @@ pub fn save_everything(
     regions: &mut RegionMap,
     bodies: &mut PixelBodies,
     players: &Players,
-    item_reg: &ItemRegistry,
     persistence: &mut Persistence,
     info: &WorldInfo,
     clock: &Calendar,
@@ -543,7 +541,7 @@ pub fn save_everything(
     };
 
     for (_, player) in players.iter() {
-        persistence.stage_player(player.uuid, snapshot_player(item_reg, player));
+        persistence.stage_player(player.uuid, snapshot_player(player));
     }
     let player_count = match persistence.flush_players() {
         Ok(count) => count,

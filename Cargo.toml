@@ -3,7 +3,6 @@ resolver = "3"
 members = [
     "crates/fallingsand_content",
     "crates/fallingsand_core",
-    "crates/fallingsand_macros",
     "crates/fallingsand_material",
     "crates/fallingsand_rng",
     "crates/fallingsand_sim",
@@ -21,7 +20,6 @@ edition = "2024"
 [workspace.dependencies]
 fallingsand_content = { path = "crates/fallingsand_content" }
 fallingsand_core = { path = "crates/fallingsand_core" }
-fallingsand_macros = { path = "crates/fallingsand_macros" }
 fallingsand_material = { path = "crates/fallingsand_material" }
 fallingsand_rng = { path = "crates/fallingsand_rng" }
 fallingsand_sim = { path = "crates/fallingsand_sim", default-features = false }
@@ -30,9 +28,8 @@ fallingsand_net = { path = "crates/fallingsand_net" }
 fallingsand_worldgen = { path = "crates/fallingsand_worldgen" }
 fallingsand_server = { path = "crates/fallingsand_server" }
 
-proc-macro2 = { version = "1", features = ["span-locations"] }
+proc-macro2 = "1"
 quote = "1"
-syn = { version = "2", features = ["full"] }
 
 serde = { version = "1.0.228", features = ["derive"] }
 serde-big-array = "0.5"
