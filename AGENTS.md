@@ -30,6 +30,7 @@ When relevant code and docs disagree, establish the intended behavior and update
 - **Scheduling:** Four-phase 2x2-chunk-block scheduling produces disjoint 4x4-chunk `SimWindow`s. `sim` is exactly the area evaluated next tick and contains `change`; replication and persistence consume `change`.
 - **Compiled content:** Material definitions under `fallingsand_core/content/` compile through `content!`. Kernels remain monomorphized per material and integer-only.
 - **Units:** Author tuning in seconds, not per-tick constants. Quantize at compile time.
+- **Perceptual continuity:** A visual field derived from world state accounts for every contributing cell and follows changes as they happen — no source cap, sampling stride, or wall-clock refresh that drops or delays visible change.
 
 ## Verification
 
