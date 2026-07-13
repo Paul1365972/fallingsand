@@ -7,13 +7,11 @@ use quote::quote;
 pub fn emit(content: &Content) -> TokenStream {
     let len = content.materials.len();
     let count = Literal::usize_unsuffixed(len);
-
     let handles = content.materials.iter().enumerate().map(|(index, mat)| {
         let name = Ident::new(&mat.const_name, Span::call_site());
         let id = material_id(fallingsand_material::MaterialId(index as u16));
         quote!(pub const #name: crate::material::MaterialId = #id;)
     });
-
     let phase = accessor_fn(
         "phase",
         quote!(crate::material::Phase),
@@ -110,7 +108,6 @@ pub fn emit(content: &Content) -> TokenStream {
         }),
         true,
     );
-
     let mut row_consts = Vec::new();
     for index in 0..len {
         let row = &content.reactions[index * len..(index + 1) * len];

@@ -76,7 +76,6 @@ pub fn emit(content: &Content) -> TokenStream {
             }
         }
     });
-
     let entries = content.materials.iter().enumerate().map(|(index, mat)| {
         let idx = Literal::u16_suffixed(index as u16);
         let const_name = Ident::new(&mat.const_name, Span::call_site());

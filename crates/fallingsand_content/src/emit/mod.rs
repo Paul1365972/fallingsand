@@ -1,23 +1,15 @@
 mod accessors;
 mod specs;
 
-use crate::dsl::Header;
 use crate::model::Content;
 use fallingsand_material::{MaterialId, Phase, Tags};
 use proc_macro2::{Literal, TokenStream};
 use quote::quote;
 
-pub fn emit(header: &Header, content: &Content) -> TokenStream {
+pub fn emit(content: &Content) -> TokenStream {
     let accessors = accessors::emit(content);
     let specs = specs::emit(content);
-    let files = header
-        .material_files
-        .iter()
-        .chain(std::iter::once(&header.reactions_file));
-
     quote! {
-        #(const _: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/content/", #files));)*
-
         #accessors
         #specs
     }

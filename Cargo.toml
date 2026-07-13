@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/fallingsand_content",
     "crates/fallingsand_core",
     "crates/fallingsand_macros",
     "crates/fallingsand_material",
@@ -18,6 +19,7 @@ version = "0.2.0"
 edition = "2024"
 
 [workspace.dependencies]
+fallingsand_content = { path = "crates/fallingsand_content" }
 fallingsand_core = { path = "crates/fallingsand_core" }
 fallingsand_macros = { path = "crates/fallingsand_macros" }
 fallingsand_material = { path = "crates/fallingsand_material" }

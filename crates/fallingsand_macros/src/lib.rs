@@ -1,23 +1,4 @@
-mod dsl;
-mod emit;
-mod model;
-
 use proc_macro::TokenStream;
-
-#[proc_macro]
-pub fn content(input: TokenStream) -> TokenStream {
-    match expand_content(input.into()) {
-        Ok(tokens) => tokens.into(),
-        Err(err) => err.into_compile_error().into(),
-    }
-}
-
-fn expand_content(input: proc_macro2::TokenStream) -> syn::Result<proc_macro2::TokenStream> {
-    let header = syn::parse2::<dsl::Header>(input)?;
-    let sources = dsl::read_sources(&header)?;
-    let content = model::build(&header, &sources)?;
-    Ok(emit::emit(&header, &content))
-}
 
 #[proc_macro]
 pub fn per_tick_threshold(input: TokenStream) -> TokenStream {

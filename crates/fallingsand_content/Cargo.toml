@@ -1,0 +1,10 @@
+[package]
+name = "fallingsand_content"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+fallingsand_material = { workspace = true }
+fallingsand_rng = { workspace = true }
+proc-macro2 = { workspace = true }
+quote = { workspace = true }

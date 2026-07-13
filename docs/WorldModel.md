@@ -12,11 +12,11 @@ Cell velocity is Q10 `i16` cells/tick, sim-only: persisted, never on the wire â€
 
 ## Materials are data
 
-Content lives in `fallingsand_core/content/` as plain `NAME = Material { â€¦ }` definition files (one per domain), compiled by the `content!` proc macro: dense ids and UPPER handles (`content::material::STONE`) from declaration order, per-second rates converted to per-tick integer constants, every check a compile error naming the offending definition. Adding a material is one edit to one file; a definition can extend an earlier one with struct-update syntax (`..WOOD`).
+Content lives in `fallingsand_content` as ordinary typed Rust grouped by domain. Definition functions fill one ordered build-time `Catalog`; they may use loops and helpers, while typed phase builders expose only relevant tuning. A tiny key macro supplies navigable UPPER symbols. Definitions can inherit an earlier material and override selected properties.
 
-`content/reactions.material` holds every transmutation: pairwise `LAVA + WATER => STONE + STEAM @ 97.0` (material/tag operands, per-second rate) and decays `STEAM => WATER @ 0.1`. Combustion is **not** a reaction: a flammable material authors a `burn_variant` block and the macro synthesizes its ember twin (see [Simulation.md](Simulation.md)). The non-Rust extension prevents false Rust Analyzer diagnostics; `fallingsand_core/build.rs` tracks the directory so edits always rebuild the generated registry.
+The host-only compiler validates names, references, inheritance, reactions, and units; synthesizes fuel embers; converts per-second tuning to integer tick constants; and generates dense ids, UPPER runtime handles, exhaustive accessors, reaction rows, item sources, and one `MatSpec` per material. Combustion is not a reaction: a flammable definition authors one burning block and receives a synthesized ember twin (see [Simulation.md](Simulation.md)).
 
-The kernel is driven by **phase + properties** (a new powder is a data edit, zero engine code) but freely names specific materials where identity is clearest. The macro emits one zero-sized spec type per material; the kernel monomorphizes over these. Content is compiled into both binaries, identical by construction; `PROTOCOL_VERSION` gates compatibility. Items and recipes layer on top; see [Inventory.md](Inventory.md).
+The kernel is driven by **phase + properties** (a new powder is a data edit, zero engine code) but freely names specific materials where identity is clearest. The generated zero-sized spec types keep kernels monomorphized. The authoring crate is not linked into either binary; both consume the same generated core registry. Items and recipes layer on top; see [Inventory.md](Inventory.md).
 
 `FLESH` is the player's body material: inert, undiggable, never auto-itemized, voided on region load as a crash artifact; its shade palette is the pixel-person pattern.
 

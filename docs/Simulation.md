@@ -31,7 +31,7 @@ Cell particles (aspirational, not built): cells knocked loose fly ballistically 
 
 ## Tuning units
 
-Constants are seconds-based, converted per-tick from `TICK_DT`, so behaviour is ~invariant to tick rate: rate `r` fires with `1−e^(−r·dt)` (keeps `e^(−r·dt)`), accelerations integrate as `a·dt`, durations become tick counts. Conversion and integer quantization happen at compile time (`content!`, `per_tick_threshold!`).
+Constants are seconds-based, converted per-tick from `TICK_DT`, so behaviour is ~invariant to tick rate: rate `r` fires with `1−e^(−r·dt)` (keeps `e^(−r·dt)`), accelerations integrate as `a·dt`, durations become tick counts. The content compiler and `per_tick_threshold!` quantize them during compilation.
 
 ## Combustion
 

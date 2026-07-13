@@ -28,7 +28,7 @@ When relevant code and docs disagree, establish the intended behavior and update
 - **Suspend/resume:** Sleep, unload, and reload preserve pending activity; in-flight processes do not freeze in time.
 - **Determinism:** The same seed and inputs produce the same result on one machine. Simulation randomness is tick-seeded and stateless; avoid iteration-order-dependent collections in simulation paths.
 - **Scheduling:** Four-phase 2x2-chunk-block scheduling produces disjoint 4x4-chunk `SimWindow`s. `sim` is exactly the area evaluated next tick and contains `change`; replication and persistence consume `change`.
-- **Compiled content:** Material definitions under `fallingsand_core/content/` compile through `content!`. Kernels remain monomorphized per material and integer-only.
+- **Compiled content:** Typed definitions in `fallingsand_content` execute only during the core build and emit dense registries plus one monomorphized, integer-only kernel spec per material.
 - **Units:** Author tuning in seconds, not per-tick constants. Quantize at compile time.
 - **Perceptual continuity:** A visual field derived from world state accounts for every contributing cell and follows changes as they happen — no source cap, sampling stride, or wall-clock refresh that drops or delays visible change.
 
