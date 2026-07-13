@@ -1,36 +1,24 @@
-use crate::inventory::{Inventory, ItemReg};
-use crate::persistence::{PlayerRecord, WorldMeta, WorldStore, encode_region};
-use crate::player::{Air, Burning, ChatHistory, Health, Life, Mode, PlayerActor, player_record};
-use crate::session::Sessions;
-use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y, SimWorld, WorldClock, WorldInfo};
-use bevy_ecs::prelude::*;
+use crate::bodies::PixelBodies;
+use crate::persistence::{Persistence, StoreError, encode_region};
+use crate::player::{PlayerLife, Players, SearchWindow};
+use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y};
 use fallingsand_core::{CellPos, ChunkPos, REGION_SIZE_CELLS, Region, RegionPos};
-use fallingsand_protocol::PlayerUuid;
 use fallingsand_sim::bodies::settle_body;
 use fallingsand_sim::{CellWorld, PixelBody};
 use fallingsand_worldgen::WorldGenerator;
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::sync::Arc;
 
 pub const BORDER_MARGIN: i32 = 3;
 pub const UNLOAD_GRACE_SECS: f32 = 5.0;
-pub const AUTOSAVE_INTERVAL_SECS: f32 = 10.0;
 pub const UNLOAD_GRACE_TICKS: u64 = fallingsand_core::ticks_from_secs(UNLOAD_GRACE_SECS);
-pub const AUTOSAVE_INTERVAL_TICKS: u64 = fallingsand_core::ticks_from_secs(AUTOSAVE_INTERVAL_SECS);
 pub const MAX_LOADS_PER_TICK: usize = 1;
-
-#[derive(Resource)]
-pub struct Generator(pub Arc<WorldGenerator>);
-
-#[derive(Resource)]
-pub struct Store(pub Option<Arc<WorldStore>>);
 
 pub struct RegionState {
     pub dirty: bool,
     pub last_wanted: u64,
 }
 
-#[derive(Resource, Default)]
+#[derive(Default)]
 pub struct RegionMap {
     pub states: FxHashMap<RegionPos, RegionState>,
 }
@@ -43,7 +31,7 @@ impl RegionMap {
     }
 }
 
-#[derive(Resource, Default)]
+#[derive(Default)]
 pub struct ChunkTickets {
     pub active: FxHashSet<ChunkPos>,
     pub border: FxHashSet<ChunkPos>,
@@ -55,34 +43,50 @@ impl ChunkTickets {
     }
 }
 
-pub fn compute_tickets(
-    mut tickets: ResMut<ChunkTickets>,
-    spawn: Res<crate::SpawnPoint>,
-    query: Query<&PlayerActor>,
-) {
-    let ChunkTickets { active, border } = &mut *tickets;
-    active.clear();
-    border.clear();
-    for body in query.iter() {
-        let center = CellPos::new(body.0.x.floor_cell(), body.0.y.floor_cell()).chunk();
-        for dy in -(INTEREST_RADIUS_Y + BORDER_MARGIN)..=(INTEREST_RADIUS_Y + BORDER_MARGIN) {
-            for dx in -(INTEREST_RADIUS_X + BORDER_MARGIN)..=(INTEREST_RADIUS_X + BORDER_MARGIN) {
-                let pos = center.translated(dx, dy);
-                if dx.abs() <= INTEREST_RADIUS_X && dy.abs() <= INTEREST_RADIUS_Y {
-                    active.insert(pos);
-                } else {
-                    border.insert(pos);
-                }
+pub fn compute_tickets(tickets: &mut ChunkTickets, spawn: CellPos, players: &Players) {
+    tickets.active.clear();
+    tickets.border.clear();
+    for (_, player) in players.iter() {
+        add_view(tickets, player.view_anchor().chunk());
+        let search = match &player.life {
+            PlayerLife::Entering(entering) => Some(entering.materialization.search.window()),
+            PlayerLife::Reviving(reviving) => Some(reviving.materialization.search.window()),
+            PlayerLife::Alive(_) | PlayerLife::Dead(_) => None,
+        };
+        if let Some(window) = search {
+            add_search_window(tickets, window);
+        }
+    }
+    let center = spawn.chunk();
+    for dy in -INTEREST_RADIUS_Y..=INTEREST_RADIUS_Y {
+        for dx in -INTEREST_RADIUS_X..=INTEREST_RADIUS_X {
+            tickets.active.insert(center.translated(dx, dy));
+        }
+    }
+    tickets.border.retain(|pos| !tickets.active.contains(pos));
+}
+
+fn add_view(tickets: &mut ChunkTickets, center: ChunkPos) {
+    for dy in -(INTEREST_RADIUS_Y + BORDER_MARGIN)..=(INTEREST_RADIUS_Y + BORDER_MARGIN) {
+        for dx in -(INTEREST_RADIUS_X + BORDER_MARGIN)..=(INTEREST_RADIUS_X + BORDER_MARGIN) {
+            let pos = center.translated(dx, dy);
+            if dx.abs() <= INTEREST_RADIUS_X && dy.abs() <= INTEREST_RADIUS_Y {
+                tickets.active.insert(pos);
+            } else {
+                tickets.border.insert(pos);
             }
         }
     }
-    let center = spawn.0.chunk();
-    for dy in -INTEREST_RADIUS_Y..=INTEREST_RADIUS_Y {
-        for dx in -INTEREST_RADIUS_X..=INTEREST_RADIUS_X {
-            active.insert(center.translated(dx, dy));
+}
+
+fn add_search_window(tickets: &mut ChunkTickets, window: SearchWindow) {
+    let min = window.min.chunk();
+    let max = window.max.chunk();
+    for y in min.y..=max.y {
+        for x in min.x..=max.x {
+            tickets.active.insert(ChunkPos::new(x, y));
         }
     }
-    border.retain(|pos| !active.contains(pos));
 }
 
 pub fn wanted_regions(tickets: &ChunkTickets) -> FxHashSet<RegionPos> {
@@ -94,7 +98,7 @@ pub fn wanted_regions(tickets: &ChunkTickets) -> FxHashSet<RegionPos> {
         .collect()
 }
 
-fn strip_player_remnants(region: &mut Region) {
+fn strip_body_remnants(region: &mut Region) {
     for chunk in region.chunks_mut().iter_mut() {
         for cell in chunk.cells_mut().iter_mut() {
             if fallingsand_core::content::tags(cell.material)
@@ -134,16 +138,26 @@ fn snapshot_region(sim: &CellWorld, pos: RegionPos) -> Region {
     region
 }
 
-fn collect_dirty_saves(sim: &CellWorld, regions: &mut RegionMap) -> Vec<(RegionPos, Vec<u8>)> {
+pub(crate) fn collect_dirty_saves(
+    sim: &CellWorld,
+    regions: &RegionMap,
+) -> Vec<(RegionPos, Vec<u8>)> {
     let mut out = Vec::new();
-    for (pos, state) in regions.states.iter_mut() {
+    for (pos, state) in &regions.states {
         if !state.dirty {
             continue;
         }
         out.push((*pos, encode_region(&snapshot_region(sim, *pos))));
-        state.dirty = false;
     }
     out
+}
+
+pub(crate) fn mark_saved(regions: &mut RegionMap, positions: impl IntoIterator<Item = RegionPos>) {
+    for pos in positions {
+        if let Some(state) = regions.states.get_mut(&pos) {
+            state.dirty = false;
+        }
+    }
 }
 
 fn body_overlaps_region(body: &PixelBody, pos: RegionPos) -> bool {
@@ -157,15 +171,15 @@ fn body_overlaps_region(body: &PixelBody, pos: RegionPos) -> bool {
 }
 
 pub fn manage_regions(
-    mut sim: ResMut<SimWorld>,
-    mut regions: ResMut<RegionMap>,
-    generator: Res<Generator>,
-    store: Res<Store>,
-    tickets: Res<ChunkTickets>,
-    mut bodies: ResMut<crate::bodies::PixelBodies>,
-) {
-    let tick = sim.0.tick();
-    let wanted = wanted_regions(&tickets);
+    sim: &mut CellWorld,
+    regions: &mut RegionMap,
+    generator: &WorldGenerator,
+    persistence: &mut Persistence,
+    tickets: &ChunkTickets,
+    bodies: &mut PixelBodies,
+) -> Result<(), StoreError> {
+    let tick = sim.tick();
+    let wanted = wanted_regions(tickets);
 
     for pos in &wanted {
         if let Some(state) = regions.states.get_mut(pos) {
@@ -173,29 +187,27 @@ pub fn manage_regions(
         }
     }
 
+    let mut candidates: Vec<_> = wanted.iter().copied().collect();
+    candidates.sort_unstable_by_key(|pos| (pos.y, pos.x));
     let mut loads = 0usize;
-    for &pos in &wanted {
-        if regions.states.contains_key(&pos) {
+    for pos in candidates {
+        if regions.states.contains_key(&pos) || loads >= MAX_LOADS_PER_TICK {
             continue;
         }
-        if loads >= MAX_LOADS_PER_TICK {
-            break;
-        }
-        loads += 1;
-        let loaded = store.0.as_ref().and_then(|store| {
-            store.load_region(pos).unwrap_or_else(|err| {
-                tracing::error!("failed to load region {pos:?}: {err}");
-                None
-            })
-        });
+        let loaded = persistence
+            .load_region(pos)
+            .map_err(|source| StoreError::RegionLoad {
+                pos,
+                source: Box::new(source),
+            })?;
         let region = match loaded {
             Some(mut region) => {
-                strip_player_remnants(&mut region);
+                strip_body_remnants(&mut region);
                 region
             }
-            None => generator.0.generate_region(pos),
+            None => generator.generate_region(pos),
         };
-        insert_region(&mut sim.0, pos, region);
+        insert_region(sim, pos, region);
         regions.states.insert(
             pos,
             RegionState {
@@ -203,6 +215,7 @@ pub fn manage_regions(
                 last_wanted: tick,
             },
         );
+        loads += 1;
     }
 
     let expired: Vec<RegionPos> = regions
@@ -215,7 +228,6 @@ pub fn manage_regions(
         .collect();
 
     if !expired.is_empty() {
-        let bodies = &mut *bodies;
         let mut index = 0;
         while index < bodies.bodies.len() {
             let unloading = expired
@@ -223,206 +235,39 @@ pub fn manage_regions(
                 .any(|&pos| body_overlaps_region(&bodies.bodies[index], pos));
             if unloading {
                 let body = bodies.bodies.swap_remove(index);
-                settle_body(&mut sim.0, &body);
+                settle_body(sim, &body);
             } else {
                 index += 1;
             }
         }
     }
 
-    for (pos, state) in regions.states.iter_mut() {
+    mark_changed_regions(sim, regions);
+
+    for pos in expired {
+        regions.states.remove(&pos).expect("state exists");
+        let region = extract_region(sim, pos);
+        persistence.stage_region(pos, encode_region(&region));
+    }
+    if let Err(err) = persistence.flush_regions() {
+        tracing::error!("failed to save unloaded regions: {err}");
+    }
+    Ok(())
+}
+
+pub(crate) fn mark_changed_regions(sim: &CellWorld, regions: &mut RegionMap) {
+    for (pos, state) in &mut regions.states {
         if state.dirty {
             continue;
         }
-        'scan: for (_, chunk_pos) in pos.chunk_positions() {
-            if let Some(chunk) = sim.0.chunk(chunk_pos)
-                && !chunk.change_rect().is_empty()
+        for (_, chunk_pos) in pos.chunk_positions() {
+            if sim
+                .chunk(chunk_pos)
+                .is_some_and(|chunk| !chunk.change_rect().is_empty())
             {
                 state.dirty = true;
-                break 'scan;
+                break;
             }
         }
     }
-
-    let mut to_save: Vec<(RegionPos, Vec<u8>)> = Vec::new();
-    for pos in expired {
-        let state = regions.states.remove(&pos).expect("state exists");
-        let region = extract_region(&mut sim.0, pos);
-        if store.0.is_some() && state.dirty {
-            to_save.push((pos, encode_region(&region)));
-        }
-    }
-    if let Some(store) = store.0.as_ref()
-        && let Err(err) = store.save_regions(&to_save)
-    {
-        tracing::error!("failed to save {} regions: {err}", to_save.len());
-    }
-}
-
-#[allow(clippy::type_complexity)]
-#[allow(clippy::too_many_arguments)]
-pub fn autosave(
-    sim: Res<SimWorld>,
-    mut regions: ResMut<RegionMap>,
-    store: Res<Store>,
-    sessions: Res<Sessions>,
-    item_reg: Res<ItemReg>,
-    info: Res<WorldInfo>,
-    clock: Res<WorldClock>,
-    query: Query<(
-        &crate::player::Player,
-        &PlayerActor,
-        &Health,
-        &Life,
-        &Mode,
-        &Air,
-        &Burning,
-        &Inventory,
-        &ChatHistory,
-    )>,
-) {
-    let Some(store) = store.0.as_ref() else {
-        return;
-    };
-    let tick = sim.0.tick();
-    if tick == 0 || !tick.is_multiple_of(AUTOSAVE_INTERVAL_TICKS) {
-        return;
-    }
-
-    let to_save = collect_dirty_saves(&sim.0, &mut regions);
-    match store.save_regions(&to_save) {
-        Ok(()) if !to_save.is_empty() => tracing::debug!("autosaved {} regions", to_save.len()),
-        Ok(()) => {}
-        Err(err) => tracing::error!("autosave failed: {err}"),
-    }
-
-    let players: Vec<(PlayerUuid, PlayerRecord)> = sessions
-        .sessions
-        .iter()
-        .filter_map(|session| {
-            let entity = session.entity?;
-            let (player, body, health, life, mode, air, burning, inventory, history) =
-                query.get(entity).ok()?;
-            Some((
-                player.uuid,
-                player_record(
-                    &item_reg.0,
-                    player,
-                    &body.0,
-                    health,
-                    life,
-                    mode,
-                    air,
-                    burning,
-                    inventory,
-                    history,
-                ),
-            ))
-        })
-        .collect();
-    if let Err(err) = store.save_players(&players) {
-        tracing::error!("player autosave failed: {err}");
-    }
-    if let Err(err) = store.save_meta(&world_meta(&info, &clock, tick)) {
-        tracing::error!("meta autosave failed: {err}");
-    }
-}
-
-pub fn world_meta(info: &WorldInfo, clock: &WorldClock, tick: u64) -> WorldMeta {
-    WorldMeta {
-        format_version: crate::persistence::WORLD_FORMAT_VERSION,
-        seed: info.seed,
-        name: info.name.clone(),
-        world_age: clock.0.age,
-        tick,
-    }
-}
-
-pub fn save_everything(world: &mut bevy_ecs::world::World, final_save: bool) {
-    let store = match &world.resource::<Store>().0 {
-        Some(store) => store.clone(),
-        None => return,
-    };
-    let started = std::time::Instant::now();
-
-    if final_save {
-        let mut bodies = std::mem::take(&mut *world.resource_mut::<crate::bodies::PixelBodies>());
-        if !bodies.bodies.is_empty() {
-            let mut touched: FxHashSet<RegionPos> = FxHashSet::default();
-            {
-                let mut sim = world.resource_mut::<SimWorld>();
-                for body in bodies.bodies.drain(..) {
-                    settle_body(&mut sim.0, &body);
-                    let radius =
-                        ((body.width() as f32).hypot(body.height() as f32) + 1.0).ceil() as i32;
-                    let (cx, cy) = (body.x.floor_cell(), body.y.floor_cell());
-                    let min = CellPos::new(cx - radius, cy - radius).region();
-                    let max = CellPos::new(cx + radius + 1, cy + radius + 1).region();
-                    for region_y in min.y..=max.y {
-                        for region_x in min.x..=max.x {
-                            touched.insert(RegionPos::new(region_x, region_y));
-                        }
-                    }
-                }
-            }
-            let mut regions = world.resource_mut::<RegionMap>();
-            for pos in touched {
-                if let Some(state) = regions.states.get_mut(&pos) {
-                    state.dirty = true;
-                }
-            }
-        }
-        *world.resource_mut::<crate::bodies::PixelBodies>() = bodies;
-    }
-
-    let item_reg = world.resource::<ItemReg>().0.clone();
-    let to_save = world.resource_scope::<RegionMap, _>(|world, mut regions| {
-        collect_dirty_saves(&world.resource::<SimWorld>().0, &mut regions)
-    });
-    if let Err(err) = store.save_regions(&to_save) {
-        tracing::error!("final save failed: {err}");
-    }
-
-    let mut players: Vec<(PlayerUuid, PlayerRecord)> = Vec::new();
-    {
-        let mut query = world.query::<(
-            &crate::player::Player,
-            &PlayerActor,
-            &Health,
-            &Life,
-            &Mode,
-            &Air,
-            &Burning,
-            &Inventory,
-            &ChatHistory,
-        )>();
-        for (player, body, health, life, mode, air, burning, inventory, history) in
-            query.iter(world)
-        {
-            players.push((
-                player.uuid,
-                player_record(
-                    &item_reg, player, &body.0, health, life, mode, air, burning, inventory,
-                    history,
-                ),
-            ));
-        }
-    }
-    if let Err(err) = store.save_players(&players) {
-        tracing::error!("final player save failed: {err}");
-    }
-    let meta = world_meta(
-        world.resource::<WorldInfo>(),
-        world.resource::<WorldClock>(),
-        world.resource::<SimWorld>().0.tick(),
-    );
-    if let Err(err) = store.save_meta(&meta) {
-        tracing::error!("final meta save failed: {err}");
-    }
-    tracing::info!(
-        "world saved: {} regions, {} players in {:.1?}",
-        to_save.len(),
-        players.len(),
-        started.elapsed(),
-    );
 }

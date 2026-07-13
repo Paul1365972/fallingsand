@@ -1,13 +1,12 @@
-use crate::SimWorld;
-use crate::inventory::{Inventory, ItemReg};
-use crate::player::{Life, Mode, Player, PlayerActor};
-use bevy_ecs::prelude::*;
+use crate::bodies::PixelBodies;
+use crate::inventory::Inventory;
+use crate::player::{PlayerLife, Players};
 use fallingsand_core::content;
 use fallingsand_core::{
     CellPos, ItemId, ItemRegistry, ItemStack, MaterialId, Phase, REACH, SURVIVAL_REACH, TICK_DT,
     Tag,
 };
-use fallingsand_protocol::{CursorMode, GameMode, InteractionState, InteractionStatus, LifeState};
+use fallingsand_protocol::{CursorMode, GameMode, InputState, InteractionState, InteractionStatus};
 
 const BARE_HAND_SPEED: f32 = 0.55;
 
@@ -24,7 +23,7 @@ struct DigProgress {
     elapsed: f32,
 }
 
-#[derive(Component, Default)]
+#[derive(Default)]
 pub struct DigState {
     progress: Option<DigProgress>,
     pub interaction: Option<InteractionState>,
@@ -39,88 +38,66 @@ impl DigState {
 type Actor = fallingsand_sim::physics::Actor;
 type World = fallingsand_sim::CellWorld;
 
-pub fn apply_player_inputs(
-    mut sim: ResMut<SimWorld>,
-    item_reg: Res<ItemReg>,
-    mut bodies: ResMut<crate::bodies::PixelBodies>,
-    mut query: Query<(
-        &Player,
-        &PlayerActor,
-        &Life,
-        &Mode,
-        &mut DigState,
-        &mut Inventory,
-    )>,
-) {
-    let reg = &item_reg.0;
-    for (player, body, life, mode, mut dig, mut inventory) in &mut query {
-        if life.0 != LifeState::Alive {
-            *dig = DigState::default();
-            continue;
-        }
-        let survival = mode.0 == GameMode::Survival;
-        let reach = if survival { SURVIVAL_REACH } else { REACH };
-        let body = &body.0;
+#[derive(Clone, Copy)]
+struct InteractionContext {
+    input: InputState,
+    selected_slot: u8,
+    survival: bool,
+    reach: f32,
+}
 
-        if player.input.primary {
-            active_dig(
-                &mut sim.0,
-                reg,
-                &mut bodies,
-                player,
-                body,
-                survival,
-                &mut dig,
-                &mut inventory,
-                reach,
-            );
-        } else if player.input.secondary {
-            active_place(
-                &mut sim.0,
-                reg,
-                player,
-                body,
-                survival,
-                &mut dig,
-                &mut inventory,
-                reach,
-            );
+pub fn apply_player_inputs(
+    sim: &mut World,
+    item_reg: &ItemRegistry,
+    bodies: &mut PixelBodies,
+    players: &mut Players,
+) {
+    for (_, player) in players.iter_mut() {
+        let input = player.control.input;
+        let survival = player.profile.mode == GameMode::Survival;
+        let PlayerLife::Alive(avatar) = &mut player.life else {
+            continue;
+        };
+        let context = InteractionContext {
+            input,
+            selected_slot: player.profile.selected_slot,
+            survival,
+            reach: if survival { SURVIVAL_REACH } else { REACH },
+        };
+        let body = &avatar.actor;
+        let dig = &mut avatar.dig;
+        let inventory = &mut player.profile.inventory;
+
+        if input.primary {
+            active_dig(sim, item_reg, bodies, &context, body, dig, inventory)
+        } else if input.secondary {
+            active_place(sim, item_reg, &context, body, dig, inventory)
         } else {
             dig.clear_progress();
-            dig.interaction = idle_preview(&sim.0, reg, player, body, survival, &inventory, reach);
+            dig.interaction = idle_preview(sim, item_reg, &context, body, inventory);
         }
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn active_dig(
     world: &mut World,
     reg: &ItemRegistry,
-    bodies: &mut crate::bodies::PixelBodies,
-    player: &Player,
+    bodies: &mut PixelBodies,
+    context: &InteractionContext,
     body: &Actor,
-    survival: bool,
     dig: &mut DigState,
     inventory: &mut Inventory,
-    reach: f32,
 ) {
-    let Some(target) = select_dig(world, player, body, reach) else {
+    let Some(target) = select_dig(world, &context.input, body, context.reach) else {
         dig.clear_progress();
         dig.interaction = Some(interaction(
-            player.input.aim,
-            miss_reason(body, player, reach),
+            context.input.aim,
+            miss_reason(body, &context.input, context.reach),
             0.0,
         ));
         return;
     };
-    let plan = match classify_dig(
-        world,
-        reg,
-        inventory,
-        player.selected_slot,
-        survival,
-        target,
-    ) {
+    let plan = match classify_dig(world, reg, inventory, context, target) {
         Ok(plan) => plan,
         Err(status) => {
             dig.clear_progress();
@@ -143,7 +120,11 @@ fn active_dig(
     let progress = dig.progress.as_mut().unwrap();
     progress.elapsed += TICK_DT;
     let hardness = content::material(plan.material).hardness.max(0.01);
-    let duration = if survival { hardness / plan.speed } else { 0.0 };
+    let duration = if context.survival {
+        hardness / plan.speed
+    } else {
+        0.0
+    };
     let fraction = if duration <= 0.0 {
         1.0
     } else {
@@ -154,12 +135,11 @@ fn active_dig(
         return;
     }
 
-    if survival {
+    if context.survival {
         let leftover = inventory
             .inner
             .insert_first_fit(ItemStack::new(plan.item, 1), reg);
         debug_assert!(leftover.is_none());
-        inventory.dirty = true;
     }
     world.place_material(target, MaterialId::AIR);
     for (dx, dy) in [(0, -1), (-1, 0), (1, 0), (0, 1)] {
@@ -169,49 +149,45 @@ fn active_dig(
     dig.interaction = Some(dig_interaction(target, 1.0, plan.material));
 }
 
-#[allow(clippy::too_many_arguments)]
 fn active_place(
     world: &mut World,
     reg: &ItemRegistry,
-    player: &Player,
+    context: &InteractionContext,
     body: &Actor,
-    survival: bool,
     dig: &mut DigState,
     inventory: &mut Inventory,
-    reach: f32,
 ) {
     dig.clear_progress();
-    let slot = player.selected_slot as usize;
+    let slot = context.selected_slot as usize;
     let Some(material) = inventory
         .inner
         .get(slot)
         .and_then(|stack| reg.try_get(stack.item).and_then(|def| def.place))
     else {
         dig.interaction = Some(interaction(
-            player.input.aim,
+            context.input.aim,
             InteractionStatus::NotPlaceable,
             0.0,
         ));
         return;
     };
-    let Some(target) = select_place(world, player, body, reach) else {
+    let Some(target) = select_place(world, &context.input, body, context.reach) else {
         dig.interaction = Some(interaction(
-            player.input.aim,
-            miss_reason(body, player, reach),
+            context.input.aim,
+            miss_reason(body, &context.input, context.reach),
             0.0,
         ));
         return;
     };
 
     world.place_material(target, material);
-    if survival {
+    if context.survival {
         let stack = inventory.inner.get(slot).expect("placeable slot occupied");
         let count = stack.count.saturating_sub(1);
         inventory.inner.set(
             slot,
             (count > 0).then_some(ItemStack::new(stack.item, count)),
         );
-        inventory.dirty = true;
     }
     dig.interaction = Some(interaction(target, InteractionStatus::Valid, 1.0));
 }
@@ -219,13 +195,11 @@ fn active_place(
 fn idle_preview(
     world: &World,
     reg: &ItemRegistry,
-    player: &Player,
+    context: &InteractionContext,
     body: &Actor,
-    survival: bool,
     inventory: &Inventory,
-    reach: f32,
 ) -> Option<InteractionState> {
-    let slot = player.selected_slot as usize;
+    let slot = context.selected_slot as usize;
     let placeable = inventory
         .inner
         .get(slot)
@@ -233,21 +207,14 @@ fn idle_preview(
         .is_some();
 
     if placeable {
-        let target = select_place(world, player, body, reach)?;
+        let target = select_place(world, &context.input, body, context.reach)?;
         return Some(interaction(target, InteractionStatus::Valid, 0.0));
     }
-    if survival && inventory.inner.get(slot).is_some() && !is_tool(reg, inventory, slot) {
+    if context.survival && inventory.inner.get(slot).is_some() && !is_tool(reg, inventory, slot) {
         return None;
     }
-    let target = select_dig(world, player, body, reach)?;
-    match classify_dig(
-        world,
-        reg,
-        inventory,
-        player.selected_slot,
-        survival,
-        target,
-    ) {
+    let target = select_dig(world, &context.input, body, context.reach)?;
+    match classify_dig(world, reg, inventory, context, target) {
         Ok(_) => Some(interaction(target, InteractionStatus::Valid, 0.0)),
         Err(_) => None,
     }
@@ -264,8 +231,7 @@ fn classify_dig(
     world: &World,
     reg: &ItemRegistry,
     inventory: &Inventory,
-    selected_slot: u8,
-    survival: bool,
+    context: &InteractionContext,
     target: CellPos,
 ) -> Result<DigPlan, InteractionStatus> {
     let Some(cell) = world.get_cell(target) else {
@@ -281,7 +247,7 @@ fn classify_dig(
     if item == ItemId::NONE {
         return Err(InteractionStatus::Undiggable);
     }
-    let slot = selected_slot as usize;
+    let slot = context.selected_slot as usize;
     let held = inventory.inner.get(slot);
     let (method, speed, tier) = match held.and_then(|stack| {
         reg.try_get(stack.item)
@@ -289,13 +255,13 @@ fn classify_dig(
     }) {
         Some((id, tool)) => (MiningMethod::Tool(id), tool.speed, tool.tier),
         None => {
-            if survival && held.is_some() {
+            if context.survival && held.is_some() {
                 return Err(InteractionStatus::WrongTool);
             }
             (MiningMethod::Hands, BARE_HAND_SPEED, 0)
         }
     };
-    if survival {
+    if context.survival {
         if tier < content::material(material).mining_tier {
             return Err(InteractionStatus::WrongTool);
         }
@@ -319,9 +285,9 @@ fn is_tool(reg: &ItemRegistry, inventory: &Inventory, slot: usize) -> bool {
         .is_some_and(|def| def.tool.is_some())
 }
 
-fn select_dig(world: &World, player: &Player, body: &Actor, reach: f32) -> Option<CellPos> {
-    let aim = player.input.aim;
-    match player.input.cursor_mode {
+fn select_dig(world: &World, input: &InputState, body: &Actor, reach: f32) -> Option<CellPos> {
+    let aim = input.aim;
+    match input.cursor_mode {
         CursorMode::Precise => {
             (diggable(world, aim) && cell_distance_sq(body, aim) <= reach * reach).then_some(aim)
         }
@@ -370,9 +336,9 @@ fn smart_dig_target(world: &World, body: &Actor, aim: CellPos, reach: f32) -> Op
     None
 }
 
-fn select_place(world: &World, player: &Player, body: &Actor, reach: f32) -> Option<CellPos> {
-    let aim = player.input.aim;
-    let target = match player.input.cursor_mode {
+fn select_place(world: &World, input: &InputState, body: &Actor, reach: f32) -> Option<CellPos> {
+    let aim = input.aim;
+    let target = match input.cursor_mode {
         CursorMode::Precise => world
             .get_cell(aim)
             .filter(|cell| cell.is_air())
@@ -386,8 +352,8 @@ fn select_place(world: &World, player: &Player, body: &Actor, reach: f32) -> Opt
     (cell_distance_sq(body, target) <= reach * reach).then_some(target)
 }
 
-fn miss_reason(body: &Actor, player: &Player, reach: f32) -> InteractionStatus {
-    if cell_distance_sq(body, player.input.aim) <= reach * reach {
+fn miss_reason(body: &Actor, input: &InputState, reach: f32) -> InteractionStatus {
+    if cell_distance_sq(body, input.aim) <= reach * reach {
         InteractionStatus::NoTarget
     } else {
         InteractionStatus::OutOfReach

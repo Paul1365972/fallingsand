@@ -24,7 +24,7 @@ pub fn sync_nametags(
     let local = ingame.and_then(|ingame| ingame.net.session.as_ref()?.player());
 
     visuals.0.retain(|player, entity| {
-        let live = ingame.is_some_and(|ingame| ingame.players.roster.contains_key(player))
+        let live = ingame.is_some_and(|ingame| ingame.players.avatars.contains_key(player))
             && Some(*player) != local;
         if !live {
             commands.entity(*entity).despawn();
@@ -35,7 +35,7 @@ pub fn sync_nametags(
     let Some(ingame) = ingame else {
         return;
     };
-    for (&player, remote) in &ingame.players.roster {
+    for (&player, remote) in &ingame.players.avatars {
         if Some(player) == local {
             continue;
         }

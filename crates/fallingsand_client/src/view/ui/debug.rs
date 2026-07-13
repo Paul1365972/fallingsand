@@ -112,7 +112,7 @@ pub fn setup_overlay(mut commands: Commands, mut gizmo_configs: ResMut<GizmoConf
             left: px(5),
             ..default()
         },
-        GlobalZIndex(100),
+        GlobalZIndex(super::depth::DEBUG),
     ));
 
     commands.spawn((
@@ -127,7 +127,7 @@ pub fn setup_overlay(mut commands: Commands, mut gizmo_configs: ResMut<GizmoConf
             right: px(5),
             ..default()
         },
-        GlobalZIndex(100),
+        GlobalZIndex(super::depth::DEBUG),
     ));
 }
 
@@ -272,8 +272,8 @@ fn playing_lines(
         region.y,
         block_phase(chunk)
     ));
-    if you.present {
-        let facing = compass(aim.x as f32 - you.pos.x, aim.y as f32 - you.pos.y);
+    if let Some(local) = ingame.local_avatar() {
+        let facing = compass(aim.x as f32 - local.pos.x, aim.y as f32 - local.pos.y);
         left_lines.push(format!("facing {facing}"));
     }
 
@@ -302,17 +302,17 @@ fn playing_lines(
         sky.state.light, sky.state.daylight
     ));
 
-    if you.present {
-        let burning = if you.burning { " burning" } else { "" };
+    if let (Some(local), Some(avatar)) = (ingame.local_avatar(), you.life.avatar()) {
+        let burning = if local.burning { " burning" } else { "" };
         left_lines.push(String::new());
         left_lines.push(format!(
             "hp {:>3.0}/{:.0} air {:>4.1}s{}",
-            you.hp, MAX_HP, you.air, burning
+            avatar.hp, MAX_HP, avatar.air, burning
         ));
         left_lines.push(format!(
             "pos {:.1},{:.1} {}",
-            you.pos.x,
-            you.pos.y,
+            local.pos.x,
+            local.pos.y,
             you.mode.label(),
         ));
         if !you.biome.is_empty() {

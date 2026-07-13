@@ -27,7 +27,6 @@ time = { workspace = true }
 ctrlc = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-bevy_ecs = { workspace = true }
 anyhow = { workspace = true }
 rustc-hash = { workspace = true }
 spin_sleep = { workspace = true }

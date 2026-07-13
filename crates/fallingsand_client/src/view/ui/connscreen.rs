@@ -21,10 +21,10 @@ pub(crate) struct DetailText;
 pub(crate) struct ErrorText;
 
 #[derive(Component)]
-pub(crate) struct CancelButton;
+pub(crate) struct ScreenButton;
 
 #[derive(Component)]
-pub(crate) struct CancelLabel;
+pub(crate) struct ScreenButtonLabel;
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
@@ -38,8 +38,8 @@ pub fn sync_connscreen(
     dots: Query<Entity, With<DotsText>>,
     detail: Query<Entity, With<DetailText>>,
     error: Query<Entity, With<ErrorText>>,
-    label: Query<Entity, With<CancelLabel>>,
-    mut button: Query<&mut Visibility, (With<CancelButton>, Without<ScreenRoot>)>,
+    label: Query<Entity, With<ScreenButtonLabel>>,
+    mut button: Query<(&mut Visibility, &mut Btn), (With<ScreenButton>, Without<ScreenRoot>)>,
     mut texts: Query<(&mut Text, &mut TextColor)>,
 ) {
     let Some(ingame) = game.0.ingame() else {
@@ -57,10 +57,10 @@ pub fn sync_connscreen(
         return;
     };
     let connecting = ingame.phase == Phase::Connecting;
-    let phase = ingame
-        .net
-        .supervisor
-        .phase(ingame.net.session.as_ref(), ingame.paused());
+    let phase = ingame.net.supervisor.phase(
+        ingame.net.session.as_ref(),
+        ingame.net.is_embedded() && ingame.game_menu_open(),
+    );
     let server = ingame
         .net
         .supervisor
@@ -75,7 +75,7 @@ pub fn sync_connscreen(
             }
         });
 
-    let (title_str, title_color, detail_str, animate, alpha, button_str) = if connecting {
+    let (title_str, title_color, detail_str, animate, alpha, button_config) = if connecting {
         match &phase {
             ConnPhase::Lost { reason } => (
                 "connection failed".to_string(),
@@ -83,7 +83,7 @@ pub fn sync_connscreen(
                 reason.clone(),
                 false,
                 1.0,
-                Some("Cancel"),
+                Some(("Cancel", Btn::CancelConnect)),
             ),
             ConnPhase::Reconnecting { attempt } => (
                 "connecting".to_string(),
@@ -91,7 +91,7 @@ pub fn sync_connscreen(
                 format!("{server} - attempt {attempt}"),
                 true,
                 1.0,
-                Some("Cancel"),
+                Some(("Cancel", Btn::CancelConnect)),
             ),
             _ => (
                 "connecting".to_string(),
@@ -99,7 +99,7 @@ pub fn sync_connscreen(
                 server,
                 true,
                 1.0,
-                Some("Cancel"),
+                Some(("Cancel", Btn::CancelConnect)),
             ),
         }
     } else {
@@ -111,18 +111,18 @@ pub fn sync_connscreen(
             ConnPhase::Connecting => (
                 "connecting".to_string(),
                 Color::srgb(0.9, 0.8, 0.5),
-                server,
+                format!("{server} - Esc: Game Menu"),
                 true,
                 0.85,
-                None,
+                Some(("Game Menu", Btn::OpenGameMenu)),
             ),
             ConnPhase::Reconnecting { attempt } => (
                 "reconnecting".to_string(),
                 Color::srgb(0.95, 0.6, 0.3),
-                format!("{server} - attempt {attempt}"),
+                format!("{server} - attempt {attempt} - Esc: Game Menu"),
                 true,
                 0.85,
-                None,
+                Some(("Game Menu", Btn::OpenGameMenu)),
             ),
             ConnPhase::Stalled { seconds } => (
                 "connection unstable".to_string(),
@@ -135,10 +135,10 @@ pub fn sync_connscreen(
             ConnPhase::Lost { reason } => (
                 "connection lost".to_string(),
                 Color::srgb(0.9, 0.3, 0.3),
-                format!("{reason} - press Esc for menu"),
+                format!("{reason} - Esc: Game Menu"),
                 false,
                 0.85,
-                Some("Back to Menu"),
+                Some(("Game Menu", Btn::OpenGameMenu)),
             ),
         }
     };
@@ -179,15 +179,18 @@ pub fn sync_connscreen(
         };
         set_text(&mut text, error_str);
     }
-    if let Ok(mut button_visibility) = button.single_mut() {
-        *button_visibility = if button_str.is_some() {
+    if let Ok((mut button_visibility, mut action)) = button.single_mut() {
+        *button_visibility = if button_config.is_some() {
             Visibility::Inherited
         } else {
             Visibility::Hidden
         };
+        if let Some((_, target)) = &button_config {
+            *action = target.clone();
+        }
     }
     if let Ok(entity) = label.single()
-        && let (Ok((mut text, _)), Some(button_str)) = (texts.get_mut(entity), button_str)
+        && let (Ok((mut text, _)), Some((button_str, _))) = (texts.get_mut(entity), button_config)
     {
         set_text(&mut text, button_str.to_string());
     }
@@ -207,7 +210,7 @@ fn spawn_screen(commands: &mut Commands) {
                 ..default()
             },
             BackgroundColor(Color::srgba(0.02, 0.03, 0.06, 0.85)),
-            GlobalZIndex(5),
+            GlobalZIndex(super::depth::CONNECTION),
             Visibility::Hidden,
             Pickable::IGNORE,
         ))
@@ -254,7 +257,7 @@ fn spawn_screen(commands: &mut Commands) {
             ));
             parent
                 .spawn((
-                    CancelButton,
+                    ScreenButton,
                     Btn::CancelConnect,
                     Button,
                     ButtonBase(BUTTON_BG),
@@ -269,7 +272,7 @@ fn spawn_screen(commands: &mut Commands) {
                     BackgroundColor(BUTTON_BG),
                 ))
                 .with_child((
-                    CancelLabel,
+                    ScreenButtonLabel,
                     Text::new("Cancel"),
                     TextFont {
                         font_size: FontSize::Px(15.0),

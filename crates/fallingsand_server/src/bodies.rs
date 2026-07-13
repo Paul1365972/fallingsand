@@ -1,7 +1,6 @@
-use crate::player::{PLAYER_MASS, PlayerActor};
+use crate::TickStats;
+use crate::player::{PLAYER_MASS, Players};
 use crate::regions::ChunkTickets;
-use crate::{PlayerImpulses, SimWorld, TickStats};
-use bevy_ecs::prelude::*;
 use fallingsand_core::{CellPos, Fixed, TICK_DT};
 use fallingsand_sim::bodies::{
     ActorDynamics, PixelBody, apply_damage, detect_island, register_body,
@@ -11,7 +10,7 @@ use fallingsand_sim::{ActorAabb, CellWorld};
 
 pub const BODY_GRAVITY: Fixed = Fixed::from_int(-400);
 
-#[derive(Resource, Default)]
+#[derive(Default)]
 pub struct PixelBodies {
     pub bodies: Vec<PixelBody>,
     pub next_id: u32,
@@ -25,78 +24,78 @@ impl PixelBodies {
 }
 
 pub fn step_bodies(
-    mut sim: ResMut<SimWorld>,
-    tickets: Res<ChunkTickets>,
-    mut bodies: ResMut<PixelBodies>,
-    mut impulses: ResMut<PlayerImpulses>,
-    mut stats: ResMut<TickStats>,
-    query: Query<(Entity, &PlayerActor)>,
+    sim: &mut CellWorld,
+    tickets: &ChunkTickets,
+    bodies: &mut PixelBodies,
+    players: &mut Players,
+    stats: &mut TickStats,
 ) {
-    let bodies = &mut *bodies;
-
-    let damage = sim.0.take_damage();
+    let damage = sim.take_damage();
     if !damage.is_empty() {
         let next_id = &mut bodies.next_id;
-        apply_damage(&mut sim.0, &mut bodies.bodies, damage, || {
+        apply_damage(sim, &mut bodies.bodies, damage, || {
             let id = *next_id;
             *next_id += 1;
             id
         });
     }
 
-    bodies.candidates.extend(sim.0.take_structural());
+    bodies.candidates.extend(sim.take_structural());
     let mut candidates = std::mem::take(&mut bodies.candidates);
     candidates.sort_unstable_by_key(|pos| (pos.y, pos.x));
     candidates.dedup();
     for seed in candidates {
-        if sim.0.get_cell(seed).is_some_and(|cell| cell.is_body()) {
+        if sim.get_cell(seed).is_some_and(|cell| cell.is_body()) {
             wake_covering(&mut bodies.bodies, seed);
             continue;
         }
-        let Some(island) = detect_island(&sim.0, seed) else {
+        let Some(island) = detect_island(sim, seed) else {
             continue;
         };
-        if !island_simulated(&sim.0, &tickets, &island) {
+        if !island_simulated(sim, tickets, &island) {
             continue;
         }
         let id = bodies.next_id;
         bodies.next_id += 1;
-        let body = register_body(&mut sim.0, id, &island);
+        let body = register_body(sim, id, &island);
         bodies.bodies.push(body);
     }
 
-    let mut players: Vec<Entity> = Vec::new();
+    let mut actor_players = Vec::new();
     let mut entities: Vec<ActorDynamics> = Vec::new();
     let mut grounded: Vec<bool> = Vec::new();
-    for (entity, body) in &query {
-        players.push(entity);
-        grounded.push(body.0.on_ground);
+    for (&id, player) in players.iter() {
+        let Some(avatar) = player.avatar() else {
+            continue;
+        };
+        actor_players.push(id);
+        grounded.push(avatar.actor.on_ground);
         entities.push(ActorDynamics {
-            bbox: ActorAabb::from_footprint(body.0.footprint()),
-            vx: body.0.vx.vel_f32(),
-            vy: body.0.vy.vel_f32(),
+            bbox: ActorAabb::from_footprint(avatar.actor.footprint()),
+            vx: avatar.actor.vx.vel_f32(),
+            vy: avatar.actor.vy.vel_f32(),
             inv_mass: 1.0 / PLAYER_MASS,
         });
     }
 
     for (dynamics, on_ground) in entities.iter().zip(&grounded) {
         if *on_ground {
-            transfer_standing_weight(&sim.0, bodies, dynamics);
+            transfer_standing_weight(sim, bodies, dynamics);
         }
     }
 
-    let entity_impulses = simulate_bodies(
-        &mut sim.0,
-        &mut bodies.bodies,
-        &entities,
-        BODY_GRAVITY,
-        &|pos| tickets.simulates(pos),
-    );
-    for (player, (jx, jy)) in players.iter().zip(entity_impulses) {
-        if jx != 0.0 || jy != 0.0 {
-            let entry = impulses.0.entry(*player).or_insert((0.0, 0.0));
-            entry.0 += jx;
-            entry.1 += jy;
+    let entity_impulses =
+        simulate_bodies(sim, &mut bodies.bodies, &entities, BODY_GRAVITY, &|pos| {
+            tickets.simulates(pos)
+        });
+    for (player, (jx, jy)) in actor_players.into_iter().zip(entity_impulses) {
+        if (jx != 0.0 || jy != 0.0)
+            && let Some(avatar) = players
+                .get_mut(player)
+                .and_then(|player| player.avatar_mut())
+        {
+            avatar.pending_impulse.0 += jx;
+            avatar.pending_impulse.1 += jy;
         }
     }
 

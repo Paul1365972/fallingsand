@@ -73,7 +73,7 @@ fn spawn_settings(commands: &mut Commands, game: &ClientGame) {
                 ..default()
             },
             BackgroundColor(Color::srgba(0.05, 0.06, 0.09, 0.96)),
-            GlobalZIndex(20),
+            GlobalZIndex(super::depth::SETTINGS),
         ))
         .with_children(|parent| {
             parent.spawn((

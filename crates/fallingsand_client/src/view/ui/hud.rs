@@ -1,11 +1,10 @@
 use super::inventory::{SlotCount, SlotGlyph, SlotSwatch, spawn_slot_widgets, sync_slots};
-use crate::game::ClientGame;
+use crate::game::{ClientGame, InGame};
 use crate::view::Game;
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
 use fallingsand_core::{HOTBAR_SLOTS, ItemStack, MAX_AIR_SECS, MAX_HP};
-use fallingsand_protocol::GameMode;
-use fallingsand_protocol::LifeState;
+use fallingsand_protocol::{GameMode, SelfLife};
 
 const SLOT_SIZE: f32 = 42.0;
 const HEALTH_WIDTH: f32 = 180.0;
@@ -34,6 +33,12 @@ pub(crate) struct DamageFlash;
 pub(crate) struct DeathScreen;
 
 #[derive(Component)]
+pub(crate) struct DeathTitle;
+
+#[derive(Component)]
+pub(crate) struct DeathReviveButton;
+
+#[derive(Component)]
 pub(crate) struct HotbarSlot(usize);
 
 #[derive(Component)]
@@ -41,6 +46,37 @@ pub(crate) struct CursorModeLabel;
 
 fn cursor_mode_text(game: &ClientGame) -> String {
     format!("[Ctrl] Cursor: {}", game.settings.cursor_mode.label())
+}
+
+struct DeathPresentation {
+    screen: Display,
+    title: &'static str,
+    revive: Display,
+}
+
+fn death_presentation(ingame: &InGame) -> DeathPresentation {
+    match ingame.you.life {
+        SelfLife::Dead if ingame.revive_request_pending => DeathPresentation {
+            screen: Display::Flex,
+            title: "Requesting revive...",
+            revive: Display::None,
+        },
+        SelfLife::Dead => DeathPresentation {
+            screen: Display::Flex,
+            title: "You died",
+            revive: Display::Flex,
+        },
+        SelfLife::Reviving => DeathPresentation {
+            screen: Display::Flex,
+            title: "Finding safe spawn...",
+            revive: Display::None,
+        },
+        SelfLife::Entering | SelfLife::Alive(_) => DeathPresentation {
+            screen: Display::None,
+            title: "You died",
+            revive: Display::None,
+        },
+    }
 }
 
 pub fn sync_hud(mut commands: Commands, game: Res<Game>, roots: Query<Entity, With<HudRoot>>) {
@@ -97,19 +133,28 @@ pub fn sync_cursor_hud(game: Res<Game>, mut label: Query<&mut Text, With<CursorM
     }
 }
 
-pub fn sync_death_screen(game: Res<Game>, mut death: Query<&mut Node, With<DeathScreen>>) {
+pub fn sync_death_screen(
+    game: Res<Game>,
+    mut death: Query<&mut Node, (With<DeathScreen>, Without<DeathReviveButton>)>,
+    mut titles: Query<&mut Text, With<DeathTitle>>,
+    mut buttons: Query<&mut Node, (With<DeathReviveButton>, Without<DeathScreen>)>,
+) {
     let Some(ingame) = game.0.playing() else {
         return;
     };
-    let display = if ingame.you.life == LifeState::Dead {
-        Display::Flex
-    } else {
-        Display::None
-    };
+    let presentation = death_presentation(ingame);
     for mut node in &mut death {
-        if node.display != display {
-            node.display = display;
+        if node.display != presentation.screen {
+            node.display = presentation.screen;
         }
+    }
+    for mut title in &mut titles {
+        if **title != presentation.title {
+            **title = presentation.title.into();
+        }
+    }
+    for mut node in &mut buttons {
+        node.display = presentation.revive;
     }
 }
 
@@ -127,28 +172,30 @@ pub fn hud_status(
         return;
     };
     let you = &ingame.you;
+    let avatar = you.life.avatar();
+    let (hp, air) = avatar.map_or((0.0, 0.0), |avatar| (avatar.hp, avatar.air));
 
-    let width = percent((you.hp / MAX_HP * 100.0).clamp(0.0, 100.0));
+    let width = percent((hp / MAX_HP * 100.0).clamp(0.0, 100.0));
     for mut node in &mut fill {
         if node.width != width {
             node.width = width;
         }
     }
     if let Ok(mut text) = label.single_mut() {
-        let value = format!("{:.0}", you.hp.max(0.0));
+        let value = format!("{:.0}", hp.max(0.0));
         if **text != value {
             **text = value;
         }
     }
 
-    let show = you.mode == GameMode::Survival && you.air < MAX_AIR_SECS - 0.05;
+    let show = you.mode == GameMode::Survival && avatar.is_some() && air < MAX_AIR_SECS - 0.05;
     let display = if show { Display::Flex } else { Display::None };
     for mut node in &mut bar {
         if node.display != display {
             node.display = display;
         }
     }
-    let width = percent((you.air / MAX_AIR_SECS * 100.0).clamp(0.0, 100.0));
+    let width = percent((air / MAX_AIR_SECS * 100.0).clamp(0.0, 100.0));
     for mut node in &mut air_fill {
         if node.width != width {
             node.width = width;
@@ -176,9 +223,8 @@ pub fn hud_status(
 }
 
 fn spawn_hud(commands: &mut Commands, game: &ClientGame) {
-    let Some(ingame) = game.ingame() else {
-        return;
-    };
+    let ingame = game.playing().expect("HUD requires a playing game");
+    let death = death_presentation(ingame);
     commands
         .spawn((
             HudRoot,
@@ -231,7 +277,7 @@ fn spawn_hud(commands: &mut Commands, game: &ClientGame) {
                                 ..default()
                             },
                             TextColor(Color::srgba(1.0, 1.0, 1.0, 0.6)),
-                            GlobalZIndex(1),
+                            GlobalZIndex(super::depth::HUD_LABEL),
                             Pickable::IGNORE,
                         ));
                         spawn_slot_widgets(
@@ -349,7 +395,7 @@ fn spawn_hud(commands: &mut Commands, game: &ClientGame) {
             ..default()
         },
         BackgroundColor(Color::srgba(0.9, 0.1, 0.1, 0.0)),
-        GlobalZIndex(50),
+        GlobalZIndex(super::depth::DAMAGE_FLASH),
         Pickable::IGNORE,
     ));
 
@@ -361,7 +407,7 @@ fn spawn_hud(commands: &mut Commands, game: &ClientGame) {
                 position_type: PositionType::Absolute,
                 width: percent(100),
                 height: percent(100),
-                display: Display::None,
+                display: death.screen,
                 flex_direction: FlexDirection::Column,
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
@@ -369,21 +415,31 @@ fn spawn_hud(commands: &mut Commands, game: &ClientGame) {
                 ..default()
             },
             BackgroundColor(Color::srgba(0.08, 0.0, 0.0, 0.78)),
-            GlobalZIndex(60),
+            GlobalZIndex(super::depth::DEATH),
         ))
         .with_children(|screen| {
             screen.spawn((
-                Text::new("You died"),
+                DeathTitle,
+                Text::new(death.title),
                 TextFont {
                     font_size: FontSize::Px(36.0),
                     ..default()
                 },
                 TextColor(Color::WHITE),
             ));
-            super::spawn_button(
+            super::spawn_button_with(
                 screen,
+                DeathReviveButton,
                 crate::view::io::Btn::Revive,
                 "Revive",
+                180.0,
+                super::BUTTON_BG,
+                death.revive,
+            );
+            super::spawn_button(
+                screen,
+                crate::view::io::Btn::OpenGameMenu,
+                "Game Menu",
                 180.0,
                 super::BUTTON_BG,
             );

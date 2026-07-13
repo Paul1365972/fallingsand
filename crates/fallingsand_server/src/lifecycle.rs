@@ -1,111 +1,150 @@
-use crate::commands::PendingCommands;
-use crate::dig::DigState;
-use crate::inventory::SlotActions;
-use crate::physics::StampResult;
-use crate::player::{
-    Air, Burning, Control, Health, Life, PLAYER_HALF_H, PLAYER_HALF_W, Player, PlayerActor,
-    PlayerRaster,
-};
-use crate::{MAX_AIR_SECS, MAX_HP, SimWorld, SpawnPoint};
-use bevy_ecs::prelude::*;
-use fallingsand_core::Fixed;
-use fallingsand_protocol::{InputState, LifeState};
-use fallingsand_sim::physics::{Actor, Controller};
+use crate::bodies::PixelBodies;
+use crate::physics::{try_materialize, unstamp_and_wake};
+use crate::player::{AvatarSnapshot, PlayerLife, Players, SearchWindow, SpawnSearch};
+use fallingsand_core::{CHUNK_SIZE, CellPos};
+use fallingsand_protocol::PlayerId;
+use fallingsand_sim::CellWorld;
 
-#[allow(clippy::too_many_arguments)]
-#[allow(clippy::type_complexity)]
-pub fn resolve_lifecycle(
-    mut sim: ResMut<SimWorld>,
-    spawn: Res<SpawnPoint>,
-    mut bodies: ResMut<crate::bodies::PixelBodies>,
-    mut impulses: ResMut<crate::PlayerImpulses>,
-    mut slot_actions: ResMut<SlotActions>,
-    mut commands: ResMut<PendingCommands>,
-    mut query: Query<(
-        Entity,
-        &mut Player,
-        &mut Life,
-        &mut Health,
-        &mut PlayerActor,
-        &mut PlayerRaster,
-        &mut Control,
-        &mut DigState,
-        &mut Air,
-        &mut Burning,
-    )>,
-) {
-    for (
-        entity,
-        mut player,
-        mut life,
-        mut health,
-        mut body,
-        mut raster,
-        mut control,
-        mut dig,
-        mut air,
-        mut burning,
-    ) in &mut query
-    {
-        if life.0 == LifeState::Alive && health.hp <= 0.0 {
-            health.hp = 0.0;
-            life.0 = LifeState::Dead;
-            clear_player_work(
-                entity,
-                &mut player,
-                &mut control,
-                &mut dig,
-                &mut impulses,
-                &mut slot_actions,
-                &mut commands,
-            );
-            crate::physics::unstamp_and_wake(&mut sim.0, &mut bodies, &mut raster.0);
-        }
+const SEARCH_ATTEMPTS_PER_TICK: usize = CHUNK_SIZE;
 
-        if life.0 != LifeState::Dead || !std::mem::take(&mut player.revive_requested) {
+pub fn begin_revives(players: &mut Players, spawn: CellPos, tick: u64) {
+    for (_, player) in players.iter_mut() {
+        if !std::mem::take(&mut player.control.revive_requested) {
             continue;
         }
-        let mut revived = Actor::new(
-            Fixed::from_cell(spawn.0.x),
-            Fixed::from_cell(spawn.0.y),
-            PLAYER_HALF_W,
-            PLAYER_HALF_H,
-        );
-        match crate::physics::spawn_stamp(&mut sim.0, &mut raster.0, &mut revived) {
-            StampResult::Stamped => {}
-            StampResult::Deferred => {
-                player.revive_requested = true;
-                continue;
-            }
-            StampResult::Blocked => continue,
-        }
-        body.0 = revived;
-        control.0 = Controller::default();
-        health.hp = MAX_HP;
-        air.secs = MAX_AIR_SECS;
-        burning.secs = 0.0;
-        life.0 = LifeState::Alive;
-        player.input = InputState::default();
-        player.jump_pressed = false;
+        player.begin_revive(spawn, tick);
     }
 }
 
-fn clear_player_work(
-    entity: Entity,
-    player: &mut Player,
-    control: &mut Control,
-    dig: &mut DigState,
-    impulses: &mut crate::PlayerImpulses,
-    slot_actions: &mut SlotActions,
-    commands: &mut PendingCommands,
+pub fn resolve_lethal(
+    sim: &mut CellWorld,
+    bodies: &mut PixelBodies,
+    players: &mut Players,
+    tick: u64,
 ) {
-    player.input = InputState::default();
-    player.jump_pressed = false;
-    player.flying = false;
-    player.revive_requested = false;
-    control.0 = Controller::default();
-    *dig = DigState::default();
-    impulses.0.remove(&entity);
-    slot_actions.0.retain(|action| action.entity != entity);
-    commands.0.retain(|command| command.entity != entity);
+    let dying: Vec<PlayerId> = players
+        .iter()
+        .filter_map(|(&id, player)| {
+            player
+                .avatar()
+                .is_some_and(|avatar| avatar.health.hp <= 0.0)
+                .then_some(id)
+        })
+        .collect();
+
+    for id in dying {
+        let Some(player) = players.get_mut(id) else {
+            continue;
+        };
+        let anchor = player.view_anchor();
+        let PlayerLife::Alive(avatar) = &mut player.life else {
+            continue;
+        };
+        avatar.health.hp = 0.0;
+        unstamp_and_wake(sim, bodies, &mut avatar.stamp);
+        player.die(anchor, tick);
+    }
+}
+
+pub fn advance_materializations(
+    sim: &mut CellWorld,
+    bodies: &mut PixelBodies,
+    players: &mut Players,
+    tick: u64,
+) -> Vec<(PlayerId, String)> {
+    let mut failures = Vec::new();
+    for (&id, player) in players.iter_mut() {
+        let result = match &mut player.life {
+            PlayerLife::Entering(entering) => {
+                let materialization = &mut entering.materialization;
+                advance_search(
+                    sim,
+                    bodies,
+                    &materialization.template,
+                    &mut materialization.search,
+                )
+            }
+            PlayerLife::Reviving(reviving) => {
+                let materialization = &mut reviving.materialization;
+                advance_search(
+                    sim,
+                    bodies,
+                    &materialization.template,
+                    &mut materialization.search,
+                )
+            }
+            PlayerLife::Alive(_) | PlayerLife::Dead(_) => continue,
+        };
+        match result {
+            SearchResult::Waiting => {}
+            SearchResult::Found(avatar) => {
+                player.finish_materialization(*avatar, tick);
+            }
+            SearchResult::Exhausted => {
+                let anchor = player.view_anchor();
+                player.die(anchor, tick);
+                failures.push((id, "no representable spawn position remains".into()));
+            }
+        }
+    }
+    failures
+}
+
+enum SearchResult {
+    Waiting,
+    Found(Box<crate::player::Avatar>),
+    Exhausted,
+}
+
+fn advance_search(
+    sim: &mut CellWorld,
+    bodies: &mut PixelBodies,
+    template: &AvatarSnapshot,
+    search: &mut SpawnSearch,
+) -> SearchResult {
+    let window = search.window();
+    if !window_loaded(sim, window) {
+        return SearchResult::Waiting;
+    }
+    for _ in 0..SEARCH_ATTEMPTS_PER_TICK {
+        let Some(candidate) = search.candidate() else {
+            return SearchResult::Exhausted;
+        };
+        if !footprint_inside_window(candidate, window) {
+            search.center_window(candidate);
+            return SearchResult::Waiting;
+        }
+        if let Some(avatar) = try_materialize(sim, bodies, template, candidate) {
+            return SearchResult::Found(Box::new(avatar));
+        }
+        if !search.advance() {
+            return SearchResult::Exhausted;
+        }
+    }
+    SearchResult::Waiting
+}
+
+fn footprint_inside_window(candidate: CellPos, window: SearchWindow) -> bool {
+    let actor = fallingsand_sim::physics::Actor::new(
+        fallingsand_core::Fixed::from_cell(candidate.x),
+        fallingsand_core::Fixed::from_cell(candidate.y),
+        crate::player::PLAYER_HALF_W,
+        crate::player::PLAYER_HALF_H,
+    );
+    let fp = actor.footprint();
+    window.contains(CellPos::new(fp.x0, fp.y0)) && window.contains(CellPos::new(fp.x1, fp.y1))
+}
+
+fn window_loaded(sim: &CellWorld, window: SearchWindow) -> bool {
+    let min = window.min.chunk();
+    let max = window.max.chunk();
+    for y in min.y..=max.y {
+        for x in min.x..=max.x {
+            if sim.chunk(fallingsand_core::ChunkPos::new(x, y)).is_none() {
+                return false;
+            }
+        }
+    }
+    debug_assert_eq!(CHUNK_SIZE as i32, 64);
+    true
 }

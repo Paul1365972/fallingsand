@@ -7,9 +7,11 @@ pub enum Context {
     Menu,
     Connecting,
     Gameplay,
+    Incapacitated,
+    Unavailable,
     Inventory,
     Chat,
-    Paused,
+    GameMenu,
     Settings,
 }
 
@@ -27,12 +29,12 @@ pub enum Action {
     SlotNext,
     OpenInventory,
     OpenChat,
-    Pause,
+    OpenGameMenu,
     CloseOverlay,
     SubmitChat,
     HistoryPrev,
     HistoryNext,
-    Resume,
+    CloseGameMenu,
     CancelConnect,
     CloseSettings,
     Screenshot,
@@ -102,9 +104,11 @@ pub struct Bindings {
     pub menu: Layer,
     pub connecting: Layer,
     pub gameplay: Layer,
+    pub incapacitated: Layer,
+    pub unavailable: Layer,
     pub inventory: Layer,
     pub chat: Layer,
-    pub paused: Layer,
+    pub game_menu: Layer,
     pub settings: Layer,
 }
 
@@ -114,9 +118,11 @@ impl Bindings {
             Context::Menu => &self.menu,
             Context::Connecting => &self.connecting,
             Context::Gameplay => &self.gameplay,
+            Context::Incapacitated => &self.incapacitated,
+            Context::Unavailable => &self.unavailable,
             Context::Inventory => &self.inventory,
             Context::Chat => &self.chat,
-            Context::Paused => &self.paused,
+            Context::GameMenu => &self.game_menu,
             Context::Settings => &self.settings,
         }
     }
@@ -203,7 +209,7 @@ impl Default for Bindings {
             bind(Button::ScrollDown, Action::SlotNext),
             bind(KeyCode::KeyE, Action::OpenInventory),
             bind(KeyCode::Enter, Action::OpenChat),
-            bind(KeyCode::Escape, Action::Pause),
+            bind(KeyCode::Escape, Action::OpenGameMenu),
             tap(KeyCode::ControlLeft, Action::ToggleCursorMode),
             tap(KeyCode::ControlRight, Action::ToggleCursorMode),
         ];
@@ -245,9 +251,11 @@ impl Default for Bindings {
             menu: opaque(Vec::new()),
             connecting: opaque(vec![bind(KeyCode::Escape, Action::CancelConnect)]),
             gameplay: opaque(gameplay),
+            incapacitated: opaque(vec![bind(KeyCode::Escape, Action::OpenGameMenu)]),
+            unavailable: opaque(vec![bind(KeyCode::Escape, Action::OpenGameMenu)]),
             inventory: opaque(inventory),
             chat: opaque(chat),
-            paused: opaque(vec![bind(KeyCode::Escape, Action::Resume)]),
+            game_menu: opaque(vec![bind(KeyCode::Escape, Action::CloseGameMenu)]),
             settings: opaque(vec![bind(KeyCode::Escape, Action::CloseSettings)]),
         }
     }

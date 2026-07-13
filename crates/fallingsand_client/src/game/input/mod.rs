@@ -4,10 +4,12 @@ mod keys;
 pub use bindings::{Action, Binding, Bindings, Context, Gesture, Layer};
 pub use keys::{Button, RawInput};
 
-use super::{ClientGame, Effect, Flow, IoFrame, Overlay, Phase};
+use super::{ClientGame, Effect, Flow, GamePanel, IoFrame};
 use bevy::input::mouse::MouseButton;
 use fallingsand_core::{HOTBAR_SLOTS, TICK_RATE};
-use fallingsand_protocol::{ClientMessage, GameMode, InputAction, InputFrame, InputState};
+use fallingsand_protocol::{
+    ClientMessage, GameMode, InputAction, InputFrame, InputState, MAX_INPUT_ACTIONS_PER_FRAME,
+};
 
 const DOUBLE_TAP_SECS: f32 = 0.3;
 const TICK_DT: f32 = 1.0 / TICK_RATE as f32;
@@ -42,6 +44,7 @@ pub struct InputCore {
     blocked_secondary: bool,
     tracks: Vec<Track>,
     acc: f32,
+    neutral_pending: bool,
 }
 
 impl InputCore {
@@ -49,23 +52,23 @@ impl InputCore {
         self.actions.push(action);
     }
 
+    fn take_actions(&mut self) -> Vec<InputAction> {
+        let count = self.actions.len().min(MAX_INPUT_ACTIONS_PER_FRAME);
+        self.actions.drain(..count).collect()
+    }
+
     pub(super) fn reset(&mut self) {
         *self = Self::default();
     }
 
-    pub(super) fn release_held(&mut self, session: Option<&mut super::net::Session>) {
+    pub(super) fn neutralize(&mut self) {
         let state = InputState {
             aim: self.latched.aim,
             ..Default::default()
         };
         self.latched = state;
         self.held = state;
-        if let Some(session) = session {
-            session.send(&ClientMessage::Input(InputFrame {
-                state,
-                actions: std::mem::take(&mut self.actions),
-            }));
-        }
+        self.neutral_pending = true;
     }
 
     fn track(&mut self, button: Button) -> &mut Track {
@@ -78,28 +81,6 @@ impl InputCore {
         };
         &mut self.tracks[index]
     }
-}
-
-fn context_stack(game: &ClientGame) -> Vec<Context> {
-    let mut stack = match &game.flow {
-        Flow::Menu => vec![Context::Menu],
-        Flow::InGame(ingame) => match ingame.phase {
-            Phase::Connecting => vec![Context::Connecting],
-            Phase::Playing => {
-                let mut stack = vec![Context::Gameplay];
-                stack.extend(ingame.overlays().iter().map(|overlay| match overlay {
-                    Overlay::Inventory => Context::Inventory,
-                    Overlay::Chat => Context::Chat,
-                    Overlay::Paused => Context::Paused,
-                }));
-                stack
-            }
-        },
-    };
-    if game.settings_open {
-        stack.push(Context::Settings);
-    }
-    stack
 }
 
 fn visible_layers<'a>(bindings: &'a Bindings, stack: &[Context]) -> Vec<&'a Layer> {
@@ -125,7 +106,7 @@ fn push_unique(fired: &mut Vec<Action>, action: Action) {
 }
 
 pub(super) fn resolve(game: &mut ClientGame, io: &IoFrame) {
-    let stack = context_stack(game);
+    let stack = game.input_contexts();
     let gameplay = stack.last() == Some(&Context::Gameplay);
 
     {
@@ -306,14 +287,14 @@ fn apply(game: &mut ClientGame, io: &IoFrame, action: Action) {
                     .queue(InputAction::SelectSlot(ingame.inventory.selected as u8));
             }
         }
-        Action::OpenInventory => open_overlay(game, Overlay::Inventory),
-        Action::OpenChat => open_overlay(game, Overlay::Chat),
-        Action::Pause => open_overlay(game, Overlay::Paused),
+        Action::OpenInventory => game.open_panel(GamePanel::Inventory),
+        Action::OpenChat => game.open_panel(GamePanel::Chat),
+        Action::OpenGameMenu => game.open_panel(GamePanel::GameMenu),
         Action::CloseOverlay => {
             if let Flow::InGame(ingame) = &mut game.flow
-                && let Some(top) = ingame.overlay_top()
+                && let Some(panel) = ingame.active_panel()
             {
-                ingame.close_overlay(top);
+                ingame.close_panel(panel);
             }
         }
         Action::SubmitChat => {
@@ -330,7 +311,7 @@ fn apply(game: &mut ClientGame, io: &IoFrame, action: Action) {
                     ingame.chat.record(&text);
                     session.send(&ClientMessage::Chat { text });
                 }
-                ingame.close_overlay(Overlay::Chat);
+                ingame.close_panel(GamePanel::Chat);
             }
         }
         Action::HistoryPrev => {
@@ -349,9 +330,9 @@ fn apply(game: &mut ClientGame, io: &IoFrame, action: Action) {
                 game.changes.chat_draft = true;
             }
         }
-        Action::Resume => {
+        Action::CloseGameMenu => {
             if let Flow::InGame(ingame) = &mut game.flow {
-                ingame.close_overlay(Overlay::Paused);
+                ingame.close_panel(GamePanel::GameMenu);
             }
         }
         Action::CancelConnect => game.leave_game(),
@@ -388,14 +369,6 @@ fn apply(game: &mut ClientGame, io: &IoFrame, action: Action) {
     }
 }
 
-fn open_overlay(game: &mut ClientGame, overlay: Overlay) {
-    if let Flow::InGame(ingame) = &mut game.flow
-        && ingame.overlay_top().is_none()
-    {
-        ingame.open_overlay(overlay, &mut game.input);
-    }
-}
-
 pub fn clamp_zoom(base: u32, index: i32) -> i32 {
     let base = base as i32;
     index.clamp((base / 2).max(1) - base, base)
@@ -406,10 +379,7 @@ pub(super) fn flush(game: &mut ClientGame, dt: f32) {
         game.input.acc = 0.0;
         return;
     };
-    if ingame.paused() {
-        game.input.acc = 0.0;
-        return;
-    }
+    let game_menu_open = ingame.game_menu_open();
     let input = &mut game.input;
     let session = ingame
         .net
@@ -420,14 +390,27 @@ pub(super) fn flush(game: &mut ClientGame, dt: f32) {
         input.acc = 0.0;
         input.actions.clear();
         input.latched = input.held;
+        input.neutral_pending = false;
         return;
     };
+    if input.neutral_pending {
+        session.send(&ClientMessage::Input(InputFrame {
+            state: input.latched,
+            actions: input.take_actions(),
+        }));
+        input.neutral_pending = false;
+        input.acc = 0.0;
+    }
+    if game_menu_open {
+        input.acc = 0.0;
+        return;
+    }
     input.acc = (input.acc + dt).min(MAX_CATCHUP_TICKS * TICK_DT);
     while input.acc >= TICK_DT {
         input.acc -= TICK_DT;
         session.send(&ClientMessage::Input(InputFrame {
             state: input.latched,
-            actions: std::mem::take(&mut input.actions),
+            actions: input.take_actions(),
         }));
         input.latched = input.held;
     }

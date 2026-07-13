@@ -1,4 +1,4 @@
-use super::{ClientGame, Flow, InGame, IoFrame, Phase};
+use super::{ClientGame, Flow, GamePanel, InGame, IoFrame, Phase};
 use bevy::log::{error, info, warn};
 use fallingsand_core::HOTBAR_SLOTS;
 use fallingsand_net::{Connection, ConnectionStatus};
@@ -79,7 +79,7 @@ pub enum ConnPhase {
 }
 
 impl Supervisor {
-    pub fn phase(&self, session: Option<&Session>, paused: bool) -> ConnPhase {
+    pub fn phase(&self, session: Option<&Session>, embedded_paused: bool) -> ConnPhase {
         match session {
             Some(session) => {
                 if session.player.is_none() {
@@ -90,7 +90,7 @@ impl Supervisor {
                             attempt: self.attempt.max(1),
                         }
                     }
-                } else if !paused && session.since_rx >= STALL_SECS {
+                } else if !embedded_paused && session.since_rx >= STALL_SECS {
                     ConnPhase::Stalled {
                         seconds: session.since_rx,
                     }
@@ -204,7 +204,7 @@ impl Net {
         {
             self.embedded
                 .as_ref()
-                .map(|server| server.stats.lock().unwrap().0)
+                .map(|server| *server.stats.lock().unwrap())
         }
         #[cfg(target_family = "wasm")]
         {
@@ -220,31 +220,34 @@ impl Net {
         #[cfg(target_family = "wasm")]
         let _ = paused;
     }
-
-    pub fn request_embedded_save(&self) {
-        #[cfg(not(target_family = "wasm"))]
-        if let Some(server) = &self.embedded {
-            server.control.request_save();
-        }
-    }
 }
 
 pub(super) fn update(game: &mut ClientGame, io: &IoFrame) {
     let Flow::InGame(ingame) = &mut game.flow else {
         return;
     };
+    let was_incapacitated = ingame.incapacitated();
+    let old_life = ingame.you.life;
     drain(ingame, io, &mut game.changes, game.view_prefs.debug_borders);
+    if ingame.you.life != old_life {
+        ingame.revive_request_pending = false;
+    }
+    if !was_incapacitated && ingame.incapacitated() {
+        ingame.close_panel(GamePanel::Inventory);
+        ingame.close_panel(GamePanel::Chat);
+        game.input.neutralize();
+    }
     supervise(ingame, io.dt, &mut game.changes, &mut game.input);
     sync_debug_stream(ingame, game.view_prefs.debug_borders);
 }
 
 fn drain(ingame: &mut InGame, io: &IoFrame, changes: &mut super::Changes, debug_borders: bool) {
-    let paused = ingame.paused();
+    let embedded_paused = ingame.net.is_embedded() && ingame.game_menu_open();
     let Some(session) = ingame.net.session.as_mut() else {
         return;
     };
     let closed = matches!(session.status(), ConnectionStatus::Closed { .. });
-    session.since_rx = if paused || closed {
+    session.since_rx = if embedded_paused || closed {
         0.0
     } else {
         session.since_rx + io.dt
@@ -269,9 +272,7 @@ fn drain(ingame: &mut InGame, io: &IoFrame, changes: &mut super::Changes, debug_
             Ok(ServerMessage::TickFrame(tick)) => {
                 ingame.world.apply(&tick);
                 ingame.inventory.apply(&tick, changes);
-                ingame
-                    .players
-                    .apply(&tick, session.player, &mut ingame.you, changes);
+                ingame.players.apply(&tick, &mut ingame.you, changes);
                 ingame.clock.apply(tick.world_age);
                 ingame.debug.track_rects(&tick, debug_borders);
                 if ingame.phase == Phase::Connecting && session.player.is_some() {
@@ -281,7 +282,6 @@ fn drain(ingame: &mut InGame, io: &IoFrame, changes: &mut super::Changes, debug_
             Ok(ServerMessage::HelloAck {
                 protocol_version,
                 player,
-                spawn,
                 selected,
             }) => {
                 if protocol_version != PROTOCOL_VERSION {
@@ -289,7 +289,7 @@ fn drain(ingame: &mut InGame, io: &IoFrame, changes: &mut super::Changes, debug_
                     session.conn.close("protocol version mismatch");
                 } else {
                     session.player = Some(player);
-                    info!("joined as {player:?}, spawn {spawn:?}");
+                    info!("joined as {player:?}");
                     ingame.inventory.selected = (selected as usize).min(HOTBAR_SLOTS - 1);
                     ingame.debug.subscribed = false;
                 }
@@ -300,13 +300,13 @@ fn drain(ingame: &mut InGame, io: &IoFrame, changes: &mut super::Changes, debug_
                 ingame.net.supervisor.target = None;
                 ingame.net.supervisor.last_error = Some(reason);
             }
-            Ok(ServerMessage::PlayerJoined { player, name }) => {
+            Ok(ServerMessage::RosterUpsert { player, name }) => {
                 ingame.players.names.insert(player, name);
                 changes.roster = true;
             }
-            Ok(ServerMessage::PlayerLeft { player }) => {
+            Ok(ServerMessage::RosterRemove { player }) => {
                 ingame.players.names.remove(&player);
-                ingame.players.roster.remove(&player);
+                ingame.players.avatars.remove(&player);
                 changes.roster = true;
             }
             Ok(ServerMessage::Chat { name, text, .. }) => {
@@ -538,7 +538,9 @@ mod embedded {
                     },
                 })
                 .expect("embedded server init");
-                server.run_blocking(thread_control);
+                if let Err(err) = server.run_blocking(thread_control) {
+                    bevy::log::error!("embedded server stopped: {err}");
+                }
             })
             .expect("spawn embedded server thread");
 

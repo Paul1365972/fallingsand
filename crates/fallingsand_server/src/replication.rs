@@ -1,87 +1,96 @@
-use crate::dig::DigState;
 use crate::inventory::Inventory;
-use crate::player::{Air, Burning, Health, Life, Mode, Player, PlayerActor, PlayerRaster};
-use crate::session::{SessionState, Sessions};
-use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y, SimWorld, TickStats};
-use bevy_ecs::prelude::*;
-use fallingsand_core::{CellOffset, ChunkPos};
+use crate::player::{PlayerLife, Players};
+use crate::regions::RegionMap;
+use crate::session::Sessions;
+use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y, TickStats};
+use fallingsand_core::{Calendar, CellOffset, ChunkPos, ItemStack};
 use fallingsand_protocol::{
-    ChunkDebugRects, ChunkOp, InteractionState, InteractionStatus, LifeState, PlayerId,
-    PlayerState, SelfState, ServerMessage, TickFrame, cells_to_wire,
+    ChunkDebugRects, ChunkOp, InteractionState, InteractionStatus, PlayerAvatarState, PlayerId,
+    PlayerState, SelfAvatarState, SelfLife, SelfState, ServerMessage, TickFrame, cells_to_wire,
 };
+use fallingsand_sim::CellWorld;
+use fallingsand_worldgen::WorldGenerator;
 use rustc_hash::FxHashSet;
+use std::collections::BTreeMap;
 
-#[derive(Resource, Default)]
-pub struct LastPlayers(pub rustc_hash::FxHashMap<PlayerId, PlayerState>);
+pub struct SessionReplication {
+    pub known_chunks: FxHashSet<ChunkPos>,
+    pub last_self: Option<SelfState>,
+    pub last_inventory: Vec<Option<ItemStack>>,
+    pub last_cursor: Option<ItemStack>,
+    pub last_trash: Option<ItemStack>,
+    pub fresh: bool,
+    pub sent_bytes: u64,
+    pub debug: bool,
+}
+
+impl Default for SessionReplication {
+    fn default() -> Self {
+        Self {
+            known_chunks: FxHashSet::default(),
+            last_self: None,
+            last_inventory: Vec::new(),
+            last_cursor: None,
+            last_trash: None,
+            fresh: true,
+            sent_bytes: 0,
+            debug: false,
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct ReplicationState {
+    last_players: BTreeMap<PlayerId, PlayerState>,
+}
 
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::type_complexity)]
 pub fn replicate(
-    mut sessions: ResMut<Sessions>,
-    sim: Res<SimWorld>,
-    clock: Res<crate::WorldClock>,
-    regions: Res<crate::regions::RegionMap>,
-    generator: Res<crate::regions::Generator>,
-    mut last_players: ResMut<LastPlayers>,
-    mut stats: ResMut<TickStats>,
-    query: Query<(
-        &Player,
-        &PlayerActor,
-        &PlayerRaster,
-        &Health,
-        &Life,
-        &Mode,
-        &Burning,
-        &Air,
-        &DigState,
-    )>,
-    mut inventories: Query<&mut Inventory>,
+    sessions: &mut Sessions,
+    players: &Players,
+    sim: &CellWorld,
+    clock: &Calendar,
+    regions: &RegionMap,
+    generator: &WorldGenerator,
+    replication: &mut ReplicationState,
+    stats: &mut TickStats,
 ) {
-    let tick = sim.0.tick();
-    let world_age = clock.0.age;
-
-    let mut all_players: Vec<PlayerState> = query
+    let tick = sim.tick();
+    let all_players: Vec<PlayerState> = players
         .iter()
-        .map(
-            |(player, body, raster, _, life, _, burning, _, _)| PlayerState {
-                player: player.id,
-                life: life.0,
-                cx: body.0.x.floor_cell(),
-                cy: body.0.y.floor_cell(),
-                height: body.0.rows() as u8,
-                burning: life.0 == LifeState::Alive && burning.active(),
-                facing_left: raster.0.facing_left(),
-            },
-        )
+        .map(|(&id, player)| PlayerState {
+            player: id,
+            avatar: player.avatar().map(|avatar| PlayerAvatarState {
+                cx: avatar.actor.x.floor_cell(),
+                cy: avatar.actor.y.floor_cell(),
+                height: avatar.actor.rows() as u8,
+                burning: avatar.burning_secs > 0.0,
+            }),
+        })
         .collect();
-    all_players.sort_unstable_by_key(|state| state.player.0);
     let changed_players: Vec<PlayerState> = all_players
         .iter()
-        .filter(|state| last_players.0.get(&state.player) != Some(*state))
+        .filter(|state| replication.last_players.get(&state.player) != Some(*state))
         .copied()
         .collect();
-    last_players.0 = all_players
+    replication.last_players = all_players
         .iter()
         .map(|state| (state.player, *state))
         .collect();
 
-    for session in &mut sessions.sessions {
-        if !matches!(session.state, SessionState::Playing) {
-            continue;
-        }
-        let Some(entity) = session.entity else {
+    for session in sessions.active_iter_mut() {
+        let Some(player_id) = session.player() else {
             continue;
         };
-        let Ok((_, body, _, health, life, mode, _, air, dig)) = query.get(entity) else {
+        let Some(player) = players.get(player_id) else {
             continue;
         };
-
-        let center = body.0.cell().chunk();
+        let center = player.view_anchor().chunk();
         let mut interest = FxHashSet::default();
         for dy in -INTEREST_RADIUS_Y..=INTEREST_RADIUS_Y {
             for dx in -INTEREST_RADIUS_X..=INTEREST_RADIUS_X {
                 let pos = center.translated(dx, dy);
-                if sim.0.chunk(pos).is_some() {
+                if sim.chunk(pos).is_some() {
                     interest.insert(pos);
                 }
             }
@@ -89,73 +98,136 @@ pub fn replicate(
 
         let mut debug = Vec::new();
         let chunks = build_tiles(
-            &mut session.known_chunks,
-            session.debug,
-            &sim.0,
+            &mut session.replication.known_chunks,
+            session.replication.debug,
+            sim,
             &interest,
             &mut debug,
         );
-        let players = if session.fresh {
+        let public_players = if session.replication.fresh {
             all_players.clone()
         } else {
             changed_players.clone()
         };
-        let (inventory, cursor, trash) = match inventories.get_mut(entity) {
-            Ok(mut inv) => inv.delta(session.fresh),
-            Err(_) => (Vec::new(), None, None),
-        };
-        let (biome, band) = generator
-            .0
-            .location_names(body.0.x.floor_cell(), body.0.y.floor_cell());
-        let current_self = SelfState {
-            life: life.0,
-            hp: health.hp,
-            air: air.secs,
-            mode: mode.0,
-            biome: biome.into(),
-            band: band.into(),
-            interaction: dig.interaction.unwrap_or(InteractionState {
-                target: body.0.cell(),
-                status: InteractionStatus::None,
-                progress: 0.0,
-                dig_material: None,
-            }),
-        };
-        let self_state = if session.last_self.as_ref() != Some(&current_self) {
-            session.last_self = Some(current_self.clone());
+        let fresh = session.replication.fresh;
+        let inventory = inventory_delta(&mut session.replication, &player.profile.inventory, fresh);
+        let anchor = player.view_anchor();
+        let (biome, band) = generator.location_names(anchor.x, anchor.y);
+        let current_self = self_state(player, biome, band);
+        let self_state = if session.replication.last_self.as_ref() != Some(&current_self) {
+            session.replication.last_self = Some(current_self.clone());
             Some(current_self)
         } else {
             None
         };
 
-        session.fresh = false;
+        session.replication.fresh = false;
         session.send(&ServerMessage::TickFrame(TickFrame {
             tick,
-            world_age,
+            world_age: clock.age,
             chunks,
-            players,
-            inventory,
-            cursor,
-            trash,
+            players: public_players,
+            inventory: inventory.slots,
+            cursor: inventory.cursor,
+            trash: inventory.trash,
             self_state,
             debug,
         }));
     }
 
-    stats.players = all_players.len();
-    (stats.awake_chunks, stats.awake_cells) = sim.0.awake_counts();
-    stats.loaded_chunks = sim.0.chunk_count();
+    stats.players = players.len();
+    (stats.awake_chunks, stats.awake_cells) = sim.awake_counts();
+    stats.loaded_chunks = sim.chunk_count();
     (stats.loaded_regions, stats.dirty_regions) = regions.counts();
-    stats.replicated_bytes = sessions.sessions.iter().map(|s| s.sent_bytes).sum();
-    for session in &mut sessions.sessions {
-        session.sent_bytes = 0;
+    stats.replicated_bytes = sessions
+        .entries
+        .values()
+        .map(|session| session.replication.sent_bytes)
+        .sum();
+    for session in sessions.entries.values_mut() {
+        session.replication.sent_bytes = 0;
+    }
+}
+
+fn self_state(player: &crate::player::Player, biome: &str, band: &str) -> SelfState {
+    let life = match &player.life {
+        PlayerLife::Entering(_) => SelfLife::Entering,
+        PlayerLife::Alive(avatar) => {
+            let interaction = avatar.dig.interaction.unwrap_or(InteractionState {
+                target: avatar.actor.cell(),
+                status: InteractionStatus::None,
+                progress: 0.0,
+                dig_material: None,
+            });
+            SelfLife::Alive(SelfAvatarState {
+                hp: avatar.health.hp,
+                air: avatar.air,
+                interaction,
+            })
+        }
+        PlayerLife::Dead(_) => SelfLife::Dead,
+        PlayerLife::Reviving(_) => SelfLife::Reviving,
+    };
+    SelfState {
+        life,
+        mode: player.profile.mode,
+        biome: biome.into(),
+        band: band.into(),
+    }
+}
+
+struct InventoryDelta {
+    slots: Vec<(u16, Option<ItemStack>)>,
+    cursor: Option<Option<ItemStack>>,
+    trash: Option<Option<ItemStack>>,
+}
+
+fn inventory_delta(
+    replication: &mut SessionReplication,
+    inventory: &Inventory,
+    fresh: bool,
+) -> InventoryDelta {
+    if fresh {
+        replication.last_inventory = inventory.inner.slots.clone();
+        replication.last_cursor = inventory.cursor;
+        replication.last_trash = inventory.trash;
+        return InventoryDelta {
+            slots: inventory
+                .inner
+                .slots
+                .iter()
+                .enumerate()
+                .map(|(index, stack)| (index as u16, *stack))
+                .collect(),
+            cursor: Some(inventory.cursor),
+            trash: Some(inventory.trash),
+        };
+    }
+    let slots = inventory
+        .inner
+        .slots
+        .iter()
+        .enumerate()
+        .filter_map(|(index, stack)| {
+            (replication.last_inventory.get(index) != Some(stack)).then_some((index as u16, *stack))
+        })
+        .collect();
+    let cursor = (replication.last_cursor != inventory.cursor).then_some(inventory.cursor);
+    let trash = (replication.last_trash != inventory.trash).then_some(inventory.trash);
+    replication.last_inventory = inventory.inner.slots.clone();
+    replication.last_cursor = inventory.cursor;
+    replication.last_trash = inventory.trash;
+    InventoryDelta {
+        slots,
+        cursor,
+        trash,
     }
 }
 
 fn build_tiles(
     known: &mut FxHashSet<ChunkPos>,
     debug: bool,
-    sim: &fallingsand_sim::CellWorld,
+    sim: &CellWorld,
     interest: &FxHashSet<ChunkPos>,
     debug_rects: &mut Vec<ChunkDebugRects>,
 ) -> Vec<ChunkOp> {
@@ -200,8 +272,4 @@ fn build_tiles(
         });
     }
     ops
-}
-
-pub fn advance_clock(mut clock: ResMut<crate::WorldClock>) {
-    clock.0.advance();
 }

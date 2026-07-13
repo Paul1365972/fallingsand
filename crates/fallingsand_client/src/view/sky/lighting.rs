@@ -111,20 +111,28 @@ pub fn apply_lighting(
     if active.darkness > 0.001
         && let Some(ingame) = game.0.ingame()
     {
-        if ingame.you.present {
+        if let Some(local) = ingame.local_avatar() {
             active.lights.push(Vec4::new(
-                ingame.you.pos.x,
-                ingame.you.pos.y,
+                local.pos.x,
+                local.pos.y,
                 PLAYER_LIGHT_RADIUS,
                 1.0,
             ));
+            if local.burning && active.lights.len() < MAX_LIGHTS {
+                active.lights.push(Vec4::new(
+                    local.pos.x,
+                    local.pos.y,
+                    BURNING_LIGHT_RADIUS,
+                    1.0,
+                ));
+            }
         }
         let local = ingame
             .net
             .session
             .as_ref()
             .and_then(|session| session.player());
-        for (&player, remote) in &ingame.players.roster {
+        for (&player, remote) in &ingame.players.avatars {
             if Some(player) == local {
                 continue;
             }
@@ -136,14 +144,6 @@ pub fn apply_lighting(
                     1.0,
                 ));
             }
-        }
-        if ingame.you.present && ingame.you.burning && active.lights.len() < MAX_LIGHTS {
-            active.lights.push(Vec4::new(
-                ingame.you.pos.x,
-                ingame.you.pos.y,
-                BURNING_LIGHT_RADIUS,
-                1.0,
-            ));
         }
         for light in &emissive_lights.0 {
             if active.lights.len() >= MAX_LIGHTS {

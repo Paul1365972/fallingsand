@@ -96,7 +96,7 @@ fn spawn_chat_ui(commands: &mut Commands, game: &ClientGame) {
                 row_gap: px(3),
                 ..default()
             },
-            GlobalZIndex(20),
+            GlobalZIndex(super::depth::CHAT),
         ))
         .with_children(|root| {
             root.spawn((

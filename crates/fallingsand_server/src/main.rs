@@ -135,7 +135,7 @@ fn main() -> anyhow::Result<()> {
         info!("shutdown requested");
         ctrlc_control.request_stop();
     })?;
-    server.run_blocking(control);
+    server.run_blocking(control)?;
     let uptime = started.elapsed().as_secs();
     info!(
         "goodbye (uptime {}h {}m {}s)",

@@ -9,18 +9,6 @@ pub struct PlayerId(pub u32);
 pub struct PlayerUuid(pub u128);
 
 impl PlayerUuid {
-    pub fn to_hex(self) -> String {
-        format!("{:032x}", self.0)
-    }
-
-    pub fn from_hex(text: &str) -> Option<Self> {
-        let text = text.trim();
-        if text.is_empty() || text.len() > 32 {
-            return None;
-        }
-        u128::from_str_radix(text, 16).ok().map(Self)
-    }
-
     pub fn from_public_key(public_key: &[u8; 32]) -> Self {
         use sha2::{Digest, Sha256};
         let digest = Sha256::digest(public_key);
@@ -151,19 +139,15 @@ pub enum SlotAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlayerState {
     pub player: PlayerId,
-    pub life: LifeState,
+    pub avatar: Option<PlayerAvatarState>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlayerAvatarState {
     pub cx: i32,
     pub cy: i32,
     pub height: u8,
     pub burning: bool,
-    pub facing_left: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub enum LifeState {
-    #[default]
-    Alive,
-    Dead,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -188,6 +172,31 @@ pub struct InteractionState {
     pub dig_material: Option<MaterialId>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct SelfAvatarState {
+    pub hp: f32,
+    pub air: f32,
+    pub interaction: InteractionState,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub enum SelfLife {
+    #[default]
+    Entering,
+    Alive(SelfAvatarState),
+    Dead,
+    Reviving,
+}
+
+impl SelfLife {
+    pub const fn avatar(self) -> Option<SelfAvatarState> {
+        match self {
+            Self::Alive(avatar) => Some(avatar),
+            Self::Entering | Self::Dead | Self::Reviving => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChunkDebugRects {
     pub pos: ChunkPos,
@@ -197,13 +206,10 @@ pub struct ChunkDebugRects {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SelfState {
-    pub life: LifeState,
-    pub hp: f32,
-    pub air: f32,
+    pub life: SelfLife,
     pub mode: GameMode,
     pub biome: String,
     pub band: String,
-    pub interaction: InteractionState,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -263,17 +269,16 @@ pub enum ServerMessage {
     HelloAck {
         protocol_version: u16,
         player: PlayerId,
-        spawn: CellPos,
         selected: u8,
     },
     Reject {
         reason: String,
     },
-    PlayerJoined {
+    RosterUpsert {
         player: PlayerId,
         name: String,
     },
-    PlayerLeft {
+    RosterRemove {
         player: PlayerId,
     },
     Chat {

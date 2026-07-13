@@ -1,12 +1,10 @@
-use crate::player::{Air, Burning, Health, Life, Mode, PlayerActor};
-use crate::{MAX_AIR_SECS, MAX_HP, SimWorld};
-use bevy_ecs::prelude::*;
+use crate::player::{PlayerLife, Players};
+use crate::{MAX_AIR_SECS, MAX_HP};
 use fallingsand_core::content;
 use fallingsand_core::{CellPos, Phase, TICK_DT, Tag};
 use fallingsand_protocol::GameMode;
-use fallingsand_protocol::LifeState;
+use fallingsand_sim::CellWorld;
 use fallingsand_sim::physics::{Actor, CellSource};
-use rustc_hash::FxHashMap;
 
 pub const BURN_SECS: f32 = 4.0;
 pub const BURN_DPS: f32 = 6.0;
@@ -17,9 +15,6 @@ pub const CRUSH_DAMAGE_PER_DV: f32 = 0.3;
 pub const REGEN_DELAY_SECS: f32 = 8.0;
 pub const REGEN_RATE: f32 = 2.0;
 const REGEN_DELAY_TICKS: u64 = fallingsand_core::ticks_from_secs(REGEN_DELAY_SECS);
-
-#[derive(Resource, Default)]
-pub struct CrushEvents(pub Vec<(Entity, f32)>);
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct HazardSample {
@@ -63,66 +58,46 @@ pub fn crush_damage(dv: f32) -> f32 {
     ((dv - CRUSH_THRESHOLD_DV) * CRUSH_DAMAGE_PER_DV).max(0.0)
 }
 
-#[allow(clippy::type_complexity)]
-pub fn apply_hazards(
-    sim: Res<SimWorld>,
-    mut crushes: ResMut<CrushEvents>,
-    mut query: Query<(
-        Entity,
-        &Life,
-        &Mode,
-        &PlayerActor,
-        &mut Health,
-        &mut Air,
-        &mut Burning,
-    )>,
-) {
-    let tick = sim.0.tick();
-    let mut crush: FxHashMap<Entity, f32> = FxHashMap::default();
-    for (entity, dv) in crushes.0.drain(..) {
-        let entry = crush.entry(entity).or_insert(0.0);
-        *entry = entry.max(dv);
-    }
-
-    for (entity, life, mode, body, mut health, mut air, mut burning) in &mut query {
-        if life.0 != LifeState::Alive {
+pub fn apply_hazards(sim: &CellWorld, players: &mut Players) {
+    for (_, player) in players.iter_mut() {
+        let survival = player.profile.mode == GameMode::Survival;
+        let PlayerLife::Alive(avatar) = &mut player.life else {
+            continue;
+        };
+        if !survival {
+            avatar.air = MAX_AIR_SECS;
+            avatar.burning_secs = 0.0;
+            avatar.pending_crush_dv = 0.0;
             continue;
         }
-        if mode.0 != GameMode::Survival {
-            air.secs = MAX_AIR_SECS;
-            burning.secs = 0.0;
-            continue;
-        }
-        let sample = sample_hazards(&sim.0, &body.0);
+        let sample = sample_hazards(sim, &avatar.actor);
         let mut damage = sample.contact_dps * TICK_DT;
         if sample.hot {
-            burning.secs = BURN_SECS;
+            avatar.burning_secs = BURN_SECS;
         }
         if sample.extinguish {
-            burning.secs = 0.0;
+            avatar.burning_secs = 0.0;
         }
-        if burning.active() {
+        if avatar.burning_secs > 0.0 {
             damage += BURN_DPS * TICK_DT;
-            burning.secs = (burning.secs - TICK_DT).max(0.0);
+            avatar.burning_secs = (avatar.burning_secs - TICK_DT).max(0.0);
         }
         if sample.head_submerged {
-            air.secs = (air.secs - TICK_DT).max(0.0);
-            if air.secs <= 0.0 {
+            avatar.air = (avatar.air - TICK_DT).max(0.0);
+            if avatar.air <= 0.0 {
                 damage += DROWN_DPS * TICK_DT;
             }
         } else {
-            air.secs = (air.secs + AIR_REFILL_MULT * TICK_DT).min(MAX_AIR_SECS);
+            avatar.air = (avatar.air + AIR_REFILL_MULT * TICK_DT).min(MAX_AIR_SECS);
         }
-        if let Some(&dv) = crush.get(&entity) {
-            damage += crush_damage(dv);
-        }
+        damage += crush_damage(std::mem::take(&mut avatar.pending_crush_dv));
         if damage > 0.0 {
-            health.hp -= damage;
-            health.last_damage_tick = tick;
-        } else if health.hp < MAX_HP
-            && tick.saturating_sub(health.last_damage_tick) >= REGEN_DELAY_TICKS
-        {
-            health.hp = (health.hp + REGEN_RATE * TICK_DT).min(MAX_HP);
+            avatar.health.hp -= damage;
+            avatar.health.regen_delay_ticks = REGEN_DELAY_TICKS;
+        } else if avatar.health.regen_delay_ticks > 0 {
+            avatar.health.regen_delay_ticks -= 1;
+        } else if avatar.health.hp < MAX_HP {
+            avatar.health.hp = (avatar.health.hp + REGEN_RATE * TICK_DT).min(MAX_HP);
         }
     }
 }

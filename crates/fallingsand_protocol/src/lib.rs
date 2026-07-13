@@ -3,12 +3,13 @@ pub mod wire;
 
 pub use messages::{
     ChunkDebugRects, ChunkOp, ClientMessage, CursorMode, GameMode, InputAction, InputFrame,
-    InputState, InteractionState, InteractionStatus, LifeState, PlayerId, PlayerState, PlayerUuid,
-    SelfState, ServerMessage, SlotAction, TickFrame,
+    InputState, InteractionState, InteractionStatus, PlayerAvatarState, PlayerId, PlayerState,
+    PlayerUuid, SelfAvatarState, SelfLife, SelfState, ServerMessage, SlotAction, TickFrame,
 };
 pub use wire::{WireError, cells_from_wire, cells_to_wire, decode_message, encode_message};
 
-pub const PROTOCOL_VERSION: u16 = 36;
+pub const PROTOCOL_VERSION: u16 = 39;
+pub const MAX_INPUT_ACTIONS_PER_FRAME: usize = 64;
 
 const IDENTITY_DOMAIN: &[u8] = b"fallingsand identity v1\0";
 pub const IDENTITY_MESSAGE_LEN: usize = IDENTITY_DOMAIN.len() + 32;

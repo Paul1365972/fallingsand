@@ -2699,7 +2699,6 @@ name = "fallingsand_server"
 version = "0.2.0"
 dependencies = [
  "anyhow",
- "bevy_ecs",
  "ctrlc",
  "dotenvy",
  "ed25519-dalek",

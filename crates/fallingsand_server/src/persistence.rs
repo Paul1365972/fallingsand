@@ -1,14 +1,25 @@
+use crate::WorldInfo;
+use crate::bodies::PixelBodies;
+use crate::inventory::Inventory;
+use crate::player::{AvatarSnapshot, Player, PlayerLife, Players, RestoredPlayer, ResumeSnapshot};
+use crate::regions::{RegionMap, collect_dirty_saves, mark_changed_regions, mark_saved};
 use fallingsand_core::{
-    CHUNK_AREA, CHUNK_SIZE, Cell, DirtyRect, Fixed, Inventory as CoreInventory, ItemId,
-    ItemRegistry, ItemStack, MaterialId, PLAYER_SLOTS, REGION_AREA_CHUNKS, Region, RegionPos,
+    CHUNK_AREA, CHUNK_SIZE, Calendar, Cell, CellPos, DirtyRect, Fixed, HOTBAR_SLOTS,
+    Inventory as CoreInventory, ItemId, ItemRegistry, ItemStack, MaterialId, PLAYER_SLOTS,
+    REGION_AREA_CHUNKS, Region, RegionPos,
 };
-use fallingsand_protocol::{GameMode, LifeState, PlayerUuid};
+use fallingsand_protocol::{GameMode, PlayerUuid};
+use fallingsand_sim::CellWorld;
+use fallingsand_sim::bodies::settle_body;
 use redb::{Database, ReadableDatabase, TableDefinition};
+use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 pub const REGION_FORMAT_VERSION: u8 = 11;
-pub const WORLD_FORMAT_VERSION: u16 = 18;
+pub const WORLD_FORMAT_VERSION: u16 = 20;
+const AUTOSAVE_INTERVAL_TICKS: u64 = fallingsand_core::ticks_from_secs(10.0);
 const CELL_BYTES: usize = 8;
 const RECT_BYTES: usize = 4;
 const REGION_CELL_BYTES: usize = REGION_AREA_CHUNKS * CHUNK_AREA * CELL_BYTES;
@@ -37,21 +48,66 @@ pub type SlotRecord = Option<StackRecord>;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlayerRecord {
-    pub x: Fixed,
-    pub y: Fixed,
-    pub hp: f32,
-    pub life: LifeState,
-    pub vx: Fixed,
-    pub vy: Fixed,
     pub mode: GameMode,
-    pub air: f32,
-    pub burning: f32,
-    pub flying: bool,
     pub selected: u8,
     pub inventory: Vec<SlotRecord>,
     pub cursor: SlotRecord,
     pub trash: SlotRecord,
     pub history: Vec<String>,
+    pub resume: ResumeState,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ResumeState {
+    Alive(AvatarRecord),
+    Dead {
+        view_anchor: fallingsand_core::CellPos,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AvatarRecord {
+    pub x: Fixed,
+    pub y: Fixed,
+    pub vx: Fixed,
+    pub vy: Fixed,
+    pub hp: f32,
+    pub regen_delay_ticks: u64,
+    pub air: f32,
+    pub burning: f32,
+    pub flying: bool,
+}
+
+impl From<AvatarRecord> for AvatarSnapshot {
+    fn from(record: AvatarRecord) -> Self {
+        Self {
+            x: record.x,
+            y: record.y,
+            vx: record.vx,
+            vy: record.vy,
+            hp: record.hp,
+            regen_delay_ticks: record.regen_delay_ticks,
+            air: record.air,
+            burning: record.burning,
+            flying: record.flying,
+        }
+    }
+}
+
+impl From<&AvatarSnapshot> for AvatarRecord {
+    fn from(snapshot: &AvatarSnapshot) -> Self {
+        Self {
+            x: snapshot.x,
+            y: snapshot.y,
+            vx: snapshot.vx,
+            vy: snapshot.vy,
+            hp: snapshot.hp,
+            regen_delay_ticks: snapshot.regen_delay_ticks,
+            air: snapshot.air,
+            burning: snapshot.burning,
+            flying: snapshot.flying,
+        }
+    }
 }
 
 pub fn stack_to_record(reg: &ItemRegistry, stack: Option<ItemStack>) -> SlotRecord {
@@ -92,6 +148,51 @@ pub fn player_slots_from_record(reg: &ItemRegistry, list: &[SlotRecord]) -> Core
     inv
 }
 
+pub fn restore_player(reg: &ItemRegistry, record: PlayerRecord) -> RestoredPlayer {
+    let resume = match record.resume {
+        ResumeState::Alive(record) => ResumeSnapshot::Alive(record.into()),
+        ResumeState::Dead { view_anchor } => ResumeSnapshot::Dead { view_anchor },
+    };
+    RestoredPlayer {
+        mode: record.mode,
+        selected_slot: record.selected.min(HOTBAR_SLOTS as u8 - 1),
+        inventory: Inventory::with(
+            player_slots_from_record(reg, &record.inventory),
+            stack_from_record(reg, &record.cursor),
+            stack_from_record(reg, &record.trash),
+        ),
+        history: record.history,
+        resume,
+    }
+}
+
+pub fn snapshot_player(reg: &ItemRegistry, player: &Player) -> PlayerRecord {
+    let resume = match &player.life {
+        PlayerLife::Entering(entering) => {
+            ResumeState::Alive(AvatarRecord::from(&entering.materialization.template))
+        }
+        PlayerLife::Alive(avatar) => {
+            let snapshot = AvatarSnapshot::from_avatar(avatar);
+            ResumeState::Alive(AvatarRecord::from(&snapshot))
+        }
+        PlayerLife::Dead(dead) => ResumeState::Dead {
+            view_anchor: dead.view_anchor,
+        },
+        PlayerLife::Reviving(reviving) => ResumeState::Dead {
+            view_anchor: reviving.death.view_anchor,
+        },
+    };
+    PlayerRecord {
+        mode: player.profile.mode,
+        selected: player.profile.selected_slot,
+        inventory: slots_to_record(reg, &player.profile.inventory.inner),
+        cursor: stack_to_record(reg, player.profile.inventory.cursor),
+        trash: stack_to_record(reg, player.profile.inventory.trash),
+        history: player.profile.history.clone(),
+        resume,
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
     #[error("redb: {0}")]
@@ -101,11 +202,17 @@ pub enum StoreError {
     #[error("corrupt record: {0}")]
     CorruptRecord(#[from] postcard::Error),
     #[error(
-        "world format {0} is too old (current {WORLD_FORMAT_VERSION}); pre-release worlds carry no migrations — delete the world and create a new one"
+        "unsupported world format {0} (current {WORLD_FORMAT_VERSION}); pre-release worlds carry no migrations — delete the world and create a new one"
     )]
     UnsupportedWorld(u16),
     #[error("unsupported region format {0} (server supports {REGION_FORMAT_VERSION})")]
     UnsupportedRegion(u8),
+    #[error("failed to load region {pos:?}: {source}")]
+    RegionLoad {
+        pos: RegionPos,
+        #[source]
+        source: Box<StoreError>,
+    },
 }
 
 impl From<redb::DatabaseError> for StoreError {
@@ -134,8 +241,117 @@ impl From<redb::CommitError> for StoreError {
     }
 }
 
-pub struct WorldStore {
+struct WorldStore {
     db: Database,
+}
+
+pub struct Persistence {
+    store: Option<WorldStore>,
+    pending_regions: BTreeMap<RegionPos, Vec<u8>>,
+    pending_players: BTreeMap<PlayerUuid, PlayerRecord>,
+    pending_meta: Option<WorldMeta>,
+}
+
+impl Persistence {
+    pub fn open(path: Option<&Path>) -> Result<Self, StoreError> {
+        Ok(Self {
+            store: path.map(WorldStore::open).transpose()?,
+            pending_regions: BTreeMap::new(),
+            pending_players: BTreeMap::new(),
+            pending_meta: None,
+        })
+    }
+
+    pub fn load_meta(&self) -> Result<Option<WorldMeta>, StoreError> {
+        match &self.pending_meta {
+            Some(meta) => Ok(Some(meta.clone())),
+            None => self.store.as_ref().map_or(Ok(None), WorldStore::load_meta),
+        }
+    }
+
+    pub fn stage_meta(&mut self, meta: WorldMeta) {
+        self.pending_meta = Some(meta);
+    }
+
+    pub fn flush_meta(&mut self) -> Result<(), StoreError> {
+        let Some(store) = &self.store else {
+            return Ok(());
+        };
+        let Some(meta) = &self.pending_meta else {
+            return Ok(());
+        };
+        store.save_meta(meta)?;
+        self.pending_meta = None;
+        Ok(())
+    }
+
+    pub fn load_region(&mut self, pos: RegionPos) -> Result<Option<Region>, StoreError> {
+        if let Some(blob) = self.pending_regions.get(&pos) {
+            let region = decode_region(blob)?;
+            self.pending_regions.remove(&pos);
+            return Ok(Some(region));
+        }
+        self.store
+            .as_ref()
+            .map_or(Ok(None), |store| store.load_region(pos))
+    }
+
+    pub fn stage_region(&mut self, pos: RegionPos, blob: Vec<u8>) {
+        self.pending_regions.insert(pos, blob);
+    }
+
+    pub fn stage_regions(&mut self, regions: impl IntoIterator<Item = (RegionPos, Vec<u8>)>) {
+        self.pending_regions.extend(regions);
+    }
+
+    pub fn flush_regions(&mut self) -> Result<usize, StoreError> {
+        if self.pending_regions.is_empty() {
+            return Ok(0);
+        }
+        let count = self.pending_regions.len();
+        let Some(store) = &self.store else {
+            return Ok(count);
+        };
+        let regions: Vec<_> = self
+            .pending_regions
+            .iter()
+            .map(|(&pos, blob)| (pos, blob.clone()))
+            .collect();
+        store.save_regions(&regions)?;
+        self.pending_regions.clear();
+        Ok(count)
+    }
+
+    pub fn load_player(&mut self, uuid: PlayerUuid) -> Result<Option<PlayerRecord>, StoreError> {
+        if let Some(record) = self.pending_players.remove(&uuid) {
+            return Ok(Some(record));
+        }
+        self.store
+            .as_ref()
+            .map_or(Ok(None), |store| store.load_player(uuid))
+    }
+
+    pub fn stage_player(&mut self, uuid: PlayerUuid, record: PlayerRecord) {
+        self.pending_players.insert(uuid, record);
+    }
+
+    pub fn flush_players(&mut self) -> Result<usize, StoreError> {
+        if self.pending_players.is_empty() {
+            return Ok(0);
+        }
+        let count = self.pending_players.len();
+        let Some(store) = &self.store else {
+            return Ok(count);
+        };
+        let players: Vec<_> = self
+            .pending_players
+            .iter()
+            .map(|(&uuid, record)| (uuid, record.clone()))
+            .collect();
+        store.save_players(&players)?;
+        self.pending_players.clear();
+        Ok(count)
+    }
 }
 
 impl WorldStore {
@@ -233,6 +449,128 @@ impl WorldStore {
         }
         write.commit()?;
         Ok(())
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn autosave(
+    sim: &CellWorld,
+    regions: &mut RegionMap,
+    item_reg: &ItemRegistry,
+    info: &WorldInfo,
+    clock: &Calendar,
+    players: &Players,
+    persistence: &mut Persistence,
+) {
+    let tick = sim.tick();
+    if tick == 0 || !tick.is_multiple_of(AUTOSAVE_INTERVAL_TICKS) {
+        return;
+    }
+
+    let to_save = collect_dirty_saves(sim, regions);
+    let saved_regions: Vec<_> = to_save.iter().map(|(pos, _)| *pos).collect();
+    persistence.stage_regions(to_save);
+    match persistence.flush_regions() {
+        Ok(count) => {
+            mark_saved(regions, saved_regions);
+            if count > 0 {
+                tracing::debug!("autosaved {count} regions");
+            }
+        }
+        Err(err) => tracing::error!("autosave failed: {err}"),
+    }
+
+    for (_, player) in players.iter() {
+        persistence.stage_player(player.uuid, snapshot_player(item_reg, player));
+    }
+    if let Err(err) = persistence.flush_players() {
+        tracing::error!("player autosave failed: {err}");
+    }
+    persistence.stage_meta(world_meta(info, clock, tick));
+    if let Err(err) = persistence.flush_meta() {
+        tracing::error!("meta autosave failed: {err}");
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn save_everything(
+    sim: &mut CellWorld,
+    regions: &mut RegionMap,
+    bodies: &mut PixelBodies,
+    players: &Players,
+    item_reg: &ItemRegistry,
+    persistence: &mut Persistence,
+    info: &WorldInfo,
+    clock: &Calendar,
+    final_save: bool,
+) {
+    let started = std::time::Instant::now();
+
+    if final_save && !bodies.bodies.is_empty() {
+        let mut touched = FxHashSet::default();
+        for body in bodies.bodies.drain(..) {
+            settle_body(sim, &body);
+            let radius = ((body.width() as f32).hypot(body.height() as f32) + 1.0).ceil() as i32;
+            let (cx, cy) = (body.x.floor_cell(), body.y.floor_cell());
+            let min = CellPos::new(cx - radius, cy - radius).region();
+            let max = CellPos::new(cx + radius + 1, cy + radius + 1).region();
+            for region_y in min.y..=max.y {
+                for region_x in min.x..=max.x {
+                    touched.insert(RegionPos::new(region_x, region_y));
+                }
+            }
+        }
+        for pos in touched {
+            if let Some(state) = regions.states.get_mut(&pos) {
+                state.dirty = true;
+            }
+        }
+    }
+
+    mark_changed_regions(sim, regions);
+    let to_save = collect_dirty_saves(sim, regions);
+    let saved_regions: Vec<_> = to_save.iter().map(|(pos, _)| *pos).collect();
+    persistence.stage_regions(to_save);
+    let region_count = match persistence.flush_regions() {
+        Ok(count) => {
+            mark_saved(regions, saved_regions);
+            count
+        }
+        Err(err) => {
+            tracing::error!("final save failed: {err}");
+            0
+        }
+    };
+
+    for (_, player) in players.iter() {
+        persistence.stage_player(player.uuid, snapshot_player(item_reg, player));
+    }
+    let player_count = match persistence.flush_players() {
+        Ok(count) => count,
+        Err(err) => {
+            tracing::error!("final player save failed: {err}");
+            0
+        }
+    };
+    persistence.stage_meta(world_meta(info, clock, sim.tick()));
+    if let Err(err) = persistence.flush_meta() {
+        tracing::error!("final meta save failed: {err}");
+    }
+    tracing::info!(
+        "world saved: {} regions, {} players in {:.1?}",
+        region_count,
+        player_count,
+        started.elapsed(),
+    );
+}
+
+fn world_meta(info: &WorldInfo, clock: &Calendar, tick: u64) -> WorldMeta {
+    WorldMeta {
+        format_version: WORLD_FORMAT_VERSION,
+        seed: info.seed,
+        name: info.name.clone(),
+        world_age: clock.age,
+        tick,
     }
 }
 

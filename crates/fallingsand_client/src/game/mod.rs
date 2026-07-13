@@ -16,7 +16,8 @@ use chat::Chat;
 use clock::WorldClock;
 use debug::DebugState;
 use fallingsand_core::{CellPos, ItemRegistry, RecipeRegistry};
-use input::{Bindings, InputCore, RawInput};
+use fallingsand_protocol::{InputAction, SelfLife};
+use input::{Bindings, Context, InputCore, RawInput};
 use inventory::{Inventory, SlotRegion};
 use menu::MenuState;
 use net::{ConnectTarget, Net};
@@ -86,9 +87,9 @@ pub enum UiEvent {
     OpenSettings,
     CloseSettings,
     QuitApp,
-    PauseResume,
-    PauseSave,
-    PauseQuitToMenu,
+    OpenGameMenu,
+    CloseGameMenu,
+    QuitToMenu,
     CancelConnect,
     Revive,
     Slot { region: SlotRegion, right: bool },
@@ -117,16 +118,17 @@ pub enum Phase {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Overlay {
+pub enum GamePanel {
     Inventory,
     Chat,
-    Paused,
+    GameMenu,
 }
 
 pub struct InGame {
     pub net: Net,
     pub phase: Phase,
-    overlays: Vec<Overlay>,
+    active_panel: Option<GamePanel>,
+    pub revive_request_pending: bool,
     pub world: WorldView,
     pub players: Players,
     pub you: SelfState,
@@ -141,7 +143,8 @@ impl InGame {
         Self {
             net,
             phase: Phase::Connecting,
-            overlays: Vec::new(),
+            active_panel: None,
+            revive_request_pending: false,
             world: WorldView::default(),
             players: Players::default(),
             you: SelfState::default(),
@@ -152,46 +155,56 @@ impl InGame {
         }
     }
 
-    pub fn overlays(&self) -> &[Overlay] {
-        &self.overlays
+    pub fn active_panel(&self) -> Option<GamePanel> {
+        self.active_panel
     }
 
-    pub fn overlay_top(&self) -> Option<Overlay> {
-        self.overlays.last().copied()
+    pub fn game_menu_open(&self) -> bool {
+        self.active_panel == Some(GamePanel::GameMenu)
     }
 
-    pub fn paused(&self) -> bool {
-        self.overlays.contains(&Overlay::Paused)
+    pub fn incapacitated(&self) -> bool {
+        matches!(self.you.life, SelfLife::Dead | SelfLife::Reviving)
     }
 
     pub fn chat_open(&self) -> bool {
-        self.overlays.contains(&Overlay::Chat)
+        self.active_panel == Some(GamePanel::Chat)
     }
 
     pub fn inventory_open(&self) -> bool {
-        self.overlays.contains(&Overlay::Inventory)
+        self.active_panel == Some(GamePanel::Inventory)
     }
 
-    pub fn open_overlay(&mut self, overlay: Overlay, input: &mut InputCore) {
-        if self.overlays.contains(&overlay) {
-            return;
-        }
-        self.overlays.push(overlay);
-        if overlay == Overlay::Chat {
+    pub fn session_ready(&self) -> bool {
+        self.net
+            .session
+            .as_ref()
+            .is_some_and(|session| session.player().is_some())
+    }
+
+    pub fn local_avatar(&self) -> Option<&players::RemotePlayer> {
+        let player = self.net.session.as_ref()?.player()?;
+        self.players.avatars.get(&player)
+    }
+
+    fn open_panel(&mut self, panel: GamePanel, input: &mut InputCore) {
+        debug_assert!(self.active_panel.is_none());
+        self.active_panel = Some(panel);
+        if panel == GamePanel::Chat {
             self.chat.begin_history();
         }
-        if overlay == Overlay::Paused {
+        if panel == GamePanel::GameMenu {
             self.net.set_embedded_paused(true);
-            input.release_held(self.net.session.as_mut());
+            input.neutralize();
         }
     }
 
-    pub fn close_overlay(&mut self, overlay: Overlay) {
-        if !self.overlays.contains(&overlay) {
+    pub(crate) fn close_panel(&mut self, panel: GamePanel) {
+        if self.active_panel != Some(panel) {
             return;
         }
-        self.overlays.retain(|&open| open != overlay);
-        if overlay == Overlay::Paused {
+        self.active_panel = None;
+        if panel == GamePanel::GameMenu {
             self.net.set_embedded_paused(false);
         }
     }
@@ -200,8 +213,14 @@ impl InGame {
         self.world.clear();
         self.players.clear();
         self.you = SelfState::default();
+        self.revive_request_pending = false;
         self.inventory.reset(changes);
-        self.overlays.retain(|&open| open != Overlay::Inventory);
+        if matches!(
+            self.active_panel,
+            Some(GamePanel::Inventory | GamePanel::Chat)
+        ) {
+            self.active_panel = None;
+        }
         self.debug.rects.clear();
         self.debug.subscribed = false;
         changes.roster = true;
@@ -256,6 +275,41 @@ impl ClientGame {
     pub fn playing(&self) -> Option<&InGame> {
         self.ingame()
             .filter(|ingame| ingame.phase == Phase::Playing)
+    }
+
+    pub(crate) fn input_contexts(&self) -> Vec<Context> {
+        let mut contexts = match &self.flow {
+            Flow::Menu => vec![Context::Menu],
+            Flow::InGame(ingame) => match ingame.phase {
+                Phase::Connecting => vec![Context::Connecting],
+                Phase::Playing => {
+                    let mut contexts = vec![Context::Gameplay];
+                    if let Some(panel @ (GamePanel::Inventory | GamePanel::Chat)) =
+                        ingame.active_panel()
+                    {
+                        contexts.push(match panel {
+                            GamePanel::Inventory => Context::Inventory,
+                            GamePanel::Chat => Context::Chat,
+                            GamePanel::GameMenu => unreachable!(),
+                        });
+                    }
+                    if ingame.incapacitated() {
+                        contexts.push(Context::Incapacitated);
+                    }
+                    if !ingame.session_ready() {
+                        contexts.push(Context::Unavailable);
+                    }
+                    if ingame.game_menu_open() {
+                        contexts.push(Context::GameMenu);
+                    }
+                    contexts
+                }
+            },
+        };
+        if self.settings_open {
+            contexts.push(Context::Settings);
+        }
+        contexts
     }
 
     pub fn update(&mut self, io: &mut IoFrame) {
@@ -320,18 +374,26 @@ impl ClientGame {
             UiEvent::OpenSettings => self.settings_open = true,
             UiEvent::CloseSettings => self.settings_open = false,
             UiEvent::QuitApp => self.effects.push(Effect::Quit),
-            UiEvent::PauseResume => {
+            UiEvent::OpenGameMenu => self.open_panel(GamePanel::GameMenu),
+            UiEvent::CloseGameMenu => {
                 if let Flow::InGame(ingame) = &mut self.flow {
-                    ingame.close_overlay(Overlay::Paused);
+                    ingame.close_panel(GamePanel::GameMenu);
                 }
             }
-            UiEvent::PauseSave => {
-                if let Some(ingame) = self.ingame() {
-                    ingame.net.request_embedded_save();
+            UiEvent::QuitToMenu | UiEvent::CancelConnect => self.leave_game(),
+            UiEvent::Revive => {
+                let can_revive = self.ingame().is_some_and(|ingame| {
+                    ingame.you.life == SelfLife::Dead
+                        && !ingame.game_menu_open()
+                        && !ingame.revive_request_pending
+                });
+                if can_revive {
+                    if let Some(ingame) = self.ingame_mut() {
+                        ingame.revive_request_pending = true;
+                    }
+                    self.input.queue(InputAction::Revive);
                 }
             }
-            UiEvent::PauseQuitToMenu | UiEvent::CancelConnect => self.leave_game(),
-            UiEvent::Revive => self.input.queue(fallingsand_protocol::InputAction::Revive),
             UiEvent::Slot { region, right } => {
                 let shift = io.raw.shift();
                 if let Flow::InGame(ingame) = &mut self.flow
@@ -348,6 +410,21 @@ impl ClientGame {
     pub fn toggle_fullscreen(&mut self) {
         self.settings.fullscreen = !self.settings.fullscreen;
         self.apply_settings();
+    }
+
+    pub(crate) fn open_panel(&mut self, panel: GamePanel) {
+        if let Flow::InGame(ingame) = &mut self.flow
+            && ingame.phase == Phase::Playing
+            && ingame.active_panel().is_none()
+            && match panel {
+                GamePanel::Inventory | GamePanel::Chat => {
+                    ingame.session_ready() && !ingame.incapacitated()
+                }
+                GamePanel::GameMenu => true,
+            }
+        {
+            ingame.open_panel(panel, &mut self.input);
+        }
     }
 
     fn apply_settings(&mut self) {
@@ -395,8 +472,6 @@ impl ClientGame {
     }
 
     pub(crate) fn player_pos(&self) -> Option<Vec2> {
-        self.ingame()
-            .filter(|ingame| ingame.you.present)
-            .map(|ingame| ingame.you.pos)
+        self.ingame()?.local_avatar().map(|avatar| avatar.pos)
     }
 }

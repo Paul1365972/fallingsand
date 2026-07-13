@@ -4,7 +4,7 @@ use super::camera::WORLD_LAYER;
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 use fallingsand_core::content;
-use fallingsand_protocol::{InteractionStatus, LifeState};
+use fallingsand_protocol::InteractionStatus;
 use fallingsand_rng::Rng;
 
 const SPRAY_TTL: f32 = 0.5;
@@ -32,8 +32,7 @@ pub fn sync_target(
     let shown = game
         .0
         .playing()
-        .filter(|ingame| ingame.you.life == LifeState::Alive)
-        .map(|ingame| ingame.you.interaction)
+        .and_then(|ingame| ingame.you.life.avatar().map(|avatar| avatar.interaction))
         .and_then(|state| status_color(state.status, state.progress).map(|color| (state, color)));
 
     if query.is_empty() {
@@ -89,7 +88,7 @@ pub fn spawn_particles(
     let Some(ingame) = game.0.playing() else {
         return;
     };
-    if ingame.paused() {
+    if ingame.game_menu_open() {
         return;
     }
 
@@ -100,7 +99,7 @@ pub fn spawn_particles(
         return;
     }
     *flame_accum = 0.0;
-    for remote in ingame.players.roster.values() {
+    for remote in ingame.players.avatars.values() {
         if !remote.burning {
             continue;
         }
@@ -131,17 +130,16 @@ pub fn spawn_particles(
 }
 
 fn spawn_dig_spray(commands: &mut Commands, ingame: &crate::game::InGame, rng: &mut Rng) {
-    let you = &ingame.you;
-    if !you.present {
+    let Some(interaction) = ingame.you.life.avatar().map(|avatar| avatar.interaction) else {
         return;
-    }
-    let Some(material) = you.interaction.dig_material else {
+    };
+    let Some(material) = interaction.dig_material else {
         return;
     };
     if rng.draw().unit() > SPRAY_CHANCE {
         return;
     }
-    let target = you.interaction.target;
+    let target = interaction.target;
     let center = Vec2::new(target.x as f32 + 0.5, target.y as f32 + 0.5);
     let colors = content::material(material).colors;
     let rgba = colors[rng.draw().range(0, colors.len() as i32 - 1) as usize];

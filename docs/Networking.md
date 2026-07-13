@@ -1,19 +1,21 @@
 # Networking
 
-One reliable ordered stream per connection; postcard-encoded serde enums, lz4 above a size threshold. `ServerMessage` = out-of-band control/social events (hello, join/leave, chat) plus one `TickFrame` per server tick carrying `tick`, `world_age`, and every per-tick delta. The frame *is* the tick boundary and the client's clock — an idle world still sends a tiny empty frame.
+One reliable ordered stream per connection; postcard-encoded serde enums, lz4 above a size threshold. `ServerMessage` carries handshake, roster, chat, and system events plus one `TickFrame` per server tick. The frame is the tick boundary and the client's clock; an idle world still sends a tiny empty frame.
 
-Each subsystem rides the frame with its own change signal (no generic differ):
+Roster and physical presence are deliberately separate. `RosterUpsert`/`RosterRemove` maintain connected `PlayerId -> name` entries. `TickFrame.players` carries change-gated `PlayerState { player, avatar: Option<PlayerAvatarState> }`: `Some` is the replicated anchor for a live avatar, while `None` removes its nametag, flames, and camera target without claiming that the person left.
 
-- **chunks** — `ChunkOp` `Load`/`Delta`/`Unload` from the sim's change rect against a per-session `known_chunks` set; pixel bodies and player flesh have no wire presence and ride these deltas.
-- **players** — change-gated `PlayerState` snapshots — anchor only, for nametag, flames, and camera.
-- **inventory + self** — per-slot deltas and private `self_state`, each sent only when changed.
+Each subsystem rides the frame with its own change signal:
 
-Client→server: one `InputFrame` per client fixed tick — held `InputState` (latest-wins, OR-merged when frames coalesce) plus ordered one-shot `InputAction`s (never coalesced, validated server-side); held input decays to neutral after 0.5 s without frames. Queued work carries the entity's session generation, so reconnect takeover cannot execute stale commands or inventory actions. A new discrete input is a new `InputAction` variant, never a new message.
+- **chunks** — `ChunkOp` `Load`/`Delta`/`Unload` from the sim's change rect against a per-session known-chunk set; pixel bodies and player flesh ride these deltas.
+- **players** — optional avatar anchors for presentation; the body itself is still world cells.
+- **inventory + self** — per-slot deltas and private `SelfState`, each sent only when changed. Its `SelfLife` is `Entering`, `Alive(SelfAvatarState)`, `Dead`, or `Reviving`; health, air, and interaction therefore exist exactly when the private lifecycle is alive.
 
-Persistent identity is an Ed25519 key, not a client-asserted UUID. Each connection starts with a random server challenge; the client signs the domain-separated nonce, the server verifies it, and `PlayerUuid` is derived from the public-key hash. The private key remains client-side. The server returns the authenticated player's persisted chat/command history after `HelloAck`.
+Client -> server normally sends one `InputFrame` per client fixed tick: held `InputState` (latest-wins, OR-merged when frames coalesce) plus ordered one-shot `InputAction`s. A client transition that cancels held control may emit one immediate neutral frame through the same flush stage. Session count, handshake lifetime, frame size, messages drained per tick, and actions per frame are bounded. The client carries excess actions into later frames; the server rejects an over-limit frame rather than silently dropping actions. Held input decays to neutral after 0.5 s without frames. Accepted intents live in the current player's `PlayerControl`; the authoritative session binding rejects input from a superseded connection, and takeover or lifecycle transitions clear already queued work. A new discrete input is a new `InputAction` variant, never a new message.
 
-A wire cell is 3 bytes (material + shade flags) — no velocity or timing; the server re-derives them. Chunk payloads are paletted containers (uniform / paletted / raw, smallest wins).
+Persistent identity is an Ed25519 key, not a client-asserted UUID. Each connection starts with a random server challenge; the client signs the domain-separated nonce, the server verifies it, and `PlayerUuid` is derived from the public-key hash. The private key remains client-side. A reconnect that arrives before the old session is cleaned up takes over the same runtime player; reconnect after a completed departure restores the durable record into a new `PlayerId`.
 
-`HelloAck` carries `PROTOCOL_VERSION`; the client rejects on mismatch. Any change to `core::content` bumps it.
+A wire cell is 3 bytes (material + shade flags), with no velocity or timing; the server re-derives them. Chunk payloads are paletted containers (uniform / paletted / raw, smallest wins).
 
-Reliable+ordered is load-bearing: deltas always apply on top of the last state — no per-chunk versioning, no resync, no sequence numbers; packet loss costs a retransmit delay, never correctness — fine for ~10-player co-op. **Latency**: no prediction, no reconciliation, no interpolation — cell-snapped at tick arrival; the camera's exponential smoothing carries the feel. The shared `step_player` is the insertion point if latency ever forces prediction.
+`HelloAck` carries `PROTOCOL_VERSION`; the client rejects on mismatch. Any wire change or change to `core::content` bumps it.
+
+Reliable + ordered is load-bearing: deltas always apply on top of the last state, with no per-chunk versioning, resync, or sequence numbers. Packet loss costs retransmit delay, never correctness, which is acceptable for ~10-player co-op. There is no prediction, reconciliation, or interpolation; state is cell-snapped at tick arrival and camera smoothing carries the feel. The shared `step_player` is the insertion point if latency later forces prediction.

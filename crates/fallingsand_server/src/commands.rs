@@ -1,34 +1,74 @@
-use crate::player::Mode;
-use crate::session::{SessionState, Sessions};
-use bevy_ecs::prelude::*;
-use fallingsand_core::DAY_UNITS;
-use fallingsand_protocol::{GameMode, ServerMessage};
+use crate::player::Players;
+use fallingsand_core::{Calendar, DAY_UNITS};
+use fallingsand_protocol::{GameMode, PlayerId};
 
-pub struct PendingCommand {
-    pub entity: Entity,
-    pub generation: u64,
-    pub text: String,
+#[derive(Clone, Copy)]
+enum Command {
+    Help,
+    Gamemode,
+    Time,
 }
 
-#[derive(Resource, Default)]
-pub struct PendingCommands(pub Vec<PendingCommand>);
-
-pub type CommandRun = fn(&mut World, Entity, &[&str]) -> Result<Option<String>, String>;
-
-pub struct CommandSpec {
-    pub name: &'static str,
-    pub aliases: &'static [&'static str],
-    pub usage: &'static str,
-    pub run: CommandRun,
+struct CommandSpec {
+    command: Command,
+    name: &'static str,
+    aliases: &'static [&'static str],
+    usage: &'static str,
 }
-
-pub const COMMANDS: &[CommandSpec] = &[HELP, GAMEMODE, TIME];
 
 const HELP: CommandSpec = CommandSpec {
+    command: Command::Help,
     name: "help",
     aliases: &["?"],
     usage: "/help [command]",
-    run: |_world, _entity, args| match args {
+};
+const GAMEMODE: CommandSpec = CommandSpec {
+    command: Command::Gamemode,
+    name: "gamemode",
+    aliases: &["gm"],
+    usage: "/gamemode <survival|creative|s|c>",
+};
+const TIME: CommandSpec = CommandSpec {
+    command: Command::Time,
+    name: "time",
+    aliases: &[],
+    usage: "/time <day|night|noon|midnight|DAY>",
+};
+const COMMANDS: &[CommandSpec] = &[HELP, GAMEMODE, TIME];
+
+pub fn run_commands(players: &mut Players, clock: &mut Calendar) -> Vec<(PlayerId, String)> {
+    let pending: Vec<_> = players
+        .iter_mut()
+        .flat_map(|(&id, player)| {
+            std::mem::take(&mut player.control.pending_commands)
+                .into_iter()
+                .map(move |text| (id, text))
+        })
+        .collect();
+    let mut feedback = Vec::new();
+    for (player, text) in pending {
+        if !players.get(player).is_some_and(|player| player.is_alive()) {
+            continue;
+        }
+        let Some((name, args)) = parse(&text) else {
+            continue;
+        };
+        let result = match lookup(name).map(|spec| spec.command) {
+            Some(Command::Help) => run_help(&args),
+            Some(Command::Gamemode) => run_gamemode(players, player, &args),
+            Some(Command::Time) => run_time(clock, &args),
+            None => Err(format!("unknown command: /{name}")),
+        };
+        match result {
+            Ok(Some(text)) | Err(text) => feedback.push((player, text)),
+            Ok(None) => {}
+        }
+    }
+    feedback
+}
+
+fn run_help(args: &[&str]) -> Result<Option<String>, String> {
+    match args {
         [] => Ok(Some(
             COMMANDS
                 .iter()
@@ -39,113 +79,69 @@ const HELP: CommandSpec = CommandSpec {
         [name] => lookup(name)
             .map(|command| Some(command.usage.to_string()))
             .ok_or_else(|| format!("unknown command: /{name}")),
-        _ => Err("usage: /help [command]".into()),
-    },
-};
+        _ => Err(format!("usage: {}", HELP.usage)),
+    }
+}
 
-const GAMEMODE: CommandSpec = CommandSpec {
-    name: "gamemode",
-    aliases: &["gm"],
-    usage: "/gamemode <survival|creative|s|c>",
-    run: |world, entity, args| {
-        let mode = match args {
-            [arg] => GameMode::parse(arg),
-            _ => None,
-        }
-        .ok_or_else(|| format!("usage: {}", GAMEMODE.usage))?;
-        let mut current = world
-            .get_mut::<Mode>(entity)
-            .ok_or_else(|| "player not in world".to_string())?;
-        if current.0 == mode {
-            return Ok(Some(format!("already in {} mode", mode.label())));
-        }
-        current.0 = mode;
-        if mode != GameMode::Creative
-            && let Some(mut player) = world.get_mut::<crate::player::Player>(entity)
-        {
-            player.flying = false;
-        }
-        Ok(Some(format!("game mode set to {}", mode.label())))
-    },
-};
+fn run_gamemode(
+    players: &mut Players,
+    player: PlayerId,
+    args: &[&str],
+) -> Result<Option<String>, String> {
+    let mode = match args {
+        [arg] => GameMode::parse(arg),
+        _ => None,
+    }
+    .ok_or_else(|| format!("usage: {}", GAMEMODE.usage))?;
+    let player = players
+        .get_mut(player)
+        .ok_or_else(|| "player not in world".to_string())?;
+    if player.profile.mode == mode {
+        return Ok(Some(format!("already in {} mode", mode.label())));
+    }
+    player.profile.mode = mode;
+    if mode != GameMode::Creative
+        && let Some(avatar) = player.avatar_mut()
+    {
+        avatar.flying = false;
+    }
+    Ok(Some(format!("game mode set to {}", mode.label())))
+}
 
-const TIME: CommandSpec = CommandSpec {
-    name: "time",
-    aliases: &[],
-    usage: "/time <day|night|noon|midnight|DAY>",
-    run: |world, _entity, args| {
-        let [arg] = args else {
-            return Err(format!("usage: {}", TIME.usage));
-        };
-        let mut clock = world.resource_mut::<crate::WorldClock>();
-        let day = clock.0.day();
-        match *arg {
-            "day" | "noon" => clock.0.age = day * DAY_UNITS + DAY_UNITS / 2,
-            "night" | "midnight" => clock.0.age = day * DAY_UNITS,
-            arg => {
-                let target: f64 = arg
-                    .parse()
-                    .ok()
-                    .filter(|day: &f64| day.is_finite() && *day >= 0.0)
-                    .ok_or_else(|| format!("usage: {}", TIME.usage))?;
-                clock.0.age = (target * DAY_UNITS as f64) as u64;
-            }
+fn run_time(clock: &mut Calendar, args: &[&str]) -> Result<Option<String>, String> {
+    let [arg] = args else {
+        return Err(format!("usage: {}", TIME.usage));
+    };
+    let day = clock.day();
+    match *arg {
+        "day" | "noon" => clock.age = day * DAY_UNITS + DAY_UNITS / 2,
+        "night" | "midnight" => clock.age = day * DAY_UNITS,
+        arg => {
+            let target: f64 = arg
+                .parse()
+                .ok()
+                .filter(|day: &f64| day.is_finite() && *day >= 0.0)
+                .ok_or_else(|| format!("usage: {}", TIME.usage))?;
+            clock.age = (target * DAY_UNITS as f64) as u64;
         }
-        let (day, minute) = (clock.0.day(), clock.0.minute_of_day());
-        Ok(Some(format!(
-            "time set to {:02}:{:02} of day {day}",
-            minute / 60,
-            minute % 60
-        )))
-    },
-};
+    }
+    let (day, minute) = (clock.day(), clock.minute_of_day());
+    Ok(Some(format!(
+        "time set to {:02}:{:02} of day {day}",
+        minute / 60,
+        minute % 60
+    )))
+}
 
-pub fn parse(text: &str) -> Option<(&str, Vec<&str>)> {
+fn parse(text: &str) -> Option<(&str, Vec<&str>)> {
     let text = text.strip_prefix('/')?;
     let mut parts = text.split_whitespace();
     let name = parts.next()?;
     Some((name, parts.collect()))
 }
 
-pub fn lookup(name: &str) -> Option<&'static CommandSpec> {
+fn lookup(name: &str) -> Option<&'static CommandSpec> {
     COMMANDS
         .iter()
         .find(|spec| spec.name == name || spec.aliases.contains(&name))
-}
-
-pub fn run_commands(world: &mut World) {
-    let pending = std::mem::take(&mut world.resource_mut::<PendingCommands>().0);
-    for command in pending {
-        let valid = world
-            .get::<crate::player::Player>(command.entity)
-            .is_some_and(|player| player.session_generation == command.generation)
-            && world
-                .get::<crate::player::Life>(command.entity)
-                .is_some_and(|life| life.0 == fallingsand_protocol::LifeState::Alive);
-        if !valid {
-            continue;
-        }
-        let Some((name, args)) = parse(&command.text) else {
-            continue;
-        };
-        let feedback = match lookup(name) {
-            Some(spec) => (spec.run)(world, command.entity, &args),
-            None => Err(format!("unknown command: /{name}")),
-        };
-        let text = match feedback {
-            Ok(Some(text)) => text,
-            Ok(None) => continue,
-            Err(text) => text,
-        };
-        send_system(world, command.entity, &text);
-    }
-}
-
-fn send_system(world: &mut World, entity: Entity, text: &str) {
-    let mut sessions = world.resource_mut::<Sessions>();
-    for session in &mut sessions.sessions {
-        if session.entity == Some(entity) && matches!(session.state, SessionState::Playing) {
-            session.send(&ServerMessage::System { text: text.into() });
-        }
-    }
 }

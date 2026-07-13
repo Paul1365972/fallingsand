@@ -12,13 +12,14 @@ pub(crate) mod replication;
 pub(crate) mod session;
 pub(crate) mod sim;
 
-use bevy_ecs::prelude::*;
-use fallingsand_core::{Calendar, CellPos, DAY_UNITS};
+use fallingsand_core::{Calendar, CellPos, DAY_UNITS, ItemRegistry, RecipeRegistry};
 use fallingsand_net::Listener;
 use fallingsand_sim::CellWorld;
 use fallingsand_worldgen::WorldGenerator;
-use persistence::{WorldMeta, WorldStore};
-use regions::{Generator, RegionMap, Store};
+use persistence::{Persistence, WorldMeta};
+use player::Players;
+use regions::{ChunkTickets, RegionMap};
+use replication::ReplicationState;
 use session::Sessions;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -31,44 +32,12 @@ pub(crate) const INTEREST_RADIUS_X: i32 = 6;
 pub(crate) const INTEREST_RADIUS_Y: i32 = 4;
 pub(crate) use fallingsand_core::{MAX_AIR_SECS, MAX_HP};
 
-#[derive(Resource)]
-pub(crate) struct SimWorld(pub(crate) CellWorld);
-
-#[derive(Resource, Default)]
-pub(crate) struct PlayerImpulses(pub(crate) rustc_hash::FxHashMap<Entity, (f32, f32)>);
-
-#[derive(Resource)]
-pub(crate) struct NetListener(pub(crate) Box<dyn Listener>);
-
-#[derive(Resource, Clone, Copy)]
-pub(crate) struct SpawnPoint(pub(crate) CellPos);
-
-#[derive(Resource, Default, Clone, Copy)]
-pub(crate) struct WorldClock(pub(crate) Calendar);
-
-#[derive(Resource, Clone)]
 pub(crate) struct WorldInfo {
     pub(crate) seed: u64,
     pub(crate) name: String,
 }
 
-pub(crate) use fallingsand_protocol::Stats;
-
-#[derive(Resource, Default, Debug, Clone, Copy)]
-pub struct TickStats(pub Stats);
-
-impl std::ops::Deref for TickStats {
-    type Target = Stats;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl std::ops::DerefMut for TickStats {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
+pub type TickStats = fallingsand_protocol::Stats;
 
 pub struct WorldConfig {
     pub name: String,
@@ -82,9 +51,27 @@ pub struct ServerConfig {
     pub world: WorldConfig,
 }
 
+struct ServerState {
+    listener: Box<dyn Listener>,
+    sim: CellWorld,
+    players: Players,
+    sessions: Sessions,
+    bodies: bodies::PixelBodies,
+    item_registry: ItemRegistry,
+    recipes: RecipeRegistry,
+    generator: WorldGenerator,
+    regions: RegionMap,
+    tickets: ChunkTickets,
+    persistence: Persistence,
+    replication: ReplicationState,
+    spawn: CellPos,
+    clock: Calendar,
+    world: WorldInfo,
+    stats: TickStats,
+}
+
 pub struct Server {
-    world: World,
-    schedule: Schedule,
+    state: ServerState,
     stats_sink: Option<Arc<Mutex<TickStats>>>,
 }
 
@@ -92,7 +79,6 @@ pub struct Server {
 pub struct ServerControl {
     stop: AtomicBool,
     paused: AtomicBool,
-    save: AtomicBool,
 }
 
 impl ServerControl {
@@ -104,20 +90,12 @@ impl ServerControl {
         self.paused.store(paused, Ordering::Relaxed);
     }
 
-    pub fn request_save(&self) {
-        self.save.store(true, Ordering::Relaxed);
-    }
-
     pub(crate) fn stop_requested(&self) -> bool {
         self.stop.load(Ordering::Relaxed)
     }
 
     pub(crate) fn paused(&self) -> bool {
         self.paused.load(Ordering::Relaxed)
-    }
-
-    fn take_save_request(&self) -> bool {
-        self.save.swap(false, Ordering::Relaxed)
     }
 }
 
@@ -129,16 +107,12 @@ pub enum ServerError {
 
 impl Server {
     pub fn new(config: ServerConfig) -> Result<Self, ServerError> {
-        let store = match &config.world.save_path {
-            Some(path) => {
-                tracing::debug!("world store: {}", path.display());
-                Some(Arc::new(WorldStore::open(path)?))
-            }
-            None => None,
-        };
-        let meta = match store.as_ref().and_then(|s| s.load_meta().transpose()) {
+        if let Some(path) = &config.world.save_path {
+            tracing::debug!("world store: {}", path.display());
+        }
+        let mut persistence = Persistence::open(config.world.save_path.as_deref())?;
+        let meta = match persistence.load_meta()? {
             Some(meta) => {
-                let meta = meta?;
                 tracing::info!("loaded world \"{}\" (seed {:#x})", meta.name, meta.seed);
                 meta
             }
@@ -150,108 +124,65 @@ impl Server {
                     world_age: DAY_UNITS / 2,
                     tick: 0,
                 };
-                if let Some(store) = &store {
-                    store.save_meta(&meta)?;
-                }
+                persistence.stage_meta(meta.clone());
+                persistence.flush_meta()?;
                 tracing::info!("created world \"{}\" (seed {:#x})", meta.name, meta.seed);
                 meta
             }
         };
         let seed = meta.seed;
-        let generator = Arc::new(WorldGenerator::new(seed));
-        let item_registry = Arc::new(fallingsand_core::content::item_registry());
-        let recipes = Arc::new(fallingsand_core::content::recipe_registry(&item_registry));
-
+        let generator = WorldGenerator::new(seed);
+        let item_registry = fallingsand_core::content::item_registry();
+        let recipes = fallingsand_core::content::recipe_registry(&item_registry);
         let spawn_x = 0;
         let spawn = CellPos::new(spawn_x, generator.surface_height(spawn_x) + 12);
-
-        let mut cell_world = CellWorld::new();
-        cell_world.set_tick(meta.tick);
-        let mut world = World::new();
-        world.insert_resource(SimWorld(cell_world));
-        world.insert_resource(inventory::ItemReg(item_registry));
-        world.insert_resource(inventory::Recipes(recipes));
-        world.insert_resource(inventory::SlotActions::default());
-        world.insert_resource(NetListener(config.listener));
-        world.insert_resource(Sessions::default());
-        world.insert_resource(replication::LastPlayers::default());
-        world.insert_resource(TickStats::default());
-        world.insert_resource(Generator(generator));
-        world.insert_resource(Store(store));
-        world.insert_resource(RegionMap::default());
-        world.insert_resource(regions::ChunkTickets::default());
-        world.insert_resource(SpawnPoint(spawn));
-        world.insert_resource(bodies::PixelBodies::default());
-        world.insert_resource(PlayerImpulses::default());
-        world.insert_resource(commands::PendingCommands::default());
-        world.insert_resource(hazards::CrushEvents::default());
-        world.insert_resource(WorldClock(Calendar::new(meta.world_age)));
-        world.insert_resource(WorldInfo {
-            seed,
-            name: meta.name.clone(),
-        });
-
-        let mut schedule = Schedule::default();
-        schedule.add_systems(
-            (
-                (
-                    session::drain_network,
-                    commands::run_commands,
-                    dig::apply_player_inputs,
-                    inventory::apply_slot_actions,
-                    regions::compute_tickets,
-                    regions::manage_regions,
-                    sim::step_simulation,
-                )
-                    .chain(),
-                (
-                    physics::step_physics,
-                    bodies::step_bodies,
-                    hazards::apply_hazards,
-                    lifecycle::resolve_lifecycle,
-                    replication::advance_clock,
-                    replication::replicate,
-                    regions::autosave,
-                )
-                    .chain(),
-            )
-                .chain(),
-        );
+        let mut sim = CellWorld::new();
+        sim.set_tick(meta.tick);
         Ok(Self {
-            world,
-            schedule,
+            state: ServerState {
+                listener: config.listener,
+                sim,
+                players: Players::default(),
+                sessions: Sessions::default(),
+                bodies: bodies::PixelBodies::default(),
+                item_registry,
+                recipes,
+                generator,
+                regions: RegionMap::default(),
+                tickets: ChunkTickets::default(),
+                persistence,
+                replication: ReplicationState::default(),
+                spawn,
+                clock: Calendar::new(meta.world_age),
+                world: WorldInfo {
+                    seed,
+                    name: meta.name,
+                },
+                stats: TickStats::default(),
+            },
             stats_sink: config.stats_sink,
         })
     }
 
-    pub(crate) fn tick(&mut self) {
-        self.schedule.run(&mut self.world);
+    pub(crate) fn tick(&mut self) -> Result<(), ServerError> {
+        self.state.tick()?;
         if let Some(sink) = &self.stats_sink {
-            *sink.lock().unwrap() = *self.world.resource::<TickStats>();
+            *sink.lock().unwrap() = self.state.stats;
         }
+        Ok(())
     }
 
     pub(crate) fn stats(&self) -> TickStats {
-        *self.world.resource::<TickStats>()
+        self.state.stats
     }
 
-    pub(crate) fn save_all(&mut self, final_save: bool) {
-        regions::save_everything(&mut self.world, final_save);
-    }
-
-    pub fn run_blocking(&mut self, control: Arc<ServerControl>) {
+    pub fn run_blocking(&mut self, control: Arc<ServerControl>) -> Result<(), ServerError> {
         let mut timer = StepTimer::new(TICK_DURATION);
         while !control.stop_requested() {
-            if control.take_save_request() {
-                self.save_all(false);
-            }
             if !control.paused() {
-                {
-                    let mut stats = self.world.resource_mut::<TickStats>();
-                    stats.tps = timer.tps();
-                    stats.slew_ms = timer.slew_ms();
-                }
-                self.tick();
+                self.state.stats.tps = timer.tps();
+                self.state.stats.slew_ms = timer.slew_ms();
+                self.tick()?;
                 let stats = self.stats();
                 if stats.tick.is_multiple_of(10 * TICK_RATE as u64) {
                     tracing::debug!(
@@ -268,7 +199,120 @@ impl Server {
             timer.sleep();
         }
         tracing::info!("stopping server");
-        self.save_all(true);
+        self.state.save_all();
+        Ok(())
+    }
+}
+
+impl ServerState {
+    fn tick(&mut self) -> Result<(), ServerError> {
+        let disconnected = session::drain_network(
+            &mut *self.listener,
+            &mut self.sessions,
+            &mut self.players,
+            &self.item_registry,
+            self.spawn,
+            self.sim.tick(),
+            &mut self.persistence,
+        );
+        self.remove_disconnected_players(disconnected);
+        for (player, text) in commands::run_commands(&mut self.players, &mut self.clock) {
+            self.sessions.send_to_player(
+                player,
+                &fallingsand_protocol::ServerMessage::System { text },
+            );
+        }
+        dig::apply_player_inputs(
+            &mut self.sim,
+            &self.item_registry,
+            &mut self.bodies,
+            &mut self.players,
+        );
+        inventory::apply_slot_actions(&mut self.players, &self.item_registry, &self.recipes);
+        lifecycle::begin_revives(&mut self.players, self.spawn, self.sim.tick());
+        regions::compute_tickets(&mut self.tickets, self.spawn, &self.players);
+        regions::manage_regions(
+            &mut self.sim,
+            &mut self.regions,
+            &self.generator,
+            &mut self.persistence,
+            &self.tickets,
+            &mut self.bodies,
+        )?;
+        sim::step_simulation(&mut self.sim, &self.tickets, &mut self.stats);
+        physics::step_physics(&mut self.sim, &mut self.bodies, &mut self.players);
+        bodies::step_bodies(
+            &mut self.sim,
+            &self.tickets,
+            &mut self.bodies,
+            &mut self.players,
+            &mut self.stats,
+        );
+        hazards::apply_hazards(&self.sim, &mut self.players);
+        let tick = self.sim.tick();
+        lifecycle::resolve_lethal(&mut self.sim, &mut self.bodies, &mut self.players, tick);
+        for (player, text) in lifecycle::advance_materializations(
+            &mut self.sim,
+            &mut self.bodies,
+            &mut self.players,
+            tick,
+        ) {
+            self.sessions.send_to_player(
+                player,
+                &fallingsand_protocol::ServerMessage::System { text },
+            );
+        }
+        self.clock.advance();
+        replication::replicate(
+            &mut self.sessions,
+            &self.players,
+            &self.sim,
+            &self.clock,
+            &self.regions,
+            &self.generator,
+            &mut self.replication,
+            &mut self.stats,
+        );
+        persistence::autosave(
+            &self.sim,
+            &mut self.regions,
+            &self.item_registry,
+            &self.world,
+            &self.clock,
+            &self.players,
+            &mut self.persistence,
+        );
+        Ok(())
+    }
+
+    fn save_all(&mut self) {
+        persistence::save_everything(
+            &mut self.sim,
+            &mut self.regions,
+            &mut self.bodies,
+            &self.players,
+            &self.item_registry,
+            &mut self.persistence,
+            &self.world,
+            &self.clock,
+            true,
+        );
+    }
+
+    fn remove_disconnected_players(&mut self, disconnected: Vec<fallingsand_protocol::PlayerId>) {
+        for id in disconnected {
+            let Some(mut player) = self.players.remove(id) else {
+                continue;
+            };
+            let record = persistence::snapshot_player(&self.item_registry, &player);
+            if let Some(avatar) = player.avatar_mut() {
+                physics::unstamp_and_wake(&mut self.sim, &mut self.bodies, &mut avatar.stamp);
+            }
+            self.persistence.stage_player(player.uuid, record);
+        }
+        if let Err(err) = self.persistence.flush_players() {
+            tracing::error!("failed to save disconnected players: {err}");
+        }
     }
 }
 

@@ -132,7 +132,7 @@ pub fn spawn_slot_widgets(
             bottom: px(0),
             ..default()
         },
-        GlobalZIndex(2),
+        GlobalZIndex(super::depth::ITEM_COUNT),
         Pickable::IGNORE,
     ));
 }
@@ -357,7 +357,7 @@ fn spawn_overlay(commands: &mut Commands, game: &ClientGame) {
                 ..default()
             },
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
-            GlobalZIndex(30),
+            GlobalZIndex(super::depth::INVENTORY),
         ))
         .with_children(|overlay| {
             overlay.spawn(panel_node()).with_children(|panel| {
@@ -406,7 +406,7 @@ fn spawn_overlay(commands: &mut Commands, game: &ClientGame) {
         },
         BackgroundColor(Color::srgba(0.02, 0.02, 0.04, 0.92)),
         BorderColor::all(Color::srgba(0.6, 0.6, 0.7, 0.5)),
-        GlobalZIndex(41),
+        GlobalZIndex(super::depth::INVENTORY_TOOLTIP),
         Pickable::IGNORE,
         children![(
             TooltipText,
@@ -431,7 +431,7 @@ fn spawn_overlay(commands: &mut Commands, game: &ClientGame) {
             ..default()
         },
         BackgroundColor(Color::srgba(0.6, 0.6, 0.6, 0.9)),
-        GlobalZIndex(40),
+        GlobalZIndex(super::depth::INVENTORY_CURSOR),
         Pickable::IGNORE,
         children![(
             CursorFollowCount,

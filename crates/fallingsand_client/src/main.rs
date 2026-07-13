@@ -108,7 +108,7 @@ fn main() {
             view::particles::sync_target,
             view::particles::update_particles,
             view::ui::menu::sync_menu,
-            view::ui::pause::sync_pause,
+            view::ui::game_menu::sync_game_menu,
             view::ui::settings::sync_settings,
             view::ui::connscreen::sync_connscreen,
             (
