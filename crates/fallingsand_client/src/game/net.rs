@@ -130,7 +130,7 @@ pub fn parse_cert_hash(hex: &str) -> Option<Vec<u8>> {
 pub fn cli_world_name() -> Option<String> {
     #[cfg(not(target_family = "wasm"))]
     {
-        super::identity::arg_value("--world")
+        super::platform::arg_value("--world")
     }
     #[cfg(target_family = "wasm")]
     {
@@ -139,8 +139,8 @@ pub fn cli_world_name() -> Option<String> {
 }
 
 pub fn default_server() -> String {
-    #[cfg(all(target_family = "wasm", target_os = "unknown"))]
-    if let Some(server) = super::identity::query_param("server") {
+    #[cfg(target_family = "wasm")]
+    if let Some(server) = super::platform::query_param("server") {
         return server;
     }
     option_env!("FALLINGSAND_SERVER")
@@ -449,7 +449,7 @@ fn poll_dial(net: &mut Net, dt: f32) -> bool {
     net.dialing.is_some()
 }
 
-#[cfg(all(target_family = "wasm", target_os = "unknown"))]
+#[cfg(target_family = "wasm")]
 fn poll_dial(_net: &mut Net, _dt: f32) -> bool {
     false
 }
@@ -485,11 +485,11 @@ fn start_dial(net: &mut Net, target: ConnectTarget) {
     });
 }
 
-#[cfg(all(target_family = "wasm", target_os = "unknown"))]
+#[cfg(target_family = "wasm")]
 fn start_dial(net: &mut Net, target: ConnectTarget) {
     let conn = Box::new(fallingsand_net::wt_wasm::connect(
         &target.url,
-        target.cert_hash.clone(),
+        target.cert_hash,
     ));
     net.session = Some(Session::new(conn));
 }

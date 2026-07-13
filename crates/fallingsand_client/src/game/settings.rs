@@ -1,6 +1,8 @@
-pub use fallingsand_protocol::CursorMode;
+use fallingsand_protocol::CursorMode;
+use serde::{Deserialize, Serialize};
 
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum RenderMode {
     #[default]
     PixelPerfect,
@@ -24,43 +26,44 @@ impl RenderMode {
             RenderMode::Retro => RenderMode::PixelPerfect,
         }
     }
+}
 
-    #[cfg(not(target_family = "wasm"))]
-    fn parse(value: &str) -> Option<Self> {
-        [
-            RenderMode::PixelPerfect,
-            RenderMode::Smooth,
-            RenderMode::Retro,
-        ]
-        .into_iter()
-        .find(|mode| mode.label() == value)
+#[repr(u16)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiScale {
+    #[serde(rename = "75")]
+    Percent75 = 75,
+    #[default]
+    #[serde(rename = "100")]
+    Percent100 = 100,
+    #[serde(rename = "125")]
+    Percent125 = 125,
+    #[serde(rename = "150")]
+    Percent150 = 150,
+}
+
+impl UiScale {
+    pub fn percent(self) -> u16 {
+        self as u16
+    }
+
+    pub fn cycled(self) -> Self {
+        match self {
+            Self::Percent75 => Self::Percent100,
+            Self::Percent100 => Self::Percent125,
+            Self::Percent125 => Self::Percent150,
+            Self::Percent150 => Self::Percent75,
+        }
     }
 }
 
-const UI_SCALES: [u32; 4] = [75, 100, 125, 150];
-
-fn cycle_ui_scale(scale: u32) -> u32 {
-    let index = UI_SCALES
-        .iter()
-        .position(|&step| step == scale)
-        .unwrap_or(1);
-    UI_SCALES[(index + 1) % UI_SCALES.len()]
-}
-
-#[cfg(not(target_family = "wasm"))]
-fn snap_ui_scale(scale: u32) -> u32 {
-    UI_SCALES
-        .into_iter()
-        .min_by_key(|&step| step.abs_diff(scale))
-        .unwrap_or(100)
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Settings {
     pub fullscreen: bool,
     pub vsync: bool,
     pub render_mode: RenderMode,
-    pub ui_scale: u32,
+    pub ui_scale: UiScale,
     pub cursor_mode: CursorMode,
 }
 
@@ -70,7 +73,7 @@ impl Default for Settings {
             fullscreen: false,
             vsync: true,
             render_mode: RenderMode::PixelPerfect,
-            ui_scale: 100,
+            ui_scale: UiScale::default(),
             cursor_mode: CursorMode::Smart,
         }
     }
@@ -82,11 +85,11 @@ impl Settings {
     }
 
     pub fn cycle_ui_scale(&mut self) {
-        self.ui_scale = cycle_ui_scale(self.ui_scale);
+        self.ui_scale = self.ui_scale.cycled();
     }
 
     pub fn ui_scale_label(&self) -> String {
-        format!("UI scale: {}%", self.ui_scale)
+        format!("UI scale: {}%", self.ui_scale.percent())
     }
 
     pub fn cycle_cursor_mode(&mut self) {
@@ -99,54 +102,35 @@ impl Settings {
 }
 
 #[cfg(not(target_family = "wasm"))]
-const SETTINGS_PATH: &str = "saves/settings.txt";
+const SETTINGS_PATH: &str = "saves/settings.json";
 
 #[cfg(not(target_family = "wasm"))]
 pub fn load() -> Settings {
-    let mut settings = Settings::default();
-    let Ok(text) = std::fs::read_to_string(SETTINGS_PATH) else {
-        return settings;
-    };
-    for line in text.lines() {
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
-        };
-        match (key.trim(), value.trim()) {
-            ("fullscreen", value) => settings.fullscreen = value == "true",
-            ("vsync", value) => settings.vsync = value == "true",
-            ("render_mode", value) => {
-                if let Some(mode) = RenderMode::parse(value) {
-                    settings.render_mode = mode;
-                }
-            }
-            ("ui_scale", value) => {
-                if let Ok(scale) = value.parse::<u32>() {
-                    settings.ui_scale = snap_ui_scale(scale);
-                }
-            }
-            ("cursor_mode", value) => {
-                if let Some(mode) = CursorMode::parse(value) {
-                    settings.cursor_mode = mode;
-                }
-            }
-            _ => {}
+    let text = match std::fs::read_to_string(SETTINGS_PATH) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Settings::default(),
+        Err(err) => {
+            bevy::log::warn!("failed to read settings: {err}");
+            return Settings::default();
         }
-    }
-    settings
+    };
+    serde_json::from_str(&text).unwrap_or_else(|err| {
+        bevy::log::warn!("failed to parse settings: {err}");
+        Settings::default()
+    })
 }
 
 #[cfg(not(target_family = "wasm"))]
 pub fn save(settings: &Settings) {
     let _ = std::fs::create_dir_all("saves");
-    let content = format!(
-        "fullscreen={}\nvsync={}\nrender_mode={}\nui_scale={}\ncursor_mode={}\n",
-        settings.fullscreen,
-        settings.vsync,
-        settings.render_mode.label(),
-        settings.ui_scale,
-        settings.cursor_mode.label(),
-    );
-    if let Err(err) = std::fs::write(SETTINGS_PATH, content) {
+    let text = match serde_json::to_string_pretty(settings) {
+        Ok(text) => text,
+        Err(err) => {
+            bevy::log::warn!("failed to serialize settings: {err}");
+            return;
+        }
+    };
+    if let Err(err) = std::fs::write(SETTINGS_PATH, text) {
         bevy::log::warn!("failed to persist settings: {err}");
     }
 }

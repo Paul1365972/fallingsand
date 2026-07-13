@@ -61,6 +61,7 @@ impl GameMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum CursorMode {
     #[default]
     Smart,
@@ -72,14 +73,6 @@ impl CursorMode {
         match self {
             Self::Smart => "smart",
             Self::Precise => "precise",
-        }
-    }
-
-    pub fn parse(text: &str) -> Option<Self> {
-        match text {
-            "smart" => Some(Self::Smart),
-            "precise" => Some(Self::Precise),
-            _ => None,
         }
     }
 

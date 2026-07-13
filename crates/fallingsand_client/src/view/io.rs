@@ -202,7 +202,7 @@ pub fn drive_game(
                 } else {
                     PresentMode::AutoNoVsync
                 };
-                ui_scale.0 = settings.ui_scale as f32 / 100.0;
+                ui_scale.0 = f32::from(settings.ui_scale.percent()) / 100.0;
             }
             Effect::Quit => {
                 exit.write(AppExit::Success);
