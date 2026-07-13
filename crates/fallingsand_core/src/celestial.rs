@@ -1,8 +1,8 @@
 ﻿use crate::Calendar;
 use std::f32::consts::{PI, TAU};
 
-const SUN_DISC_RADIUS: f32 = 0.090;
-const MOON_DISC_RADIUS: f32 = 0.096;
+pub const SUN_DISC_RADIUS: f32 = 0.090;
+pub const MOON_DISC_RADIUS: f32 = 0.096;
 pub const SHADE_DISC_RADIUS: f32 = 0.125;
 const SHADE_TRACK: f32 = 1.06;
 const TRACK_FLATTEN: f32 = 0.62;

@@ -1,44 +1,49 @@
 #import bevy_sprite::mesh2d_vertex_output::VertexOutput
+#import fallingsand::celestial::{position_hash, snapped_disc_position, disc_coverage, aura_falloff, unpremultiply}
 
 struct SunParams {
     redness: f32,
     occlusion: f32,
-    _pad: vec2<f32>,
+    quad_size: f32,
+    disc_radius: f32,
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: SunParams;
 
-const GRID_SIZE: f32 = 48.0;
-const DISC_RADIUS: f32 = 0.91;
-
-fn hash(p: vec2<f32>) -> f32 {
-    return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453);
-}
+const DISC_HDR: f32 = 14.0;
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-    let texel = floor(in.uv * GRID_SIZE);
-    let grid = (texel + vec2<f32>(0.5)) / GRID_SIZE;
-    let p = (grid - vec2<f32>(0.5)) * 2.0;
-    let pixel = 2.0 / GRID_SIZE;
-    let radius = length(p);
-    let cover = clamp((DISC_RADIUS - radius) / pixel + 0.5, 0.0, 1.0);
+    let quad_size = max(params.quad_size, 1.0);
+    let position = snapped_disc_position(in.uv, quad_size);
+    let pixel_size = 2.0 / quad_size;
+    let radius = length(position);
+    let coverage = disc_coverage(radius, params.disc_radius, pixel_size);
+    let normalized_radius = clamp(radius / params.disc_radius, 0.0, 1.0);
 
-    let inward = clamp(1.0 - radius / DISC_RADIUS, 0.0, 1.0);
-    let core = pow(inward, 8.0);
-    let ring = floor(core * 10.0 + 0.5) / 10.0;
-    let orange = vec3<f32>(1.0, 0.216, 0.027);
-    let pale_core = vec3<f32>(1.0, 0.880, 0.591);
-    var surface = mix(orange, pale_core, ring);
-    let granule = floor(hash(texel) * 3.0) - 1.0;
-    surface *= 1.0 + granule * 0.025 * (1.0 - ring);
+    let core_color = vec3<f32>(1.0, 0.88, 0.59);
+    let mid_color = vec3<f32>(1.0, 0.64, 0.17);
+    let edge_color = vec3<f32>(1.0, 0.22, 0.03);
+    var disc_color = mix(core_color, mid_color, smoothstep(0.0, 0.5, normalized_radius));
+    disc_color = mix(disc_color, edge_color, smoothstep(0.5, 1.0, normalized_radius));
 
-    let warm = surface * vec3<f32>(1.0, 0.58, 0.32);
-    var color = mix(surface, warm, params.redness) * 6.5;
+    let surface_grain = (position_hash(floor(in.uv * quad_size)) - 0.5) * 0.05;
+    disc_color *= 1.0 + surface_grain * (1.0 - normalized_radius);
 
-    let eclipse = params.occlusion * params.occlusion;
-    let halo = pow(clamp(1.0 - radius, 0.0, 1.0), 2.2) * 2.6 * eclipse;
-    color += vec3<f32>(1.0, 0.72, 0.32) * halo;
+    let sunset_color = disc_color * vec3<f32>(1.0, 0.74, 0.46);
+    let hdr_disc_color = mix(disc_color, sunset_color, params.redness) * DISC_HDR;
 
-    return vec4<f32>(color, clamp(cover + halo, 0.0, 1.0));
+    let aura_strength = aura_falloff(radius, params.disc_radius) * (1.0 - coverage);
+    let aura_color = mix(vec3<f32>(1.0, 0.62, 0.30), vec3<f32>(1.0, 0.40, 0.17), params.redness) * 1.6;
+
+    let eclipse_strength = params.occlusion * params.occlusion;
+    let corona = pow(clamp(1.0 - radius, 0.0, 1.0), 2.2) * 2.4 * eclipse_strength;
+    let corona_color = vec3<f32>(1.0, 0.82, 0.52) * 3.0;
+
+    let aura_alpha = aura_strength * 0.5;
+    let alpha = coverage + aura_alpha + corona;
+    let premultiplied_color = hdr_disc_color * coverage
+        + aura_color * aura_alpha
+        + corona_color * corona;
+    return unpremultiply(premultiplied_color, alpha);
 }

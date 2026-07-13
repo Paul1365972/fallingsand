@@ -1,4 +1,5 @@
 #import bevy_sprite::mesh2d_vertex_output::VertexOutput
+#import fallingsand::celestial::{snapped_disc_position, disc_coverage, aura_falloff, quantize, unpremultiply}
 
 struct MoonParams {
     sun_direction: vec2<f32>,
@@ -7,70 +8,93 @@ struct MoonParams {
     umbra_radius: f32,
     sky_color: vec4<f32>,
     quad_size: f32,
+    disc_radius: f32,
+    lunar_shadow: f32,
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: MoonParams;
 
-const DISC_RADIUS: f32 = 0.92;
-
-fn crater(p: vec2<f32>, center: vec2<f32>, radius: f32) -> f32 {
-    let distance = length(p - center) / radius;
-    let bowl = 1.0 - smoothstep(0.0, 0.78, distance);
-    let rim = smoothstep(0.68, 0.86, distance) * (1.0 - smoothstep(0.88, 1.06, distance));
-    return rim * 0.16 - bowl * 0.22;
+fn soft_blob(position: vec2<f32>, center: vec2<f32>, radius: f32) -> f32 {
+    return 1.0 - smoothstep(radius * 0.45, radius, length(position - center));
 }
 
-fn surface(p: vec2<f32>) -> vec3<f32> {
-    var shade = 0.48 + sin(p.x * 17.0 + sin(p.y * 9.0)) * 0.035;
-    shade += crater(p, vec2<f32>(-0.31, 0.24), 0.24);
-    shade += crater(p, vec2<f32>(0.27, 0.38), 0.14);
-    shade += crater(p, vec2<f32>(0.36, -0.22), 0.23);
-    shade += crater(p, vec2<f32>(-0.18, -0.42), 0.12);
-    shade += crater(p, vec2<f32>(0.02, 0.02), 0.09);
-    shade = floor(clamp(shade, 0.0, 1.0) * 6.0 + 0.5) / 6.0;
-    let low = vec3<f32>(0.314, 0.371, 0.604);
-    let high = vec3<f32>(0.604, 0.651, 0.768);
-    return mix(low, high, shade);
+fn mare_coverage(position: vec2<f32>) -> f32 {
+    var coverage = soft_blob(position, vec2<f32>(-0.18, 0.20), 0.44);
+    coverage = max(coverage, soft_blob(position, vec2<f32>(0.24, 0.04), 0.42));
+    coverage = max(coverage, soft_blob(position, vec2<f32>(0.34, -0.26), 0.28));
+    coverage = max(coverage, soft_blob(position, vec2<f32>(-0.30, -0.34), 0.12));
+    coverage = max(coverage, soft_blob(position, vec2<f32>(-0.02, -0.16), 0.10));
+    coverage += sin(position.x * 6.0 + sin(position.y * 5.0)) * 0.05;
+    return clamp(coverage, 0.0, 1.0);
+}
+
+fn moon_albedo(position: vec2<f32>) -> vec3<f32> {
+    let highland = vec3<f32>(0.66, 0.71, 0.84);
+    let mare = vec3<f32>(0.30, 0.35, 0.55);
+    return mix(highland, mare, quantize(mare_coverage(position), 5.0));
 }
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-    let grid_size = max(params.quad_size, 1.0);
-    let grid = (floor(in.uv * grid_size) + vec2<f32>(0.5)) / grid_size;
-    let p = vec2<f32>(grid.x - 0.5, 0.5 - grid.y) * 2.0;
-    let pixel = 2.0 / grid_size;
+    let quad_size = max(params.quad_size, 1.0);
+    let position = snapped_disc_position(in.uv, quad_size);
+    let pixel_size = 2.0 / quad_size;
+    let radius = length(position);
+    let coverage = disc_coverage(radius, params.disc_radius, pixel_size);
+    let albedo = moon_albedo(position);
+    let albedo_luminance = dot(albedo, vec3<f32>(0.3333));
 
-    let distance = length(p);
-    let cover = clamp((DISC_RADIUS - distance) / pixel + 0.5, 0.0, 1.0);
-    let inner = p * (min(distance, DISC_RADIUS - 0.5 * pixel) / max(distance, 1e-5));
-    let albedo = surface(inner);
+    let sun_direction = normalize(params.sun_direction + vec2<f32>(1e-5, 0.0));
+    let tangent = vec2<f32>(-sun_direction.y, sun_direction.x);
+    let sunward_distance = dot(position, sun_direction);
+    let tangent_distance = dot(position, tangent);
+    let phase_half_width = sqrt(max(
+        params.disc_radius * params.disc_radius - tangent_distance * tangent_distance,
+        0.0
+    ));
+    let terminator_position = (1.0 - 2.0 * params.illumination) * phase_half_width;
+    let sunlight = smoothstep(
+        -pixel_size,
+        pixel_size,
+        sunward_distance - terminator_position
+    );
 
-    let sun = normalize(params.sun_direction + vec2<f32>(1e-5, 0.0));
-    let perpendicular = vec2<f32>(-sun.y, sun.x);
-    let along = dot(p, sun);
-    let across = dot(p, perpendicular);
-    let half_width = sqrt(max(DISC_RADIUS * DISC_RADIUS - across * across, 0.0));
-    let terminator = (1.0 - 2.0 * params.illumination) * half_width;
-    let lit = smoothstep(-0.5 * pixel, 0.5 * pixel, along - terminator);
+    let distance_to_umbra = length(position - params.umbra);
+    let umbra_shadow = 1.0 - smoothstep(
+        -0.5 * pixel_size,
+        0.5 * pixel_size,
+        distance_to_umbra - params.umbra_radius
+    );
+    let penumbra = 1.0 - smoothstep(
+        params.umbra_radius,
+        params.umbra_radius + 1.1,
+        distance_to_umbra
+    );
+    let umbra_core = smoothstep(0.1, 1.2, params.umbra_radius - distance_to_umbra);
+    let blood_moon_color = mix(
+        vec3<f32>(1.05, 0.16, 0.06),
+        vec3<f32>(0.32, 0.045, 0.03),
+        umbra_core
+    ) * (0.5 + 0.75 * albedo_luminance);
 
-    let shadow_distance = length(p - params.umbra);
-    let shade = 1.0 - smoothstep(-0.5 * pixel, 0.5 * pixel, shadow_distance - params.umbra_radius);
-    let penumbra = 1.0 - smoothstep(params.umbra_radius, params.umbra_radius + 1.1, shadow_distance);
-    let core = smoothstep(0.1, 1.2, params.umbra_radius - shadow_distance);
-    let luma = dot(albedo, vec3<f32>(0.333, 0.334, 0.333));
-    let blood = mix(vec3<f32>(0.62, 0.20, 0.07), vec3<f32>(0.26, 0.045, 0.035), core)
-        * (0.5 + 1.2 * luma);
+    let night_reflection = mix(albedo * 0.04, albedo * 4.2, sunlight);
+    let day_reflection = mix(albedo * 0.02, albedo * 0.12, sunlight);
+    var reflected_light = mix(night_reflection, day_reflection, params.sky_color.a);
+    reflected_light *= 1.0 - 0.4 * penumbra;
+    reflected_light = mix(reflected_light, blood_moon_color, umbra_shadow);
 
-    let dark = vec3<f32>(0.004, 0.005, 0.008);
-    var night = mix(dark, albedo, lit) * 4.2;
-    night *= 1.0 - 0.45 * penumbra;
-    night = mix(night, blood * 1.2, shade);
+    let disc_color = params.sky_color.rgb + reflected_light;
 
-    var day = mix(vec3<f32>(0.009, 0.010, 0.012), albedo * 0.15, lit);
-    day *= 1.0 - 0.5 * penumbra;
-    day = mix(day, blood * 0.5, shade);
-
-    let color = mix(night, day, params.sky_color.a)
-        + params.sky_color.rgb * (1.0 - 0.75 * shade);
-    return vec4<f32>(color, cover);
+    let halo_strength = aura_falloff(radius, params.disc_radius) * (1.0 - coverage);
+    let halo_color = mix(
+        vec3<f32>(0.55, 0.60, 0.78) * 0.7,
+        vec3<f32>(1.0, 0.14, 0.05) * 1.4,
+        params.lunar_shadow
+    );
+    let halo_alpha = halo_strength
+        * mix(0.4, 0.8, params.lunar_shadow)
+        * (1.0 - params.sky_color.a);
+    let alpha = coverage + halo_alpha;
+    let premultiplied_color = disc_color * coverage + halo_color * halo_alpha;
+    return unpremultiply(premultiplied_color, alpha);
 }

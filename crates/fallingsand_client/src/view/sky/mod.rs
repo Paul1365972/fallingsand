@@ -2,7 +2,7 @@ mod lighting;
 mod materials;
 
 pub use lighting::{ActiveLights, EmissiveLights, apply_lighting, scan_emissive};
-pub use materials::{HorizonMaterial, MoonMaterial, StarfieldMaterial, SunMaterial};
+pub use materials::{AtmosphereMaterial, MoonMaterial, StarfieldMaterial, SunMaterial};
 pub use materials::{LightingMaterial, LightingParams};
 
 use super::Game;
@@ -17,7 +17,7 @@ use bevy::image::{
 };
 use bevy::prelude::*;
 use bevy::shader::Shader;
-use fallingsand_core::celestial::SHADE_DISC_RADIUS;
+use fallingsand_core::celestial::{MOON_DISC_RADIUS, SHADE_DISC_RADIUS, SUN_DISC_RADIUS};
 use fallingsand_core::{CelestialState, smoothstep};
 use materials::{MoonParams, StarfieldParams, SunParams};
 
@@ -48,7 +48,7 @@ pub struct SkyAssets {
     sun: Handle<SunMaterial>,
     moon: Handle<MoonMaterial>,
     starfield: Handle<StarfieldMaterial>,
-    horizon: Handle<HorizonMaterial>,
+    atmosphere: Handle<AtmosphereMaterial>,
 }
 
 #[derive(Resource)]
@@ -58,7 +58,7 @@ pub(crate) struct SharedShaders(#[allow(dead_code)] Vec<Handle<Shader>>);
 pub(crate) struct StarfieldQuad;
 
 #[derive(Component)]
-pub(crate) struct HorizonQuad;
+pub(crate) struct AtmosphereQuad;
 
 #[derive(Component)]
 pub(crate) struct SunVisual;
@@ -70,6 +70,7 @@ pub fn load_shared_shaders(mut commands: Commands, asset_server: Res<AssetServer
     commands.insert_resource(SharedShaders(vec![
         asset_server.load("shaders/layer_common.wgsl"),
         asset_server.load("shaders/light_common.wgsl"),
+        asset_server.load("shaders/celestial_common.wgsl"),
     ]));
 }
 
@@ -79,7 +80,7 @@ pub fn setup_sky(
     mut sun_mats: ResMut<Assets<SunMaterial>>,
     mut moon_mats: ResMut<Assets<MoonMaterial>>,
     mut star_mats: ResMut<Assets<StarfieldMaterial>>,
-    mut horizon_mats: ResMut<Assets<HorizonMaterial>>,
+    mut atmosphere_mats: ResMut<Assets<AtmosphereMaterial>>,
     asset_server: Res<AssetServer>,
     shared: Res<super::chunks::RenderShared>,
     cameras: Query<(Entity, &LayerCamera)>,
@@ -110,7 +111,7 @@ pub fn setup_sky(
             })
             .load("sky/stars.png"),
     });
-    let horizon = horizon_mats.add(HorizonMaterial::default());
+    let atmosphere = atmosphere_mats.add(AtmosphereMaterial::default());
 
     commands.entity(star_camera).with_children(|parent| {
         parent.spawn((
@@ -124,9 +125,9 @@ pub fn setup_sky(
     });
     commands.entity(sky_camera).with_children(|parent| {
         parent.spawn((
-            HorizonQuad,
+            AtmosphereQuad,
             Mesh2d(quad.clone()),
-            MeshMaterial2d(horizon.clone()),
+            MeshMaterial2d(atmosphere.clone()),
             Transform::from_xyz(0.0, 0.0, -45.0),
             RenderLayers::layer(SKY_LAYER),
             Visibility::Hidden,
@@ -150,7 +151,7 @@ pub fn setup_sky(
         sun,
         moon,
         starfield,
-        horizon,
+        atmosphere,
     });
 }
 
@@ -180,12 +181,12 @@ pub fn sync_sky(
     mut sun_mats: ResMut<Assets<SunMaterial>>,
     mut moon_mats: ResMut<Assets<MoonMaterial>>,
     mut star_mats: ResMut<Assets<StarfieldMaterial>>,
-    mut horizon_mats: ResMut<Assets<HorizonMaterial>>,
+    mut atmosphere_mats: ResMut<Assets<AtmosphereMaterial>>,
     mut quads: ParamSet<(
         Query<(&mut Transform, &mut Visibility), With<SunVisual>>,
         Query<(&mut Transform, &mut Visibility), With<MoonVisual>>,
         Query<(&mut Transform, &mut Visibility), With<StarfieldQuad>>,
-        Query<(&mut Transform, &mut Visibility), With<HorizonQuad>>,
+        Query<(&mut Transform, &mut Visibility), With<AtmosphereQuad>>,
     )>,
 ) {
     let clock = game.0.ingame().map(|ingame| ingame.clock);
@@ -206,7 +207,7 @@ pub fn sync_sky(
         let sun_altitude = celestial.sun_altitude;
         let solar_occlusion = celestial.solar_occlusion;
 
-        let moon_size = (MOON_SIZE * celestial.moon_radius_scale).round().max(1.0);
+        let moon_size = (MOON_SIZE * celestial.moon_radius_scale).max(1.0);
         let world_to_moon_uv = 2.0 / moon_size;
         let umbra = (shade_position - moon_position) * world_to_moon_uv;
         let umbra_radius = SHADE_DISC_RADIUS * ORBIT_RADIUS * world_to_moon_uv;
@@ -228,9 +229,12 @@ pub fn sync_sky(
             transform.scale = Vec3::new(SUN_SIZE * k, SUN_SIZE * k, 1.0);
             *visibility = Visibility::Inherited;
         }
+        let redness = 1.0 - smoothstep(0.0, 0.35, sun_altitude);
         if let Some(mut material) = sun_mats.get_mut(&assets.sun) {
-            material.params.redness = 1.0 - smoothstep(0.0, 0.35, sun_altitude);
+            material.params.redness = redness;
             material.params.occlusion = solar_occlusion;
+            material.params.quad_size = SUN_SIZE;
+            material.params.disc_radius = SUN_DISC_RADIUS * ORBIT_RADIUS / (SUN_SIZE * 0.5);
         }
 
         if let Ok((mut transform, mut visibility)) = quads.p1().single_mut() {
@@ -245,6 +249,9 @@ pub fn sync_sky(
             material.params.umbra_radius = umbra_radius;
             material.params.sky_color = sky.color_linear.extend(celestial.daylight);
             material.params.quad_size = moon_size;
+            material.params.disc_radius =
+                MOON_DISC_RADIUS * celestial.moon_radius_scale * ORBIT_RADIUS / (moon_size * 0.5);
+            material.params.lunar_shadow = celestial.lunar_shadow;
         }
 
         clear.0 = Color::srgb(color.x, color.y, color.z);
@@ -258,16 +265,31 @@ pub fn sync_sky(
             material.params.horizon = horizon_uv;
             material.params.sidereal = calendar.sidereal();
         }
-        if let Some(mut material) = horizon_mats.get_mut(&assets.horizon) {
+        if let Some(mut material) = atmosphere_mats.get_mut(&assets.atmosphere) {
             let day_haze = Vec3::new(0.72, 0.82, 0.96);
             let night_haze = Vec3::new(0.08, 0.11, 0.20);
             let warm = Vec3::new(0.98, 0.6, 0.38);
             let base = night_haze.lerp(day_haze, sky.state.light);
-            let horizon_band = (1.0 - sky.state.sun_altitude.abs()).powi(2);
-            let color = base.lerp(warm, horizon_band * (1.0 - sky.state.solar_occlusion) * 0.7);
+            let horizon_band = (1.0 - sun_altitude.abs()).powi(2);
+            let color = base.lerp(warm, horizon_band * (1.0 - solar_occlusion) * 0.7);
             material.params.color = color.extend(1.0);
             material.params.horizon = horizon_uv;
             material.params.intensity = 0.25 + 0.6 * sky.state.light;
+
+            let to_uv = |p: Vec2| Vec2::new(0.5 + p.x / native.x, 0.5 - p.y / native.y);
+            material.params.sun_pos = to_uv(sun_position + center);
+            material.params.moon_pos = to_uv(moon_position + center);
+            material.params.aspect = native.x / native.y;
+
+            let daylight = celestial.daylight;
+            let sun_glow_col = Vec3::new(1.0, 0.6, 0.3).lerp(Vec3::new(1.0, 0.38, 0.16), redness);
+            let sun_glow_i = daylight * (0.12 + 0.7 * horizon_band) * (1.0 - solar_occlusion);
+            material.params.sun_glow = sun_glow_col.extend(sun_glow_i);
+
+            let moon_up = smoothstep(-0.10, 0.10, celestial.moon_position[1]);
+            let moon_glow_col = Vec3::new(0.5, 0.6, 0.85);
+            let moon_glow_i = celestial.illumination * moon_up * (1.0 - daylight) * 0.22;
+            material.params.moon_glow = moon_glow_col.extend(moon_glow_i);
         }
     } else {
         if sky.state != CelestialState::default() {

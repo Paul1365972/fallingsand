@@ -330,61 +330,86 @@ for (let i = 0; i < 900; i++) {
   });
 }
 
-const CRATERS = [];
-for (let i = 0; i < 9; i++) {
-  const a = hash(i, 11) * TAU, r = 0.15 + 0.72 * Math.sqrt(hash(i, 12));
-  CRATERS.push({ x: Math.cos(a) * r, y: Math.sin(a) * r, r: 0.09 + 0.16 * hash(i, 13), d: 0.10 + 0.14 * hash(i, 14) });
+const MOON_HIGHLAND = [0.83, 0.86, 0.93];
+const MOON_MARE = [0.58, 0.63, 0.77];
+const MARIA = [
+  { x: -0.18, y: 0.20, radius: 0.44 },
+  { x: 0.24, y: 0.04, radius: 0.42 },
+  { x: 0.34, y: -0.26, radius: 0.28 },
+  { x: -0.30, y: -0.34, radius: 0.12 },
+  { x: -0.02, y: -0.16, radius: 0.10 },
+];
+const quantize = (x, levels) => Math.floor(clamp(x, 0, 1) * levels + 0.5) / levels;
+function moonAlbedo(x, y) {
+  let mareCoverage = 0;
+  for (const mare of MARIA) {
+    const distance = Math.hypot(x - mare.x, y - mare.y);
+    const coverage = 1 - smoothstep(mare.radius * 0.45, mare.radius, distance);
+    mareCoverage = Math.max(mareCoverage, coverage);
+  }
+  mareCoverage = clamp(mareCoverage + Math.sin(x * 6 + Math.sin(y * 5)) * 0.05, 0, 1);
+  return lerp3(MOON_HIGHLAND, MOON_MARE, quantize(mareCoverage, 5));
 }
 
 function drawMoon(ctx, cx, cy, radiusPx, s, sky) {
-  const n = Math.max(16, Math.ceil(radiusPx * 2)) | 0;
-  const img = ctx.createImageData(n, n);
-  const d = img.data;
-  const sd = s.sunDir;
-  const ux = (s.shadePos[0] - s.moonPos[0]) / s.moonR;
-  const uy = (s.shadePos[1] - s.moonPos[1]) / s.moonR;
-  const ur = SHADE_DISC_RADIUS / s.moonR;
-  const albedo = [0.86, 0.85, 0.80];
-  const TEXELS = 28;
-  const snap = v => (Math.floor((v * 0.5 + 0.5) * TEXELS) + 0.5) / TEXELS * 2 - 1;
-  for (let py = 0; py < n; py++) {
-    for (let px = 0; px < n; px++) {
-      const x = snap((px + 0.5) / n * 2 - 1);
-      const y = snap(-((py + 0.5) / n * 2 - 1));
-      const r = Math.hypot(x, y);
-      const idx = (py * n + px) * 4;
-      if (r > 1) { d[idx + 3] = 0; continue; }
-      let a = [albedo[0], albedo[1], albedo[2]];
-      for (const c of CRATERS) {
-        if (Math.hypot(x - c.x, y - c.y) < c.r) { a = [a[0] - c.d, a[1] - c.d, a[2] - c.d]; }
-      }
-      const along = x * sd[0] + y * sd[1];
-      const perp = -x * sd[1] + y * sd[0];
-      const hw = Math.sqrt(Math.max(1 - perp * perp, 0));
-      const term = (1 - 2 * s.illum) * hw;
-      const tw = 2 / TEXELS;
-      const lit = smoothstep(-0.5 * tw, 0.5 * tw, along - term);
-      const ud = Math.hypot(x - ux, y - uy);
-      const shade = 1 - smoothstep(-0.5 * tw, 0.5 * tw, ud - ur);
-      const pen = 1 - smoothstep(ur, ur + 1.2, ud);
-      const core = smoothstep(0.1, 1.2, ur - ud);
-      const luma = (a[0] + a[1] + a[2]) / 3;
-      const bloodCol = lerp3([0.62, 0.20, 0.07], [0.26, 0.045, 0.035], core).map(v => v * (0.5 + 1.2 * luma));
-      let litCol = a.map(v => v * (1 - 0.5 * pen));
-      litCol = lerp3(litCol, bloodCol, shade);
-      const nightCol = a.map(v => v * 0.14);
-      let col = lerp3(nightCol, litCol, lit);
-      const wash = s.daylight * 0.9 * (1 - 0.75 * shade);
-      col = [col[0] + sky[0] * wash, col[1] + sky[1] * wash, col[2] + sky[2] * wash];
-      d[idx] = clamp(col[0], 0, 1) * 255;
-      d[idx + 1] = clamp(col[1], 0, 1) * 255;
-      d[idx + 2] = clamp(col[2], 0, 1) * 255;
-      d[idx + 3] = 255;
+  const diameter = Math.max(16, Math.ceil(radiusPx * 2)) | 0;
+  const image = ctx.createImageData(diameter, diameter);
+  const pixels = image.data;
+  const sunDirection = s.sunDir;
+  const umbraX = (s.shadePos[0] - s.moonPos[0]) / s.moonR;
+  const umbraY = (s.shadePos[1] - s.moonPos[1]) / s.moonR;
+  const umbraRadius = SHADE_DISC_RADIUS / s.moonR;
+  const texels = Math.max(1, 28 * s.moonScale);
+  const pixelSize = 2 / texels;
+  const snap = v => (Math.floor((v * 0.5 + 0.5) * texels) + 0.5) / texels * 2 - 1;
+  for (let pixelY = 0; pixelY < diameter; pixelY++) {
+    for (let pixelX = 0; pixelX < diameter; pixelX++) {
+      const x = snap((pixelX + 0.5) / diameter * 2 - 1);
+      const y = snap(-((pixelY + 0.5) / diameter * 2 - 1));
+      const offset = (pixelY * diameter + pixelX) * 4;
+      if (Math.hypot(x, y) > 1) { pixels[offset + 3] = 0; continue; }
+      const albedo = moonAlbedo(x, y);
+      const sunwardDistance = x * sunDirection[0] + y * sunDirection[1];
+      const tangentDistance = -x * sunDirection[1] + y * sunDirection[0];
+      const phaseHalfWidth = Math.sqrt(Math.max(1 - tangentDistance * tangentDistance, 0));
+      const terminatorPosition = (1 - 2 * s.illum) * phaseHalfWidth;
+      const sunlight = smoothstep(
+        -pixelSize,
+        pixelSize,
+        sunwardDistance - terminatorPosition,
+      );
+      const distanceToUmbra = Math.hypot(x - umbraX, y - umbraY);
+      const umbraShadow = 1 - smoothstep(
+        -0.5 * pixelSize,
+        0.5 * pixelSize,
+        distanceToUmbra - umbraRadius,
+      );
+      const penumbra = 1 - smoothstep(umbraRadius, umbraRadius + 1.1, distanceToUmbra);
+      const umbraCore = smoothstep(0.1, 1.2, umbraRadius - distanceToUmbra);
+      const albedoLuminance = (albedo[0] + albedo[1] + albedo[2]) / 3;
+      const bloodMoonColor = lerp3(
+        [0.82, 0.18, 0.08],
+        [0.4, 0.06, 0.05],
+        umbraCore,
+      ).map(value => value * (0.5 + 0.75 * albedoLuminance));
+      const nightReflection = lerp3(albedo.map(value => value * 0.04), albedo, sunlight);
+      const dayReflection = lerp3(
+        albedo.map(value => value * 0.02),
+        albedo.map(value => value * 0.12),
+        sunlight,
+      );
+      let reflectedLight = lerp3(nightReflection, dayReflection, s.daylight)
+        .map(value => value * (1 - 0.4 * penumbra));
+      reflectedLight = lerp3(reflectedLight, bloodMoonColor, umbraShadow);
+      pixels[offset] = clamp(sky[0] + reflectedLight[0], 0, 1) * 255;
+      pixels[offset + 1] = clamp(sky[1] + reflectedLight[1], 0, 1) * 255;
+      pixels[offset + 2] = clamp(sky[2] + reflectedLight[2], 0, 1) * 255;
+      pixels[offset + 3] = 255;
     }
   }
-  const off = new OffscreenCanvas(n, n);
-  off.getContext("2d").putImageData(img, 0, 0);
-  ctx.drawImage(off, cx - n / 2, cy - n / 2);
+  const offscreenCanvas = new OffscreenCanvas(diameter, diameter);
+  offscreenCanvas.getContext("2d").putImageData(image, 0, 0);
+  ctx.drawImage(offscreenCanvas, cx - diameter / 2, cy - diameter / 2);
 }
 
 function drawSky() {
@@ -393,6 +418,7 @@ function drawSky() {
   const s = celestial(age);
   const sky = skyColor(s.light, s.sunAlt, s.occ);
   const haze = hazeColor(s);
+  const redness = 1 - smoothstep(0.0, 0.35, s.sunAlt);
   const horizonY = H * 0.66;
   const R = H * 0.55;
   const cx = W / 2;
@@ -422,23 +448,49 @@ function drawSky() {
     sctx.fillRect(sx - size / 2, sy - size / 2, size, size);
   }
 
+  const horizonBand = Math.pow(1 - Math.abs(s.sunAlt), 2);
+  const drawAirglow = (worldPosition, radius, color, intensity) => {
+    if (intensity <= 0.01) return;
+    const [screenX, screenY] = px(worldPosition);
+    const gradient = sctx.createRadialGradient(screenX, screenY, 0, screenX, screenY, radius);
+    gradient.addColorStop(0, cssA(color, clamp(intensity, 0, 1)));
+    gradient.addColorStop(1, cssA(color, 0));
+    sctx.fillStyle = gradient;
+    sctx.fillRect(screenX - radius, screenY - radius, radius * 2, radius * 2);
+  };
+  drawAirglow(s.sunPos, R * 0.9, lerp3([1, 0.6, 0.3], [1, 0.38, 0.16], redness),
+    s.daylight * (0.12 + 0.7 * horizonBand) * (1 - s.occ));
+  drawAirglow(s.moonPos, R * 0.6, lerp3([0.5, 0.6, 0.85], [0.85, 0.14, 0.06], s.shadow),
+    s.illum * smoothstep(-0.10, 0.10, s.moonAlt) * (1 - s.daylight) * (0.22 + 0.4 * s.shadow));
+
   const [sunX, sunY] = px(s.sunPos);
-  const sunR = SUN_DISC_RADIUS * R;
-  const redness = 1 - smoothstep(0.0, 0.35, s.sunAlt);
-  const warmCore = lerp3([1, 0.97, 0.88], [1, 0.62, 0.34], redness);
-  const halo = sctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, sunR * 3.6);
-  const haloA = 0.32 * (1 - s.occ) + 2.6 * s.occ * s.occ * 0.35;
-  halo.addColorStop(0, cssA([1, 0.95, 0.85], clamp(haloA, 0, 1)));
-  halo.addColorStop(1, cssA([1, 0.95, 0.85], 0));
-  sctx.fillStyle = halo;
-  sctx.fillRect(sunX - sunR * 5, sunY - sunR * 5, sunR * 10, sunR * 10);
-  const core = sctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, sunR);
-  core.addColorStop(0, css([1, 1, 0.97]));
-  core.addColorStop(0.75, css(warmCore));
-  core.addColorStop(1, cssA(warmCore, 0.85));
-  sctx.fillStyle = core;
+  const sunRadius = SUN_DISC_RADIUS * R;
+  const warmColor = color => lerp3(
+    color,
+    [color[0], color[1] * 0.8, color[2] * 0.55],
+    redness,
+  );
+  const auraRadius = sunRadius * 2.6;
+  const auraColor = warmColor([1, 0.66, 0.4]);
+  const auraGradient = sctx.createRadialGradient(
+    sunX,
+    sunY,
+    sunRadius * 0.8,
+    sunX,
+    sunY,
+    auraRadius,
+  );
+  auraGradient.addColorStop(0, cssA(auraColor, clamp(0.32 + 0.96 * s.occ * s.occ, 0, 1)));
+  auraGradient.addColorStop(1, cssA(auraColor, 0));
+  sctx.fillStyle = auraGradient;
+  sctx.fillRect(sunX - auraRadius, sunY - auraRadius, auraRadius * 2, auraRadius * 2);
+  const discGradient = sctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, sunRadius);
+  discGradient.addColorStop(0.0, css(warmColor([1, 0.945, 0.79])));
+  discGradient.addColorStop(0.5, css(warmColor([1, 0.82, 0.45])));
+  discGradient.addColorStop(1.0, css(warmColor([1, 0.51, 0.19])));
+  sctx.fillStyle = discGradient;
   sctx.beginPath();
-  sctx.arc(sunX, sunY, sunR, 0, TAU);
+  sctx.arc(sunX, sunY, sunRadius, 0, TAU);
   sctx.fill();
 
   const [moonX, moonY] = px(s.moonPos);

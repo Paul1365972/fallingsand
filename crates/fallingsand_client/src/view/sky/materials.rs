@@ -61,7 +61,8 @@ impl Material2d for LightingMaterial {
 pub struct SunParams {
     pub redness: f32,
     pub occlusion: f32,
-    pub _pad: Vec2,
+    pub quad_size: f32,
+    pub disc_radius: f32,
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
@@ -88,6 +89,8 @@ pub struct MoonParams {
     pub umbra_radius: f32,
     pub sky_color: Vec4,
     pub quad_size: f32,
+    pub disc_radius: f32,
+    pub lunar_shadow: f32,
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
@@ -137,21 +140,27 @@ impl Material2d for StarfieldMaterial {
 }
 
 #[derive(ShaderType, Debug, Clone, Default)]
-pub struct HorizonParams {
+pub struct AtmosphereParams {
     pub color: Vec4,
+    pub sun_pos: Vec2,
+    pub moon_pos: Vec2,
+    pub sun_glow: Vec4,
+    pub moon_glow: Vec4,
     pub horizon: f32,
     pub intensity: f32,
+    pub aspect: f32,
+    pub _pad: f32,
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
-pub struct HorizonMaterial {
+pub struct AtmosphereMaterial {
     #[uniform(0)]
-    pub params: HorizonParams,
+    pub params: AtmosphereParams,
 }
 
-impl Material2d for HorizonMaterial {
+impl Material2d for AtmosphereMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/horizon.wgsl".into()
+        "shaders/atmosphere.wgsl".into()
     }
 
     fn alpha_mode(&self) -> AlphaMode2d {

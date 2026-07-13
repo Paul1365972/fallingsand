@@ -52,7 +52,7 @@ fn main() {
         Material2dPlugin::<view::sky::SunMaterial>::default(),
         Material2dPlugin::<view::sky::MoonMaterial>::default(),
         Material2dPlugin::<view::sky::StarfieldMaterial>::default(),
-        Material2dPlugin::<view::sky::HorizonMaterial>::default(),
+        Material2dPlugin::<view::sky::AtmosphereMaterial>::default(),
         Material2dPlugin::<view::parallax::CaveWallMaterial>::default(),
         Material2dPlugin::<view::parallax::SilhouetteMaterial>::default(),
         FrameTimeDiagnosticsPlugin::default(),
