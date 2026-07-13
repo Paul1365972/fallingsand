@@ -9,7 +9,8 @@ const LAUNCH_MIN_SPEED: Fixed = Fixed::vel_per_sec(80.0);
 const LEDGE_LAUNCH_K: Fixed = Fixed::from_f32(0.35);
 const STEP_UP_CELLS: i32 = 3;
 const STEP_DOWN_CELLS: i32 = 3;
-const UPWARD_CORNER_CORRECTION: i32 = 4;
+const CEILING_VY_DAMP: Fixed = Fixed::HALF;
+const CEILING_VX_REDIRECT: Fixed = Fixed::from_f32(0.25);
 const SNAP_DOWN_MAX_SUBMERSION: f32 = 0.5;
 const CLIMB_COST: Fixed = Fixed::HALF;
 const CLIMB_DRAIN: Fixed = Fixed::HALF;
@@ -25,6 +26,7 @@ pub struct Blocked {
 pub struct MoveResult {
     pub blocked: Vec<Blocked>,
     pub hit_ceiling: bool,
+    pub(super) corrected_ceiling: bool,
 }
 
 impl MoveResult {
@@ -45,12 +47,23 @@ impl MoveResult {
 
 struct Blockage {
     solid: bool,
+    unloaded: bool,
     solids: Vec<CellPos>,
 }
 
 impl Blockage {
     fn free(&self) -> bool {
         !self.solid
+    }
+
+    fn single_head_hit(&self, head_row: i32) -> Option<CellPos> {
+        if self.unloaded {
+            return None;
+        }
+        match self.solids.as_slice() {
+            [pos] if pos.y == head_row => Some(*pos),
+            _ => None,
+        }
     }
 
     fn step_top(&self) -> Option<i32> {
@@ -97,6 +110,7 @@ fn passage<W: CellSource>(
     let next = footprint_at(cx, cy, body.half_w, body.half_h);
     let mut blockage = Blockage {
         solid: false,
+        unloaded: false,
         solids: Vec::new(),
     };
     for y in next.y0..=next.y1 {
@@ -107,6 +121,7 @@ fn passage<W: CellSource>(
             }
             let Some(cell) = world.cell_at(pos) else {
                 blockage.solid = true;
+                blockage.unloaded = true;
                 continue;
             };
             if matches!(content::phase(cell.material), Phase::Solid | Phase::Powder) {
@@ -144,24 +159,32 @@ fn try_step_up<W: CellSource>(
     true
 }
 
-fn corner_correct<W: CellSource>(
+fn ceiling_correct<W: CellSource>(
     world: &W,
     body: &Actor,
     next_y: Fixed,
+    vx: Fixed,
     own: OwnCells,
-) -> Option<Fixed> {
-    let mut sides: Vec<i32> = Vec::new();
-    if body.vx <= Fixed::ZERO {
-        sides.push(-1);
+) -> Option<(Fixed, i32)> {
+    let w = body.half_w.mul_int(2).round_int().max(1);
+    let max_shift = w - 1;
+    if max_shift < 1 {
+        return None;
     }
-    if body.vx >= Fixed::ZERO {
-        sides.push(1);
-    }
+    let head_row = footprint_at(body.x, next_y, body.half_w, body.half_h).y1;
+    let sides: [i32; 2] = if vx > Fixed::ZERO { [1, -1] } else { [-1, 1] };
     for side in sides {
-        for off in 1..=UPWARD_CORNER_CORRECTION {
-            let cand_x = body.x + Fixed::from_int(side * off);
-            if passage(world, body, cand_x, next_y, own).free() {
-                return Some(cand_x);
+        for step in 1..=max_shift {
+            let cand_x = body.x + Fixed::from_int(side * step);
+            if !passage(world, body, cand_x, body.y, own).free() {
+                break;
+            }
+            let up = passage(world, body, cand_x, next_y, own);
+            if up.free() {
+                return Some((cand_x, side));
+            }
+            if up.single_head_hit(head_row).is_none() {
+                break;
             }
         }
     }
@@ -282,7 +305,8 @@ pub fn move_body<W: CellSource>(
 
     if remaining_y != Fixed::ZERO {
         let dir = if remaining_y > Fixed::ZERO { 1i32 } else { -1 };
-        let target = body.y + remaining_y;
+        let mut target = body.y + remaining_y;
+        let mut corrected = false;
         let mut row = if dir > 0 {
             body.y.floor_cell() + h_up
         } else {
@@ -321,10 +345,29 @@ pub fn move_body<W: CellSource>(
                 row = next_row;
             } else {
                 if dir > 0 {
-                    if let Some(corrected_x) = corner_correct(world, body, next_y, own) {
+                    let head_row = footprint_at(body.x, next_y, body.half_w, body.half_h).y1;
+                    if !corrected
+                        && let Some(contact) = blockage.single_head_hit(head_row)
+                        && let Some((corrected_x, side)) =
+                            ceiling_correct(world, body, next_y, body.vx, own)
+                    {
+                        let (vx0, vy0) = (body.vx, body.vy);
+                        let removed = vy0.mul(CEILING_VY_DAMP);
+                        body.vy = vy0 - removed;
+                        let redirect = removed.mul(CEILING_VX_REDIRECT).min(body.vy);
+                        body.vx += Fixed::from_int(side).mul(redirect);
+                        result.record_blocked(
+                            &[contact],
+                            (vx0 - body.vx).vel_f32(),
+                            (vy0 - body.vy).vel_f32(),
+                        );
+                        result.hit_ceiling = true;
+                        result.corrected_ceiling = true;
                         body.x = corrected_x;
                         body.y = next_y;
+                        target = body.y + (target - body.y).mul(Fixed::HALF);
                         row = next_row;
+                        corrected = true;
                         continue;
                     }
                     result.hit_ceiling = true;

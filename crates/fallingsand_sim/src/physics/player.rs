@@ -142,7 +142,9 @@ pub fn step_player<W: CellSource>(
     }
 
     let result = move_body(world, body, submersion.fraction, own);
-    if result.hit_ceiling && ctrl.var_jump_timer < CEILING_VAR_JUMP_GRACE {
+    if result.corrected_ceiling
+        || (result.hit_ceiling && ctrl.var_jump_timer < CEILING_VAR_JUMP_GRACE)
+    {
         ctrl.var_jump_timer = 0.0;
     }
     result
