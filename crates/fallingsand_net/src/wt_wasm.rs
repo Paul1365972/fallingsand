@@ -6,25 +6,28 @@ use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::sync::{Arc, Mutex};
 use wasm_bindgen_futures::spawn_local;
 
+const CLOSE_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
+
+enum Outgoing {
+    Frame(Vec<u8>),
+    Close(String),
+}
+
 pub struct WtWasmConnection {
-    tx: UnboundedSender<Vec<u8>>,
+    tx: UnboundedSender<Outgoing>,
     rx: Mutex<Receiver<Vec<u8>>>,
-    close_tx: UnboundedSender<String>,
     closed: Arc<Closed>,
 }
 
 pub fn connect(url: &str, cert_hash: Option<Vec<u8>>) -> WtWasmConnection {
     let closed = Arc::new(Closed::default());
-    let (out_tx, out_rx) = unbounded::<Vec<u8>>();
-    let (close_tx, close_rx) = unbounded::<String>();
+    let (out_tx, out_rx) = unbounded::<Outgoing>();
     let (in_tx, in_rx) = channel::<Vec<u8>>();
 
     let url = url.to_string();
     let task_closed = closed.clone();
     spawn_local(async move {
-        if let Err(err) =
-            run_session(url, cert_hash, out_rx, close_rx, in_tx, task_closed.clone()).await
-        {
+        if let Err(err) = run_session(url, cert_hash, out_rx, in_tx, task_closed.clone()).await {
             task_closed.mark(&err);
         }
     });
@@ -32,7 +35,6 @@ pub fn connect(url: &str, cert_hash: Option<Vec<u8>>) -> WtWasmConnection {
     WtWasmConnection {
         tx: out_tx,
         rx: Mutex::new(in_rx),
-        close_tx,
         closed,
     }
 }
@@ -40,8 +42,7 @@ pub fn connect(url: &str, cert_hash: Option<Vec<u8>>) -> WtWasmConnection {
 async fn run_session(
     url: String,
     cert_hash: Option<Vec<u8>>,
-    mut out_rx: UnboundedReceiver<Vec<u8>>,
-    mut close_rx: UnboundedReceiver<String>,
+    mut out_rx: UnboundedReceiver<Outgoing>,
     in_tx: Sender<Vec<u8>>,
     closed: Arc<Closed>,
 ) -> Result<(), String> {
@@ -92,30 +93,35 @@ async fn run_session(
         }
     });
 
-    let close_session = session.clone();
-    spawn_local(async move {
-        if let Some(reason) = close_rx.next().await {
-            close_session.close(0, &reason);
-        }
-    });
-
+    let watch_session = session.clone();
     let closed_watch = closed.clone();
     spawn_local(async move {
-        let err = session.closed().await;
+        let err = watch_session.closed().await;
         closed_watch.mark(&err.to_string());
     });
 
-    while let Some(message) = out_rx.next().await {
-        if send_stream.write(&encode_frame(&message)).await.is_err() {
-            return Err("write failed".into());
+    while let Some(outgoing) = out_rx.next().await {
+        match outgoing {
+            Outgoing::Frame(message) => {
+                if send_stream.write(&encode_frame(&message)).await.is_err() {
+                    return Err("write failed".into());
+                }
+            }
+            Outgoing::Close(reason) => {
+                let _ = send_stream.finish();
+                gloo_timers::future::sleep(CLOSE_GRACE).await;
+                session.close(0, &reason);
+                return Ok(());
+            }
         }
     }
+    let _ = send_stream.finish();
     Ok(())
 }
 
 impl Connection for WtWasmConnection {
     fn send(&mut self, message: Vec<u8>) {
-        let _ = self.tx.unbounded_send(message);
+        let _ = self.tx.unbounded_send(Outgoing::Frame(message));
     }
 
     fn poll(&mut self) -> Option<Vec<u8>> {
@@ -131,6 +137,6 @@ impl Connection for WtWasmConnection {
 
     fn close(&mut self, reason: &str) {
         self.closed.mark(reason);
-        let _ = self.close_tx.unbounded_send(reason.to_string());
+        let _ = self.tx.unbounded_send(Outgoing::Close(reason.to_string()));
     }
 }

@@ -50,6 +50,7 @@ tokio = { version = "1.52.3", default-features = false }
 redb = "4.1.0"
 web-transport-quinn = "0.11.9"
 web-transport-wasm = "0.5.8"
+gloo-timers = { version = "0.3", features = ["futures"] }
 rcgen = "0.14"
 rustls-pki-types = "1"
 sha2 = "0.10"
