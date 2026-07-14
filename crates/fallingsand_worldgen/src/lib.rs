@@ -14,8 +14,8 @@ use biomes::{
 use caves::Caves;
 use fallingsand_core::content::material;
 use fallingsand_core::{
-    Cell, CellOffset, ChunkOffset, DirtyRect, MaterialId, REGION_SIZE_CELLS, REGION_SIZE_CHUNKS,
-    Region, RegionPos,
+    Cell, CellOffset, CellPos, ChunkOffset, DirtyRect, MaterialId, REGION_SIZE_CELLS,
+    REGION_SIZE_CHUNKS, Region, RegionPos,
 };
 use fallingsand_rng::Hash;
 use noise::Cached;
@@ -425,12 +425,8 @@ impl WorldGenerator {
 }
 
 fn region_index(base_x: i32, base_y: i32, x: i32, y: i32) -> (ChunkOffset, CellOffset) {
-    let local_x = x - base_x;
-    let local_y = y - base_y;
-    (
-        ChunkOffset::new((local_x / 64) as u8, (local_y / 64) as u8),
-        CellOffset::new((local_x % 64) as u8, (local_y % 64) as u8),
-    )
+    let local = CellPos::new(x - base_x, y - base_y);
+    (local.chunk().offset(), local.offset())
 }
 
 fn region_get(region: &Region, base_x: i32, base_y: i32, x: i32, y: i32) -> Cell {

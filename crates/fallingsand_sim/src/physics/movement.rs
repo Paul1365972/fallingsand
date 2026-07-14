@@ -1,9 +1,10 @@
 use super::{
-    Actor, BOUNCE_MIN_SPEED, CellSource, OwnCells, footprint_at, own_covers, rect_blocked,
-    supported_at,
+    Actor, BOUNCE_MIN_SPEED, CellSource, Obstacle, OwnCells, footprint_at, rect_blocked,
+    supported_at, walk_footprint,
 };
 use fallingsand_core::content;
-use fallingsand_core::{CellPos, Fixed, Phase};
+use fallingsand_core::{CellPos, Fixed};
+use std::ops::ControlFlow;
 
 const LAUNCH_MIN_SPEED: Fixed = Fixed::vel_per_sec(80.0);
 const LEDGE_LAUNCH_K: Fixed = Fixed::from_f32(0.35);
@@ -106,30 +107,19 @@ fn passage<W: CellSource>(
     cy: Fixed,
     own: OwnCells,
 ) -> Blockage {
-    let cur = body.footprint();
-    let next = footprint_at(cx, cy, body.half_w, body.half_h);
     let mut blockage = Blockage {
         solid: false,
         unloaded: false,
         solids: Vec::new(),
     };
-    for y in next.y0..=next.y1 {
-        for x in next.x0..=next.x1 {
-            let pos = CellPos::new(x, y);
-            if cur.contains(pos) || own_covers(own, pos) {
-                continue;
-            }
-            let Some(cell) = world.cell_at(pos) else {
-                blockage.solid = true;
-                blockage.unloaded = true;
-                continue;
-            };
-            if matches!(content::phase(cell.material), Phase::Solid | Phase::Powder) {
-                blockage.solid = true;
-                blockage.solids.push(pos);
-            }
+    walk_footprint(world, body, cx, cy, own, |obstacle| {
+        blockage.solid = true;
+        match obstacle {
+            Obstacle::Unloaded => blockage.unloaded = true,
+            Obstacle::Solid(pos) => blockage.solids.push(pos),
         }
-    }
+        ControlFlow::Continue(())
+    });
     blockage
 }
 

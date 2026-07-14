@@ -1,4 +1,4 @@
-use fallingsand_core::{REGION_SIZE_CELLS, RegionPos};
+use fallingsand_core::{CHUNK_SIZE, CellOffset, ChunkOffset, REGION_SIZE_CELLS, RegionPos};
 use fallingsand_worldgen::WorldGenerator;
 use std::fs::File;
 use std::io::BufWriter;
@@ -66,11 +66,13 @@ fn main() {
             let origin_x = (region_x - args.min.0) as usize * size;
             let origin_y = (args.max.1 - region_y) as usize * size;
             for (chunk_index, chunk) in region.chunks().iter().enumerate() {
-                let chunk_x = (chunk_index % 8) * 64;
-                let chunk_y = (chunk_index / 8) * 64;
+                let chunk_off = ChunkOffset::from_index(chunk_index);
+                let chunk_x = chunk_off.x as usize * CHUNK_SIZE;
+                let chunk_y = chunk_off.y as usize * CHUNK_SIZE;
                 for (cell_index, cell) in chunk.cells().iter().enumerate() {
-                    let cell_x = cell_index % 64;
-                    let cell_y = cell_index / 64;
+                    let cell_off = CellOffset::from_index(cell_index);
+                    let cell_x = cell_off.x as usize;
+                    let cell_y = cell_off.y as usize;
                     let material = fallingsand_core::content::material(cell.material);
                     let color = material.colors[cell.shade() as usize % material.colors.len()];
                     let px = origin_x + chunk_x + cell_x;

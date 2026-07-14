@@ -403,32 +403,28 @@ fn update_powder<M: MatSpec>(
     rng: &mut Rng,
     tick_byte: u8,
 ) {
-    let (mut vx, mut vy) = cell.vel();
-
-    let ambient = ambient_density_milli(window, pos);
-    vy -= buoyant_gravity::<M>(ambient);
-    apply_drag(
-        &mut vx,
-        &mut vy,
-        ambient,
-        d.drag_keep_q16,
-        d.drag_keep_submerged_q16,
+    update_mover::<M>(
+        window,
+        pos,
+        cell,
+        d.restitution_q16,
+        -1,
+        rng,
+        tick_byte,
+        |window, pos, vx, vy, _rng| {
+            settling_accelerate::<M>(
+                window,
+                pos,
+                vx,
+                vy,
+                d.drag_keep_q16,
+                d.drag_keep_submerged_q16,
+                d.friction_keep_q16,
+                d.cohesion_q16,
+            )
+        },
+        |window, cur, vx, vy, rng| repose_slide::<M>(window, cur, vx, vy, d, rng),
     );
-
-    if supported_below::<M>(window, pos) {
-        vx = mul_q16(vx, d.friction_keep_q16);
-    }
-    note_body_below(window, pos);
-    cohesion::<M>(window, pos, &mut vx, &mut vy, d.cohesion_q16);
-
-    let (mut cur, mut moved) = traverse::<M>(window, pos, &mut vx, &mut vy, d.restitution_q16, rng);
-    if !can_enter::<M>(window, (0, -1), cur.translated(0, -1)) {
-        moved |= repose_slide::<M>(window, &mut cur, &mut vx, vy, d, rng);
-    }
-    if moved {
-        note_undermined(window, pos);
-    }
-    finish::<M>(window, cur, vx, vy, d.restitution_q16, -1, tick_byte);
 }
 
 fn update_liquid<M: MatSpec>(
@@ -448,32 +444,28 @@ fn update_liquid<M: MatSpec>(
         return;
     }
 
-    let (mut vx, mut vy) = cell.vel();
-
-    let ambient = ambient_density_milli(window, pos);
-    vy -= buoyant_gravity::<M>(ambient);
-    apply_drag(
-        &mut vx,
-        &mut vy,
-        ambient,
-        d.drag_keep_q16,
-        d.drag_keep_submerged_q16,
+    update_mover::<M>(
+        window,
+        pos,
+        cell,
+        d.restitution_q16,
+        -1,
+        rng,
+        tick_byte,
+        |window, pos, vx, vy, _rng| {
+            settling_accelerate::<M>(
+                window,
+                pos,
+                vx,
+                vy,
+                d.drag_keep_q16,
+                d.drag_keep_submerged_q16,
+                d.friction_keep_q16,
+                d.cohesion_q16,
+            )
+        },
+        |window, cur, vx, vy, rng| ledge_flow::<M>(window, cur, vx, vy, d, rng),
     );
-
-    if supported_below::<M>(window, pos) {
-        vx = mul_q16(vx, d.friction_keep_q16);
-    }
-    note_body_below(window, pos);
-    cohesion::<M>(window, pos, &mut vx, &mut vy, d.cohesion_q16);
-
-    let (mut cur, mut moved) = traverse::<M>(window, pos, &mut vx, &mut vy, d.restitution_q16, rng);
-    if !can_enter::<M>(window, (0, -1), cur.translated(0, -1)) {
-        moved |= ledge_flow::<M>(window, &mut cur, &mut vx, vy, d, rng);
-    }
-    if moved {
-        note_undermined(window, pos);
-    }
-    finish::<M>(window, cur, vx, vy, d.restitution_q16, -1, tick_byte);
 }
 
 fn update_gas<M: MatSpec>(
@@ -484,27 +476,75 @@ fn update_gas<M: MatSpec>(
     rng: &mut Rng,
     tick_byte: u8,
 ) {
+    update_mover::<M>(
+        window,
+        pos,
+        cell,
+        d.restitution_q16,
+        1,
+        rng,
+        tick_byte,
+        |window, pos, vx, vy, rng| {
+            *vy += GRAVITY_DV;
+            *vx = mul_q16(*vx, d.drag_keep_q16);
+            *vy = mul_q16(*vy, d.drag_keep_q16);
+            if d.turbulence_q16 > 0 {
+                let r = rng.draw().bits(16) as i64 - 32768;
+                *vx += scaled_round(d.turbulence_q16 as i64 * r, 31);
+            }
+            note_body_below(window, pos);
+            cohesion::<M>(window, pos, vx, vy, d.cohesion_q16);
+        },
+        |window, cur, vx, vy, rng| ceiling_spread::<M>(window, cur, vx, vy, d, rng),
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn settling_accelerate<M: MatSpec>(
+    window: &mut SimWindow,
+    pos: CellPos,
+    vx: &mut i32,
+    vy: &mut i32,
+    drag_keep_q16: u32,
+    drag_keep_submerged_q16: u32,
+    friction_keep_q16: u32,
+    cohesion_q16: u32,
+) {
+    let ambient = ambient_density_milli(window, pos);
+    *vy -= buoyant_gravity::<M>(ambient);
+    apply_drag(vx, vy, ambient, drag_keep_q16, drag_keep_submerged_q16);
+
+    if supported_below::<M>(window, pos) {
+        *vx = mul_q16(*vx, friction_keep_q16);
+    }
+    note_body_below(window, pos);
+    cohesion::<M>(window, pos, vx, vy, cohesion_q16);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn update_mover<M: MatSpec>(
+    window: &mut SimWindow,
+    pos: CellPos,
+    cell: Cell,
+    restitution_q16: u32,
+    gdir: i32,
+    rng: &mut Rng,
+    tick_byte: u8,
+    accelerate: impl FnOnce(&mut SimWindow, CellPos, &mut i32, &mut i32, &mut Rng),
+    redirect: impl FnOnce(&mut SimWindow, &mut CellPos, &mut i32, i32, &mut Rng) -> bool,
+) {
     let (mut vx, mut vy) = cell.vel();
 
-    vy += GRAVITY_DV;
-    vx = mul_q16(vx, d.drag_keep_q16);
-    vy = mul_q16(vy, d.drag_keep_q16);
-    if d.turbulence_q16 > 0 {
-        let r = rng.draw().bits(16) as i64 - 32768;
-        vx += scaled_round(d.turbulence_q16 as i64 * r, 31);
-    }
+    accelerate(window, pos, &mut vx, &mut vy, rng);
 
-    note_body_below(window, pos);
-    cohesion::<M>(window, pos, &mut vx, &mut vy, d.cohesion_q16);
-
-    let (mut cur, mut moved) = traverse::<M>(window, pos, &mut vx, &mut vy, d.restitution_q16, rng);
-    if !can_enter::<M>(window, (0, 1), cur.translated(0, 1)) {
-        moved |= ceiling_spread::<M>(window, &mut cur, &mut vx, vy, d, rng);
+    let (mut cur, mut moved) = traverse::<M>(window, pos, &mut vx, &mut vy, restitution_q16, rng);
+    if !can_enter::<M>(window, (0, gdir), cur.translated(0, gdir)) {
+        moved |= redirect(window, &mut cur, &mut vx, vy, rng);
     }
     if moved {
         note_undermined(window, pos);
     }
-    finish::<M>(window, cur, vx, vy, d.restitution_q16, 1, tick_byte);
+    finish::<M>(window, cur, vx, vy, restitution_q16, gdir, tick_byte);
 }
 
 fn buoyant_gravity<M: MatSpec>(ambient: i32) -> i32 {

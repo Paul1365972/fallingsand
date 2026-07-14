@@ -142,13 +142,22 @@ fn cell_blocks<W: CellSource>(world: &W, pos: CellPos) -> bool {
     }
 }
 
-fn rect_blocked<W: CellSource>(
+enum Obstacle {
+    Unloaded,
+    Solid(CellPos),
+}
+
+// Visits every candidate cell the footprint would newly occupy at (cx, cy) -- those
+// outside the current footprint and not owned -- and reports each blocking cell.
+// Allocation-free: callers early-exit (rect_blocked) or accumulate (passage) themselves.
+fn walk_footprint<W: CellSource>(
     world: &W,
     body: &Actor,
     cx: Fixed,
     cy: Fixed,
     own: OwnCells,
-) -> bool {
+    mut visit: impl FnMut(Obstacle) -> std::ops::ControlFlow<()>,
+) {
     let cur = body.footprint();
     let next = footprint_at(cx, cy, body.half_w, body.half_h);
     for y in next.y0..=next.y1 {
@@ -157,12 +166,35 @@ fn rect_blocked<W: CellSource>(
             if cur.contains(pos) || own_covers(own, pos) {
                 continue;
             }
-            if cell_blocks(world, pos) {
-                return true;
+            let obstacle = match world.cell_at(pos) {
+                None => Obstacle::Unloaded,
+                Some(cell)
+                    if matches!(content::phase(cell.material), Phase::Solid | Phase::Powder) =>
+                {
+                    Obstacle::Solid(pos)
+                }
+                Some(_) => continue,
+            };
+            if visit(obstacle).is_break() {
+                return;
             }
         }
     }
-    false
+}
+
+fn rect_blocked<W: CellSource>(
+    world: &W,
+    body: &Actor,
+    cx: Fixed,
+    cy: Fixed,
+    own: OwnCells,
+) -> bool {
+    let mut blocked = false;
+    walk_footprint(world, body, cx, cy, own, |_| {
+        blocked = true;
+        std::ops::ControlFlow::Break(())
+    });
+    blocked
 }
 
 fn supported_at<W: CellSource>(
