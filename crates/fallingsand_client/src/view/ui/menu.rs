@@ -64,7 +64,6 @@ pub fn sync_menu(
 
 fn spawn_menu(commands: &mut Commands, game: &ClientGame) {
     let player_name = game.identity.name.clone();
-    let name_editable = game.identity.name_editable();
     commands
         .spawn((
             MenuRoot,
@@ -102,15 +101,7 @@ fn spawn_menu(commands: &mut Commands, game: &ClientGame) {
                     ..default()
                 })
                 .with_children(|column| {
-                    if name_editable {
-                        spawn_field(column, PlayerNameField, "name", 220.0, &player_name);
-                    } else {
-                        spawn_readonly_field(column, "name", 220.0, &player_name);
-                        #[cfg(not(target_family = "wasm"))]
-                        spawn_note(column, "set by --name");
-                        #[cfg(target_family = "wasm")]
-                        spawn_note(column, "set by ?name= query");
-                    }
+                    spawn_field(column, PlayerNameField, "name", 220.0, &player_name);
                 });
 
             #[cfg(not(target_family = "wasm"))]
@@ -283,51 +274,4 @@ fn spawn_field(
                 BackgroundColor(FIELD_BG),
             ));
         });
-}
-
-fn spawn_readonly_field(parent: &mut ChildSpawnerCommands, label: &str, width: f32, value: &str) {
-    parent
-        .spawn(Node {
-            flex_direction: FlexDirection::Row,
-            column_gap: px(8),
-            align_items: AlignItems::Center,
-            ..default()
-        })
-        .with_children(|row| {
-            row.spawn((
-                Text::new(label),
-                TextFont {
-                    font_size: FontSize::Px(12.0),
-                    ..default()
-                },
-                TextColor(Color::srgba(0.7, 0.75, 0.8, 0.7)),
-            ));
-            row.spawn((
-                Text::new(value),
-                TextFont {
-                    font_size: FontSize::Px(16.0),
-                    ..default()
-                },
-                TextColor(Color::srgba(0.9, 0.9, 0.95, 0.6)),
-                Node {
-                    width: px(width),
-                    height: px(26),
-                    padding: UiRect::axes(px(6), px(3)),
-                    overflow: Overflow::clip(),
-                    ..default()
-                },
-                BackgroundColor(FIELD_BG),
-            ));
-        });
-}
-
-fn spawn_note(parent: &mut ChildSpawnerCommands, text: &str) {
-    parent.spawn((
-        Text::new(text),
-        TextFont {
-            font_size: FontSize::Px(11.0),
-            ..default()
-        },
-        TextColor(Color::srgba(0.7, 0.75, 0.8, 0.5)),
-    ));
 }
