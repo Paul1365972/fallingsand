@@ -183,12 +183,6 @@ impl SelfLife {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ParticleKind {
-    Spray,
-    Flame,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct ParticleSpawn {
     pub x: f32,
@@ -196,7 +190,6 @@ pub struct ParticleSpawn {
     pub vx: f32,
     pub vy: f32,
     pub color: [u8; 3],
-    pub kind: ParticleKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

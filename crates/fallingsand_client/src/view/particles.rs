@@ -2,13 +2,10 @@ use super::Game;
 use super::camera::WORLD_LAYER;
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
-use fallingsand_protocol::{InteractionStatus, ParticleKind, ParticleSpawn};
+use fallingsand_protocol::{InteractionStatus, ParticleSpawn};
 
 const SPRAY_TTL: f32 = 0.5;
 const SPRAY_GRAVITY: f32 = 260.0;
-const FLAME_TTL: f32 = 0.45;
-const FLAME_GRAVITY: f32 = -60.0;
-const FLAME_ALPHA: f32 = 0.95;
 
 #[derive(Component)]
 pub struct Particle {
@@ -85,22 +82,13 @@ pub fn drain_particles(mut commands: Commands, mut game: ResMut<Game>) {
 }
 
 fn particle_bundle(spawn: ParticleSpawn) -> (Particle, Sprite, Transform, RenderLayers) {
-    let (gravity, ttl, alpha) = match spawn.kind {
-        ParticleKind::Spray => (SPRAY_GRAVITY, SPRAY_TTL, 1.0),
-        ParticleKind::Flame => (FLAME_GRAVITY, FLAME_TTL, FLAME_ALPHA),
-    };
-    let color = Color::srgba_u8(
-        spawn.color[0],
-        spawn.color[1],
-        spawn.color[2],
-        (alpha * 255.0) as u8,
-    );
+    let color = Color::srgb_u8(spawn.color[0], spawn.color[1], spawn.color[2]);
     (
         Particle {
             velocity: Vec2::new(spawn.vx, spawn.vy),
-            gravity,
-            ttl,
-            max_ttl: ttl,
+            gravity: SPRAY_GRAVITY,
+            ttl: SPRAY_TTL,
+            max_ttl: SPRAY_TTL,
         },
         Sprite::from_color(color, Vec2::ONE),
         Transform::from_xyz(spawn.x, spawn.y, 15.0),
