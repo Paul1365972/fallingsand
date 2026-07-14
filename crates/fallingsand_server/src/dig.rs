@@ -176,7 +176,10 @@ fn active_place(
         return;
     };
 
-    world.place_material(target, material);
+    if !world.fill_material(target, material) {
+        dig.interaction = Some(interaction(target, InteractionStatus::Occupied, 0.0));
+        return;
+    }
     if context.survival {
         let stack = inventory.inner.get(slot).expect("placeable slot occupied");
         let count = stack.count.saturating_sub(1);

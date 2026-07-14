@@ -103,6 +103,14 @@ impl CellWorld {
         self.set_cell(pos, Cell::new(material, shade));
     }
 
+    pub fn fill_material(&mut self, pos: CellPos, material: MaterialId) -> bool {
+        if !self.get_cell(pos).is_some_and(|cell| cell.is_air()) {
+            return false;
+        }
+        self.place_material(pos, material);
+        true
+    }
+
     pub(crate) fn push_structural(&mut self, positions: Vec<CellPos>) {
         self.structural.extend(positions);
     }
