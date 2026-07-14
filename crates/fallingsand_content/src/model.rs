@@ -278,21 +278,8 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
             ember_base[ignition.into.0 as usize] = Some(MaterialId(base as u16));
         }
     }
-    let item_source: Vec<Option<MaterialId>> = materials
-        .iter()
-        .enumerate()
-        .map(|(index, mat)| {
-            if mat.is_fuel_ember {
-                ember_base[index]
-            } else if matches!(mat.phase, Phase::Empty) || mat.tags.contains(Tag::Player) {
-                None
-            } else {
-                Some(MaterialId(index as u16))
-            }
-        })
-        .collect();
 
-    let (items, item_for_material) = build_items(catalog, &materials, &item_source)?;
+    let (items, item_for_material) = build_items(catalog, &materials, &ember_base)?;
     let recipes = build_recipes(catalog, &by_name, &item_for_material)?;
     let thresholds = build_thresholds(catalog)?;
 
@@ -310,7 +297,7 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
 fn build_items(
     catalog: &Catalog,
     materials: &[Mat],
-    item_source: &[Option<MaterialId>],
+    ember_base: &[Option<MaterialId>],
 ) -> Result<(Vec<ItemOut>, Vec<u16>), Error> {
     let mut items = vec![ItemOut {
         name: "none".to_owned(),
@@ -340,10 +327,7 @@ fn build_items(
     }
 
     let mut material_item = vec![0u16; materials.len()];
-    for (index, mat) in materials.iter().enumerate() {
-        if item_source[index] != Some(MaterialId(index as u16)) {
-            continue;
-        }
+    for (index, mat) in materials.iter().enumerate().skip(1) {
         let id = items.len() as u16;
         items.push(ItemOut {
             name: format!("mat:{}", mat.name),
@@ -360,14 +344,12 @@ fn build_items(
         return Err(fail(format!("too many items: {}", items.len())));
     }
 
-    // Every item id maps through its source material, so digging a fuel ember
-    // or a variant yields the base material's item.
-    let mut item_for_material = vec![0u16; materials.len()];
-    for (index, source) in item_source.iter().enumerate() {
-        if let Some(source) = source {
-            item_for_material[index] = material_item[source.0 as usize];
-        }
-    }
+    let item_for_material = (0..materials.len())
+        .map(|index| {
+            let source = ember_base[index].map_or(index, |base| base.0 as usize);
+            material_item[source]
+        })
+        .collect();
 
     Ok((items, item_for_material))
 }
