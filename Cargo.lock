@@ -2667,6 +2667,7 @@ name = "fallingsand_net"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "futures",
  "gloo-timers",
  "rustls-pki-types",

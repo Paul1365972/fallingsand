@@ -1,5 +1,6 @@
 use crate::framing::{Closed, FrameBuffer, encode_frame};
 use crate::{Connection, ConnectionStatus};
+use bytes::Bytes;
 use futures::StreamExt;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
@@ -15,14 +16,14 @@ enum Outgoing {
 
 pub struct WtWasmConnection {
     tx: UnboundedSender<Outgoing>,
-    rx: Mutex<Receiver<Vec<u8>>>,
+    rx: Mutex<Receiver<Bytes>>,
     closed: Arc<Closed>,
 }
 
 pub fn connect(url: &str, cert_hash: Option<Vec<u8>>) -> WtWasmConnection {
     let closed = Arc::new(Closed::default());
     let (out_tx, out_rx) = unbounded::<Outgoing>();
-    let (in_tx, in_rx) = channel::<Vec<u8>>();
+    let (in_tx, in_rx) = channel::<Bytes>();
 
     let url = url.to_string();
     let task_closed = closed.clone();
@@ -43,7 +44,7 @@ async fn run_session(
     url: String,
     cert_hash: Option<Vec<u8>>,
     mut out_rx: UnboundedReceiver<Outgoing>,
-    in_tx: Sender<Vec<u8>>,
+    in_tx: Sender<Bytes>,
     closed: Arc<Closed>,
 ) -> Result<(), String> {
     let parsed = crate::normalize_server_url(&url).map_err(|_| "invalid url".to_string())?;
@@ -124,7 +125,7 @@ impl Connection for WtWasmConnection {
         let _ = self.tx.unbounded_send(Outgoing::Frame(message));
     }
 
-    fn poll(&mut self) -> Option<Vec<u8>> {
+    fn poll(&mut self) -> Option<Bytes> {
         match self.rx.lock().unwrap().try_recv() {
             Ok(message) => Some(message),
             Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => None,

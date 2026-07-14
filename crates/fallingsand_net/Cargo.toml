@@ -21,6 +21,7 @@ wt-wasm = [
 ]
 
 [dependencies]
+bytes = { workspace = true }
 url = { version = "2", optional = true }
 anyhow = { workspace = true, optional = true }
 

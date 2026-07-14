@@ -1,5 +1,6 @@
 use crate::framing::{Closed, FrameBuffer, encode_frame};
 use crate::{Connection, ConnectionStatus, Listener};
+use bytes::Bytes;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
@@ -13,7 +14,7 @@ enum Outgoing {
 
 pub struct WtConnection {
     tx: UnboundedSender<Outgoing>,
-    rx: Mutex<Receiver<Vec<u8>>>,
+    rx: Mutex<Receiver<Bytes>>,
     closed: Arc<Closed>,
 }
 
@@ -26,7 +27,7 @@ impl WtConnection {
     ) -> Self {
         let closed = Arc::new(Closed::default());
         let (out_tx, out_rx) = unbounded_channel::<Outgoing>();
-        let (in_tx, in_rx) = channel::<Vec<u8>>();
+        let (in_tx, in_rx) = channel::<Bytes>();
 
         runtime.spawn(writer(session.clone(), send_stream, out_rx));
         runtime.spawn(reader(recv_stream, in_tx, closed.clone()));
@@ -65,7 +66,7 @@ async fn writer(
 
 async fn reader(
     mut stream: web_transport_quinn::RecvStream,
-    messages: Sender<Vec<u8>>,
+    messages: Sender<Bytes>,
     closed: Arc<Closed>,
 ) {
     let mut frames = FrameBuffer::default();
@@ -110,7 +111,7 @@ impl Connection for WtConnection {
         let _ = self.tx.send(Outgoing::Frame(message));
     }
 
-    fn poll(&mut self) -> Option<Vec<u8>> {
+    fn poll(&mut self) -> Option<Bytes> {
         match self.rx.lock().unwrap().try_recv() {
             Ok(message) => Some(message),
             Err(TryRecvError::Empty) => None,

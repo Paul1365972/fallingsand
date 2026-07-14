@@ -1,49 +1,40 @@
 use crate::ConnectionStatus;
+use bytes::{Buf, Bytes, BytesMut};
 use std::sync::Mutex;
 
 pub(crate) const MAX_FRAME: usize = 64 * 1024 * 1024;
 const FRAME_HEADER: usize = 4;
 
-pub(crate) fn encode_frame(message: &[u8]) -> Vec<u8> {
-    let mut framed = Vec::with_capacity(message.len() + FRAME_HEADER);
+pub(crate) fn encode_frame(message: &[u8]) -> Bytes {
+    let mut framed = BytesMut::with_capacity(message.len() + FRAME_HEADER);
     framed.extend_from_slice(&(message.len() as u32).to_le_bytes());
     framed.extend_from_slice(message);
-    framed
+    framed.freeze()
 }
 
 #[derive(Default)]
 pub(crate) struct FrameBuffer {
-    buffer: Vec<u8>,
-    cursor: usize,
+    buffer: BytesMut,
 }
 
 impl FrameBuffer {
     pub(crate) fn push(&mut self, bytes: &[u8]) {
-        if self.cursor == self.buffer.len() {
-            self.buffer.clear();
-            self.cursor = 0;
-        } else if self.cursor >= self.buffer.len() / 2 {
-            self.buffer.drain(..self.cursor);
-            self.cursor = 0;
-        }
         self.buffer.extend_from_slice(bytes);
     }
 
-    pub(crate) fn next_frame(&mut self) -> Result<Option<Vec<u8>>, ()> {
-        let available = &self.buffer[self.cursor..];
-        if available.len() < FRAME_HEADER {
+    pub(crate) fn next_frame(&mut self) -> Result<Option<Bytes>, ()> {
+        if self.buffer.len() < FRAME_HEADER {
             return Ok(None);
         }
-        let len = u32::from_le_bytes(available[..FRAME_HEADER].try_into().unwrap()) as usize;
+        let len = u32::from_le_bytes(self.buffer[..FRAME_HEADER].try_into().unwrap()) as usize;
         if len > MAX_FRAME {
             return Err(());
         }
-        if available.len() < FRAME_HEADER + len {
+        if self.buffer.len() < FRAME_HEADER + len {
             return Ok(None);
         }
-        let frame = available[FRAME_HEADER..FRAME_HEADER + len].to_vec();
-        self.cursor += FRAME_HEADER + len;
-        Ok(Some(frame))
+        self.buffer.advance(FRAME_HEADER);
+        Ok(Some(self.buffer.split_to(len).freeze()))
     }
 }
 

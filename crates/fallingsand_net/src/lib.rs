@@ -48,7 +48,7 @@ pub enum ConnectionStatus {
 
 pub trait Connection: Send + Sync {
     fn send(&mut self, message: Vec<u8>);
-    fn poll(&mut self) -> Option<Vec<u8>>;
+    fn poll(&mut self) -> Option<bytes::Bytes>;
     fn status(&self) -> ConnectionStatus;
     fn close(&mut self, reason: &str);
 }
