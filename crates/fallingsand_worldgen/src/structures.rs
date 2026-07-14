@@ -249,6 +249,9 @@ fn islands(seed: u64, builder: &mut Builder) {
             }
             let center_x = anchor_x * ISLAND_ANCHOR_X + rng.draw().range(0, ISLAND_ANCHOR_X - 1);
             let center_y = anchor_y * ISLAND_ANCHOR_Y + rng.draw().range(0, ISLAND_ANCHOR_Y - 1);
+            if !(ISLAND_MIN_Y..=ISLAND_MAX_Y).contains(&center_y) {
+                continue;
+            }
             let rx = rng.draw().range(22, 56);
             let ry_top = rx / 4 + 2;
             let ry_bottom = rx / 2 + 3;
