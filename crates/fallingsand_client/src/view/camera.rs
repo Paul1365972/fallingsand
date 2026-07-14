@@ -329,6 +329,7 @@ pub fn setup_camera(
     let lighting = lighting_mats.add(LightingMaterial {
         params: LightingParams::default(),
         world: targets[L_WORLD].clone(),
+        emissive: Handle::default(),
     });
     let mut upscale: [Option<Handle<UpscaleMaterial>>; 6] = Default::default();
     commands.entity(composite).with_children(|parent| {

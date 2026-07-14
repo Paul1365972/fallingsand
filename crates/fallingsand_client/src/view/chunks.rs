@@ -62,17 +62,42 @@ pub struct ChunkUpload {
 #[derive(Resource, Default)]
 pub struct ChunkUploadQueue(Vec<ChunkUpload>);
 
+pub struct EmissiveUpload {
+    image: AssetId<Image>,
+    size: UVec2,
+    data: Vec<u8>,
+    retries: u8,
+}
+
+#[derive(Resource, Default)]
+pub struct EmissiveUploadQueue(Vec<EmissiveUpload>);
+
+impl EmissiveUploadQueue {
+    pub fn push(&mut self, image: AssetId<Image>, size: UVec2, data: Vec<u8>) {
+        self.0.push(EmissiveUpload {
+            image,
+            size,
+            data,
+            retries: 0,
+        });
+    }
+}
+
 #[derive(Resource, Default)]
 struct RenderChunkUploads(Vec<ChunkUpload>);
+
+#[derive(Resource, Default)]
+struct RenderEmissiveUploads(Vec<EmissiveUpload>);
 
 pub fn setup_render_app(app: &mut App) {
     if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
         render_app
             .init_resource::<RenderChunkUploads>()
-            .add_systems(ExtractSchedule, extract_chunk_uploads)
+            .init_resource::<RenderEmissiveUploads>()
+            .add_systems(ExtractSchedule, (extract_chunk_uploads, extract_emissive))
             .add_systems(
                 Render,
-                upload_chunk_rects.in_set(RenderSystems::PrepareResources),
+                (upload_chunk_rects, upload_emissive).in_set(RenderSystems::PrepareResources),
             );
     }
 }
@@ -83,6 +108,49 @@ fn extract_chunk_uploads(
 ) {
     let mut queue = main_world.resource_mut::<ChunkUploadQueue>();
     uploads.0.append(&mut queue.0);
+}
+
+fn extract_emissive(mut main_world: ResMut<MainWorld>, mut uploads: ResMut<RenderEmissiveUploads>) {
+    let mut queue = main_world.resource_mut::<EmissiveUploadQueue>();
+    uploads.0.append(&mut queue.0);
+}
+
+fn upload_emissive(
+    mut uploads: ResMut<RenderEmissiveUploads>,
+    images: Res<RenderAssets<GpuImage>>,
+    queue: Res<RenderQueue>,
+) {
+    uploads.0.retain_mut(|upload| {
+        let Some(gpu) = images.get(upload.image) else {
+            upload.retries += 1;
+            return upload.retries < UPLOAD_RETRY_FRAMES;
+        };
+        let gpu_size = gpu.texture_descriptor.size;
+        if gpu_size.width != upload.size.x || gpu_size.height != upload.size.y {
+            upload.retries += 1;
+            return upload.retries < UPLOAD_RETRY_FRAMES;
+        }
+        queue.write_texture(
+            TexelCopyTextureInfo {
+                texture: &gpu.texture,
+                mip_level: 0,
+                origin: Origin3d::ZERO,
+                aspect: TextureAspect::All,
+            },
+            &upload.data,
+            TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(upload.size.x * 4),
+                rows_per_image: Some(upload.size.y),
+            },
+            Extent3d {
+                width: upload.size.x,
+                height: upload.size.y,
+                depth_or_array_layers: 1,
+            },
+        );
+        false
+    });
 }
 
 fn upload_chunk_rects(

@@ -1,7 +1,7 @@
 mod lighting;
 mod materials;
 
-pub use lighting::{ActiveLights, EmissiveLights, apply_lighting, scan_emissive};
+pub use lighting::{ActiveLights, apply_lighting, setup_emissive, sync_emissive};
 pub use materials::{AtmosphereMaterial, MoonMaterial, StarfieldMaterial, SunMaterial};
 pub use materials::{LightingMaterial, LightingParams};
 

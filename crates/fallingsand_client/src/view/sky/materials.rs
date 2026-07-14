@@ -1,4 +1,4 @@
-use super::lighting::MAX_LIGHTS;
+use super::lighting::MAX_PLAYER_LIGHTS;
 use crate::view::camera::premultiplied_composite;
 use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::prelude::*;
@@ -10,21 +10,25 @@ use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
 
 #[derive(ShaderType, Debug, Clone)]
 pub struct LightingParams {
-    pub lights: [Vec4; MAX_LIGHTS],
+    pub lights: [Vec4; MAX_PLAYER_LIGHTS],
     pub darkness: f32,
     pub light_count: u32,
     pub snapped_cam: Vec2,
     pub native_size: Vec2,
+    pub emissive_origin: Vec2,
+    pub emissive_size: Vec2,
 }
 
 impl Default for LightingParams {
     fn default() -> Self {
         Self {
-            lights: [Vec4::ZERO; MAX_LIGHTS],
+            lights: [Vec4::ZERO; MAX_PLAYER_LIGHTS],
             darkness: 0.0,
             light_count: 0,
             snapped_cam: Vec2::ZERO,
             native_size: Vec2::ONE,
+            emissive_origin: Vec2::ZERO,
+            emissive_size: Vec2::ONE,
         }
     }
 }
@@ -36,6 +40,8 @@ pub struct LightingMaterial {
     #[texture(1)]
     #[sampler(2)]
     pub world: Handle<Image>,
+    #[texture(3)]
+    pub emissive: Handle<Image>,
 }
 
 impl Material2d for LightingMaterial {
