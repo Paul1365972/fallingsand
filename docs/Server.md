@@ -14,7 +14,7 @@
 
 ## Tick order
 
-1. Drain network: authenticate or take over sessions, merge input, neutralize stale input, and complete departures
+1. Drain network: authenticate or take over sessions, adopt each session's latest held input, neutralize stale input, and complete departures
 2. Apply alive-player commands, dig/place, inventory actions, then begin requested revives
 3. Recompute view and materialization-search tickets, then load/generate/unload regions
 4. Step the CA in four phases

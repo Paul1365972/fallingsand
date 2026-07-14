@@ -97,20 +97,6 @@ impl Default for InputState {
     }
 }
 
-impl InputState {
-    pub fn merge_or(&mut self, next: Self) {
-        if next.move_x != 0 {
-            self.move_x = next.move_x;
-        }
-        self.jump |= next.jump;
-        self.down |= next.down;
-        self.primary |= next.primary;
-        self.secondary |= next.secondary;
-        self.aim = next.aim;
-        self.cursor_mode = next.cursor_mode;
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum InputAction {
     Jump,

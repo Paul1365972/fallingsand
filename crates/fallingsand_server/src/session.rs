@@ -149,7 +149,6 @@ pub fn drain_network(
     let mut chats = Vec::new();
 
     for id in ids {
-        let mut fresh_input = true;
         let messages = poll_messages(sessions, id);
         for message in messages {
             match message {
@@ -189,22 +188,14 @@ pub fn drain_network(
                     let Some(player) = players.get_mut(player_id) else {
                         continue;
                     };
-                    if fresh_input {
-                        player.control.input = if player.is_alive() {
-                            frame.state
-                        } else {
-                            InputState::default()
-                        };
-                        fresh_input = false;
-                    } else if player.is_alive() {
-                        player.control.input.merge_or(frame.state);
-                    }
+                    player.control.input = if player.is_alive() {
+                        frame.state
+                    } else {
+                        InputState::default()
+                    };
                     player.control.last_input_tick = tick;
                     for action in frame.actions {
                         apply_input_action(player, action);
-                    }
-                    if !player.is_alive() {
-                        player.control.input = InputState::default();
                     }
                 }
                 ClientMessage::Chat { text } => {

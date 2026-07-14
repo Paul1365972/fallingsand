@@ -38,7 +38,6 @@ impl Track {
 #[derive(Default)]
 pub struct InputCore {
     pub held: InputState,
-    latched: InputState,
     actions: Vec<InputAction>,
     blocked_primary: bool,
     blocked_secondary: bool,
@@ -62,12 +61,10 @@ impl InputCore {
     }
 
     pub(super) fn neutralize(&mut self) {
-        let state = InputState {
-            aim: self.latched.aim,
+        self.held = InputState {
+            aim: self.held.aim,
             ..Default::default()
         };
-        self.latched = state;
-        self.held = state;
         self.neutral_pending = true;
     }
 
@@ -135,7 +132,7 @@ pub(super) fn resolve(game: &mut ClientGame, io: &IoFrame) {
 }
 
 fn sample(game: &mut ClientGame, io: &IoFrame, gameplay: bool) {
-    let aim = io.cursor_cell.unwrap_or(game.input.latched.aim);
+    let aim = io.cursor_cell.unwrap_or(game.input.held.aim);
     let mut state = InputState {
         aim,
         ..Default::default()
@@ -157,7 +154,6 @@ fn sample(game: &mut ClientGame, io: &IoFrame, gameplay: bool) {
         state.cursor_mode = game.settings.cursor_mode;
     }
     game.input.held = state;
-    game.input.latched.merge_or(state);
 }
 
 fn collect(
@@ -389,13 +385,12 @@ pub(super) fn flush(game: &mut ClientGame, dt: f32) {
     let Some(session) = session else {
         input.acc = 0.0;
         input.actions.clear();
-        input.latched = input.held;
         input.neutral_pending = false;
         return;
     };
     if input.neutral_pending {
         session.send(&ClientMessage::Input(InputFrame {
-            state: input.latched,
+            state: input.held,
             actions: input.take_actions(),
         }));
         input.neutral_pending = false;
@@ -409,9 +404,8 @@ pub(super) fn flush(game: &mut ClientGame, dt: f32) {
     while input.acc >= TICK_DT {
         input.acc -= TICK_DT;
         session.send(&ClientMessage::Input(InputFrame {
-            state: input.latched,
+            state: input.held,
             actions: input.take_actions(),
         }));
-        input.latched = input.held;
     }
 }
