@@ -12,12 +12,12 @@ The stamp commits the sweep's pose: liquids in newly claimed cells pair into vac
 
 ## Pixel bodies
 
-Rigid bodies made of cells, rasterized at all times: a motion record (cell buffer, `Fixed` pose/velocity, spin, mass, inertia) over real world cells carrying the body flag — one cell, one owner. The flag marks a cell as raster-owned (body or player); resolving *which* body owns a cell is O(1) through a cell→index owner map rebuilt from the authoritative rasters at each phase entry and patched in lockstep with the one re-stamp that replaces a raster, never scanned linearly.
+Rigid bodies made of cells, rasterized at all times: a motion record (cell buffer, `Fixed` pose/velocity, spin, mass, inertia) over real world cells carrying the body flag — one cell, one owner. The flag marks a cell as raster-owned (body or player); resolving *which* body owns a flagged cell is constant-time, never a linear scan.
 
 - **Registration**: flood-fill finds disconnected solid islands (`rigid_capable`) and flags them in place; anything removing support feeds one structural-notification queue.
 - **Dynamics**: impulse-based, substepped; one transactional re-stamp per tick — plan-then-commit, conflicts fall back translation-only → rotation-only → damped abort; displaced fluid pairs into vacated cells or surfaces up its column. Hidden overlap mass stays in the buffer and reappears — matter is conserved.
 - **Buoyancy** from liquid bearing on the footprint, plus drag — wood floats, stone sinks, no special cases.
 - **Bodies are terrain**: the CA runs reactions, decay, and combustion on them (a fallen tree burns). Any write unflagging a body cell feeds a damage queue reconciled before stepping — solid products re-adopted (a moving log keeps its fire), bodies split by connectivity or despawn when empty.
 - **Resting is free**: a resting body sleeps as a kickable body forever; only region unload settles it into terrain. Kicks, weight, damage, undermining, or fluid on top wake it.
-- **Settle conserves mass**: unloading writes every non-air buffer cell back to the grid unflagged — winners to their own world cell, hidden-overlap cells to the nearest empty cell radiating outward, else displacing the nearest loaded cell of any phase. Settle never drops a cell; the buffer is gone afterward, so it can only place, never refuse.
+- **Settle conserves mass**: unloading writes every non-air buffer cell back to the grid unflagged, hidden-overlap mass included; it always finds a cell to place into and never drops one, so it can only place, never refuse.
 - **No body protocol or renderer** — body cells ride ordinary chunk deltas and render as terrain.
