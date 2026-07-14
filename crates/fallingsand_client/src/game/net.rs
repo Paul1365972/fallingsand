@@ -298,6 +298,7 @@ fn drain(
                 ingame.world.apply(&tick);
                 ingame.inventory.apply(&tick, changes);
                 ingame.players.apply(&tick, &mut ingame.you, changes);
+                ingame.particles.extend(tick.particles.iter().copied());
                 ingame.clock.apply(tick.world_age);
                 ingame.debug.track_rects(&tick, debug_borders);
                 if ingame.phase == Phase::Connecting && session.player.is_some() {

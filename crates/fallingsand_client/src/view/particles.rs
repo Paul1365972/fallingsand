@@ -1,17 +1,14 @@
 use super::Game;
-use super::PLAYER_WIDTH;
 use super::camera::WORLD_LAYER;
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
-use fallingsand_core::content;
-use fallingsand_protocol::InteractionStatus;
-use fallingsand_rng::Rng;
+use fallingsand_protocol::{InteractionStatus, ParticleKind, ParticleSpawn};
 
 const SPRAY_TTL: f32 = 0.5;
 const SPRAY_GRAVITY: f32 = 260.0;
-const SPRAY_CHANCE: f32 = 0.2;
 const FLAME_TTL: f32 = 0.45;
-const FLAME_INTERVAL: f32 = 0.05;
+const FLAME_GRAVITY: f32 = -60.0;
+const FLAME_ALPHA: f32 = 0.95;
 
 #[derive(Component)]
 pub struct Particle {
@@ -78,88 +75,37 @@ fn status_color(status: InteractionStatus, progress: f32) -> Option<Color> {
     })
 }
 
-pub fn spawn_particles(
-    mut commands: Commands,
-    game: Res<Game>,
-    time: Res<Time>,
-    mut flame_accum: Local<f32>,
-    mut rng: Local<Rng>,
-) {
-    let Some(ingame) = game.0.playing() else {
+pub fn drain_particles(mut commands: Commands, mut game: ResMut<Game>) {
+    let Some(ingame) = game.0.ingame_mut() else {
         return;
     };
-    if ingame.game_menu_open() {
-        return;
-    }
-
-    spawn_dig_spray(&mut commands, ingame, &mut rng);
-
-    *flame_accum += time.delta_secs();
-    if *flame_accum < FLAME_INTERVAL {
-        return;
-    }
-    *flame_accum -= FLAME_INTERVAL;
-    for remote in ingame.players.avatars.values() {
-        if !remote.burning {
-            continue;
-        }
-        let size = Vec2::new(PLAYER_WIDTH, remote.height.max(1) as f32);
-        for _ in 0..2 {
-            let offset = Vec2::new(
-                (rng.draw().unit() - 0.5) * size.x,
-                (rng.draw().unit() - 0.5) * size.y,
-            );
-            let warm = rng.draw().unit();
-            let color = Color::srgba(1.0, 0.4 + warm * 0.5, 0.1, 0.95);
-            commands.spawn((
-                Particle {
-                    velocity: Vec2::new(
-                        (rng.draw().unit() - 0.5) * 14.0,
-                        24.0 + rng.draw().unit() * 26.0,
-                    ),
-                    gravity: -60.0,
-                    ttl: FLAME_TTL,
-                    max_ttl: FLAME_TTL,
-                },
-                Sprite::from_color(color, Vec2::ONE),
-                Transform::from_translation((remote.center() + offset).extend(15.0)),
-                RenderLayers::layer(WORLD_LAYER),
-            ));
-        }
+    for spawn in ingame.particles.drain(..) {
+        commands.spawn(particle_bundle(spawn));
     }
 }
 
-fn spawn_dig_spray(commands: &mut Commands, ingame: &crate::game::InGame, rng: &mut Rng) {
-    let Some(interaction) = ingame.you.life.avatar().map(|avatar| avatar.interaction) else {
-        return;
+fn particle_bundle(spawn: ParticleSpawn) -> (Particle, Sprite, Transform, RenderLayers) {
+    let (gravity, ttl, alpha) = match spawn.kind {
+        ParticleKind::Spray => (SPRAY_GRAVITY, SPRAY_TTL, 1.0),
+        ParticleKind::Flame => (FLAME_GRAVITY, FLAME_TTL, FLAME_ALPHA),
     };
-    let Some(material) = interaction.dig_material else {
-        return;
-    };
-    if rng.draw().unit() > SPRAY_CHANCE {
-        return;
-    }
-    let target = interaction.target;
-    let center = Vec2::new(target.x as f32 + 0.5, target.y as f32 + 0.5);
-    let colors = content::material(material).colors;
-    let rgba = colors[rng.draw().range(0, colors.len() as i32 - 1) as usize];
-    let color = Color::srgba_u8(rgba[0], rgba[1], rgba[2], 255);
-    let angle = std::f32::consts::FRAC_PI_4 + rng.draw().unit() * std::f32::consts::FRAC_PI_2;
-    let speed = 25.0 + rng.draw().unit() * 55.0;
-    let velocity = Vec2::from_angle(angle) * speed;
-    let jitter = Vec2::new(rng.draw().unit() - 0.5, rng.draw().unit() - 0.5);
-    let origin = center + jitter;
-    commands.spawn((
+    let color = Color::srgba_u8(
+        spawn.color[0],
+        spawn.color[1],
+        spawn.color[2],
+        (alpha * 255.0) as u8,
+    );
+    (
         Particle {
-            velocity,
-            gravity: SPRAY_GRAVITY,
-            ttl: SPRAY_TTL,
-            max_ttl: SPRAY_TTL,
+            velocity: Vec2::new(spawn.vx, spawn.vy),
+            gravity,
+            ttl,
+            max_ttl: ttl,
         },
         Sprite::from_color(color, Vec2::ONE),
-        Transform::from_xyz(origin.x, origin.y, 15.0),
+        Transform::from_xyz(spawn.x, spawn.y, 15.0),
         RenderLayers::layer(WORLD_LAYER),
-    ));
+    )
 }
 
 pub fn update_particles(

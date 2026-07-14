@@ -13,6 +13,7 @@ fallingsand_sim = { workspace = true, features = ["parallel"] }
 fallingsand_protocol = { workspace = true }
 fallingsand_net = { workspace = true, features = ["wt-native"] }
 fallingsand_worldgen = { workspace = true }
+fallingsand_rng = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
 rcgen = { workspace = true }
 rustls-pki-types = { workspace = true, features = ["std"] }

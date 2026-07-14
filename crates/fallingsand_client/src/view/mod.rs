@@ -12,7 +12,5 @@ pub mod ui;
 use crate::game::ClientGame;
 use bevy::prelude::Resource;
 
-pub const PLAYER_WIDTH: f32 = 3.0;
-
 #[derive(Resource)]
 pub struct Game(pub ClientGame);

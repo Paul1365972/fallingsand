@@ -4,6 +4,7 @@ pub(crate) mod dig;
 pub(crate) mod hazards;
 pub(crate) mod inventory;
 pub(crate) mod lifecycle;
+pub(crate) mod particles;
 pub(crate) mod persistence;
 pub(crate) mod physics;
 pub(crate) mod player;
@@ -62,6 +63,7 @@ struct ServerState {
     tickets: ChunkTickets,
     persistence: Persistence,
     replication: ReplicationState,
+    emitter: particles::ParticleEmitter,
     spawn: CellPos,
     clock: Calendar,
     world: WorldInfo,
@@ -146,6 +148,7 @@ impl Server {
                 tickets: ChunkTickets::default(),
                 persistence,
                 replication: ReplicationState::default(),
+                emitter: particles::ParticleEmitter::default(),
                 spawn,
                 clock: Calendar::new(meta.world_age),
                 world: WorldInfo {
@@ -251,6 +254,7 @@ impl ServerState {
             );
         }
         self.clock.advance();
+        self.emitter.emit(&self.players, tick);
         replication::replicate(
             &mut self.sessions,
             &self.players,
@@ -258,6 +262,7 @@ impl ServerState {
             &self.clock,
             &self.regions,
             &self.generator,
+            &self.emitter.spawns,
             &mut self.replication,
             &mut self.stats,
         );

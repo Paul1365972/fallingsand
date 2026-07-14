@@ -184,6 +184,22 @@ impl SelfLife {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ParticleKind {
+    Spray,
+    Flame,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ParticleSpawn {
+    pub x: f32,
+    pub y: f32,
+    pub vx: f32,
+    pub vy: f32,
+    pub color: [u8; 3],
+    pub kind: ParticleKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChunkDebugRects {
     pub pos: ChunkPos,
     pub change: DirtyRect,
@@ -225,6 +241,7 @@ pub struct TickFrame {
     pub cursor: Option<Option<ItemStack>>,
     pub trash: Option<Option<ItemStack>>,
     pub self_state: Option<SelfState>,
+    pub particles: Vec<ParticleSpawn>,
     pub debug: Vec<ChunkDebugRects>,
 }
 
@@ -279,5 +296,5 @@ pub enum ServerMessage {
     History {
         entries: Vec<String>,
     },
-    TickFrame(TickFrame),
+    TickFrame(Box<TickFrame>),
 }

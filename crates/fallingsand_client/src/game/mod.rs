@@ -17,7 +17,7 @@ use chat::Chat;
 use clock::WorldClock;
 use debug::DebugState;
 use fallingsand_core::CellPos;
-use fallingsand_protocol::{InputAction, SelfLife};
+use fallingsand_protocol::{InputAction, ParticleSpawn, SelfLife};
 use identity::Identity;
 use input::{Bindings, Context, InputCore, RawInput};
 use inventory::{Inventory, SlotRegion};
@@ -127,6 +127,7 @@ pub struct InGame {
     pub revive_request_pending: bool,
     pub world: WorldView,
     pub players: Players,
+    pub particles: Vec<ParticleSpawn>,
     pub you: SelfState,
     pub inventory: Inventory,
     pub chat: Chat,
@@ -143,6 +144,7 @@ impl InGame {
             revive_request_pending: false,
             world: WorldView::default(),
             players: Players::default(),
+            particles: Vec::new(),
             you: SelfState::default(),
             inventory: Inventory::default(),
             chat: Chat::default(),
@@ -208,6 +210,7 @@ impl InGame {
     fn on_session_lost(&mut self, changes: &mut Changes, input: &mut InputCore) {
         self.world.clear();
         self.players.clear();
+        self.particles.clear();
         self.you = SelfState::default();
         self.revive_request_pending = false;
         self.inventory.reset(changes);

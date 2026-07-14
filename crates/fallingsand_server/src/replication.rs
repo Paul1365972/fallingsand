@@ -3,10 +3,11 @@ use crate::player::{PlayerLife, Players};
 use crate::regions::RegionMap;
 use crate::session::Sessions;
 use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y, TickStats};
-use fallingsand_core::{Calendar, CellOffset, ChunkPos, ItemStack};
+use fallingsand_core::{CHUNK_SIZE, Calendar, CellOffset, ChunkPos, ItemStack};
 use fallingsand_protocol::{
-    ChunkDebugRects, ChunkOp, InteractionState, InteractionStatus, PlayerAvatarState, PlayerId,
-    PlayerState, SelfAvatarState, SelfLife, SelfState, ServerMessage, TickFrame, cells_to_wire,
+    ChunkDebugRects, ChunkOp, InteractionState, InteractionStatus, ParticleSpawn,
+    PlayerAvatarState, PlayerId, PlayerState, SelfAvatarState, SelfLife, SelfState, ServerMessage,
+    TickFrame, cells_to_wire,
 };
 use fallingsand_sim::CellWorld;
 use fallingsand_worldgen::WorldGenerator;
@@ -52,6 +53,7 @@ pub fn replicate(
     clock: &Calendar,
     regions: &RegionMap,
     generator: &WorldGenerator,
+    particles: &[ParticleSpawn],
     replication: &mut ReplicationState,
     stats: &mut TickStats,
 ) {
@@ -104,6 +106,7 @@ pub fn replicate(
             &interest,
             &mut debug,
         );
+        let in_interest = particles_in_interest(particles, center);
         let public_players = if session.replication.fresh {
             all_players.clone()
         } else {
@@ -122,7 +125,7 @@ pub fn replicate(
         };
 
         session.replication.fresh = false;
-        session.send(&ServerMessage::TickFrame(TickFrame {
+        session.send(&ServerMessage::TickFrame(Box::new(TickFrame {
             tick,
             world_age: clock.age,
             chunks,
@@ -131,8 +134,9 @@ pub fn replicate(
             cursor: inventory.cursor,
             trash: inventory.trash,
             self_state,
+            particles: in_interest,
             debug,
-        }));
+        })));
     }
 
     stats.players = players.len();
@@ -223,6 +227,22 @@ fn inventory_delta(
         cursor,
         trash,
     }
+}
+
+fn particles_in_interest(particles: &[ParticleSpawn], center: ChunkPos) -> Vec<ParticleSpawn> {
+    if particles.is_empty() {
+        return Vec::new();
+    }
+    let size = CHUNK_SIZE as f32;
+    let min_x = (center.x - INTEREST_RADIUS_X) as f32 * size;
+    let max_x = (center.x + INTEREST_RADIUS_X + 1) as f32 * size;
+    let min_y = (center.y - INTEREST_RADIUS_Y) as f32 * size;
+    let max_y = (center.y + INTEREST_RADIUS_Y + 1) as f32 * size;
+    particles
+        .iter()
+        .filter(|p| p.x >= min_x && p.x < max_x && p.y >= min_y && p.y < max_y)
+        .copied()
+        .collect()
 }
 
 fn build_tiles(

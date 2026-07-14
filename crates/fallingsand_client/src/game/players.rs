@@ -20,10 +20,6 @@ impl RemotePlayer {
     pub fn top_y(&self) -> f32 {
         self.feet_y() + self.height.max(1) as f32
     }
-
-    pub fn center(&self) -> Vec2 {
-        Vec2::new(self.pos.x, self.feet_y() + self.height.max(1) as f32 * 0.5)
-    }
 }
 
 #[derive(Default)]

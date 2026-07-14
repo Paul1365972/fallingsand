@@ -101,7 +101,7 @@ fn main() {
         Update,
         (
             view::chunks::sync_chunks,
-            view::particles::spawn_particles,
+            view::particles::drain_particles,
             view::particles::sync_target,
             view::particles::update_particles,
             view::ui::menu::sync_menu,

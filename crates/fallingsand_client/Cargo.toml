@@ -15,7 +15,6 @@ embed-resource = "3"
 
 [dependencies]
 fallingsand_core = { workspace = true }
-fallingsand_rng = { workspace = true }
 fallingsand_protocol = { workspace = true }
 fallingsand_net = { workspace = true }
 bevy = { workspace = true, features = [
