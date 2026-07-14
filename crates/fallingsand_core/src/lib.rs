@@ -26,7 +26,7 @@ pub use calendar::{Calendar, DAY_UNITS, SEASON_DAYS, Season};
 pub use celestial::{CelestialState, smoothstep};
 pub use cell::{Cell, VEL_ONE};
 pub use chunk::{CHUNK_AREA, CHUNK_SIZE, Chunk, DirtyRect};
-pub use coords::{CellOffset, CellPos, ChunkOffset, ChunkPos, RegionPos};
+pub use coords::{CARDINAL_NEIGHBORS, CellOffset, CellPos, ChunkOffset, ChunkPos, RegionPos};
 pub use fixed::Fixed;
 pub use item::{
     HOTBAR_SLOTS, Inventory, ItemId, ItemInfo, ItemStack, MAIN_SLOTS, PLAYER_SLOTS, Recipe,

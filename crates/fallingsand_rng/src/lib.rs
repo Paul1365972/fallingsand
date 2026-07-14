@@ -69,7 +69,13 @@ impl Hash {
 
     #[inline]
     pub const fn bits(self, n: u32) -> u64 {
-        self.0 >> (64 - n)
+        if n == 0 {
+            0
+        } else if n >= 64 {
+            self.0
+        } else {
+            self.0 >> (64 - n)
+        }
     }
 
     #[inline]
@@ -92,8 +98,8 @@ impl Hash {
         if max <= min {
             return min;
         }
-        let span = (max - min) as u64 + 1;
-        min + ((self.0 as u128 * span as u128) >> 64) as i32
+        let span = (max as i64 - min as i64) as u64 + 1;
+        (min as i64 + ((self.0 as u128 * span as u128) >> 64) as i64) as i32
     }
 }
 

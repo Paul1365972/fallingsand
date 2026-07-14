@@ -6,6 +6,8 @@ const REGION_BITS: u32 = 3;
 const _: () = assert!(1usize << CHUNK_BITS == crate::chunk::CHUNK_SIZE);
 const _: () = assert!(1usize << REGION_BITS == crate::region::REGION_SIZE_CHUNKS);
 
+pub const CARDINAL_NEIGHBORS: [(i32, i32); 4] = [(0, -1), (-1, 0), (1, 0), (0, 1)];
+
 #[derive(
     Debug, Default, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
 )]
@@ -97,8 +99,8 @@ impl ChunkPos {
 
     pub const fn base_cell(self) -> CellPos {
         CellPos {
-            x: self.x << CHUNK_BITS,
-            y: self.y << CHUNK_BITS,
+            x: self.x.wrapping_shl(CHUNK_BITS),
+            y: self.y.wrapping_shl(CHUNK_BITS),
         }
     }
 }
@@ -110,15 +112,15 @@ impl RegionPos {
 
     pub const fn base_chunk(self) -> ChunkPos {
         ChunkPos {
-            x: self.x << REGION_BITS,
-            y: self.y << REGION_BITS,
+            x: self.x.wrapping_shl(REGION_BITS),
+            y: self.y.wrapping_shl(REGION_BITS),
         }
     }
 
     pub const fn chunk(self, offset: ChunkOffset) -> ChunkPos {
         ChunkPos {
-            x: (self.x << REGION_BITS) | offset.x as i32,
-            y: (self.y << REGION_BITS) | offset.y as i32,
+            x: self.x.wrapping_shl(REGION_BITS) | offset.x as i32,
+            y: self.y.wrapping_shl(REGION_BITS) | offset.y as i32,
         }
     }
 
