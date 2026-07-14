@@ -138,7 +138,7 @@ fn active_dig(
             return;
         }
     }
-    world.place_material(target, MaterialId::AIR);
+    world.clear_cell(target);
     for (dx, dy) in CARDINAL_NEIGHBORS {
         bodies.candidates.push(target.translated(dx, dy));
     }

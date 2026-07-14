@@ -55,7 +55,7 @@ impl CellWorld {
         self.chunks.get(&pos.chunk()).map(|c| c.get(pos.offset()))
     }
 
-    pub fn set_cell(&mut self, pos: CellPos, mut cell: Cell) {
+    pub(crate) fn set_cell(&mut self, pos: CellPos, mut cell: Cell) {
         let Some(chunk) = self.chunks.get_mut(&pos.chunk()) else {
             return;
         };
@@ -101,6 +101,10 @@ impl CellWorld {
     pub fn place_material(&mut self, pos: CellPos, material: MaterialId) {
         let shade = Hash::new().pos(pos.x, pos.y).bits(4) as u8;
         self.set_cell(pos, Cell::new(material, shade));
+    }
+
+    pub fn clear_cell(&mut self, pos: CellPos) {
+        self.set_cell(pos, Cell::AIR);
     }
 
     pub fn fill_material(&mut self, pos: CellPos, material: MaterialId) -> bool {

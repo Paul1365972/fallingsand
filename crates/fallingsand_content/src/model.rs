@@ -328,6 +328,9 @@ fn build_items(
 
     let mut material_item = vec![0u16; materials.len()];
     for (index, mat) in materials.iter().enumerate().skip(1) {
+        if mat.tags.contains(Tag::Player) {
+            continue;
+        }
         let id = items.len() as u16;
         items.push(ItemOut {
             name: format!("mat:{}", mat.name),
