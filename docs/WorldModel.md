@@ -8,7 +8,7 @@
 
 Cells are 8-byte, heap-free (flat array per chunk): material, per-cell velocity, shade, a body flag, and an `updated` tick byte (a cell moves at most once per tick). Every cell is a particle — velocity drives all grid movement. Burning is a material, not a flag: a lit fuel transmutes to its synthesized `burning_*` ember, and probabilistic burnout *is* the burn duration — no per-cell HP. Heavier per-cell state (e.g. temperature) would be a separate per-chunk plane most chunks skip.
 
-Cell velocity is Q10 `i16` cells/tick, sim-only: persisted, never on the wire — clients render cell-snapped. Other continuous quantities are `Fixed`, Q10 over `i64`, exact in saves and never on the wire. Cell coordinates are `i32`; storage keys use z-order region coords.
+Cell velocity is Q5.10 `i16` cells/tick (10 fractional bits), sim-only: persisted, never on the wire — clients render cell-snapped. Other continuous quantities are `Fixed`, Q53.10 over `i64` (10 fractional bits), exact in saves and never on the wire. Cell coordinates are `i32`; storage keys use z-order region coords.
 
 ## Materials are data
 

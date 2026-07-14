@@ -7,7 +7,7 @@ Canonical names for the core domain vocabulary. One concept, one name.
 | **Cell / Chunk / Region** | 8-byte grid unit / 64x64 cells (dirty tracking, sleeping, replication, rendering) / 8x8 chunks (generation, storage, load/unload) |
 | **CellPos / ChunkPos / RegionPos** | `i32` x,y coordinates at each granularity |
 | **sim / change** | per-chunk rects: `sim` (cells to re-sim next tick, feeds scheduling) contains `change` (changed cells, feeds replication + persistence); double-buffered (`prev_`) |
-| **Fixed** | Q54.10 `i64` fixed-point for continuous pose/velocity; saves only, never on the wire |
+| **Fixed** | Q53.10 `i64` fixed-point (10 fractional bits) for continuous pose/velocity; saves only, never on the wire |
 | **Cell velocity** | `i16` Q10 cells/tick, sim-only, persisted, never on the wire; clamped in-flow to +/-31 cells/tick (`VEL_MAX`) |
 | **Session** | one connection, handshake state, and replication baselines; server-local `SessionId` |
 | **Player** | one authenticated person currently present: identity, profile, control, and exactly one lifecycle state |
