@@ -5,23 +5,25 @@ pub const WINDOW_SLOTS: usize = (WINDOW_CHUNKS * WINDOW_CHUNKS) as usize;
 pub const SPEED_OF_LIGHT: i32 = CHUNK_SIZE as i32;
 const _: () = assert!(SPEED_OF_LIGHT as usize == CHUNK_SIZE && WINDOW_CHUNKS == 4);
 
-pub struct SimWindow {
+pub struct SimWindow<'a> {
     origin: ChunkPos,
-    slots: [Option<Chunk>; WINDOW_SLOTS],
+    slots: [Option<&'a mut Chunk>; WINDOW_SLOTS],
     tick: u64,
     structural: Vec<CellPos>,
     damage: Vec<CellPos>,
 }
 
 pub(crate) struct WindowParts {
-    pub origin: ChunkPos,
-    pub slots: [Option<Chunk>; WINDOW_SLOTS],
     pub structural: Vec<CellPos>,
     pub damage: Vec<CellPos>,
 }
 
-impl SimWindow {
-    pub(crate) fn new(origin: ChunkPos, slots: [Option<Chunk>; WINDOW_SLOTS], tick: u64) -> Self {
+impl<'a> SimWindow<'a> {
+    pub(crate) fn new(
+        origin: ChunkPos,
+        slots: [Option<&'a mut Chunk>; WINDOW_SLOTS],
+        tick: u64,
+    ) -> Self {
         Self {
             origin,
             slots,
@@ -33,11 +35,13 @@ impl SimWindow {
 
     pub(crate) fn into_parts(self) -> WindowParts {
         WindowParts {
-            origin: self.origin,
-            slots: self.slots,
             structural: self.structural,
             damage: self.damage,
         }
+    }
+
+    pub(crate) fn set_slot(&mut self, sx: i32, sy: i32, chunk: &'a mut Chunk) {
+        self.slots[(sy * WINDOW_CHUNKS + sx) as usize] = Some(chunk);
     }
 
     pub fn note_structural(&mut self, pos: CellPos) {
@@ -52,7 +56,7 @@ impl SimWindow {
         if !(0..WINDOW_CHUNKS).contains(&sx) || !(0..WINDOW_CHUNKS).contains(&sy) {
             return None;
         }
-        self.slots[(sy * WINDOW_CHUNKS + sx) as usize].as_ref()
+        self.slots[(sy * WINDOW_CHUNKS + sx) as usize].as_deref()
     }
 
     fn slot_of(&self, pos: CellPos) -> Option<usize> {

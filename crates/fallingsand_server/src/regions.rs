@@ -35,17 +35,23 @@ impl RegionMap {
 pub struct ChunkTickets {
     pub active: FxHashSet<ChunkPos>,
     pub border: FxHashSet<ChunkPos>,
+    pub random_tick: FxHashSet<ChunkPos>,
 }
 
 impl ChunkTickets {
     pub fn simulates(&self, pos: ChunkPos) -> bool {
         self.active.contains(&pos) || self.border.contains(&pos)
     }
+
+    pub fn random_ticks(&self, pos: ChunkPos) -> bool {
+        self.random_tick.contains(&pos)
+    }
 }
 
 pub fn compute_tickets(tickets: &mut ChunkTickets, spawn: CellPos, players: &Players) {
     tickets.active.clear();
     tickets.border.clear();
+    tickets.random_tick.clear();
     for (_, player) in players.iter() {
         add_view(tickets, player.view_anchor().chunk());
         if let Some(materialization) = player.life.materialization() {
@@ -67,6 +73,7 @@ fn add_view(tickets: &mut ChunkTickets, center: ChunkPos) {
             let pos = center.translated(dx, dy);
             if dx.abs() <= INTEREST_RADIUS_X && dy.abs() <= INTEREST_RADIUS_Y {
                 tickets.active.insert(pos);
+                tickets.random_tick.insert(pos);
             } else {
                 tickets.border.insert(pos);
             }

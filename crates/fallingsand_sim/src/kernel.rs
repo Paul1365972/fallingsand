@@ -1,10 +1,10 @@
 use crate::rules;
-use crate::window::{SimWindow, WINDOW_CHUNKS, WINDOW_SLOTS};
+use crate::window::{SimWindow, WINDOW_CHUNKS};
 use crate::world::CellWorld;
 use fallingsand_core::material::RANDOM_TICKS_PER_CHUNK;
 use fallingsand_core::{CHUNK_SIZE, CellPos, Chunk, ChunkPos, DirtyRect};
 use fallingsand_rng::Hash;
-use rustc_hash::FxHashSet;
+use rustc_hash::FxHashMap;
 
 const RANDOM_TICK_SAMPLE_SALT: u64 = 0x5361_6d70_6c65_5254;
 
@@ -12,14 +12,21 @@ type Simulate<'a> = dyn Fn(ChunkPos) -> bool + Sync + 'a;
 type Schedule<'a> = dyn Fn(ChunkPos, &Chunk) -> bool + 'a;
 type Kernel<'a> = dyn Fn(&mut SimWindow) + Sync + 'a;
 
-pub fn step_scoped(world: &mut CellWorld, simulate: &Simulate) {
+pub fn step_scoped(world: &mut CellWorld, simulate: &Simulate, random_tick: &Simulate) {
     world.advance_tick();
     let tick = world.tick();
-    let loaded: FxHashSet<ChunkPos> = world.chunk_map_mut().keys().copied().collect();
-    for (&pos, chunk) in world.chunk_map_mut().iter_mut() {
-        let ready = simulate(pos)
-            && (-1..=1).all(|dy| (-1..=1).all(|dx| loaded.contains(&pos.translated(dx, dy))));
-        if ready {
+
+    let ready: Vec<ChunkPos> = world
+        .chunks()
+        .filter(|&(pos, _)| {
+            simulate(pos)
+                && (-1..=1)
+                    .all(|dy| (-1..=1).all(|dx| world.chunk(pos.translated(dx, dy)).is_some()))
+        })
+        .map(|(pos, _)| pos)
+        .collect();
+    for pos in ready {
+        if let Some(chunk) = world.chunk_map_mut().get_mut(&pos) {
             chunk.swap_rects();
         }
     }
@@ -30,8 +37,8 @@ pub fn step_scoped(world: &mut CellWorld, simulate: &Simulate) {
         &|pos, chunk| simulate(pos) && !chunk.sim_rect().is_empty(),
         &|window| simulate_block(window, tick, simulate),
     );
-    run_sim(world, tick, &|pos, _| simulate(pos), &|window| {
-        random_tick_block(window, tick, simulate)
+    run_sim(world, tick, &|pos, _| random_tick(pos), &|window| {
+        random_tick_block(window, tick, random_tick)
     });
 }
 
@@ -46,24 +53,31 @@ fn run_phase(world: &mut CellWorld, phase: u32, tick: u64, schedule: &Schedule, 
     let py = ((phase >> 1) & 1) as i32;
 
     let map = world.chunk_map_mut();
-    let mut blocks: FxHashSet<(i32, i32)> = FxHashSet::default();
+    let mut origins: Vec<ChunkPos> = Vec::new();
+    let mut members: FxHashMap<ChunkPos, (usize, i32, i32)> = FxHashMap::default();
     for (&pos, chunk) in map.iter() {
         let block = (pos.x >> 1, pos.y >> 1);
-        if (block.0 & 1) == px && (block.1 & 1) == py && schedule(pos, chunk) {
-            blocks.insert(block);
+        if (block.0 & 1) != px || (block.1 & 1) != py || !schedule(pos, chunk) {
+            continue;
+        }
+        let origin = ChunkPos::new((block.0 << 1) - 1, (block.1 << 1) - 1);
+        let index = origins.len();
+        origins.push(origin);
+        for sy in 0..WINDOW_CHUNKS {
+            for sx in 0..WINDOW_CHUNKS {
+                members.insert(origin.translated(sx, sy), (index, sx, sy));
+            }
         }
     }
 
-    let mut windows = Vec::with_capacity(blocks.len());
-    for &(bx, by) in &blocks {
-        let origin = ChunkPos::new((bx << 1) - 1, (by << 1) - 1);
-        let mut slots: [Option<Chunk>; WINDOW_SLOTS] = std::array::from_fn(|_| None);
-        for sy in 0..WINDOW_CHUNKS {
-            for sx in 0..WINDOW_CHUNKS {
-                slots[(sy * WINDOW_CHUNKS + sx) as usize] = map.remove(&origin.translated(sx, sy));
-            }
+    let mut windows: Vec<SimWindow> = origins
+        .iter()
+        .map(|&origin| SimWindow::new(origin, std::array::from_fn(|_| None), tick))
+        .collect();
+    for (&pos, chunk) in map.iter_mut() {
+        if let Some(&(index, sx, sy)) = members.get(&pos) {
+            windows[index].set_slot(sx, sy, chunk);
         }
-        windows.push(SimWindow::new(origin, slots, tick));
     }
 
     #[cfg(feature = "parallel")]
@@ -82,13 +96,6 @@ fn run_phase(world: &mut CellWorld, phase: u32, tick: u64, schedule: &Schedule, 
         let parts = window.into_parts();
         structural.extend(parts.structural);
         damage.extend(parts.damage);
-        for (index, slot) in parts.slots.into_iter().enumerate() {
-            if let Some(chunk) = slot {
-                let sx = index as i32 % WINDOW_CHUNKS;
-                let sy = index as i32 / WINDOW_CHUNKS;
-                map.insert(parts.origin.translated(sx, sy), chunk);
-            }
-        }
     }
     world.push_structural(structural);
     world.push_damage(damage);

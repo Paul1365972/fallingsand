@@ -27,7 +27,7 @@ Budget ~16 ms/tick, sim <=8 ms; sleeping keeps ~2000 active chunks inside it.
 
 ## Interest and materialization
 
-Each view projects onto chunks as `Active` (sim + replicate), `Border` (sim only, so edges behave), or loaded through its containing region; simulation extends one margin beyond replication. Zero-ticket regions unload after a grace period, and frozen chunks retain their pending rects until re-entered.
+Each view projects onto chunks as `Active` (sim + replicate), `Border` (sim only, so edges behave), or loaded through its containing region; simulation extends one margin beyond replication. Random ticks (see Simulation.md) run only on each player's `Active` chunks, a bounded range that always sits inside the loaded `Active ∪ Border` set, so its 3×3 window-scheduler neighbourhood is always available; the spawn keep-alive and materialization search windows load and simulate but are never random-ticked. Zero-ticket regions unload after a grace period, and frozen chunks retain their pending rects until re-entered.
 
 Entering and revive use the same deterministic Manhattan-ring search. Search work advances over ticks in batches of 64 candidates and only examines a loaded 64x64-cell window. Crossing that window moves its tickets and waits for loading before continuing. A candidate becomes `Alive` only after one complete transactional stamp; terrain, bodies, and other players are never overwritten. Dead players keep their camera interest at the death location while revive searches around the world spawn.
 
