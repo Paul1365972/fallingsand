@@ -52,7 +52,6 @@ pub fn step_bodies(
 ) -> Vec<(f32, f32)> {
     let mut entity_impulses = vec![(0.0, 0.0); entities.len()];
     let entity_boxes: Vec<ActorAabb> = entities.iter().map(|entity| entity.bbox).collect();
-    owners.rebuild(bodies);
 
     let mut order: Vec<usize> = (0..bodies.len()).collect();
     order.sort_unstable_by_key(|&index| {
@@ -430,8 +429,9 @@ fn settle_spot(
     claimed: &FxHashSet<CellPos>,
     exclude: &FxHashSet<CellPos>,
     base: CellPos,
-) -> Option<CellPos> {
-    for radius in 0..=SETTLE_SPOT_LIMIT {
+) -> CellPos {
+    let mut fallback: Option<CellPos> = None;
+    for radius in 0.. {
         let ring = if radius == 0 {
             vec![(0, 0)]
         } else {
@@ -442,15 +442,21 @@ fn settle_spot(
             if claimed.contains(&pos) || exclude.contains(&pos) {
                 continue;
             }
-            if world
-                .get_cell(pos)
-                .is_some_and(|cell| content::phase(cell.material) == Phase::Empty)
-            {
-                return Some(pos);
+            let Some(cell) = world.get_cell(pos) else {
+                continue;
+            };
+            if radius <= SETTLE_SPOT_LIMIT && content::phase(cell.material) == Phase::Empty {
+                return pos;
             }
+            fallback.get_or_insert(pos);
+        }
+        if radius >= SETTLE_SPOT_LIMIT
+            && let Some(pos) = fallback
+        {
+            return pos;
         }
     }
-    None
+    unreachable!()
 }
 
 pub fn settle_body(world: &mut CellWorld, body: &PixelBody) {
@@ -470,9 +476,7 @@ pub fn settle_body(world: &mut CellWorld, body: &PixelBody) {
             }
             let base =
                 body.world_cell_with(sin, cos, body.x, body.y, lx as f32 + 0.5, ly as f32 + 0.5);
-            let Some(pos) = settle_spot(world, &claimed, &body.raster.set, base) else {
-                continue;
-            };
+            let pos = settle_spot(world, &claimed, &body.raster.set, base);
             claimed.insert(pos);
             let mut placed = cell;
             placed.set_body(false);
