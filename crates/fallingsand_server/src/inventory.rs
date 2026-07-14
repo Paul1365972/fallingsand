@@ -72,19 +72,20 @@ fn apply_action(action: SlotAction, creative: bool, inventory: &mut Inventory) {
             let Some(recipe) = content::recipes().get(recipe as usize) else {
                 return;
             };
+            let output = ItemStack::new(recipe.output.0, recipe.output.1);
+            let mut trial = inventory.inner.clone();
             loop {
                 if !recipe.can_craft(&inventory.inner) {
                     break;
                 }
-                let mut trial = inventory.inner.clone();
+                trial.slots.clone_from(&inventory.inner.slots);
                 for &(item, count) in recipe.inputs {
                     trial.remove_item(item, count);
                 }
-                let output = ItemStack::new(recipe.output.0, recipe.output.1);
                 if trial.insert_first_fit(output).is_some() {
                     break;
                 }
-                inventory.inner = trial;
+                std::mem::swap(&mut inventory.inner, &mut trial);
                 if !all {
                     break;
                 }

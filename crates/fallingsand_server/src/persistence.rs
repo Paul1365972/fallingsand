@@ -2,7 +2,9 @@ use crate::WorldInfo;
 use crate::bodies::PixelBodies;
 use crate::inventory::Inventory;
 use crate::player::{AvatarSnapshot, Player, PlayerLife, Players, RestoredPlayer, ResumeSnapshot};
-use crate::regions::{RegionMap, collect_dirty_saves, mark_changed_regions, mark_saved};
+use crate::regions::{
+    RegionMap, body_region_radius, collect_dirty_saves, mark_changed_regions, mark_saved,
+};
 use fallingsand_core::{
     CHUNK_AREA, CHUNK_SIZE, Calendar, Cell, CellPos, DirtyRect, Fixed, HOTBAR_SLOTS,
     Inventory as CoreInventory, ItemId, ItemStack, MaterialId, PLAYER_SLOTS, REGION_AREA_CHUNKS,
@@ -508,7 +510,7 @@ pub fn save_everything(
         let mut touched = FxHashSet::default();
         for body in bodies.bodies.drain(..) {
             settle_body(sim, &body);
-            let radius = ((body.width() as f32).hypot(body.height() as f32) + 1.0).ceil() as i32;
+            let radius = body_region_radius(&body);
             let (cx, cy) = (body.x.floor_cell(), body.y.floor_cell());
             let min = CellPos::new(cx - radius, cy - radius).region();
             let max = CellPos::new(cx + radius + 1, cy + radius + 1).region();

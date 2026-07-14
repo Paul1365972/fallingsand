@@ -3,7 +3,8 @@ use crate::inventory::Inventory;
 use crate::player::{PlayerLife, Players};
 use fallingsand_core::content;
 use fallingsand_core::{
-    CellPos, ItemId, ItemStack, MaterialId, Phase, REACH, SURVIVAL_REACH, TICK_DT, Tag,
+    CARDINAL_NEIGHBORS, CellPos, ItemId, ItemStack, MaterialId, Phase, REACH, SURVIVAL_REACH,
+    TICK_DT, Tag,
 };
 use fallingsand_protocol::{CursorMode, GameMode, InputState, InteractionState, InteractionStatus};
 
@@ -132,10 +133,13 @@ fn active_dig(
         let leftover = inventory
             .inner
             .insert_first_fit(ItemStack::new(plan.item, 1));
-        debug_assert!(leftover.is_none());
+        if leftover.is_some() {
+            dig.interaction = Some(interaction(target, InteractionStatus::InventoryFull, 0.0));
+            return;
+        }
     }
     world.place_material(target, MaterialId::AIR);
-    for (dx, dy) in [(0, -1), (-1, 0), (1, 0), (0, 1)] {
+    for (dx, dy) in CARDINAL_NEIGHBORS {
         bodies.candidates.push(target.translated(dx, dy));
     }
     dig.clear_progress();
@@ -318,7 +322,7 @@ fn select_place(world: &World, input: &InputState, body: &Actor, reach: f32) -> 
             .map(|_| aim)?,
         CursorMode::Smart => {
             let start = body.cell();
-            let end = clamp_to_reach(start, aim, reach);
+            let end = clamp_to_reach(body, aim, reach);
             last_air_before_obstruction(world, start, end)?
         }
     };
@@ -333,18 +337,19 @@ fn miss_reason(body: &Actor, input: &InputState, reach: f32) -> InteractionStatu
     }
 }
 
-fn clamp_to_reach(start: CellPos, aim: CellPos, reach: f32) -> CellPos {
-    let dx = (aim.x as i64 - start.x as i64) as f64;
-    let dy = (aim.y as i64 - start.y as i64) as f64;
+fn clamp_to_reach(body: &Actor, aim: CellPos, reach: f32) -> CellPos {
+    let cx = body.x.to_f32();
+    let cy = body.y.to_f32();
+    let dx = aim.x as f32 + 0.5 - cx;
+    let dy = aim.y as f32 + 0.5 - cy;
     let dist = (dx * dx + dy * dy).sqrt();
-    let max = reach as f64 + 1.0;
-    if dist <= max || dist == 0.0 {
+    if dist <= reach || dist == 0.0 {
         return aim;
     }
-    let scale = max / dist;
+    let scale = reach / dist;
     CellPos::new(
-        start.x + (dx * scale).round() as i32,
-        start.y + (dy * scale).round() as i32,
+        (cx + dx * scale - 0.5).round() as i32,
+        (cy + dy * scale - 0.5).round() as i32,
     )
 }
 

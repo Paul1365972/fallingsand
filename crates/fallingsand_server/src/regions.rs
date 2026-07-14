@@ -2,7 +2,7 @@ use crate::bodies::PixelBodies;
 use crate::persistence::{Persistence, StoreError, encode_region};
 use crate::player::{Players, SearchWindow};
 use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y};
-use fallingsand_core::{CellPos, ChunkPos, REGION_SIZE_CELLS, Region, RegionPos};
+use fallingsand_core::{CellPos, Chunk, ChunkPos, REGION_SIZE_CELLS, Region, RegionPos};
 use fallingsand_sim::bodies::settle_body;
 use fallingsand_sim::{CellWorld, PixelBody};
 use fallingsand_worldgen::WorldGenerator;
@@ -113,24 +113,22 @@ fn insert_region(sim: &mut CellWorld, pos: RegionPos, region: Region) {
     }
 }
 
-fn extract_region(sim: &mut CellWorld, pos: RegionPos) -> Region {
+fn gather_region(pos: RegionPos, mut chunk_of: impl FnMut(ChunkPos) -> Option<Chunk>) -> Region {
     let mut region = Region::new();
     for (offset, chunk_pos) in pos.chunk_positions() {
-        if let Some(chunk) = sim.remove_chunk(chunk_pos) {
+        if let Some(chunk) = chunk_of(chunk_pos) {
             *region.chunk_mut(offset) = chunk;
         }
     }
     region
 }
 
+fn extract_region(sim: &mut CellWorld, pos: RegionPos) -> Region {
+    gather_region(pos, |chunk_pos| sim.remove_chunk(chunk_pos))
+}
+
 fn snapshot_region(sim: &CellWorld, pos: RegionPos) -> Region {
-    let mut region = Region::new();
-    for (offset, chunk_pos) in pos.chunk_positions() {
-        if let Some(chunk) = sim.chunk(chunk_pos) {
-            *region.chunk_mut(offset) = chunk.clone();
-        }
-    }
-    region
+    gather_region(pos, |chunk_pos| sim.chunk(chunk_pos).cloned())
 }
 
 pub(crate) fn collect_dirty_saves(
@@ -155,8 +153,12 @@ pub(crate) fn mark_saved(regions: &mut RegionMap, positions: impl IntoIterator<I
     }
 }
 
+pub(crate) fn body_region_radius(body: &PixelBody) -> i32 {
+    ((body.width() as f32).hypot(body.height() as f32) + 1.0).ceil() as i32
+}
+
 fn body_overlaps_region(body: &PixelBody, pos: RegionPos) -> bool {
-    let radius = ((body.width() as f32).hypot(body.height() as f32) + 1.0).ceil() as i32;
+    let radius = body_region_radius(body);
     let base = pos.base_chunk().base_cell();
     let (cx, cy) = (body.x.floor_cell(), body.y.floor_cell());
     cx + radius > base.x
