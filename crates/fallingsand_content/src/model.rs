@@ -1,5 +1,5 @@
 use crate::{
-    BurningDef, Catalog, EmberDef, Error, GasDef, IngredientDef, ItemKey, LiquidDef, MaterialDef,
+    BurningDef, Catalog, EmberDef, Error, GasDef, IngredientDef, LiquidDef, MaterialDef,
     MaterialKey, OperandDef, PhaseDef, PowderDef, ProductDef, SolidDef,
 };
 use fallingsand_material::{
@@ -117,6 +117,13 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
     }
 
     let hand_len = raws.len();
+    let ember_count = raws.iter().filter(|raw| raw.burn.is_some()).count();
+    if hand_len + ember_count > u16::MAX as usize {
+        return Err(fail(format!(
+            "too many materials: {}",
+            hand_len + ember_count
+        )));
+    }
     let mut ignitions: Vec<Option<Ignition>> = vec![None; hand_len];
     for index in 0..hand_len {
         let Some(burn) = raws[index].burn.clone() else {
@@ -155,9 +162,6 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
     }
 
     let len = raws.len();
-    if len > u16::MAX as usize {
-        return Err(fail(format!("too many materials: {len}")));
-    }
     ignitions.resize(len, None);
 
     for raw in &raws {
@@ -319,7 +323,7 @@ fn build_items(
 
     let mut by_key: HashMap<String, u16> = HashMap::new();
     for (key, def) in &catalog.items {
-        validate_item_key(key)?;
+        validate_ident("item key", key.as_str())?;
         let name = key.as_str().to_ascii_lowercase();
         let id = items.len() as u16;
         if by_key.insert(key.as_str().to_owned(), id).is_some() {
@@ -415,6 +419,7 @@ fn build_recipes(
 fn build_thresholds(catalog: &Catalog) -> Result<Vec<(String, u64)>, Error> {
     let mut thresholds = Vec::with_capacity(catalog.thresholds.len());
     for def in &catalog.thresholds {
+        validate_ident("threshold", &def.name)?;
         validate_number(&format!("threshold {}", def.name), def.rate)?;
         thresholds.push((
             def.name.clone(),
@@ -424,8 +429,7 @@ fn build_thresholds(catalog: &Catalog) -> Result<Vec<(String, u64)>, Error> {
     Ok(thresholds)
 }
 
-fn validate_item_key(key: &ItemKey) -> Result<(), Error> {
-    let name = key.as_str();
+fn validate_ident(kind: &str, name: &str) -> Result<(), Error> {
     if name.is_empty()
         || !name.as_bytes()[0].is_ascii_uppercase()
         || !name
@@ -433,7 +437,7 @@ fn validate_item_key(key: &ItemKey) -> Result<(), Error> {
             .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
     {
         return Err(fail(format!(
-            "item key `{key}` must be an UPPER_SNAKE_CASE Rust identifier"
+            "{kind} `{name}` must be an UPPER_SNAKE_CASE Rust identifier"
         )));
     }
     Ok(())
@@ -457,7 +461,7 @@ fn pretty_name(raw: &str) -> String {
 fn build_materials(catalog: &Catalog) -> Result<Vec<RawMaterial>, Error> {
     let mut raws = Vec::with_capacity(catalog.materials.len());
     for (key, definition) in &catalog.materials {
-        validate_key(key)?;
+        validate_ident("material key", key.as_str())?;
         let mut raw = match &definition.base {
             Some(base) => {
                 let inherited = raws
@@ -516,21 +520,6 @@ fn apply_definition(raw: &mut RawMaterial, definition: &MaterialDef) {
     if let Some(value) = &definition.ember {
         raw.ember = Some(value.clone());
     }
-}
-
-fn validate_key(key: &MaterialKey) -> Result<(), Error> {
-    let name = key.as_str();
-    if name.is_empty()
-        || !name.as_bytes()[0].is_ascii_uppercase()
-        || !name
-            .bytes()
-            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
-    {
-        return Err(fail(format!(
-            "material key `{key}` must be an UPPER_SNAKE_CASE Rust identifier"
-        )));
-    }
-    Ok(())
 }
 
 fn validate_material(raw: &RawMaterial) -> Result<(), Error> {
@@ -617,6 +606,11 @@ fn validate_material(raw: &RawMaterial) -> Result<(), Error> {
                 ("burning damage", burn.damage),
             ],
         )?;
+        if burn.residue.is_some() && burn.residue_chance <= 0.0 {
+            return Err(fail(format!(
+                "{context}: burning residue is set but residue_chance is 0 (it would never appear)"
+            )));
+        }
     }
     if let Some(ember) = &raw.ember {
         validate_numbers(
@@ -627,6 +621,11 @@ fn validate_material(raw: &RawMaterial) -> Result<(), Error> {
                 ("ember residue_chance", ember.residue_chance),
             ],
         )?;
+        if ember.residue.is_some() && ember.residue_chance <= 0.0 {
+            return Err(fail(format!(
+                "{context}: ember residue is set but residue_chance is 0 (it would never appear)"
+            )));
+        }
     }
     Ok(())
 }
