@@ -1,6 +1,7 @@
 pub mod chat;
 pub mod clock;
 pub mod debug;
+pub mod hex;
 pub mod identity;
 pub mod input;
 pub mod inventory;
@@ -345,10 +346,12 @@ impl ClientGame {
             UiEvent::Connect { url, cert_hex } => {
                 let url = url.trim().to_string();
                 if !url.is_empty() {
-                    self.start_game_remote(ConnectTarget {
-                        url,
-                        cert_hash: net::parse_cert_hash(cert_hex.trim()),
-                    });
+                    match net::parse_cert_hash(cert_hex.trim()) {
+                        Ok(cert_hash) => {
+                            self.start_game_remote(ConnectTarget { url, cert_hash });
+                        }
+                        Err(err) => self.enter_game(Net::failed(format!("cert hash: {err}"))),
+                    }
                 }
             }
             UiEvent::ToggleFullscreen => self.toggle_fullscreen(),

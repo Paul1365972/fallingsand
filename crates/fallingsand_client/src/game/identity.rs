@@ -81,11 +81,20 @@ fn valid_name(name: String) -> Option<String> {
 #[cfg(not(target_family = "wasm"))]
 fn configured_secret() -> Option<[u8; 32]> {
     let path = super::platform::arg_value("--identity-key-file")?;
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("failed to read identity key file {path}: {err}"));
-    let secret = decode_secret(text.trim())
-        .unwrap_or_else(|| panic!("invalid identity key file {path}: expected 64 hex characters"));
-    Some(secret)
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) => {
+            bevy::log::error!("failed to read identity key file {path}: {err}");
+            return None;
+        }
+    };
+    match text.trim().parse::<super::hex::Hex32>() {
+        Ok(hex) => Some(hex.0),
+        Err(err) => {
+            bevy::log::error!("invalid identity key file {path}: {err}");
+            None
+        }
+    }
 }
 
 #[cfg(target_family = "wasm")]
@@ -174,12 +183,5 @@ fn store(identity: &Identity) {
 }
 
 fn decode_secret(text: &str) -> Option<[u8; 32]> {
-    if text.len() != 64 {
-        return None;
-    }
-    let mut out = [0u8; 32];
-    for (index, byte) in out.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&text[index * 2..index * 2 + 2], 16).ok()?;
-    }
-    Some(out)
+    text.parse::<super::hex::Hex32>().ok().map(|hex| hex.0)
 }

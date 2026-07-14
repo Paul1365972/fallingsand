@@ -117,14 +117,11 @@ impl Supervisor {
     }
 }
 
-pub fn parse_cert_hash(hex: &str) -> Option<Vec<u8>> {
-    if hex.len() != 64 {
-        return None;
+pub fn parse_cert_hash(hex: &str) -> Result<Option<Vec<u8>>, super::hex::HexError> {
+    if hex.is_empty() {
+        return Ok(None);
     }
-    (0..hex.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).ok())
-        .collect()
+    hex.parse::<super::hex::Hex32>().map(|h| Some(h.to_vec()))
 }
 
 pub fn cli_world_name() -> Option<String> {
@@ -165,6 +162,22 @@ impl Net {
             session: None,
             supervisor: Supervisor {
                 target: Some(target),
+                ..Supervisor::default()
+            },
+            #[cfg(not(target_family = "wasm"))]
+            dialing: None,
+            #[cfg(not(target_family = "wasm"))]
+            runtime: None,
+            #[cfg(not(target_family = "wasm"))]
+            embedded: None,
+        }
+    }
+
+    pub fn failed(reason: String) -> Self {
+        Self {
+            session: None,
+            supervisor: Supervisor {
+                last_error: Some(reason),
                 ..Supervisor::default()
             },
             #[cfg(not(target_family = "wasm"))]
