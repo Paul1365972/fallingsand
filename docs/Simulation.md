@@ -7,6 +7,7 @@ The CA (`fallingsand_sim`) collides against the cell grid directly — terrain c
 - **4-phase block scheduling**: chunks group into 2×2 blocks, run in 4 phases by block parity; a worker owns its block plus a one-chunk halo, and same-phase windows share no chunks — race-free, no locking.
 - **Neighbourhood-complete**: a chunk simulates only when its whole 3×3 chunk neighbourhood is loaded; frontier chunks defer, keeping their rects.
 - **Speed of light = 64**: no update reaches farther than 64 cells; longer-range effects propagate as local waves over ticks. A queued between-tick world-event list is the sanctioned escape hatch for true long-range effects — none exists today.
+- **Random ticks**: a second simulation, its own 4-phase pass after the interaction sim. Each ticketed chunk samples `RANDOM_TICKS_PER_CHUNK` cells (seeded by tick and chunk) and runs the ambient kernel on each, a no-op on inert cells. It drives sleep-independent processes: lava ignition today, growth or decay later.
 - Randomness is tick-seeded and stateless (`fallingsand_rng`).
 - **Per-material kernels**: the kernel monomorphizes per material (`MatSpec`), so a cell's own properties are immediate constants and dead rule branches vanish (an inert solid's kernel is nearly empty); neighbours read generated exhaustive-match accessors. One movement kernel per phase, each taking exactly its phase's coefficients — a liquid kernel cannot read a repose angle. Integer-only: precomputed RNG thresholds, Q16 multipliers — grid determinism is independent of float semantics.
 
@@ -25,19 +26,19 @@ Leveling and pressure propagate as local waves over ticks. Steam condenses back 
 
 ## Sleeping
 
-Each chunk tracks a **sim rect** of cells to re-simulate; an empty rect **sleeps** (the biggest optimization), and a write to a sleeping chunk or its border wakes it. The rect is honest: exactly the cells iterated next tick. The **change rect** (⊆ `sim`) holds actual value changes: a write marks `change` tight and `sim` as the 3×3 Moore neighbourhood (dilating across chunk borders); a **keep-alive** mark (clinging fire, pending decay) extends `sim` by 1×1 only. Scheduling reads `sim`; replication reads `change`, so keep-alives cost zero bandwidth.
+Each chunk tracks a **sim rect** of cells to re-simulate; a write to a chunk or its border marks it. Sleep gates the interaction sim: an empty sim rect skips the chunk, so a settled world does no movement work; the random-tick sim ignores sleep. The rect is honest: exactly the cells iterated next tick. The **change rect** (⊆ `sim`) holds actual value changes: a write marks `change` tight and `sim` as the 3×3 Moore neighbourhood (dilating across chunk borders); a **keep-alive** mark (clinging fire, pending decay) extends `sim` by 1×1 only. Scheduling reads `sim`; replication reads `change`, so keep-alives cost zero bandwidth.
 
 Cell particles (aspirational, not built): cells knocked loose fly ballistically as free particles and reinsert on impact.
 
 ## Tuning units
 
-Constants are seconds-based, converted per-tick from `TICK_DT`, so behaviour is ~invariant to tick rate: rate `r` fires with `1−e^(−r·dt)` (keeps `e^(−r·dt)`), accelerations integrate as `a·dt`, durations become tick counts. The content compiler quantizes authored seconds into integer tick constants during compilation, including named tuning thresholds the simulation reads back (e.g. `content::FLICKER_THRESHOLD`).
+Constants are seconds-based, converted per-tick from `TICK_DT`, so behaviour is ~invariant to tick rate: rate `r` fires with `1−e^(−r·dt)` (keeps `e^(−r·dt)`), accelerations integrate as `a·dt`, durations become tick counts. The content compiler quantizes authored seconds into integer tick constants during compilation, including named tuning thresholds the simulation reads back (e.g. `content::FLICKER_THRESHOLD`). Random-tick rates scale by `CHUNK_AREA / RANDOM_TICKS_PER_CHUNK` (`per_random_tick_chance`) so a seconds-rate means the same real time under random ticks, clamped at 1.0.
 
 ## Combustion
 
 Burning is an **ember material**: each flammable fuel authors one `burn_variant: Burning { … }` block and gets a synthesized `burning_*` twin (same phase and dynamics, its own palette, `hot`+`emissive`) — nothing hand-mirrored, no per-cell state beyond the id. Three local stages:
 
-- **Ignite**: any `hot` cell transmutes adjacent flammables into their embers at their `ignite` rate, keeping velocity and shade (igniting oil keeps flowing); ember spread into a sealed neighbour (no adjacent oxygen) scales by `smoulder` — 0 is surface-only (oil), higher burns through a sealed lump (coal) — while open flames (lava, `fire`) ignite sealed fuel at the full rate.
+- **Ignite**: a `hot` cell transmutes adjacent flammables into their embers at their `ignite` rate, keeping velocity and shade (igniting oil keeps flowing); sealed neighbours (no adjacent oxygen) scale by `smoulder` — 0 is surface-only (oil), higher burns through a sealed lump (coal) — while open flames ignite sealed fuel at the full rate. Ignition splits by heat lifetime: **transient** heat (`fire`, `burning_*` embers) burns out, so it ignites in the interaction sim at full rate; **persistent** heat (`lava`) never burns out, so it ignites from the random-tick sim, slower but sleep-independent. No cell uses both.
 - **Burn**: an ember damages entities, emits `fire` into adjacent air at `emit`, and burns out at `rate` — that rate *is* the burn duration; `residue`/`residue_chance` leave ash, otherwise burnout resolves to `burnout` (smoke) so the front self-exposes to oxygen.
 - **Flame**: `fire` is a hand-authored ember with no base fuel — a `hot` gas persisting beside fuel, burning out into `smoke`. One pipeline covers fuel and flame; there is no fire phase.
 

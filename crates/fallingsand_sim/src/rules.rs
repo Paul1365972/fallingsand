@@ -8,6 +8,14 @@ use fallingsand_rng::{Hash, Rng};
 
 const NEIGHBORS: [(i32, i32); 4] = [(0, -1), (-1, 0), (1, 0), (0, 1)];
 
+const RANDOM_TICK_SALT: u64 = 0x5261_6e64_5469_636b;
+
+#[derive(Clone, Copy)]
+enum IgniteRate {
+    Interaction,
+    Random,
+}
+
 const VEL_MAX: i32 = 31 * VEL_ONE;
 const MAX_STEP: i32 = 31;
 const SETTLE: i32 = (7.5 * TICK_DT * VEL_ONE as f32) as i32;
@@ -35,6 +43,23 @@ macro_rules! material_dispatch {
                 _ => unreachable!("invalid material id"),
             }
         }
+
+        pub(crate) fn random_tick(
+            window: &mut SimWindow,
+            pos: CellPos,
+            tick: u64,
+            tick_byte: u8,
+        ) {
+            let Some(cell) = window.get(pos) else {
+                return;
+            };
+            match cell.material.0 {
+                $( $idx => random_tick_spec::<content::specs::$spec>(
+                    window, pos, tick, tick_byte,
+                ), )*
+                _ => unreachable!("invalid material id"),
+            }
+        }
     };
 }
 fallingsand_core::for_each_material!(material_dispatch);
@@ -48,8 +73,16 @@ fn update_cell_spec<M: MatSpec>(
 ) {
     let mut rng = Hash::seed(tick).pos(pos.x, pos.y).rng();
 
-    if const { M::IS_HOT } {
-        ignite_neighbors(window, pos, &mut rng, tick_byte, const { M::OPEN_FLAME });
+    if const { M::IS_HOT && M::EMBER.is_some() } {
+        let open_flame = const { M::OPEN_FLAME };
+        ignite_neighbors(
+            window,
+            pos,
+            &mut rng,
+            tick_byte,
+            open_flame,
+            IgniteRate::Interaction,
+        );
     }
     if let Some(ember) = const { M::EMBER }
         && ember_step::<M>(window, pos, cell, ember, &mut rng, tick_byte)
@@ -65,6 +98,25 @@ fn update_cell_spec<M: MatSpec>(
         Dynamics::Liquid(d) => update_liquid::<M>(window, pos, cell, d, &mut rng, tick_byte),
         Dynamics::Gas(d) => update_gas::<M>(window, pos, cell, d, &mut rng, tick_byte),
     }
+}
+
+fn random_tick_spec<M: MatSpec>(window: &mut SimWindow, pos: CellPos, tick: u64, tick_byte: u8) {
+    if const { !(M::IS_HOT && M::EMBER.is_none()) } {
+        return;
+    }
+    let mut rng = Hash::seed(tick)
+        .add(RANDOM_TICK_SALT)
+        .pos(pos.x, pos.y)
+        .rng();
+    let open_flame = const { M::OPEN_FLAME };
+    ignite_neighbors(
+        window,
+        pos,
+        &mut rng,
+        tick_byte,
+        open_flame,
+        IgniteRate::Random,
+    );
 }
 
 fn react<M: MatSpec>(
@@ -128,8 +180,8 @@ fn ignite_neighbors(
     rng: &mut Rng,
     tick_byte: u8,
     open_flame: bool,
+    rate: IgniteRate,
 ) {
-    let mut pending = false;
     for (dx, dy) in NEIGHBORS {
         let neighbor_pos = pos.translated(dx, dy);
         let Some(neighbor) = window.get(neighbor_pos) else {
@@ -141,18 +193,18 @@ fn ignite_neighbors(
         let Some(ignition) = content::ignition(neighbor.material) else {
             continue;
         };
-        let threshold = if open_flame
-            || ignition.sealed == ignition.open
-            || oxygen_exposed(window, neighbor_pos)
-        {
-            ignition.open
+        let (open, sealed) = match rate {
+            IgniteRate::Interaction => (ignition.open, ignition.sealed),
+            IgniteRate::Random => (ignition.open_random, ignition.sealed_random),
+        };
+        let threshold = if open_flame || sealed == open || oxygen_exposed(window, neighbor_pos) {
+            open
         } else {
-            ignition.sealed
+            sealed
         };
         if threshold == 0 {
             continue;
         }
-        pending = true;
         if rng.draw().below(threshold) {
             let mut lit = neighbor;
             lit.material = ignition.into;
@@ -160,9 +212,6 @@ fn ignite_neighbors(
             lit.updated = tick_byte;
             window.set(neighbor_pos, lit);
         }
-    }
-    if pending {
-        window.mark(pos);
     }
 }
 

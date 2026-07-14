@@ -1,43 +1,55 @@
 use crate::rules;
 use crate::window::{SimWindow, WINDOW_CHUNKS, WINDOW_SLOTS};
 use crate::world::CellWorld;
+use fallingsand_core::material::RANDOM_TICKS_PER_CHUNK;
 use fallingsand_core::{CHUNK_SIZE, CellPos, Chunk, ChunkPos, DirtyRect};
+use fallingsand_rng::Hash;
 use rustc_hash::FxHashSet;
 
-pub fn step_scoped(world: &mut CellWorld, simulate: &(dyn Fn(ChunkPos) -> bool + Sync)) {
+const RANDOM_TICK_SAMPLE_SALT: u64 = 0x5361_6d70_6c65_5254;
+
+type Simulate<'a> = dyn Fn(ChunkPos) -> bool + Sync + 'a;
+type Schedule<'a> = dyn Fn(ChunkPos, &Chunk) -> bool + 'a;
+type Kernel<'a> = dyn Fn(&mut SimWindow) + Sync + 'a;
+
+pub fn step_scoped(world: &mut CellWorld, simulate: &Simulate) {
     world.advance_tick();
     let tick = world.tick();
     let loaded: FxHashSet<ChunkPos> = world.chunk_map_mut().keys().copied().collect();
     for (&pos, chunk) in world.chunk_map_mut().iter_mut() {
         let ready = simulate(pos)
             && (-1..=1).all(|dy| (-1..=1).all(|dx| loaded.contains(&pos.translated(dx, dy))));
-        if !ready {
-            continue;
+        if ready {
+            chunk.swap_rects();
         }
-        chunk.swap_rects();
     }
+
+    run_sim(
+        world,
+        tick,
+        &|pos, chunk| simulate(pos) && !chunk.sim_rect().is_empty(),
+        &|window| simulate_block(window, tick, simulate),
+    );
+    run_sim(world, tick, &|pos, _| simulate(pos), &|window| {
+        random_tick_block(window, tick, simulate)
+    });
+}
+
+fn run_sim(world: &mut CellWorld, tick: u64, schedule: &Schedule, kernel: &Kernel) {
     for phase in 0..4 {
-        run_phase(world, phase, tick, simulate);
+        run_phase(world, phase, tick, schedule, kernel);
     }
 }
 
-fn run_phase(
-    world: &mut CellWorld,
-    phase: u32,
-    tick: u64,
-    simulate: &(dyn Fn(ChunkPos) -> bool + Sync),
-) {
+fn run_phase(world: &mut CellWorld, phase: u32, tick: u64, schedule: &Schedule, kernel: &Kernel) {
     let px = (phase & 1) as i32;
     let py = ((phase >> 1) & 1) as i32;
 
     let map = world.chunk_map_mut();
     let mut blocks: FxHashSet<(i32, i32)> = FxHashSet::default();
     for (&pos, chunk) in map.iter() {
-        if chunk.sim_rect().is_empty() || !simulate(pos) {
-            continue;
-        }
         let block = (pos.x >> 1, pos.y >> 1);
-        if (block.0 & 1) == px && (block.1 & 1) == py {
+        if (block.0 & 1) == px && (block.1 & 1) == py && schedule(pos, chunk) {
             blocks.insert(block);
         }
     }
@@ -57,13 +69,11 @@ fn run_phase(
     #[cfg(feature = "parallel")]
     {
         use rayon::prelude::*;
-        windows
-            .par_iter_mut()
-            .for_each(|window| process_block(window, tick, simulate));
+        windows.par_iter_mut().for_each(kernel);
     }
     #[cfg(not(feature = "parallel"))]
     for window in windows.iter_mut() {
-        process_block(window, tick, simulate);
+        kernel(window);
     }
 
     let mut structural: Vec<CellPos> = Vec::new();
@@ -84,19 +94,29 @@ fn run_phase(
     world.push_damage(damage);
 }
 
-fn process_block(window: &mut SimWindow, tick: u64, simulate: &(dyn Fn(ChunkPos) -> bool + Sync)) {
+fn owned_chunks(window: &SimWindow, simulate: &Simulate) -> [[bool; 2]; 2] {
+    let mut owned = [[false; 2]; 2];
+    for (oy, row) in owned.iter_mut().enumerate() {
+        for (ox, slot) in row.iter_mut().enumerate() {
+            let (sx, sy) = (ox as i32 + 1, oy as i32 + 1);
+            *slot = simulate(window.origin().translated(sx, sy))
+                && (-1..=1)
+                    .all(|dy| (-1..=1).all(|dx| window.chunk_at(sx + dx, sy + dy).is_some()));
+        }
+    }
+    owned
+}
+
+fn simulate_block(window: &mut SimWindow, tick: u64, simulate: &Simulate) {
+    let owned = owned_chunks(window, simulate);
     let mut rects = [[DirtyRect::EMPTY; 2]; 2];
-    for oy in 0..2i32 {
-        for ox in 0..2i32 {
-            let (sx, sy) = (ox + 1, oy + 1);
-            if !simulate(window.origin().translated(sx, sy))
-                || (-1..=1).any(|dy| (-1..=1).any(|dx| window.chunk_at(sx + dx, sy + dy).is_none()))
-            {
-                continue;
+    for (oy, row) in owned.iter().enumerate() {
+        for (ox, &is_owned) in row.iter().enumerate() {
+            if is_owned {
+                rects[oy][ox] = window
+                    .chunk_at(ox as i32 + 1, oy as i32 + 1)
+                    .map_or(DirtyRect::EMPTY, |chunk| chunk.sim_rect());
             }
-            rects[oy as usize][ox as usize] = window
-                .chunk_at(sx, sy)
-                .map_or(DirtyRect::EMPTY, |chunk| chunk.sim_rect());
         }
     }
 
@@ -118,6 +138,31 @@ fn process_block(window: &mut SimWindow, tick: u64, simulate: &(dyn Fn(ChunkPos)
                 let lx = if reverse { end - i } else { start + i };
                 let pos = CellPos::new(origin_cell.x + ox as i32 * size + lx, origin_cell.y + gy);
                 rules::update_cell(window, pos, tick, tick_byte);
+            }
+        }
+    }
+}
+
+fn random_tick_block(window: &mut SimWindow, tick: u64, simulate: &Simulate) {
+    let owned = owned_chunks(window, simulate);
+    let tick_byte = tick as u8;
+    let size = CHUNK_SIZE as i32;
+    for (oy, row) in owned.iter().enumerate() {
+        for (ox, &is_owned) in row.iter().enumerate() {
+            if !is_owned {
+                continue;
+            }
+            let cp = window.origin().translated(ox as i32 + 1, oy as i32 + 1);
+            let base = cp.base_cell();
+            let mut rng = Hash::seed(tick)
+                .add(RANDOM_TICK_SAMPLE_SALT)
+                .pos(cp.x, cp.y)
+                .rng();
+            for _ in 0..RANDOM_TICKS_PER_CHUNK {
+                let lx = rng.draw().range(0, size - 1);
+                let ly = rng.draw().range(0, size - 1);
+                let pos = CellPos::new(base.x + lx, base.y + ly);
+                rules::random_tick(window, pos, tick, tick_byte);
             }
         }
     }

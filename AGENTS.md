@@ -23,9 +23,9 @@ When relevant code and docs disagree, establish the intended behavior and update
 - **One cell, one owner:** Double occupancy by terrain, rigid bodies, or entities is an architecture bug, not a tuning problem.
 - **Universality:** Every matter-affecting system handles grid cells, rigid bodies, and entities, or explicitly flags the gap.
 - **Body raster integrity:** A body flag corresponds to exactly one live body or player raster. Public cell writes create only unflagged cells. Players are grid residents, not collision overlays.
-- **Idle cost:** A settled world costs approximately nothing, with no per-tick work or permanently awake chunks.
+- **Idle cost:** Unloaded chunks cost nothing. A settled ticketed chunk does no movement work (sleep skips it), paying only a bounded per-chunk random-tick sample. No unbounded or growing per-tick cost.
 - **Locality and speed of light:** Simulation work remains within a 64-cell window; longer-range behavior propagates locally over ticks.
-- **Suspend/resume:** Sleep, unload, and reload preserve pending activity; in-flight processes do not freeze in time.
+- **Suspend/resume:** Sleep, unload, and reload preserve pending activity; in-flight processes do not freeze in time. Random ticks depend only on cell contents, so ambient behaviour (lava ignition) resumes on load with nothing extra persisted.
 - **Determinism:** The same seed and inputs produce the same result on one machine. Simulation randomness is tick-seeded and stateless; avoid iteration-order-dependent collections in simulation paths.
 - **Scheduling:** Four-phase 2x2-chunk-block scheduling produces disjoint 4x4-chunk `SimWindow`s. `sim` is exactly the area evaluated next tick and contains `change`; replication and persistence consume `change`.
 - **Compiled content:** Typed definitions in `fallingsand_content` execute only during the core build and emit dense registries plus one monomorphized, integer-only kernel spec per material.

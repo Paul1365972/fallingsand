@@ -59,8 +59,16 @@ pub fn emit(content: &Content) -> TokenStream {
                 let into = material_id(ignition.into);
                 let open = Literal::u64_suffixed(ignition.open);
                 let sealed = Literal::u64_suffixed(ignition.sealed);
+                let open_random = Literal::u64_suffixed(ignition.open_random);
+                let sealed_random = Literal::u64_suffixed(ignition.sealed_random);
                 quote! {
-                    Some(crate::material::Ignition { into: #into, open: #open, sealed: #sealed })
+                    Some(crate::material::Ignition {
+                        into: #into,
+                        open: #open,
+                        sealed: #sealed,
+                        open_random: #open_random,
+                        sealed_random: #sealed_random,
+                    })
                 }
             }
             None => quote!(None),

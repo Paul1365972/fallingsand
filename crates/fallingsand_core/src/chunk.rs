@@ -2,8 +2,7 @@ use crate::cell::Cell;
 use crate::coords::CellOffset;
 use serde::{Deserialize, Serialize};
 
-pub const CHUNK_SIZE: usize = 64;
-pub const CHUNK_AREA: usize = CHUNK_SIZE * CHUNK_SIZE;
+pub use fallingsand_material::{CHUNK_AREA, CHUNK_SIZE};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DirtyRect {

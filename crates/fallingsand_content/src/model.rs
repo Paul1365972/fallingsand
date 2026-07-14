@@ -4,7 +4,8 @@ use crate::{
 };
 use fallingsand_material::{
     Dynamics, Ember, EmberKind, GasDynamics, Ignition, LiquidDynamics, MaterialId, Phase,
-    PowderDynamics, Reaction, Tag, Tags, milli, per_tick_chance, per_tick_keep, q16,
+    PowderDynamics, Reaction, Tag, Tags, milli, per_random_tick_chance, per_tick_chance,
+    per_tick_keep, q16,
 };
 use fallingsand_rng::chance_threshold;
 use std::collections::HashMap;
@@ -123,11 +124,14 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
         };
         let base = raws[index].clone();
         let chance = per_tick_chance(burn.ignite);
+        let random_chance = per_random_tick_chance(burn.ignite);
         let smoulder = burn.smoulder.clamp(0.0, 1.0);
         ignitions[index] = Some(Ignition {
             into: MaterialId(raws.len() as u16),
             open: chance_threshold(chance),
             sealed: chance_threshold(chance * smoulder),
+            open_random: chance_threshold(random_chance),
+            sealed_random: chance_threshold(random_chance * smoulder),
         });
         raws.push(RawMaterial {
             name: format!("burning_{}", base.name),

@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 
 pub const TICK_RATE: u32 = 60;
 pub const VEL_ONE: i32 = 1024;
+pub const CHUNK_SIZE: usize = 64;
+pub const CHUNK_AREA: usize = CHUNK_SIZE * CHUNK_SIZE;
+
+pub const RANDOM_TICKS_PER_CHUNK: u32 = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct MaterialId(pub u16);
@@ -87,6 +91,8 @@ pub struct Ignition {
     pub into: MaterialId,
     pub open: u64,
     pub sealed: u64,
+    pub open_random: u64,
+    pub sealed_random: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -177,6 +183,13 @@ pub fn per_tick_chance(rate: f32) -> f32 {
 
 pub fn per_tick_keep(rate: f32) -> f32 {
     (-rate * (1.0 / TICK_RATE as f32)).exp()
+}
+
+/// `per_tick_chance` divided by the per-cell sampling rate, preserving a seconds-rate under random
+/// ticks. Clamped at 1.0.
+pub fn per_random_tick_chance(rate: f32) -> f32 {
+    let opportunities = RANDOM_TICKS_PER_CHUNK as f32 / CHUNK_AREA as f32;
+    (per_tick_chance(rate) / opportunities).min(1.0)
 }
 
 pub fn q16(value: f32) -> u32 {
