@@ -1,13 +1,13 @@
 use super::contact::{Contact, Other, find_contacts};
+use super::rotation::quantize_step;
 use super::{
-    ActorDynamics, OwnerMap, PixelBody, REFERENCE_DENSITY_MILLI, Raster, chebyshev_ring,
-    commit_stamp, quantized_trig, rasterize_at, vacated_wake_targets, wake_covering,
+    ActorDynamics, OwnerMap, PixelBody, REFERENCE_DENSITY_MILLI, Raster, commit_stamp,
+    rasterize_at, vacated_wake_targets, wake_covering,
 };
 use crate::physics::{ActorAabb, BOUNCE_MIN_SPEED, fluid_drag};
 use crate::world::CellWorld;
 use fallingsand_core::content;
-use fallingsand_core::{Cell, CellPos, ChunkPos, Fixed, Phase, TICK_DT};
-use rustc_hash::FxHashSet;
+use fallingsand_core::{CellPos, ChunkPos, Fixed, Phase, TICK_DT};
 
 const SLEEP_SECS: f32 = 0.33;
 const WAKE_SPEED: f32 = 0.5;
@@ -20,7 +20,6 @@ const FRICTION: f32 = 0.4;
 const CONTACT_ITERATIONS: usize = 4;
 const PENETRATION_CORRECTION: f32 = 0.5;
 const SUBSTEP_TRAVEL: f32 = 0.5;
-const SETTLE_SPOT_LIMIT: i32 = 256;
 
 fn span_simulated(
     world: &CellWorld,
@@ -134,12 +133,13 @@ pub fn step_bodies(
 
 fn apply_buoyancy(world: &CellWorld, body: &mut PixelBody, gravity: Fixed) {
     const BEARING: [(i32, i32); 3] = [(0, -1), (-1, 0), (1, 0)];
-    let (sin, cos) = quantized_trig(body.angle);
+    let step = quantize_step(body.angle, body.angle_steps);
+    let pivot_cell = body.pivot_cell(body.x, body.y);
     let mut density_sum = 0.0f32;
     let mut samples = 0u32;
     let mut wet = 0u32;
     for &(lx, ly) in &body.perimeter {
-        let pos = body.world_cell_with(sin, cos, body.x, body.y, lx as f32 + 0.5, ly as f32 + 0.5);
+        let pos = body.body_cell(pivot_cell, step, lx, ly);
         let mut bearing = false;
         for (dx, dy) in BEARING {
             let neighbor = pos.translated(dx, dy);
@@ -424,72 +424,10 @@ fn plan_and_commit(
     Some(vacated)
 }
 
-fn settle_spot(
-    world: &CellWorld,
-    claimed: &FxHashSet<CellPos>,
-    exclude: &FxHashSet<CellPos>,
-    base: CellPos,
-) -> CellPos {
-    let mut fallback: Option<CellPos> = None;
-    for radius in 0.. {
-        let ring = if radius == 0 {
-            vec![(0, 0)]
-        } else {
-            chebyshev_ring(radius)
-        };
-        for (dx, dy) in ring {
-            let pos = base.translated(dx, dy);
-            if claimed.contains(&pos) || exclude.contains(&pos) {
-                continue;
-            }
-            let Some(cell) = world.get_cell(pos) else {
-                continue;
-            };
-            if radius <= SETTLE_SPOT_LIMIT && content::phase(cell.material) == Phase::Empty {
-                return pos;
-            }
-            fallback.get_or_insert(pos);
-        }
-        if radius >= SETTLE_SPOT_LIMIT
-            && let Some(pos) = fallback
-        {
-            return pos;
-        }
-    }
-    unreachable!()
-}
-
 pub fn settle_body(world: &mut CellWorld, body: &PixelBody) {
-    let mut winner = vec![false; body.cells.len()];
-    for &(_, local) in &body.raster.cells {
-        winner[local as usize] = true;
-    }
-    let (sin, cos) = quantized_trig(body.angle);
-    let mut claimed: FxHashSet<CellPos> = FxHashSet::default();
-    let mut writes: Vec<(CellPos, Cell)> = Vec::new();
-    for ly in 0..body.height {
-        for lx in 0..body.width {
-            let index = ly as usize * body.width as usize + lx as usize;
-            let cell = body.cells[index];
-            if cell.is_air() || winner[index] {
-                continue;
-            }
-            let base =
-                body.world_cell_with(sin, cos, body.x, body.y, lx as f32 + 0.5, ly as f32 + 0.5);
-            let pos = settle_spot(world, &claimed, &body.raster.set, base);
-            claimed.insert(pos);
-            let mut placed = cell;
-            placed.set_body(false);
-            writes.push((pos, placed));
-        }
-    }
-
     for &(pos, local) in &body.raster.cells {
         let mut cell = body.cells[local as usize];
         cell.set_body(false);
-        writes.push((pos, cell));
-    }
-    for (pos, cell) in writes {
         world.set_cell_raw(pos, cell);
     }
 }

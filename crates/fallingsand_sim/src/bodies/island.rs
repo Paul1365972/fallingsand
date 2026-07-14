@@ -1,4 +1,4 @@
-use super::{OwnerMap, PixelBody, Raster, cell_mass, rasterize_at};
+use super::{OwnerMap, PixelBody, Raster, angle_steps_for, cell_mass, rasterize_at};
 use crate::world::CellWorld;
 use fallingsand_core::content;
 use fallingsand_core::{Cell, CellPos, Fixed, Phase};
@@ -7,6 +7,10 @@ use std::collections::VecDeque;
 
 const MAX_ISLAND_EXTENT: i32 = 48;
 const MAX_ISLAND_CELLS: usize = 2048;
+
+fn pivot_of(width: u8, height: u8) -> (i32, i32) {
+    ((width as i32 - 1) / 2, (height as i32 - 1) / 2)
+}
 
 struct Shape {
     mass: f32,
@@ -139,6 +143,8 @@ pub fn register_body(world: &mut CellWorld, id: u32, island: &[CellPos]) -> Pixe
         cells,
         perimeter: shape.perimeter,
         com_local: shape.com,
+        pivot: pivot_of(width, height),
+        angle_steps: angle_steps_for(width, height),
         x: Fixed::from_cell(min_x).add_f32(shape.com.0),
         y: Fixed::from_cell(min_y).add_f32(shape.com.1),
         vx: Fixed::ZERO,
@@ -297,6 +303,8 @@ fn split_body(
             cells,
             perimeter: shape.perimeter,
             com_local: shape.com,
+            pivot: pivot_of(part_w, part_h),
+            angle_steps: angle_steps_for(part_w, part_h),
             x: body.x.add_f32(rx),
             y: body.y.add_f32(ry),
             vx: body.vx.add_f32(-body.spin * ry),

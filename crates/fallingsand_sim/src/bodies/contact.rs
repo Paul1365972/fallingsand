@@ -1,4 +1,4 @@
-use super::{ActorDynamics, OwnerMap, PixelBody, quantized_trig};
+use super::{ActorDynamics, OwnerMap, PixelBody, quantized_trig_of};
 use crate::world::CellWorld;
 use fallingsand_core::content;
 use fallingsand_core::{CellPos, Fixed, Phase};
@@ -89,7 +89,7 @@ pub(super) fn find_contacts(
     index: usize,
 ) -> Vec<Contact> {
     let body = &bodies[index];
-    let (sin, cos) = quantized_trig(body.angle);
+    let (sin, cos) = quantized_trig_of(body.angle, body.angle_steps);
     let mut contacts: Vec<Contact> = Vec::new();
     for &(lx, ly) in &body.perimeter {
         let (ox, oy) = body.offset_with(sin, cos, lx as f32 + 0.5, ly as f32 + 0.5);

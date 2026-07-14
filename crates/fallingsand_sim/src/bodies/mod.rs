@@ -1,5 +1,6 @@
 mod contact;
 mod island;
+mod rotation;
 mod step;
 
 pub use island::{apply_damage, detect_island, register_body};
@@ -9,22 +10,15 @@ use crate::physics::ActorAabb;
 use crate::world::CellWorld;
 use fallingsand_core::content;
 use fallingsand_core::{CARDINAL_NEIGHBORS as NEIGHBORS, Cell, CellPos, Fixed, MaterialId, Phase};
+use rotation::{ANGLE_STEPS, ANGLE_STEPS_LARGE, LARGE_BODY_EXTENT, quantize_step, rotate_offset};
 use rustc_hash::{FxHashMap, FxHashSet};
 
-const ANGLE_STEPS: u32 = 1024;
 const REFERENCE_DENSITY_MILLI: f32 = 1_000_000.0;
 const RELOCATE_RADIUS: i32 = 8;
 const SURFACE_PROBE: i32 = 64;
 
 fn cell_mass(material: MaterialId) -> f32 {
     content::density_milli(material) as f32 / REFERENCE_DENSITY_MILLI
-}
-
-fn quantized_trig(angle: f32) -> (f32, f32) {
-    const STEP: f32 = std::f32::consts::TAU / ANGLE_STEPS as f32;
-    let k = (angle / STEP).round() as i64;
-    let k = k.rem_euclid(ANGLE_STEPS as i64);
-    (k as f32 * STEP).sin_cos()
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -86,6 +80,8 @@ pub struct PixelBody {
     pub(crate) cells: Vec<Cell>,
     pub(crate) perimeter: Vec<(u8, u8)>,
     pub(crate) com_local: (f32, f32),
+    pub(crate) pivot: (i32, i32),
+    pub(crate) angle_steps: u32,
     pub x: Fixed,
     pub y: Fixed,
     pub vx: Fixed,
@@ -154,19 +150,45 @@ impl PixelBody {
         (dx * cos - dy * sin, dx * sin + dy * cos)
     }
 
-    fn world_cell_with(&self, sin: f32, cos: f32, x: Fixed, y: Fixed, lx: f32, ly: f32) -> CellPos {
-        let (ox, oy) = self.offset_with(sin, cos, lx, ly);
+    fn local_offset(&self, lx: f32, ly: f32) -> (f32, f32) {
+        let (sin, cos) = quantized_trig_of(self.angle, self.angle_steps);
+        self.offset_with(sin, cos, lx, ly)
+    }
+
+    fn pivot_cell(&self, x: Fixed, y: Fixed) -> CellPos {
+        let (px, py) = self.pivot;
+        let ox = px as f32 + 0.5 - self.com_local.0;
+        let oy = py as f32 + 0.5 - self.com_local.1;
         CellPos::new(x.add_f32(ox).floor_cell(), y.add_f32(oy).floor_cell())
     }
 
-    fn local_offset(&self, lx: f32, ly: f32) -> (f32, f32) {
-        let (sin, cos) = quantized_trig(self.angle);
-        self.offset_with(sin, cos, lx, ly)
+    fn body_cell(&self, pivot_cell: CellPos, step: u32, lx: u8, ly: u8) -> CellPos {
+        let (dx, dy) = rotate_offset(
+            step,
+            self.angle_steps,
+            lx as i32 - self.pivot.0,
+            ly as i32 - self.pivot.1,
+        );
+        pivot_cell.translated(dx, dy)
+    }
+}
+
+fn quantized_trig_of(angle: f32, steps: u32) -> (f32, f32) {
+    let step = quantize_step(angle, steps);
+    (step as f32 / steps as f32 * std::f32::consts::TAU).sin_cos()
+}
+
+fn angle_steps_for(width: u8, height: u8) -> u32 {
+    if width.max(height) as i32 >= LARGE_BODY_EXTENT {
+        ANGLE_STEPS_LARGE
+    } else {
+        ANGLE_STEPS
     }
 }
 
 fn rasterize_at(body: &PixelBody, x: Fixed, y: Fixed, angle: f32) -> Raster {
-    let (sin, cos) = quantized_trig(angle);
+    let step = quantize_step(angle, body.angle_steps);
+    let pivot_cell = body.pivot_cell(x, y);
     let mut raster = Raster::default();
     for ly in 0..body.height {
         for lx in 0..body.width {
@@ -174,10 +196,9 @@ fn rasterize_at(body: &PixelBody, x: Fixed, y: Fixed, angle: f32) -> Raster {
             if body.cells[index].is_air() {
                 continue;
             }
-            let pos = body.world_cell_with(sin, cos, x, y, lx as f32 + 0.5, ly as f32 + 0.5);
-            if raster.set.insert(pos) {
-                raster.cells.push((pos, index as u16));
-            }
+            let pos = body.body_cell(pivot_cell, step, lx, ly);
+            raster.set.insert(pos);
+            raster.cells.push((pos, index as u16));
         }
     }
     raster
