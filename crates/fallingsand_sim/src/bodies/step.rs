@@ -1,4 +1,4 @@
-use super::contact::{Contact, Other, find_contacts};
+use super::contact::{Other, find_contacts};
 use super::rotation::quantize_step;
 use super::{
     ActorDynamics, OwnerMap, PixelBody, REFERENCE_DENSITY_MILLI, Raster, commit_stamp,
@@ -14,6 +14,7 @@ const WAKE_SPEED: f32 = 0.5;
 const SETTLE_SPEED_SQ: f32 = 100.0;
 const SETTLE_SPIN: f32 = 1.5;
 const SUPPORT_NORMAL_Y: f32 = 0.25;
+const RESTING_SPIN_KEEP: f32 = 0.5;
 const CONTACT_KEEP_PER_SEC: f32 = 0.25;
 const BLOCKED_DAMPING: f32 = 0.5;
 const FRICTION: f32 = 0.4;
@@ -182,6 +183,45 @@ struct Substep {
     damping: f32,
 }
 
+#[derive(Clone, Copy)]
+struct PointState {
+    vx: f32,
+    vy: f32,
+    spin: f32,
+    inv_mass: f32,
+    inv_inertia: f32,
+}
+
+impl PointState {
+    fn point_vel(&self, rx: f32, ry: f32) -> (f32, f32) {
+        (self.vx - self.spin * ry, self.vy + self.spin * rx)
+    }
+
+    fn apply(&mut self, rx: f32, ry: f32, jx: f32, jy: f32) {
+        self.vx += jx * self.inv_mass;
+        self.vy += jy * self.inv_mass;
+        self.spin += (rx * jy - ry * jx) * self.inv_inertia;
+    }
+}
+
+enum Partner {
+    Static,
+    Body { slot: usize, rx: f32, ry: f32 },
+    Entity { slot: usize },
+}
+
+struct SolverContact {
+    rx: f32,
+    ry: f32,
+    nx: f32,
+    ny: f32,
+    restitution: f32,
+    partner: Partner,
+    bias: f32,
+    acc_n: f32,
+    acc_t: f32,
+}
+
 fn step_substep(
     world: &CellWorld,
     bodies: &mut [PixelBody],
@@ -208,97 +248,91 @@ fn step_substep(
         .iter()
         .any(|contact| contact.other.is_static() && contact.ny > SUPPORT_NORMAL_Y);
 
-    let mut body_impulses: Vec<(usize, f32, f32, f32)> = Vec::new();
+    let restitution = bodies[index].restitution;
+    let mut points: Vec<PointState> = vec![state_of(&bodies[index])];
+    let mut body_slots: Vec<(usize, usize)> = Vec::new();
+    let mut entity_states: Vec<PointState> = Vec::new();
+    let mut entity_slots: Vec<(usize, usize)> = Vec::new();
+
+    let mut solver: Vec<SolverContact> = Vec::with_capacity(contacts.len());
+    for contact in &contacts {
+        let partner = match contact.other {
+            Other::Terrain => Partner::Static,
+            Other::Body {
+                index: other_index,
+                rx,
+                ry,
+                ..
+            } => {
+                let slot = slot_for(&mut points, &mut body_slots, other_index, || {
+                    state_of(&bodies[other_index])
+                });
+                Partner::Body { slot, rx, ry }
+            }
+            Other::Entity {
+                index: entity_index,
+                inv_mass,
+            } => {
+                let slot = slot_for(&mut entity_states, &mut entity_slots, entity_index, || {
+                    PointState {
+                        vx: entities[entity_index].vx,
+                        vy: entities[entity_index].vy,
+                        spin: 0.0,
+                        inv_mass,
+                        inv_inertia: 0.0,
+                    }
+                });
+                Partner::Entity { slot }
+            }
+        };
+        solver.push(SolverContact {
+            rx: contact.rx,
+            ry: contact.ry,
+            nx: contact.nx,
+            ny: contact.ny,
+            restitution: restitution.max(contact.restitution),
+            partner,
+            bias: 0.0,
+            acc_n: 0.0,
+            acc_t: 0.0,
+        });
+    }
+
+    for sc in &mut solver {
+        let vn = relative_vn(&points, &entity_states, sc);
+        sc.bias = if -vn > BOUNCE_MIN_SPEED {
+            sc.restitution * vn
+        } else {
+            0.0
+        };
+    }
+
+    for _ in 0..CONTACT_ITERATIONS {
+        for i in 0..solver.len() {
+            solve_contact(&mut solver, &mut points, &mut entity_states, i);
+        }
+    }
+
+    if touching {
+        points[0].vx *= substep.damping;
+        points[0].vy *= substep.damping;
+        points[0].spin *= substep.damping;
+        for &(_, slot) in &body_slots {
+            points[slot].vx *= substep.damping;
+            points[slot].vy *= substep.damping;
+            points[slot].spin *= substep.damping;
+        }
+        for state in &mut entity_states {
+            state.vx *= substep.damping;
+            state.vy *= substep.damping;
+        }
+    }
+
+    let active = points[0];
+    let slow = active.vx * active.vx + active.vy * active.vy < SETTLE_SPEED_SQ
+        && active.spin.abs() < SETTLE_SPIN;
     {
         let body = &mut bodies[index];
-        let (mut vx, mut vy) = (body.vx.vel_f32(), body.vy.vel_f32());
-        for _ in 0..CONTACT_ITERATIONS {
-            for contact in &contacts {
-                let (other_inv_mass, other_inv_inertia, other_vx, other_vy, r2) =
-                    match contact.other {
-                        Other::Terrain => (0.0, 0.0, 0.0, 0.0, (0.0, 0.0)),
-                        Other::Entity {
-                            inv_mass, vx, vy, ..
-                        } => (inv_mass, 0.0, vx, vy, (0.0, 0.0)),
-                        Other::Body {
-                            inv_mass,
-                            inv_inertia,
-                            vx,
-                            vy,
-                            spin,
-                            rx,
-                            ry,
-                            ..
-                        } => (
-                            inv_mass,
-                            inv_inertia,
-                            vx - spin * ry,
-                            vy + spin * rx,
-                            (rx, ry),
-                        ),
-                    };
-
-                let rel_vx = vx - body.spin * contact.ry - other_vx;
-                let rel_vy = vy + body.spin * contact.rx - other_vy;
-                let vn = rel_vx * contact.nx + rel_vy * contact.ny;
-                if vn >= 0.0 {
-                    continue;
-                }
-                let r_cross_n = contact.rx * contact.ny - contact.ry * contact.nx;
-                let r2_cross_n = r2.0 * contact.ny - r2.1 * contact.nx;
-                let k = body.inv_mass
-                    + other_inv_mass
-                    + r_cross_n * r_cross_n * body.inv_inertia
-                    + r2_cross_n * r2_cross_n * other_inv_inertia;
-                let bounce = if -vn > BOUNCE_MIN_SPEED {
-                    body.restitution.max(contact.restitution)
-                } else {
-                    0.0
-                };
-                let jn = -(1.0 + bounce) * vn / k;
-                vx += jn * contact.nx * body.inv_mass;
-                vy += jn * contact.ny * body.inv_mass;
-                body.spin += r_cross_n * jn * body.inv_inertia;
-                apply_to_other(
-                    contact,
-                    -jn * contact.nx,
-                    -jn * contact.ny,
-                    entity_impulses,
-                    &mut body_impulses,
-                );
-
-                let tx = -contact.ny;
-                let ty = contact.nx;
-                let rel_vx = vx - body.spin * contact.ry - other_vx;
-                let rel_vy = vy + body.spin * contact.rx - other_vy;
-                let vt = rel_vx * tx + rel_vy * ty;
-                let r_cross_t = contact.rx * ty - contact.ry * tx;
-                let r2_cross_t = r2.0 * ty - r2.1 * tx;
-                let kt = body.inv_mass
-                    + other_inv_mass
-                    + r_cross_t * r_cross_t * body.inv_inertia
-                    + r2_cross_t * r2_cross_t * other_inv_inertia;
-                let jt = (-vt / kt).clamp(-FRICTION * jn.abs(), FRICTION * jn.abs());
-                vx += jt * tx * body.inv_mass;
-                vy += jt * ty * body.inv_mass;
-                body.spin += r_cross_t * jt * body.inv_inertia;
-                apply_to_other(
-                    contact,
-                    -jt * tx,
-                    -jt * ty,
-                    entity_impulses,
-                    &mut body_impulses,
-                );
-            }
-        }
-
-        if touching {
-            vx *= substep.damping;
-            vy *= substep.damping;
-            body.spin *= substep.damping;
-        }
-
-        let slow = vx * vx + vy * vy < SETTLE_SPEED_SQ && body.spin.abs() < SETTLE_SPIN;
         if touching && slow && static_only && supported {
             body.x = prev_x;
             body.y = prev_y;
@@ -318,44 +352,159 @@ fn step_substep(
                 body.x = body.x.add_f32(deepest.nx * correction);
                 body.y = body.y.add_f32(deepest.ny * correction);
             }
-            body.vx = Fixed::vel_per_sec(vx);
-            body.vy = Fixed::vel_per_sec(vy);
+            body.vx = Fixed::vel_per_sec(active.vx);
+            body.vy = Fixed::vel_per_sec(active.vy);
+            let spin = if touching && slow && supported {
+                active.spin * RESTING_SPIN_KEEP
+            } else {
+                active.spin
+            };
+            body.spin = spin;
             body.rest_secs = 0.0;
         }
     }
 
-    for (other_index, jx, jy, r_cross_j) in body_impulses {
+    for &(other_index, slot) in &body_slots {
+        let before = state_of(&bodies[other_index]);
+        let after = points[slot];
         let other = &mut bodies[other_index];
-        let dvx = jx * other.inv_mass;
-        let dvy = jy * other.inv_mass;
-        let dspin = r_cross_j * other.inv_inertia;
-        other.vx = other.vx.add_vel_f32(dvx);
-        other.vy = other.vy.add_vel_f32(dvy);
-        other.spin += dspin;
-        if dvx.abs() + dvy.abs() > WAKE_SPEED || dspin.abs() > WAKE_SPEED {
+        other.vx = Fixed::vel_per_sec(after.vx);
+        other.vy = Fixed::vel_per_sec(after.vy);
+        other.spin = after.spin;
+        let moved = (after.vx - before.vx).abs() + (after.vy - before.vy).abs();
+        if moved > WAKE_SPEED || (after.spin - before.spin).abs() > WAKE_SPEED {
             other.rest_secs = 0.0;
             other.asleep = false;
         }
     }
+    for &(entity_index, slot) in &entity_slots {
+        let after = entity_states[slot];
+        let mass = 1.0 / entities[entity_index].inv_mass;
+        entity_impulses[entity_index].0 += (after.vx - entities[entity_index].vx) * mass;
+        entity_impulses[entity_index].1 += (after.vy - entities[entity_index].vy) * mass;
+    }
 }
 
-fn apply_to_other(
-    contact: &Contact,
+fn state_of(body: &PixelBody) -> PointState {
+    PointState {
+        vx: body.vx.vel_f32(),
+        vy: body.vy.vel_f32(),
+        spin: body.spin,
+        inv_mass: body.inv_mass,
+        inv_inertia: body.inv_inertia,
+    }
+}
+
+fn slot_for(
+    states: &mut Vec<PointState>,
+    map: &mut Vec<(usize, usize)>,
+    key: usize,
+    make: impl FnOnce() -> PointState,
+) -> usize {
+    if let Some(&(_, slot)) = map.iter().find(|&&(k, _)| k == key) {
+        return slot;
+    }
+    let slot = states.len();
+    states.push(make());
+    map.push((key, slot));
+    slot
+}
+
+fn relative_vn(points: &[PointState], entities: &[PointState], sc: &SolverContact) -> f32 {
+    let (ax, ay) = points[0].point_vel(sc.rx, sc.ry);
+    let (bx, by) = partner_point_vel(points, entities, sc);
+    (ax - bx) * sc.nx + (ay - by) * sc.ny
+}
+
+fn partner_point_vel(
+    points: &[PointState],
+    entities: &[PointState],
+    sc: &SolverContact,
+) -> (f32, f32) {
+    match sc.partner {
+        Partner::Static => (0.0, 0.0),
+        Partner::Body { slot, rx, ry } => points[slot].point_vel(rx, ry),
+        Partner::Entity { slot } => (entities[slot].vx, entities[slot].vy),
+    }
+}
+
+fn partner_effective(
+    points: &[PointState],
+    entities: &[PointState],
+    sc: &SolverContact,
+) -> (f32, f32, f32, f32) {
+    match sc.partner {
+        Partner::Static => (0.0, 0.0, 0.0, 0.0),
+        Partner::Body { slot, rx, ry } => (points[slot].inv_mass, points[slot].inv_inertia, rx, ry),
+        Partner::Entity { slot } => (entities[slot].inv_mass, 0.0, 0.0, 0.0),
+    }
+}
+
+fn apply_partner(
+    points: &mut [PointState],
+    entities: &mut [PointState],
+    sc: &SolverContact,
     jx: f32,
     jy: f32,
-    entity_impulses: &mut [(f32, f32)],
-    body_impulses: &mut Vec<(usize, f32, f32, f32)>,
 ) {
-    match contact.other {
-        Other::Terrain => {}
-        Other::Entity { index, .. } => {
-            entity_impulses[index].0 += jx;
-            entity_impulses[index].1 += jy;
-        }
-        Other::Body { index, rx, ry, .. } => {
-            body_impulses.push((index, jx, jy, rx * jy - ry * jx));
+    match sc.partner {
+        Partner::Static => {}
+        Partner::Body { slot, rx, ry } => points[slot].apply(rx, ry, -jx, -jy),
+        Partner::Entity { slot } => {
+            entities[slot].vx -= jx * entities[slot].inv_mass;
+            entities[slot].vy -= jy * entities[slot].inv_mass;
         }
     }
+}
+
+fn solve_contact(
+    solver: &mut [SolverContact],
+    points: &mut [PointState],
+    entities: &mut [PointState],
+    i: usize,
+) {
+    let (rx, ry, nx, ny, bias) = {
+        let sc = &solver[i];
+        (sc.rx, sc.ry, sc.nx, sc.ny, sc.bias)
+    };
+    let (other_inv_mass, other_inv_inertia, r2x, r2y) =
+        partner_effective(points, entities, &solver[i]);
+
+    let (ax, ay) = points[0].point_vel(rx, ry);
+    let (bx, by) = partner_point_vel(points, entities, &solver[i]);
+    let vn = (ax - bx) * nx + (ay - by) * ny;
+    let r_cross_n = rx * ny - ry * nx;
+    let r2_cross_n = r2x * ny - r2y * nx;
+    let kn = points[0].inv_mass
+        + other_inv_mass
+        + r_cross_n * r_cross_n * points[0].inv_inertia
+        + r2_cross_n * r2_cross_n * other_inv_inertia;
+    let jn_target = -(vn + bias) / kn;
+    let old_n = solver[i].acc_n;
+    let new_n = (old_n + jn_target).max(0.0);
+    let dn = new_n - old_n;
+    solver[i].acc_n = new_n;
+    points[0].apply(rx, ry, dn * nx, dn * ny);
+    apply_partner(points, entities, &solver[i], dn * nx, dn * ny);
+
+    let (tx, ty) = (-ny, nx);
+    let (ax, ay) = points[0].point_vel(rx, ry);
+    let (bx, by) = partner_point_vel(points, entities, &solver[i]);
+    let vt = (ax - bx) * tx + (ay - by) * ty;
+    let r_cross_t = rx * ty - ry * tx;
+    let r2_cross_t = r2x * ty - r2y * tx;
+    let kt = points[0].inv_mass
+        + other_inv_mass
+        + r_cross_t * r_cross_t * points[0].inv_inertia
+        + r2_cross_t * r2_cross_t * other_inv_inertia;
+    let jt_target = -vt / kt;
+    let limit = FRICTION * solver[i].acc_n;
+    let old_t = solver[i].acc_t;
+    let new_t = (old_t + jt_target).clamp(-limit, limit);
+    let dt = new_t - old_t;
+    solver[i].acc_t = new_t;
+    points[0].apply(rx, ry, dt * tx, dt * ty);
+    apply_partner(points, entities, &solver[i], dt * tx, dt * ty);
 }
 
 fn restamp(

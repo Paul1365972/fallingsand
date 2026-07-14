@@ -9,6 +9,7 @@ use fallingsand_sim::bodies::{
 use fallingsand_sim::{ActorAabb, CellWorld};
 
 pub const BODY_GRAVITY: Fixed = Fixed::from_int(-400);
+const STANDING_TORQUE: f32 = 0.15;
 
 #[derive(Default)]
 pub struct PixelBodies {
@@ -158,7 +159,7 @@ fn transfer_standing_weight(world: &CellWorld, bodies: &mut PixelBodies, dynamic
         }
         let rx = (Fixed::cell_center(pos.x) - body.x).to_f32();
         body.vy = body.vy.add_vel_f32(share * body.inv_mass());
-        body.spin += rx * share * body.inv_inertia();
+        body.spin += rx * share * body.inv_inertia() * STANDING_TORQUE;
         body.rest_secs = 0.0;
         body.asleep = false;
     }

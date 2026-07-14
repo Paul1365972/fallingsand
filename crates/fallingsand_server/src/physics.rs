@@ -64,6 +64,7 @@ pub fn step_physics(sim: &mut CellWorld, bodies: &mut PixelBodies, players: &mut
         };
         commit_pose(sim, bodies, avatar, snapshot, facing_left);
 
+        let (mut restore_x, mut restore_y) = (0.0f32, 0.0f32);
         for blocked in &result.blocked {
             let Some(cell) = sim.get_cell(blocked.pos) else {
                 continue;
@@ -71,24 +72,25 @@ pub fn step_physics(sim: &mut CellWorld, bodies: &mut PixelBodies, players: &mut
             if !cell.is_body() {
                 continue;
             }
-            let jx = PLAYER_MASS * blocked.dvx;
-            let jy = PLAYER_MASS * blocked.dvy;
             match bodies.body_at_mut(blocked.pos) {
                 Some(pixel_body) => {
                     if pixel_body.frozen {
                         continue;
                     }
-                    let rx = (Fixed::cell_center(blocked.pos.x) - pixel_body.x).to_f32();
-                    let ry = (Fixed::cell_center(blocked.pos.y) - pixel_body.y).to_f32();
-                    pixel_body.vx = pixel_body.vx.add_vel_f32(jx * pixel_body.inv_mass());
-                    pixel_body.vy = pixel_body.vy.add_vel_f32(jy * pixel_body.inv_mass());
-                    pixel_body.spin += (rx * jy - ry * jx) * pixel_body.inv_inertia();
+                    restore_x += blocked.dvx;
+                    restore_y += blocked.dvy;
                     pixel_body.rest_secs = 0.0;
                     pixel_body.asleep = false;
                 }
-                None => shoves.push((blocked.pos, jx, jy)),
+                None => {
+                    let jx = PLAYER_MASS * blocked.dvx;
+                    let jy = PLAYER_MASS * blocked.dvy;
+                    shoves.push((blocked.pos, jx, jy));
+                }
             }
         }
+        avatar.actor.vx = avatar.actor.vx.add_vel_f32(restore_x);
+        avatar.actor.vy = avatar.actor.vy.add_vel_f32(restore_y);
     }
 
     for (pos, jx, jy) in shoves {
