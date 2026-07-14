@@ -7,7 +7,6 @@ use std::collections::BTreeMap;
 use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
 
 const SPRAY_INTERVAL: f32 = 1.0 / 12.0;
-const MAX_PER_TICK: usize = 256;
 
 #[derive(Default)]
 pub struct ParticleEmitter {
@@ -19,7 +18,6 @@ impl ParticleEmitter {
     pub fn emit(&mut self, players: &Players, tick: u64) {
         self.spawns.clear();
         self.emit_spray(players, tick);
-        self.spawns.truncate(MAX_PER_TICK);
     }
 
     fn emit_spray(&mut self, players: &Players, tick: u64) {

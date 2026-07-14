@@ -267,7 +267,7 @@ pub(crate) fn commit_stamp(
     Some(vacated)
 }
 
-pub(super) fn chebyshev_ring(radius: i32) -> Vec<(i32, i32)> {
+fn chebyshev_ring(radius: i32) -> Vec<(i32, i32)> {
     let mut ring = Vec::new();
     for dy in -radius..=radius {
         for dx in -radius..=radius {

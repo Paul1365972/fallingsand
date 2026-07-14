@@ -9,7 +9,7 @@ Display/input/UI only — never drives game logic. Bevy is the IO engine; game s
 - **`view/` — the bevy shell.** `Game(ClientGame)` is a single resource; one driver system builds the `IoFrame`, calls `update`, executes returned `Effect`s; every other system reconciles bevy entities/assets/UI from core state.
 - **Update triggering.** Cheap values recompute every frame behind if-different guards; expensive updates gate on `Changes`, a frame-scoped signal struct. Spawns bake correct initial values — no first-frame patch.
 - **Entity policy.** The core owns zero `Entity` ids and zero `Handle`s; view modules must render any core state from scratch — this is what makes reconnect and quit-to-menu clean.
-- **Player projection.** One `PlayerId -> RemotePlayer` avatar directory is the source for every public pose, including the local camera, flames, and light. Private `SelfState` contains profile context, `SelfLife`, and a coarse camera `anchor`; only `SelfLife::Alive` carries health, air, and interaction. It never duplicates the alive pose: the camera follows the avatar while alive and falls back to `anchor` while entering, dead, or reviving, so it stays placed through respawns and reconnects instead of resetting to the origin.
+- **Player projection.** One `PlayerId -> RemotePlayer` avatar directory is the source for every public pose, including the local camera and light. Private `SelfState` contains profile context, `SelfLife`, and a coarse camera `anchor`; only `SelfLife::Alive` carries health, air, and interaction. It never duplicates the alive pose: the camera follows the avatar while alive and falls back to `anchor` while entering, dead, or reviving, so it stays placed through respawns and reconnects instead of resetting to the origin.
 
 ## Rendering
 

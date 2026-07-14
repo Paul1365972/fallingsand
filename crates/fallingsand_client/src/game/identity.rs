@@ -17,8 +17,9 @@ impl Identity {
             None => (stored_secret.unwrap_or_else(generate_secret), false),
         };
         let uuid = uuid_for(&secret);
-        let name = configured_name()
-            .or(stored_name.clone())
+        let name = stored_name
+            .clone()
+            .or_else(configured_name)
             .unwrap_or_else(|| default_name(uuid));
         let identity = Self {
             secret,

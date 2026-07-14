@@ -1,10 +1,8 @@
 use std::fmt;
 use std::str::FromStr;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Hex32(pub [u8; 32]);
 
-#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum HexError {
     Length(usize),
     Digit,
@@ -19,19 +17,13 @@ impl fmt::Display for HexError {
     }
 }
 
-impl Hex32 {
-    pub fn to_vec(self) -> Vec<u8> {
-        self.0.to_vec()
-    }
-}
-
 impl FromStr for Hex32 {
     type Err = HexError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let bytes = s.as_bytes();
         if bytes.len() != 64 {
-            return Err(HexError::Length(s.chars().count()));
+            return Err(HexError::Length(bytes.len()));
         }
         let mut out = [0u8; 32];
         for (byte, pair) in out.iter_mut().zip(bytes.chunks_exact(2)) {
@@ -40,14 +32,6 @@ impl FromStr for Hex32 {
             *byte = hi << 4 | lo;
         }
         Ok(Hex32(out))
-    }
-}
-
-impl TryFrom<&str> for Hex32 {
-    type Error = HexError;
-
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        s.parse()
     }
 }
 

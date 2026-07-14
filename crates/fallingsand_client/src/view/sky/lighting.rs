@@ -42,6 +42,7 @@ pub struct EmissiveField {
     pub size: UVec2,
     scratch: Vec<[f32; 3]>,
     light: Vec<[f32; 3]>,
+    tmp: Vec<[f32; 3]>,
     built: bool,
 }
 
@@ -54,6 +55,7 @@ impl EmissiveField {
             size,
             scratch: Vec::new(),
             light: Vec::new(),
+            tmp: Vec::new(),
             built: false,
         }
     }
@@ -97,6 +99,7 @@ pub fn sync_emissive(
         field.size = size;
         field.scratch = vec![[0.0; 3]; (size.x * size.y) as usize];
         field.light = vec![[0.0; 3]; (size.x * size.y) as usize];
+        field.tmp = vec![[0.0; 3]; (size.x * size.y) as usize];
         field.built = false;
         if let Some(mut material) = lighting_mats.get_mut(&assets.lighting) {
             material.emissive = field.image.clone();
@@ -133,6 +136,7 @@ pub fn sync_emissive(
 
     let mut scratch = std::mem::take(&mut field.scratch);
     let mut light = std::mem::take(&mut field.light);
+    let mut tmp = std::mem::take(&mut field.tmp);
     scratch.iter_mut().for_each(|texel| *texel = [0.0; 3]);
     if let Some(ingame) = game.0.ingame() {
         let view = &ingame.world;
@@ -156,17 +160,18 @@ pub fn sync_emissive(
         }
     }
 
-    spread(&scratch, &mut light, width, height);
+    spread(&scratch, &mut light, &mut tmp, width, height);
     upload(&mut queue, field.image.id(), size, &light);
     field.scratch = scratch;
     field.light = light;
+    field.tmp = tmp;
 }
 
-fn spread(src: &[[f32; 3]], dst: &mut [[f32; 3]], width: i32, height: i32) {
-    let falloff: Vec<f32> = (-SPREAD_RADIUS..=SPREAD_RADIUS)
-        .map(|d| 1.0 - d.abs() as f32 / (SPREAD_RADIUS as f32 + 1.0))
-        .collect();
-    let mut tmp = vec![[0.0f32; 3]; (width * height) as usize];
+fn spread(src: &[[f32; 3]], dst: &mut [[f32; 3]], tmp: &mut [[f32; 3]], width: i32, height: i32) {
+    let falloff: [f32; (2 * SPREAD_RADIUS + 1) as usize] = std::array::from_fn(|i| {
+        let d = i as i32 - SPREAD_RADIUS;
+        1.0 - d.abs() as f32 / (SPREAD_RADIUS as f32 + 1.0)
+    });
     for y in 0..height {
         for x in 0..width {
             let mut acc = [0.0f32; 3];

@@ -122,7 +122,7 @@ pub fn parse_cert_hash(hex: &str) -> Result<Option<Vec<u8>>, super::hex::HexErro
     if hex.is_empty() {
         return Ok(None);
     }
-    hex.parse::<super::hex::Hex32>().map(|h| Some(h.to_vec()))
+    hex.parse::<super::hex::Hex32>().map(|h| Some(h.0.to_vec()))
 }
 
 pub fn cli_world_name() -> Option<String> {

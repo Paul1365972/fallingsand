@@ -230,9 +230,6 @@ fn inventory_delta(
 }
 
 fn particles_in_interest(particles: &[ParticleSpawn], center: ChunkPos) -> Vec<ParticleSpawn> {
-    if particles.is_empty() {
-        return Vec::new();
-    }
     let size = CHUNK_SIZE as f32;
     let min_x = (center.x - INTEREST_RADIUS_X) as f32 * size;
     let max_x = (center.x + INTEREST_RADIUS_X + 1) as f32 * size;
