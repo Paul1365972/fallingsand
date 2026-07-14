@@ -1,3 +1,4 @@
+use super::identity::Identity;
 use super::{ClientGame, Flow, GamePanel, InGame, IoFrame, Phase};
 use bevy::log::{error, info, warn};
 use fallingsand_core::HOTBAR_SLOTS;
@@ -241,7 +242,13 @@ pub(super) fn update(game: &mut ClientGame, io: &IoFrame) {
     };
     let was_incapacitated = ingame.incapacitated();
     let old_life = ingame.you.life;
-    drain(ingame, io, &mut game.changes, game.view_prefs.debug_borders);
+    drain(
+        ingame,
+        io,
+        &game.identity,
+        &mut game.changes,
+        game.view_prefs.debug_borders,
+    );
     if ingame.you.life != old_life {
         ingame.revive_request_pending = false;
     }
@@ -254,7 +261,13 @@ pub(super) fn update(game: &mut ClientGame, io: &IoFrame) {
     sync_debug_stream(ingame, game.view_prefs.debug_borders);
 }
 
-fn drain(ingame: &mut InGame, io: &IoFrame, changes: &mut super::Changes, debug_borders: bool) {
+fn drain(
+    ingame: &mut InGame,
+    io: &IoFrame,
+    identity: &Identity,
+    changes: &mut super::Changes,
+    debug_borders: bool,
+) {
     let embedded_paused = ingame.net.is_embedded() && ingame.game_menu_open();
     let Some(session) = ingame.net.session.as_mut() else {
         return;
@@ -272,14 +285,13 @@ fn drain(ingame: &mut InGame, io: &IoFrame, changes: &mut super::Changes, debug_
         session.window_bytes += bytes.len() as u64;
         match decode_message::<ServerMessage>(&bytes) {
             Ok(ServerMessage::Challenge { nonce }) => {
-                let identity = super::identity::load_or_create();
-                let (public_key, signature) = super::identity::authenticate(&identity, nonce);
+                let (public_key, signature) = identity.authenticate(nonce);
                 session.send(&ClientMessage::Hello {
                     protocol_version: PROTOCOL_VERSION,
                     uuid: identity.uuid,
                     public_key,
                     signature,
-                    name: identity.name,
+                    name: identity.name.clone(),
                 });
             }
             Ok(ServerMessage::TickFrame(tick)) => {

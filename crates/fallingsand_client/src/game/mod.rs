@@ -18,6 +18,7 @@ use clock::WorldClock;
 use debug::DebugState;
 use fallingsand_core::CellPos;
 use fallingsand_protocol::{InputAction, SelfLife};
+use identity::Identity;
 use input::{Bindings, Context, InputCore, RawInput};
 use inventory::{Inventory, SlotRegion};
 use menu::MenuState;
@@ -226,6 +227,7 @@ impl InGame {
 
 pub struct ClientGame {
     pub settings: Settings,
+    pub identity: Identity,
     pub menu: MenuState,
     pub flow: Flow,
     pub bindings: Bindings,
@@ -246,6 +248,7 @@ impl ClientGame {
     pub fn new() -> Self {
         Self {
             settings: settings::load(),
+            identity: Identity::resolve(),
             menu: MenuState::scan(),
             flow: Flow::Menu,
             bindings: Bindings::default(),
@@ -331,7 +334,7 @@ impl ClientGame {
     fn apply_ui_event(&mut self, event: UiEvent, io: &IoFrame) {
         match event {
             UiEvent::NameEdited(name) => {
-                identity::update_name(&name);
+                self.identity.set_name(&name);
             }
             UiEvent::Play(world) => self.start_game_local(world),
             UiEvent::CreateWorld(raw) => {

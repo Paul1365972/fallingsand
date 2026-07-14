@@ -14,6 +14,8 @@ Client -> server normally sends one `InputFrame` per client fixed tick: the held
 
 Persistent identity is an Ed25519 key, not a client-asserted UUID. Each connection starts with a random server challenge; the client signs the domain-separated nonce, the server verifies it, and `PlayerUuid` is derived from the public-key hash. The private key remains client-side. A reconnect that arrives before the old session is cleaned up takes over the same runtime player; reconnect after a completed departure restores the durable record into a new `PlayerId`.
 
+The client resolves one identity at startup: the durable keypair plus a separate mutable display name, each field with its own precedence — secret from `--identity-key-file` else the stored file else a freshly generated, persisted key; name from `--name` (`?name=` on wasm) else the stored file else a default derived from the uuid. Menu name edits mutate that single resolved identity and persist the name alone, never minting a secret; an externally supplied `--name` freezes the field (the menu shows it read-only), and an externally supplied key never writes its private key back to the stored file.
+
 A wire cell is 3 bytes (material + shade flags), with no velocity or timing; the server re-derives them. Chunk payloads are paletted containers (uniform / paletted / raw, smallest wins).
 
 `HelloAck` carries `PROTOCOL_VERSION`; the client rejects on mismatch. Any wire change or change to `core::content` bumps it.
