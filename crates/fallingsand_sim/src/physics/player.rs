@@ -1,7 +1,7 @@
 use super::movement::move_body;
 use super::{
-    Actor, CellSource, FLUID_DRAG_LINEAR, FLUID_DRAG_QUAD, MAX_FLUID_DRAG, MoveResult, OwnCells,
-    StepInput, Submersion, cell_blocks, ring_submersion,
+    Actor, CellSource, MoveResult, OwnCells, StepInput, Submersion, cell_blocks, fluid_drag,
+    ring_submersion,
 };
 use crate::player::{DUCK_ROWS, STAND_ROWS};
 use fallingsand_core::content;
@@ -257,8 +257,7 @@ fn normal_update<W: CellSource>(
         let rel_x = vx - submersion.flow_vx;
         let rel_y = vy - submersion.flow_vy;
         let speed = rel_x.hypot(rel_y);
-        let drag = ((FLUID_DRAG_LINEAR + FLUID_DRAG_QUAD * speed) * submersion.fraction * TICK_DT)
-            .min(MAX_FLUID_DRAG);
+        let drag = fluid_drag(speed, submersion.fraction);
         body.vx = Fixed::vel_per_sec(vx - rel_x * drag);
         body.vy = Fixed::vel_per_sec(vy - rel_y * drag);
     }

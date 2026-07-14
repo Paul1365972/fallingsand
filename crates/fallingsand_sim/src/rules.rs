@@ -1,12 +1,10 @@
 use crate::window::SimWindow;
 use fallingsand_core::content::{self, FLICKER_THRESHOLD, MatSpec, material};
 use fallingsand_core::{
-    Cell, CellPos, Dynamics, Ember, EmberKind, GRID_GRAVITY, GasDynamics, LiquidDynamics,
-    MaterialId, Phase, PowderDynamics, TICK_DT, VEL_ONE,
+    CARDINAL_NEIGHBORS as NEIGHBORS, Cell, CellPos, Dynamics, Ember, EmberKind, GRID_GRAVITY,
+    GasDynamics, LiquidDynamics, MaterialId, Phase, PowderDynamics, TICK_DT, VEL_ONE,
 };
 use fallingsand_rng::{Hash, Rng};
-
-const NEIGHBORS: [(i32, i32); 4] = [(0, -1), (-1, 0), (1, 0), (0, 1)];
 
 const RANDOM_TICK_SALT: u64 = 0x5261_6e64_5469_636b;
 
@@ -18,6 +16,8 @@ enum IgniteRate {
 
 const VEL_MAX: i32 = 31 * VEL_ONE;
 const MAX_STEP: i32 = 31;
+const VEL_BITS: u32 = VEL_ONE.trailing_zeros();
+const _: () = assert!(1 << VEL_BITS == VEL_ONE);
 const SETTLE: i32 = (7.5 * TICK_DT * VEL_ONE as f32) as i32;
 const SUBMERGED_DENSITY_MILLI: i32 = 100_000;
 const GRAVITY_DV: i32 = (GRID_GRAVITY * TICK_DT * TICK_DT * VEL_ONE as f32 + 0.5) as i32;
@@ -376,7 +376,7 @@ fn can_enter<M: MatSpec>(window: &SimWindow, dir: (i32, i32), target: CellPos) -
 
 fn step_cells(v: i32, rng: &mut Rng) -> i32 {
     let mag = v.abs();
-    let fractional = (rng.draw().bits(10) as i32) < mag % VEL_ONE;
+    let fractional = (rng.draw().bits(VEL_BITS) as i32) < mag % VEL_ONE;
     let cells = (mag / VEL_ONE + fractional as i32).min(MAX_STEP);
     cells * v.signum()
 }

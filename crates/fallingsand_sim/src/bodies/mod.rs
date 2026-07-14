@@ -8,14 +8,13 @@ pub use step::{settle_body, step_bodies};
 use crate::physics::ActorAabb;
 use crate::world::CellWorld;
 use fallingsand_core::content;
-use fallingsand_core::{Cell, CellPos, Fixed, MaterialId, Phase};
+use fallingsand_core::{CARDINAL_NEIGHBORS as NEIGHBORS, Cell, CellPos, Fixed, MaterialId, Phase};
 use rustc_hash::FxHashSet;
 
 const ANGLE_STEPS: u32 = 1024;
 const REFERENCE_DENSITY_MILLI: f32 = 1_000_000.0;
 const RELOCATE_RADIUS: i32 = 8;
 const SURFACE_PROBE: i32 = 64;
-const NEIGHBORS: [(i32, i32); 4] = [(0, -1), (-1, 0), (1, 0), (0, 1)];
 
 fn cell_mass(material: MaterialId) -> f32 {
     content::density_milli(material) as f32 / REFERENCE_DENSITY_MILLI

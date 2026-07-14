@@ -6,13 +6,17 @@ pub use player::{Controller, PlayerParams, step_player};
 
 use crate::world::CellWorld;
 use fallingsand_core::content;
-use fallingsand_core::{Cell, CellPos, Fixed, Phase, TICK_RATE, VEL_ONE};
+use fallingsand_core::{Cell, CellPos, Fixed, Phase, TICK_DT, TICK_RATE, VEL_ONE};
 use rustc_hash::FxHashSet;
 
 pub(crate) const BOUNCE_MIN_SPEED: f32 = 30.0;
-pub(crate) const FLUID_DRAG_LINEAR: f32 = 2.5;
-pub(crate) const FLUID_DRAG_QUAD: f32 = 0.0625;
-pub(crate) const MAX_FLUID_DRAG: f32 = 0.9;
+const FLUID_DRAG_LINEAR: f32 = 2.5;
+const FLUID_DRAG_QUAD: f32 = 0.0625;
+const MAX_FLUID_DRAG: f32 = 0.9;
+
+pub(crate) fn fluid_drag(speed: f32, submersion: f32) -> f32 {
+    ((FLUID_DRAG_LINEAR + FLUID_DRAG_QUAD * speed) * submersion * TICK_DT).min(MAX_FLUID_DRAG)
+}
 
 pub trait CellSource {
     fn cell_at(&self, pos: CellPos) -> Option<Cell>;

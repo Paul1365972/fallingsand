@@ -3,9 +3,7 @@ use super::{
     ActorDynamics, PixelBody, REFERENCE_DENSITY_MILLI, Raster, commit_stamp, quantized_trig,
     rasterize_at, relocation_spot, vacated_wake_targets, wake_covering,
 };
-use crate::physics::{
-    ActorAabb, BOUNCE_MIN_SPEED, FLUID_DRAG_LINEAR, FLUID_DRAG_QUAD, MAX_FLUID_DRAG,
-};
+use crate::physics::{ActorAabb, BOUNCE_MIN_SPEED, fluid_drag};
 use crate::world::CellWorld;
 use fallingsand_core::content;
 use fallingsand_core::{Cell, CellPos, ChunkPos, Fixed, Phase, TICK_DT};
@@ -164,8 +162,7 @@ fn apply_buoyancy(world: &CellWorld, body: &mut PixelBody, gravity: Fixed) {
         .vy
         .add_vel_f32(-gravity.to_f32() * buoyant * body.inv_mass * TICK_DT);
     let speed = body.vx.vel_f32().hypot(body.vy.vel_f32());
-    let drag =
-        ((FLUID_DRAG_LINEAR + FLUID_DRAG_QUAD * speed) * submersion * TICK_DT).min(MAX_FLUID_DRAG);
+    let drag = fluid_drag(speed, submersion);
     let keep = Fixed::from_f32(1.0 - drag);
     body.vx = body.vx.mul(keep);
     body.vy = body.vy.mul(keep);
