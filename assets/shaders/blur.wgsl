@@ -16,12 +16,13 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let center = vec2<i32>(layer_texel(in.uv, vec2<f32>(dims)));
     let dir = vec2<i32>(params.dir);
     let r = i32(params.radius);
+    let sigma = params.radius / 3.0;
+    let denom = 2.0 * sigma * sigma;
     var acc = vec3<f32>(0.0);
     for (var d = -r; d <= r; d = d + 1) {
-        let f = 1.0 - abs(f32(d)) / (params.radius + 1.0);
+        let w = exp(-f32(d * d) / denom);
         let p = clamp(center + dir * d, vec2<i32>(0), dims - vec2<i32>(1));
-        let s = textureLoad(src, vec2<u32>(p), 0).rgb;
-        acc = max(acc, s * f);
+        acc = acc + textureLoad(src, vec2<u32>(p), 0).rgb * w;
     }
     return vec4<f32>(acc, 1.0);
 }

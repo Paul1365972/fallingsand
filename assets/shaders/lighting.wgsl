@@ -6,7 +6,7 @@
 @group(#{MATERIAL_BIND_GROUP}) @binding(2) var world_sampler: sampler;
 @group(#{MATERIAL_BIND_GROUP}) @binding(3) var glow_tex: texture_2d<f32>;
 
-const EMISSIVE_GAIN: f32 = 1.15;
+const EMISSIVE_GAIN: f32 = 1.4;
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {

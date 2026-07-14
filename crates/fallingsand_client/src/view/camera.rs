@@ -41,7 +41,7 @@ pub const L_GLOW_TMP: usize = 7;
 pub const L_GLOW: usize = 8;
 pub const TARGET_COUNT: usize = 9;
 
-const BLUR_RADIUS: f32 = 10.0;
+const BLUR_RADIUS: f32 = 40.0;
 
 pub const FAR_RATIO: Vec2 = Vec2::new(0.88, 0.92);
 pub const NEAR_RATIO: Vec2 = Vec2::new(0.72, 0.80);
@@ -402,7 +402,7 @@ pub fn setup_camera(
             Msaa::Off,
             Tonemapping::AcesFitted,
             Bloom {
-                intensity: 0.55,
+                intensity: 0.72,
                 prefilter: BloomPrefilter {
                     threshold: 1.0,
                     threshold_softness: 0.4,
