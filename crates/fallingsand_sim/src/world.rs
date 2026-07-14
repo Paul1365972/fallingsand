@@ -60,9 +60,10 @@ impl CellWorld {
             return;
         };
         let old = chunk.get(pos.offset());
+        cell.set_body(false);
         cell.updated = self.tick as u8;
         chunk.set(pos.offset(), cell);
-        if old.is_body() && !cell.is_body() {
+        if old.is_body() {
             self.damage.push(pos);
         }
         self.mark_sim_border(pos);
