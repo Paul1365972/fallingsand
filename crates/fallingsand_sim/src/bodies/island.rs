@@ -1,4 +1,4 @@
-use super::{PixelBody, Raster, cell_mass, rasterize_at};
+use super::{OwnerMap, PixelBody, Raster, cell_mass, rasterize_at};
 use crate::world::CellWorld;
 use fallingsand_core::content;
 use fallingsand_core::{Cell, CellPos, Fixed, Phase};
@@ -171,10 +171,12 @@ pub fn apply_damage(
 ) {
     notes.sort_unstable_by_key(|pos| (pos.y, pos.x));
     notes.dedup();
+    let mut owners = OwnerMap::default();
+    owners.rebuild(bodies);
     let mut removed: FxHashSet<CellPos> = FxHashSet::default();
     let mut touched: FxHashSet<usize> = FxHashSet::default();
     for pos in notes {
-        let Some(index) = bodies.iter().position(|body| body.raster.covers(pos)) else {
+        let Some(index) = owners.get(pos) else {
             continue;
         };
         let body = &mut bodies[index];

@@ -1,7 +1,7 @@
 use super::contact::{Contact, Other, find_contacts};
 use super::{
-    ActorDynamics, PixelBody, REFERENCE_DENSITY_MILLI, Raster, commit_stamp, quantized_trig,
-    rasterize_at, relocation_spot, vacated_wake_targets, wake_covering,
+    ActorDynamics, OwnerMap, PixelBody, REFERENCE_DENSITY_MILLI, Raster, chebyshev_ring,
+    commit_stamp, quantized_trig, rasterize_at, vacated_wake_targets, wake_covering,
 };
 use crate::physics::{ActorAabb, BOUNCE_MIN_SPEED, fluid_drag};
 use crate::world::CellWorld;
@@ -20,6 +20,7 @@ const FRICTION: f32 = 0.4;
 const CONTACT_ITERATIONS: usize = 4;
 const PENETRATION_CORRECTION: f32 = 0.5;
 const SUBSTEP_TRAVEL: f32 = 0.5;
+const SETTLE_SPOT_LIMIT: i32 = 256;
 
 fn span_simulated(
     world: &CellWorld,
@@ -44,12 +45,14 @@ fn span_simulated(
 pub fn step_bodies(
     world: &mut CellWorld,
     bodies: &mut [PixelBody],
+    owners: &mut OwnerMap,
     entities: &[ActorDynamics],
     gravity: Fixed,
     simulated: &dyn Fn(ChunkPos) -> bool,
 ) -> Vec<(f32, f32)> {
     let mut entity_impulses = vec![(0.0, 0.0); entities.len()];
     let entity_boxes: Vec<ActorAabb> = entities.iter().map(|entity| entity.bbox).collect();
+    owners.rebuild(bodies);
 
     let mut order: Vec<usize> = (0..bodies.len()).collect();
     order.sort_unstable_by_key(|&index| {
@@ -95,19 +98,23 @@ pub fn step_bodies(
             let travel = ((vx * vx + vy * vy).sqrt() + body.spin.abs() * radius) * TICK_DT;
             ((travel / SUBSTEP_TRAVEL).ceil() as u32).max(1)
         };
-        let damping = CONTACT_KEEP_PER_SEC.powf(TICK_DT / substeps as f32);
+        let substep = Substep {
+            count: substeps,
+            damping: CONTACT_KEEP_PER_SEC.powf(TICK_DT / substeps as f32),
+        };
 
         for _ in 0..substeps {
             step_substep(
                 world,
                 bodies,
+                owners,
                 entities,
                 index,
-                damping,
-                substeps,
+                substep,
                 &mut entity_impulses,
             );
         }
+        let old_raster = bodies[index].raster.clone();
         let vacated = restamp(
             world,
             &entity_boxes,
@@ -116,10 +123,11 @@ pub fn step_bodies(
             start_y,
             start_angle,
         );
+        owners.reseat(index, &old_raster, &bodies[index].raster);
         let targets =
             vacated_wake_targets(world, &|pos| bodies[index].raster.covers(pos), &vacated);
         for pos in targets {
-            wake_covering(bodies, pos);
+            wake_covering(bodies, owners, pos);
         }
     }
     entity_impulses
@@ -169,26 +177,32 @@ fn apply_buoyancy(world: &CellWorld, body: &mut PixelBody, gravity: Fixed) {
     body.spin *= 1.0 - drag;
 }
 
+#[derive(Clone, Copy)]
+struct Substep {
+    count: u32,
+    damping: f32,
+}
+
 fn step_substep(
     world: &CellWorld,
     bodies: &mut [PixelBody],
+    owners: &OwnerMap,
     entities: &[ActorDynamics],
     index: usize,
-    damping: f32,
-    substeps: u32,
+    substep: Substep,
     entity_impulses: &mut [(f32, f32)],
 ) {
-    let sub_dt = TICK_DT / substeps as f32;
+    let sub_dt = TICK_DT / substep.count as f32;
     let (prev_x, prev_y, prev_angle) = {
         let body = &mut bodies[index];
         let prev = (body.x, body.y, body.angle);
-        body.x += body.vx.per_substep(substeps);
-        body.y += body.vy.per_substep(substeps);
+        body.x += body.vx.per_substep(substep.count);
+        body.y += body.vy.per_substep(substep.count);
         body.angle = (body.angle + body.spin * sub_dt).rem_euclid(std::f32::consts::TAU);
         prev
     };
 
-    let contacts = find_contacts(world, entities, bodies, index);
+    let contacts = find_contacts(world, entities, bodies, owners, index);
     let touching = !contacts.is_empty();
     let static_only = contacts.iter().all(|contact| contact.other.is_static());
     let supported = contacts
@@ -280,9 +294,9 @@ fn step_substep(
         }
 
         if touching {
-            vx *= damping;
-            vy *= damping;
-            body.spin *= damping;
+            vx *= substep.damping;
+            vy *= substep.damping;
+            body.spin *= substep.damping;
         }
 
         let slow = vx * vx + vy * vy < SETTLE_SPEED_SQ && body.spin.abs() < SETTLE_SPIN;
@@ -411,6 +425,34 @@ fn plan_and_commit(
     Some(vacated)
 }
 
+fn settle_spot(
+    world: &CellWorld,
+    claimed: &FxHashSet<CellPos>,
+    exclude: &FxHashSet<CellPos>,
+    base: CellPos,
+) -> Option<CellPos> {
+    for radius in 0..=SETTLE_SPOT_LIMIT {
+        let ring = if radius == 0 {
+            vec![(0, 0)]
+        } else {
+            chebyshev_ring(radius)
+        };
+        for (dx, dy) in ring {
+            let pos = base.translated(dx, dy);
+            if claimed.contains(&pos) || exclude.contains(&pos) {
+                continue;
+            }
+            if world
+                .get_cell(pos)
+                .is_some_and(|cell| content::phase(cell.material) == Phase::Empty)
+            {
+                return Some(pos);
+            }
+        }
+    }
+    None
+}
+
 pub fn settle_body(world: &mut CellWorld, body: &PixelBody) {
     let mut winner = vec![false; body.cells.len()];
     for &(_, local) in &body.raster.cells {
@@ -428,33 +470,9 @@ pub fn settle_body(world: &mut CellWorld, body: &PixelBody) {
             }
             let base =
                 body.world_cell_with(sin, cos, body.x, body.y, lx as f32 + 0.5, ly as f32 + 0.5);
-            let target = [(0, 0), (0, 1), (1, 0), (-1, 0), (0, 2), (0, -1)]
-                .iter()
-                .map(|&(dx, dy)| base.translated(dx, dy))
-                .find(|&pos| {
-                    !claimed.contains(&pos)
-                        && !body.raster.covers(pos)
-                        && world.get_cell(pos).is_some_and(|existing| {
-                            !existing.is_body()
-                                && !matches!(
-                                    content::phase(existing.material),
-                                    Phase::Solid | Phase::Powder
-                                )
-                        })
-                })
-                .or_else(|| relocation_spot(world, &[], &claimed, &body.raster.set, base));
-            let Some(pos) = target else {
+            let Some(pos) = settle_spot(world, &claimed, &body.raster.set, base) else {
                 continue;
             };
-            let existing = world.get_cell(pos).expect("settle target is loaded");
-            if !existing.is_air() {
-                let Some(spot) = relocation_spot(world, &[], &claimed, &body.raster.set, pos)
-                else {
-                    continue;
-                };
-                claimed.insert(spot);
-                writes.push((spot, existing));
-            }
             claimed.insert(pos);
             let mut placed = cell;
             placed.set_body(false);

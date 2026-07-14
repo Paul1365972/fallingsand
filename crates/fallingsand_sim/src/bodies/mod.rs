@@ -9,7 +9,7 @@ use crate::physics::ActorAabb;
 use crate::world::CellWorld;
 use fallingsand_core::content;
 use fallingsand_core::{CARDINAL_NEIGHBORS as NEIGHBORS, Cell, CellPos, Fixed, MaterialId, Phase};
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 const ANGLE_STEPS: u32 = 1024;
 const REFERENCE_DENSITY_MILLI: f32 = 1_000_000.0;
@@ -47,6 +47,37 @@ impl Raster {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct OwnerMap {
+    owner: FxHashMap<CellPos, usize>,
+}
+
+impl OwnerMap {
+    pub fn rebuild(&mut self, bodies: &[PixelBody]) {
+        self.owner.clear();
+        for (index, body) in bodies.iter().enumerate() {
+            for &pos in &body.raster.set {
+                self.owner.insert(pos, index);
+            }
+        }
+    }
+
+    pub fn get(&self, pos: CellPos) -> Option<usize> {
+        self.owner.get(&pos).copied()
+    }
+
+    fn reseat(&mut self, index: usize, old: &Raster, new: &Raster) {
+        for pos in old.set.difference(&new.set) {
+            if self.owner.get(pos) == Some(&index) {
+                self.owner.remove(pos);
+            }
+        }
+        for &pos in &new.set {
+            self.owner.insert(pos, index);
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PixelBody {
     pub id: u32,
@@ -70,13 +101,10 @@ pub struct PixelBody {
     pub asleep: bool,
 }
 
-pub fn wake_covering(bodies: &mut [PixelBody], pos: CellPos) {
-    for body in bodies.iter_mut() {
-        if body.raster.covers(pos) {
-            body.asleep = false;
-            body.rest_secs = 0.0;
-            return;
-        }
+pub fn wake_covering(bodies: &mut [PixelBody], owners: &OwnerMap, pos: CellPos) {
+    if let Some(body) = owners.get(pos).and_then(|index| bodies.get_mut(index)) {
+        body.asleep = false;
+        body.rest_secs = 0.0;
     }
 }
 
@@ -218,7 +246,7 @@ pub(crate) fn commit_stamp(
     Some(vacated)
 }
 
-fn chebyshev_ring(radius: i32) -> Vec<(i32, i32)> {
+pub(super) fn chebyshev_ring(radius: i32) -> Vec<(i32, i32)> {
     let mut ring = Vec::new();
     for dy in -radius..=radius {
         for dx in -radius..=radius {

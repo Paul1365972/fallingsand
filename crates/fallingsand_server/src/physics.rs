@@ -12,6 +12,7 @@ use fallingsand_sim::physics::{
 use fallingsand_sim::player::{DUCK_ROWS, STAND_ROWS, stamp_player, unstamp_player};
 
 pub fn step_physics(sim: &mut CellWorld, bodies: &mut PixelBodies, players: &mut Players) {
+    bodies.refresh_owners();
     let params = PlayerParams::default();
     let prior: Vec<_> = players
         .iter()
@@ -163,7 +164,7 @@ fn wake_neighbours(
     vacated: &[CellPos],
 ) {
     for pos in vacated_wake_targets(sim, &|pos| stamp.covers(pos), vacated) {
-        wake_covering(&mut bodies.bodies, pos);
+        wake_covering(&mut bodies.bodies, &bodies.owners, pos);
     }
 }
 
@@ -177,8 +178,9 @@ pub fn unstamp_and_wake(
         .map(|set| set.iter().copied().collect())
         .unwrap_or_default();
     unstamp_player(sim, stamp);
+    bodies.refresh_owners();
     for pos in vacated_wake_targets(sim, &|_| false, &vacated) {
-        wake_covering(&mut bodies.bodies, pos);
+        wake_covering(&mut bodies.bodies, &bodies.owners, pos);
     }
 }
 
