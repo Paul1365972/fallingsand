@@ -290,10 +290,10 @@ fn spawn_overlay(commands: &mut Commands, game: &ClientGame, icons: &ItemIcons) 
         .with_children(|overlay| {
             overlay.spawn(panel_node()).with_children(|panel| {
                 panel.spawn(label_node("Inventory"));
-                for row in 0..(MAIN_SLOTS / 9) {
+                for row in 0..(MAIN_SLOTS / HOTBAR_SLOTS) {
                     panel.spawn(row_node()).with_children(|r| {
-                        for col in 0..9 {
-                            let index = HOTBAR_SLOTS + row * 9 + col;
+                        for col in 0..HOTBAR_SLOTS {
+                            let index = HOTBAR_SLOTS + row * HOTBAR_SLOTS + col;
                             spawn_slot(r, SlotRegion::Player(index), ingame, icons);
                         }
                     });

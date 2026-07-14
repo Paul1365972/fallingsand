@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 pub const REGION_FORMAT_VERSION: u8 = 11;
-pub const WORLD_FORMAT_VERSION: u16 = 20;
+pub const WORLD_FORMAT_VERSION: u16 = 21;
 const AUTOSAVE_INTERVAL_TICKS: u64 = fallingsand_core::ticks_from_secs(10.0);
 const CELL_BYTES: usize = 8;
 const RECT_BYTES: usize = 4;

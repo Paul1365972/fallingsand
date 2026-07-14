@@ -2,8 +2,8 @@ use crate::{MaterialId, content};
 use serde::{Deserialize, Serialize};
 use std::ops::Range;
 
-pub const HOTBAR_SLOTS: usize = 9;
-pub const MAIN_SLOTS: usize = 27;
+pub const HOTBAR_SLOTS: usize = 10;
+pub const MAIN_SLOTS: usize = 20;
 pub const PLAYER_SLOTS: usize = HOTBAR_SLOTS + MAIN_SLOTS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -25,8 +25,6 @@ impl ItemStack {
     }
 }
 
-/// Static per-item data emitted by the content compiler; reach it via
-/// [`content::item`](crate::content::item).
 #[derive(Debug, Clone, Copy)]
 pub struct ItemInfo {
     pub name: &'static str,
@@ -43,8 +41,6 @@ pub struct ToolSpec {
     pub speed: f32,
 }
 
-/// Compile-time crafting recipe over concrete item ids, from
-/// [`content::RECIPES`](crate::content::RECIPES).
 #[derive(Debug, Clone, Copy)]
 pub struct Recipe {
     pub inputs: &'static [(ItemId, u32)],

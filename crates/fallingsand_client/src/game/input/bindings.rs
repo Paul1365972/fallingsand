@@ -178,7 +178,7 @@ fn zoom_chords() -> [Binding; 2] {
     ]
 }
 
-const SLOT_KEYS: [KeyCode; 9] = [
+const SLOT_KEYS: [KeyCode; 10] = [
     KeyCode::Digit1,
     KeyCode::Digit2,
     KeyCode::Digit3,
@@ -188,6 +188,7 @@ const SLOT_KEYS: [KeyCode; 9] = [
     KeyCode::Digit7,
     KeyCode::Digit8,
     KeyCode::Digit9,
+    KeyCode::Digit0,
 ];
 
 impl Default for Bindings {

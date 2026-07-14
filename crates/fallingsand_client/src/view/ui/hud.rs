@@ -277,7 +277,7 @@ fn spawn_hud(commands: &mut Commands, game: &ClientGame, icons: &ItemIcons) {
                     ))
                     .with_children(|slot| {
                         slot.spawn((
-                            Text::new(format!("{}", index + 1)),
+                            Text::new(format!("{}", (index + 1) % 10)),
                             TextFont {
                                 font_size: FontSize::Px(10.0),
                                 ..default()
