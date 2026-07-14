@@ -10,8 +10,8 @@ use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::post_process::bloom::{Bloom, BloomPrefilter};
 use bevy::prelude::*;
 use bevy::render::render_resource::{
-    AsBindGroup, BlendState, Extent3d, RenderPipelineDescriptor, SpecializedMeshPipelineError,
-    TextureDimension, TextureFormat, TextureUsages,
+    AsBindGroup, BlendState, Extent3d, RenderPipelineDescriptor, ShaderType,
+    SpecializedMeshPipelineError, TextureDimension, TextureFormat, TextureUsages,
 };
 use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
@@ -26,6 +26,9 @@ pub const SKY_LAYER: usize = 3;
 pub const FAR_LAYER: usize = 4;
 pub const NEAR_LAYER: usize = 5;
 pub const WALL_LAYER: usize = 6;
+pub const EMISSIVE_LAYER: usize = 7;
+pub const BLUR_H_LAYER: usize = 8;
+pub const BLUR_V_LAYER: usize = 9;
 
 pub const L_WORLD: usize = 0;
 pub const L_STAR: usize = 1;
@@ -33,6 +36,12 @@ pub const L_SKY: usize = 2;
 pub const L_FAR: usize = 3;
 pub const L_NEAR: usize = 4;
 pub const L_WALL: usize = 5;
+pub const L_EMISSIVE_SRC: usize = 6;
+pub const L_GLOW_TMP: usize = 7;
+pub const L_GLOW: usize = 8;
+pub const TARGET_COUNT: usize = 9;
+
+const BLUR_RADIUS: f32 = 10.0;
 
 pub const FAR_RATIO: Vec2 = Vec2::new(0.88, 0.92);
 pub const NEAR_RATIO: Vec2 = Vec2::new(0.72, 0.80);
@@ -111,10 +120,16 @@ pub const LAYERS: [LayerDef; 6] = [
 pub struct WorldCamera;
 
 #[derive(Component)]
+pub struct EmissiveCamera;
+
+#[derive(Component)]
 pub struct CompositeCamera;
 
 #[derive(Component)]
 pub struct LayerCamera(pub usize);
+
+#[derive(Component)]
+pub struct BlurQuad;
 
 #[derive(Component)]
 pub struct LayerQuad {
@@ -125,7 +140,7 @@ pub struct LayerQuad {
 
 #[derive(Resource)]
 pub struct LayerTargets {
-    handles: [Handle<Image>; 6],
+    handles: [Handle<Image>; TARGET_COUNT],
     native: UVec2,
 }
 
@@ -133,6 +148,33 @@ pub struct LayerTargets {
 pub struct LayerAssets {
     pub lighting: Handle<LightingMaterial>,
     upscale: [Option<Handle<UpscaleMaterial>>; 6],
+    blur_h: Handle<BlurMaterial>,
+    blur_v: Handle<BlurMaterial>,
+}
+
+#[derive(ShaderType, Debug, Clone, Default)]
+pub struct BlurParams {
+    pub dir: Vec2,
+    pub radius: f32,
+    pub _pad: f32,
+}
+
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
+pub struct BlurMaterial {
+    #[uniform(0)]
+    pub params: BlurParams,
+    #[texture(1)]
+    pub src: Handle<Image>,
+}
+
+impl Material2d for BlurMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/blur.wgsl".into()
+    }
+
+    fn alpha_mode(&self) -> AlphaMode2d {
+        AlphaMode2d::Opaque
+    }
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
@@ -273,6 +315,7 @@ pub fn setup_camera(
     mut images: ResMut<Assets<Image>>,
     mut upscale_mats: ResMut<Assets<UpscaleMaterial>>,
     mut lighting_mats: ResMut<Assets<LightingMaterial>>,
+    mut blur_mats: ResMut<Assets<BlurMaterial>>,
     shared: Res<super::chunks::RenderShared>,
     window: Single<&Window>,
 ) {
@@ -288,7 +331,8 @@ pub fn setup_camera(
         ..default()
     });
 
-    let targets: [Handle<Image>; 6] = std::array::from_fn(|_| native_target(&mut images, native));
+    let targets: [Handle<Image>; TARGET_COUNT] =
+        std::array::from_fn(|_| native_target(&mut images, native));
 
     for (i, def) in LAYERS.iter().enumerate() {
         let mut camera = commands.spawn((
@@ -299,6 +343,57 @@ pub fn setup_camera(
             camera.insert(WorldCamera);
         }
     }
+
+    let blur_quad_scale = Vec3::new(native.x as f32, native.y as f32, 1.0);
+    commands.spawn((
+        native_camera(-8, EMISSIVE_LAYER, native, targets[L_EMISSIVE_SRC].clone()),
+        LayerCamera(L_EMISSIVE_SRC),
+        EmissiveCamera,
+    ));
+    let blur_h = blur_mats.add(BlurMaterial {
+        params: BlurParams {
+            dir: Vec2::X,
+            radius: BLUR_RADIUS,
+            _pad: 0.0,
+        },
+        src: targets[L_EMISSIVE_SRC].clone(),
+    });
+    let blur_v = blur_mats.add(BlurMaterial {
+        params: BlurParams {
+            dir: Vec2::Y,
+            radius: BLUR_RADIUS,
+            _pad: 0.0,
+        },
+        src: targets[L_GLOW_TMP].clone(),
+    });
+    commands
+        .spawn((
+            native_camera(-7, BLUR_H_LAYER, native, targets[L_GLOW_TMP].clone()),
+            LayerCamera(L_GLOW_TMP),
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                BlurQuad,
+                Mesh2d(shared.quad.clone()),
+                MeshMaterial2d(blur_h.clone()),
+                Transform::from_scale(blur_quad_scale),
+                RenderLayers::layer(BLUR_H_LAYER),
+            ));
+        });
+    commands
+        .spawn((
+            native_camera(-6, BLUR_V_LAYER, native, targets[L_GLOW].clone()),
+            LayerCamera(L_GLOW),
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                BlurQuad,
+                Mesh2d(shared.quad.clone()),
+                MeshMaterial2d(blur_v.clone()),
+                Transform::from_scale(blur_quad_scale),
+                RenderLayers::layer(BLUR_V_LAYER),
+            ));
+        });
 
     let composite = commands
         .spawn((
@@ -329,7 +424,7 @@ pub fn setup_camera(
     let lighting = lighting_mats.add(LightingMaterial {
         params: LightingParams::default(),
         world: targets[L_WORLD].clone(),
-        emissive: Handle::default(),
+        glow: targets[L_GLOW].clone(),
     });
     let mut upscale: [Option<Handle<UpscaleMaterial>>; 6] = Default::default();
     commands.entity(composite).with_children(|parent| {
@@ -359,18 +454,57 @@ pub fn setup_camera(
         handles: targets,
         native,
     });
-    commands.insert_resource(LayerAssets { lighting, upscale });
+    commands.insert_resource(LayerAssets {
+        lighting,
+        upscale,
+        blur_h,
+        blur_v,
+    });
 }
 
 #[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments)]
 pub fn sync_camera(
     game: Res<Game>,
     time: Res<Time>,
     window: Single<&Window>,
     mut state: ResMut<CameraState>,
     mut composite: Single<&mut Projection, With<CompositeCamera>>,
-    mut world_camera: Single<&mut Transform, (With<WorldCamera>, Without<LayerQuad>)>,
-    mut quads: Query<(&LayerQuad, &mut Transform), Without<WorldCamera>>,
+    mut world_camera: Single<
+        &mut Transform,
+        (
+            With<WorldCamera>,
+            Without<EmissiveCamera>,
+            Without<LayerQuad>,
+            Without<BlurQuad>,
+        ),
+    >,
+    mut emissive_camera: Single<
+        &mut Transform,
+        (
+            With<EmissiveCamera>,
+            Without<WorldCamera>,
+            Without<LayerQuad>,
+            Without<BlurQuad>,
+        ),
+    >,
+    mut quads: Query<
+        (&LayerQuad, &mut Transform),
+        (
+            Without<WorldCamera>,
+            Without<EmissiveCamera>,
+            Without<BlurQuad>,
+        ),
+    >,
+    mut blur_quads: Query<
+        &mut Transform,
+        (
+            With<BlurQuad>,
+            Without<WorldCamera>,
+            Without<EmissiveCamera>,
+            Without<LayerQuad>,
+        ),
+    >,
 ) {
     let window_px = UVec2::new(
         window.physical_width().max(1),
@@ -400,6 +534,13 @@ pub fn sync_camera(
     let (snapped, _) = state.layer(Vec2::ZERO);
     world_camera.translation.x = snapped.x as f32;
     world_camera.translation.y = snapped.y as f32;
+    emissive_camera.translation.x = snapped.x as f32;
+    emissive_camera.translation.y = snapped.y as f32;
+
+    let native_scale = Vec3::new(state.native.x as f32, state.native.y as f32, 1.0);
+    for mut transform in &mut blur_quads {
+        transform.scale = native_scale;
+    }
 
     let calendar = game
         .0
@@ -450,12 +591,20 @@ pub fn rebind_targets(
     assets: Res<LayerAssets>,
     mut upscale_mats: ResMut<Assets<UpscaleMaterial>>,
     mut lighting_mats: ResMut<Assets<LightingMaterial>>,
+    mut blur_mats: ResMut<Assets<BlurMaterial>>,
 ) {
     if !targets.is_changed() {
         return;
     }
     if let Some(mut material) = lighting_mats.get_mut(&assets.lighting) {
         material.world = targets.handles[L_WORLD].clone();
+        material.glow = targets.handles[L_GLOW].clone();
+    }
+    if let Some(mut material) = blur_mats.get_mut(&assets.blur_h) {
+        material.src = targets.handles[L_EMISSIVE_SRC].clone();
+    }
+    if let Some(mut material) = blur_mats.get_mut(&assets.blur_v) {
+        material.src = targets.handles[L_GLOW_TMP].clone();
     }
     for (i, handle) in assets.upscale.iter().enumerate() {
         if let Some(handle) = handle

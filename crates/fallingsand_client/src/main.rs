@@ -43,8 +43,10 @@ fn main() {
     )
     .add_plugins((
         Material2dPlugin::<view::chunks::ChunkMaterial>::default(),
+        Material2dPlugin::<view::chunks::EmissiveChunkMaterial>::default(),
         Material2dPlugin::<view::sky::LightingMaterial>::default(),
         Material2dPlugin::<view::camera::UpscaleMaterial>::default(),
+        Material2dPlugin::<view::camera::BlurMaterial>::default(),
         Material2dPlugin::<view::sky::SunMaterial>::default(),
         Material2dPlugin::<view::sky::MoonMaterial>::default(),
         Material2dPlugin::<view::sky::StarfieldMaterial>::default(),
@@ -59,7 +61,6 @@ fn main() {
     .init_resource::<view::io::UiInbox>()
     .init_resource::<view::chunks::ChunkVisuals>()
     .init_resource::<view::chunks::ChunkUploadQueue>()
-    .init_resource::<view::chunks::EmissiveUploadQueue>()
     .init_resource::<view::players::NametagVisuals>()
     .init_resource::<view::sky::Sky>()
     .init_resource::<view::sky::ActiveLights>()
@@ -75,11 +76,7 @@ fn main() {
     )
     .add_systems(
         PostStartup,
-        (
-            view::sky::setup_sky,
-            view::sky::setup_emissive,
-            view::parallax::setup_parallax,
-        ),
+        (view::sky::setup_sky, view::parallax::setup_parallax),
     )
     .add_systems(
         Update,
@@ -92,7 +89,6 @@ fn main() {
             view::camera::resize_targets,
             view::camera::rebind_targets,
             view::sky::sync_sky,
-            view::sky::sync_emissive,
             view::sky::apply_lighting,
             view::parallax::sync_parallax,
             view::players::sync_nametags,

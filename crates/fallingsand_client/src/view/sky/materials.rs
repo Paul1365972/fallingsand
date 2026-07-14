@@ -15,8 +15,6 @@ pub struct LightingParams {
     pub light_count: u32,
     pub snapped_cam: Vec2,
     pub native_size: Vec2,
-    pub emissive_origin: Vec2,
-    pub emissive_size: Vec2,
 }
 
 impl Default for LightingParams {
@@ -27,8 +25,6 @@ impl Default for LightingParams {
             light_count: 0,
             snapped_cam: Vec2::ZERO,
             native_size: Vec2::ONE,
-            emissive_origin: Vec2::ZERO,
-            emissive_size: Vec2::ONE,
         }
     }
 }
@@ -41,7 +37,7 @@ pub struct LightingMaterial {
     #[sampler(2)]
     pub world: Handle<Image>,
     #[texture(3)]
-    pub emissive: Handle<Image>,
+    pub glow: Handle<Image>,
 }
 
 impl Material2d for LightingMaterial {

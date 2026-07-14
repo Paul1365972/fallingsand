@@ -19,7 +19,6 @@ pub struct WorldView {
     pub chunks: HashMap<ChunkPos, ViewChunk>,
     pub server_tick: u64,
     changes: Vec<ChunkChange>,
-    emissive_dirty: bool,
 }
 
 impl WorldView {
@@ -33,20 +32,14 @@ impl WorldView {
         self.chunks.clear();
         self.server_tick = 0;
         self.changes.push(ChunkChange::Cleared);
-        self.emissive_dirty = true;
     }
 
     pub fn take_changes(&mut self) -> Vec<ChunkChange> {
         std::mem::take(&mut self.changes)
     }
 
-    pub fn emissive_dirty(&mut self) -> bool {
-        std::mem::take(&mut self.emissive_dirty)
-    }
-
     pub fn apply(&mut self, tick: &TickFrame) {
         self.server_tick = self.server_tick.max(tick.tick);
-        self.emissive_dirty |= !tick.chunks.is_empty();
         for op in &tick.chunks {
             match op {
                 ChunkOp::Load { pos, cells } => match cells_from_wire(cells, CHUNK_AREA) {
