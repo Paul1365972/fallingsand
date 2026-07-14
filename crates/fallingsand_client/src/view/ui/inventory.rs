@@ -1,4 +1,3 @@
-use super::format_count;
 use super::icons::ItemIcons;
 use crate::game::inventory::{Inventory, SlotRegion};
 use crate::game::{ClientGame, InGame};
@@ -62,7 +61,7 @@ pub fn spawn_slot_widgets(
         None => (icons.missing(), Display::None),
     };
     let count = match stack {
-        Some(stack) if stack.count > 1 => format_count(stack.count),
+        Some(stack) if stack.count > 1 => stack.count.to_string(),
         _ => String::new(),
     };
     slot.spawn((
@@ -141,7 +140,7 @@ fn apply_icon(
 
 fn apply_count(stack: Option<ItemStack>, text: &mut Mut<Text>) {
     let target = match stack {
-        Some(stack) if stack.count > 1 => format_count(stack.count),
+        Some(stack) if stack.count > 1 => stack.count.to_string(),
         _ => String::new(),
     };
     if text.0 != target {
@@ -532,7 +531,7 @@ pub fn update_cursor_follow(
             image.image = icons.get(stack.item);
             if let Ok(mut text) = count.single_mut() {
                 **text = if stack.count > 1 {
-                    format_count(stack.count)
+                    stack.count.to_string()
                 } else {
                     String::new()
                 };

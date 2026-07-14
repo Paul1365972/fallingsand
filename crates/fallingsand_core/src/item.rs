@@ -82,11 +82,11 @@ impl Inventory {
         }
     }
 
-    pub fn len(&self) -> usize {
+    pub fn capacity(&self) -> usize {
         self.slots.len()
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub fn has_no_items(&self) -> bool {
         self.slots.iter().all(Option::is_none)
     }
 

@@ -98,7 +98,7 @@ pub fn spawn_particles(
     if *flame_accum < FLAME_INTERVAL {
         return;
     }
-    *flame_accum = 0.0;
+    *flame_accum -= FLAME_INTERVAL;
     for remote in ingame.players.avatars.values() {
         if !remote.burning {
             continue;

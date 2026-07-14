@@ -29,14 +29,6 @@ pub mod depth {
     pub const DEBUG: i32 = 100;
 }
 
-pub fn format_count(count: u32) -> String {
-    if count >= 100_000 {
-        format!("{}k", count / 1000)
-    } else {
-        format!("{count}")
-    }
-}
-
 pub fn field_cursor_style() -> TextCursorStyle {
     TextCursorStyle {
         color: Color::srgb(0.9, 0.8, 0.5),
