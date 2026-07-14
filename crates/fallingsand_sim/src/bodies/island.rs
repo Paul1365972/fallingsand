@@ -171,6 +171,7 @@ pub fn apply_damage(
 ) {
     notes.sort_unstable_by_key(|pos| (pos.y, pos.x));
     notes.dedup();
+    let mut removed: FxHashSet<CellPos> = FxHashSet::default();
     let mut touched: FxHashSet<usize> = FxHashSet::default();
     for pos in notes {
         let Some(index) = bodies.iter().position(|body| body.raster.covers(pos)) else {
@@ -195,14 +196,18 @@ pub fn apply_damage(
             world.set_cell_raw(pos, flagged);
         } else {
             body.cells[local] = Cell::AIR;
-            body.raster.cells.remove(entry);
-            body.raster.set.remove(&pos);
+            removed.insert(pos);
         }
         touched.insert(index);
     }
 
     let mut touched: Vec<usize> = touched.into_iter().collect();
     touched.sort_unstable_by(|a, b| b.cmp(a));
+    for &index in &touched {
+        let raster = &mut bodies[index].raster;
+        raster.cells.retain(|(pos, _)| !removed.contains(pos));
+        raster.set.retain(|pos| !removed.contains(pos));
+    }
     for index in touched {
         let body = bodies.swap_remove(index);
         let parts = split_body(world, body, &mut next_id);
