@@ -46,7 +46,7 @@ pub const L_AIR: usize = 10;
 pub const TARGET_COUNT: usize = 11;
 
 const BLUR_RADIUS: f32 = 40.0;
-const AIR_BLUR_RADIUS: f32 = 12.0;
+const AIR_BLUR_RADIUS: f32 = 15.0;
 
 pub const FAR_RATIO: Vec2 = Vec2::new(0.88, 0.92);
 pub const NEAR_RATIO: Vec2 = Vec2::new(0.72, 0.80);

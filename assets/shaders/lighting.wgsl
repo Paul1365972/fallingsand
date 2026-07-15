@@ -11,6 +11,7 @@
 const CORE_GAIN: f32 = 3.0;
 const HALO_LIGHT: f32 = 0.1;
 const HALO_SPILL: f32 = 0.03;
+const AIR_GAIN: f32 = 2.5;
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
@@ -26,7 +27,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let lit = max(point, max(halo.r, max(halo.g, halo.b)) * HALO_LIGHT);
     let sky = 1.0 - light_params.darkness;
     let air = textureLoad(air_tex, vec2<u32>(t), 0).r;
-    let ambient = air * sky;
+    let ambient = clamp(air * AIR_GAIN, 0.0, 1.0) * sky;
     let incident = clamp(ambient + lit, 0.0, 1.0);
 
     let dark = vec3<f32>(0.01, 0.012, 0.03);
