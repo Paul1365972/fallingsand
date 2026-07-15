@@ -6,6 +6,7 @@ struct LightingParams {
     light_count: u32,
     snapped_cam: vec2<f32>,
     native_size: vec2<f32>,
+    margin: vec2<f32>,
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> light_params: LightingParams;

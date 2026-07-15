@@ -15,6 +15,7 @@ pub struct LightingParams {
     pub light_count: u32,
     pub snapped_cam: Vec2,
     pub native_size: Vec2,
+    pub margin: Vec2,
 }
 
 impl Default for LightingParams {
@@ -25,6 +26,7 @@ impl Default for LightingParams {
             light_count: 0,
             snapped_cam: Vec2::ZERO,
             native_size: Vec2::ONE,
+            margin: Vec2::ZERO,
         }
     }
 }

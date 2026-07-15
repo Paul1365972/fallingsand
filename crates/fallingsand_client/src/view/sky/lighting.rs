@@ -5,7 +5,7 @@ use crate::view::camera::{CameraState, LayerAssets};
 use bevy::prelude::*;
 
 pub const MAX_PLAYER_LIGHTS: usize = 32;
-const PLAYER_LIGHT_RADIUS: f32 = 70.0;
+const PLAYER_LIGHT_RADIUS: f32 = 40.0;
 const BURNING_LIGHT_RADIUS: f32 = 40.0;
 
 #[derive(Resource, Default)]

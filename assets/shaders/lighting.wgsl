@@ -11,7 +11,7 @@
 const CORE_GAIN: f32 = 3.0;
 const HALO_LIGHT: f32 = 0.1;
 const HALO_SPILL: f32 = 0.03;
-const AIR_GAIN: f32 = 2.5;
+const AIR_GAIN: f32 = 10.0;
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
@@ -20,13 +20,14 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let world = textureLoad(world_tex, vec2<u32>(t), 0);
     let cell = layer_cell(t, light_params.snapped_cam, native);
 
-    let core = textureLoad(emission_tex, vec2<u32>(t), 0).rgb;
-    let halo = textureLoad(glow_tex, vec2<u32>(t), 0).rgb;
+    let te = vec2<u32>(t + light_params.margin);
+    let core = textureLoad(emission_tex, te, 0).rgb;
+    let halo = textureLoad(glow_tex, te, 0).rgb;
     let point = glow(cell);
 
     let lit = max(point, max(halo.r, max(halo.g, halo.b)) * HALO_LIGHT);
     let sky = 1.0 - light_params.darkness;
-    let air = textureLoad(air_tex, vec2<u32>(t), 0).r;
+    let air = textureLoad(air_tex, te, 0).r;
     let ambient = clamp(air * AIR_GAIN, 0.0, 1.0) * sky;
     let incident = clamp(ambient + lit, 0.0, 1.0);
 

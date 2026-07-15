@@ -45,8 +45,12 @@ pub const L_AIR_TMP: usize = 9;
 pub const L_AIR: usize = 10;
 pub const TARGET_COUNT: usize = 11;
 
-const BLUR_RADIUS: f32 = 40.0;
-const AIR_BLUR_RADIUS: f32 = 15.0;
+const BLUR_RADIUS: f32 = 50.0;
+const AIR_BLUR_RADIUS: f32 = 35.0;
+
+fn light_margin() -> u32 {
+    BLUR_RADIUS.max(AIR_BLUR_RADIUS).ceil() as u32
+}
 
 pub const FAR_RATIO: Vec2 = Vec2::new(0.88, 0.92);
 pub const NEAR_RATIO: Vec2 = Vec2::new(0.72, 0.80);
@@ -291,6 +295,14 @@ fn pixel_scale(window_px: UVec2, zoom_index: i32) -> (u32, UVec2) {
     (k, native)
 }
 
+fn target_size(layer: usize, native: UVec2) -> UVec2 {
+    if layer >= L_EMISSIVE_SRC {
+        native + UVec2::splat(2 * light_margin())
+    } else {
+        native
+    }
+}
+
 fn fixed_projection(size: UVec2) -> Projection {
     Projection::Orthographic(OrthographicProjection {
         scaling_mode: ScalingMode::Fixed {
@@ -318,7 +330,7 @@ fn native_target(images: &mut Assets<Image>, size: UVec2) -> Handle<Image> {
     images.add(image)
 }
 
-fn native_camera(order: isize, layer: usize, native: UVec2, target: Handle<Image>) -> impl Bundle {
+fn native_camera(order: isize, layer: usize, size: UVec2, target: Handle<Image>) -> impl Bundle {
     (
         Camera2d,
         Hdr,
@@ -330,7 +342,7 @@ fn native_camera(order: isize, layer: usize, native: UVec2, target: Handle<Image
         },
         RenderTarget::from(target),
         RenderLayers::layer(layer),
-        fixed_projection(native),
+        fixed_projection(size),
         Transform::IDENTITY,
     )
 }
@@ -359,7 +371,7 @@ pub fn setup_camera(
     });
 
     let targets: [Handle<Image>; TARGET_COUNT] =
-        std::array::from_fn(|_| native_target(&mut images, native));
+        std::array::from_fn(|i| native_target(&mut images, target_size(i, native)));
 
     for (i, def) in LAYERS.iter().enumerate() {
         let mut camera = commands.spawn((
@@ -371,9 +383,10 @@ pub fn setup_camera(
         }
     }
 
-    let blur_quad_scale = Vec3::new(native.x as f32, native.y as f32, 1.0);
+    let ext = target_size(L_EMISSIVE_SRC, native);
+    let blur_quad_scale = Vec3::new(ext.x as f32, ext.y as f32, 1.0);
     commands.spawn((
-        native_camera(-10, EMISSIVE_LAYER, native, targets[L_EMISSIVE_SRC].clone()),
+        native_camera(-10, EMISSIVE_LAYER, ext, targets[L_EMISSIVE_SRC].clone()),
         LayerCamera(L_EMISSIVE_SRC),
         EmissiveCamera,
     ));
@@ -395,7 +408,7 @@ pub fn setup_camera(
     });
     commands
         .spawn((
-            native_camera(-9, BLUR_H_LAYER, native, targets[L_GLOW_TMP].clone()),
+            native_camera(-9, BLUR_H_LAYER, ext, targets[L_GLOW_TMP].clone()),
             LayerCamera(L_GLOW_TMP),
         ))
         .with_children(|parent| {
@@ -409,7 +422,7 @@ pub fn setup_camera(
         });
     commands
         .spawn((
-            native_camera(-8, BLUR_V_LAYER, native, targets[L_GLOW].clone()),
+            native_camera(-8, BLUR_V_LAYER, ext, targets[L_GLOW].clone()),
             LayerCamera(L_GLOW),
         ))
         .with_children(|parent| {
@@ -439,7 +452,7 @@ pub fn setup_camera(
     });
     commands
         .spawn((
-            native_camera(-7, AIR_BLUR_H_LAYER, native, targets[L_AIR_TMP].clone()),
+            native_camera(-7, AIR_BLUR_H_LAYER, ext, targets[L_AIR_TMP].clone()),
             LayerCamera(L_AIR_TMP),
         ))
         .with_children(|parent| {
@@ -453,7 +466,7 @@ pub fn setup_camera(
         });
     commands
         .spawn((
-            native_camera(-6, AIR_BLUR_V_LAYER, native, targets[L_AIR].clone()),
+            native_camera(-6, AIR_BLUR_V_LAYER, ext, targets[L_AIR].clone()),
             LayerCamera(L_AIR),
         ))
         .with_children(|parent| {
@@ -493,7 +506,10 @@ pub fn setup_camera(
 
     let quad = shared.quad.clone();
     let lighting = lighting_mats.add(LightingMaterial {
-        params: LightingParams::default(),
+        params: LightingParams {
+            margin: Vec2::splat(light_margin() as f32),
+            ..default()
+        },
         world: targets[L_WORLD].clone(),
         glow: targets[L_GLOW].clone(),
         emission: targets[L_EMISSIVE_SRC].clone(),
@@ -612,9 +628,10 @@ pub fn sync_camera(
     emissive_camera.translation.x = snapped.x as f32;
     emissive_camera.translation.y = snapped.y as f32;
 
-    let native_scale = Vec3::new(state.native.x as f32, state.native.y as f32, 1.0);
+    let ext = target_size(L_EMISSIVE_SRC, state.native).as_vec2();
+    let ext_scale = Vec3::new(ext.x, ext.y, 1.0);
     for mut transform in &mut blur_quads {
-        transform.scale = native_scale;
+        transform.scale = ext_scale;
     }
 
     let calendar = game
@@ -654,9 +671,10 @@ pub fn resize_targets(
     targets.native = state.native;
 
     for (layer, mut projection, mut target) in &mut cameras {
-        let handle = native_target(&mut images, state.native);
+        let size = target_size(layer.0, state.native);
+        let handle = native_target(&mut images, size);
         targets.handles[layer.0] = handle.clone();
-        *projection = fixed_projection(state.native);
+        *projection = fixed_projection(size);
         *target = RenderTarget::from(handle);
     }
 }
