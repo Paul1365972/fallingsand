@@ -94,19 +94,19 @@ pub struct Ignition {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EmberKind {
+pub enum BurningKind {
     Flame,
     Fuel,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Ember {
+pub struct Burning {
     pub burn: u64,
     pub burn_sealed: u64,
     pub emit: u64,
     pub residue: Option<(u64, MaterialId)>,
     pub burnout: MaterialId,
-    pub kind: EmberKind,
+    pub kind: BurningKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

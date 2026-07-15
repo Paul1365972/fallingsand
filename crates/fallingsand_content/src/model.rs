@@ -1,9 +1,9 @@
 use crate::{
-    BurningDef, Catalog, EmberDef, EmissionDef, Error, GasDef, IngredientDef, LiquidDef,
+    BurningDef, Catalog, EmissionDef, Error, FlammableDef, GasDef, IngredientDef, LiquidDef,
     MaterialDef, MaterialKey, OperandDef, PhaseDef, PowderDef, ProductDef, SolidDef,
 };
 use fallingsand_material::{
-    Dynamics, Ember, EmberKind, GasDynamics, Ignition, LiquidDynamics, MaterialId, Phase,
+    Burning, BurningKind, Dynamics, GasDynamics, Ignition, LiquidDynamics, MaterialId, Phase,
     PowderDynamics, Reaction, Tag, Tags, milli, per_random_tick_chance, per_tick_chance,
     per_tick_keep, q16,
 };
@@ -32,8 +32,8 @@ struct RawMaterial {
     surface_bounce: f32,
     contact_damage: f32,
     tags: Tags,
-    burn: Option<BurningDef>,
-    ember: Option<EmberDef>,
+    flammable: Option<FlammableDef>,
+    burning: Option<BurningDef>,
     emission: Option<EmissionDef>,
 }
 
@@ -50,8 +50,8 @@ impl RawMaterial {
             surface_bounce: 0.0,
             contact_damage: 0.0,
             tags: Tags::EMPTY,
-            burn: None,
-            ember: None,
+            flammable: None,
+            burning: None,
             emission: None,
         }
     }
@@ -95,7 +95,7 @@ pub struct Mat {
     pub colors: Vec<[u8; 4]>,
     pub tags: Tags,
     pub rigid_capable: bool,
-    pub is_fuel_ember: bool,
+    pub is_fuel_burning: bool,
     pub hardness: f32,
     pub restitution: f32,
     pub surface_grip: f32,
@@ -103,7 +103,7 @@ pub struct Mat {
     pub contact_damage: f32,
     pub emission: [f32; 3],
     pub flicker: f32,
-    pub ember: Option<Ember>,
+    pub burning: Option<Burning>,
     pub decay: Option<(u64, MaterialId)>,
     pub reactive: bool,
     pub dynamics: Dynamics,
@@ -150,22 +150,22 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
     }
 
     let hand_len = raws.len();
-    let ember_count = raws.iter().filter(|raw| raw.burn.is_some()).count();
-    if hand_len + ember_count > u16::MAX as usize {
+    let flammable_count = raws.iter().filter(|raw| raw.flammable.is_some()).count();
+    if hand_len + flammable_count > u16::MAX as usize {
         return Err(fail(format!(
             "too many materials: {}",
-            hand_len + ember_count
+            hand_len + flammable_count
         )));
     }
     let mut ignitions: Vec<Option<Ignition>> = vec![None; hand_len];
     for index in 0..hand_len {
-        let Some(burn) = raws[index].burn.clone() else {
+        let Some(flammable) = raws[index].flammable.clone() else {
             continue;
         };
         let base = raws[index].clone();
-        let chance = per_tick_chance(burn.ignite);
-        let random_chance = per_random_tick_chance(burn.ignite);
-        let sealed_keep = burn.sealed_burn.clamp(0.0, 1.0);
+        let chance = per_tick_chance(flammable.ignite);
+        let random_chance = per_random_tick_chance(flammable.ignite);
+        let sealed_keep = flammable.sealed_burn.clamp(0.0, 1.0);
         ignitions[index] = Some(Ignition {
             into: MaterialId(raws.len() as u16),
             open: chance_threshold(chance),
@@ -175,22 +175,22 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
         });
         raws.push(RawMaterial {
             name: format!("burning_{}", base.name),
-            colors: if burn.colors.is_empty() {
-                catalog.ember_colors.clone()
+            colors: if flammable.colors.is_empty() {
+                catalog.burning_colors.clone()
             } else {
-                burn.colors.clone()
+                flammable.colors.clone()
             },
-            contact_damage: burn.damage.max(base.contact_damage),
+            contact_damage: flammable.damage.max(base.contact_damage),
             tags: base.tags.union(Tags::new(&[Tag::Hot])),
-            ember: Some(EmberDef {
-                rate: burn.rate,
-                sealed_burn: burn.sealed_burn,
-                emit: burn.emit,
-                residue: burn.residue.clone(),
-                residue_chance: burn.residue_chance,
-                burnout: burn.burnout.clone(),
+            burning: Some(BurningDef {
+                rate: flammable.rate,
+                sealed_burn: flammable.sealed_burn,
+                emit: flammable.emit,
+                residue: flammable.residue.clone(),
+                residue_chance: flammable.residue_chance,
+                burnout: flammable.burnout.clone(),
             }),
-            burn: None,
+            flammable: None,
             emission: Some(BURNING_EMISSION),
             ..base
         });
@@ -251,30 +251,31 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
     let mut materials = Vec::with_capacity(len);
     for (index, raw) in raws.iter().enumerate() {
         let decay = decays[index];
-        let ember = match &raw.ember {
-            Some(raw_ember) => {
-                let residue = match (&raw_ember.residue, raw_ember.residue_chance) {
+        let burning = match &raw.burning {
+            Some(raw_burning) => {
+                let residue = match (&raw_burning.residue, raw_burning.residue_chance) {
                     (Some(_), chance) if chance > 0.0 => {
-                        let id = resolve(&raw_ember.residue, &raw.name)?.unwrap_or(MaterialId::AIR);
+                        let id =
+                            resolve(&raw_burning.residue, &raw.name)?.unwrap_or(MaterialId::AIR);
                         Some((chance_threshold(chance.clamp(0.0, 1.0)), id))
                     }
                     _ => None,
                 };
-                let sealed_keep = raw_ember.sealed_burn.clamp(0.0, 1.0);
-                Some(Ember {
-                    burn: chance_threshold(per_tick_chance(raw_ember.rate)),
+                let sealed_keep = raw_burning.sealed_burn.clamp(0.0, 1.0);
+                Some(Burning {
+                    burn: chance_threshold(per_tick_chance(raw_burning.rate)),
                     burn_sealed: if sealed_keep <= 0.0 {
                         u64::MAX
                     } else {
-                        chance_threshold(per_tick_chance(raw_ember.rate) * sealed_keep)
+                        chance_threshold(per_tick_chance(raw_burning.rate) * sealed_keep)
                     },
-                    emit: chance_threshold(per_tick_chance(raw_ember.emit)),
+                    emit: chance_threshold(per_tick_chance(raw_burning.emit)),
                     residue,
-                    burnout: resolve(&raw_ember.burnout, &raw.name)?.unwrap_or(MaterialId::AIR),
+                    burnout: resolve(&raw_burning.burnout, &raw.name)?.unwrap_or(MaterialId::AIR),
                     kind: if index < hand_len {
-                        EmberKind::Flame
+                        BurningKind::Flame
                     } else {
-                        EmberKind::Fuel
+                        BurningKind::Fuel
                     },
                 })
             }
@@ -303,27 +304,27 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
                     rigid_capable: true
                 })
             ),
-            is_fuel_ember: raw.ember.is_some() && index >= hand_len,
+            is_fuel_burning: raw.burning.is_some() && index >= hand_len,
             hardness: raw.hardness,
             restitution: raw.restitution,
             surface_grip: raw.surface_grip,
             surface_bounce: raw.surface_bounce,
             contact_damage: raw.contact_damage,
-            ember,
+            burning,
             decay,
             reactive,
             dynamics: quantize_dynamics(raw),
         });
     }
 
-    let mut ember_base = vec![None; len];
+    let mut fuel_base = vec![None; len];
     for (base, ignition) in ignitions.iter().enumerate() {
         if let Some(ignition) = ignition {
-            ember_base[ignition.into.0 as usize] = Some(MaterialId(base as u16));
+            fuel_base[ignition.into.0 as usize] = Some(MaterialId(base as u16));
         }
     }
 
-    let (items, item_for_material) = build_items(catalog, &materials, &ember_base)?;
+    let (items, item_for_material) = build_items(catalog, &materials, &fuel_base)?;
     let recipes = build_recipes(catalog, &by_name, &item_for_material)?;
     let thresholds = build_thresholds(catalog)?;
 
@@ -341,7 +342,7 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
 fn build_items(
     catalog: &Catalog,
     materials: &[Mat],
-    ember_base: &[Option<MaterialId>],
+    fuel_base: &[Option<MaterialId>],
 ) -> Result<(Vec<ItemOut>, Vec<u16>), Error> {
     let mut items = vec![ItemOut {
         name: "none".to_owned(),
@@ -393,7 +394,7 @@ fn build_items(
 
     let item_for_material = (0..materials.len())
         .map(|index| {
-            let source = ember_base[index].map_or(index, |base| base.0 as usize);
+            let source = fuel_base[index].map_or(index, |base| base.0 as usize);
             material_item[source]
         })
         .collect();
@@ -543,11 +544,11 @@ fn apply_definition(raw: &mut RawMaterial, definition: &MaterialDef) {
     if let Some(value) = &definition.tags {
         raw.tags = Tags::new(value);
     }
-    if let Some(value) = &definition.burn {
-        raw.burn = Some(value.clone());
+    if let Some(value) = &definition.flammable {
+        raw.flammable = Some(value.clone());
     }
-    if let Some(value) = &definition.ember {
-        raw.ember = Some(value.clone());
+    if let Some(value) = &definition.burning {
+        raw.burning = Some(value.clone());
     }
     if let Some(value) = definition.emission {
         raw.emission = Some(value);
@@ -556,9 +557,9 @@ fn apply_definition(raw: &mut RawMaterial, definition: &MaterialDef) {
 
 fn validate_material(raw: &RawMaterial) -> Result<(), Error> {
     let context = format!("material {}", raw.name);
-    if raw.ember.is_some() && raw.burn.is_some() {
+    if raw.burning.is_some() && raw.flammable.is_some() {
         return Err(fail(format!(
-            "{context}: an ember cannot author a burning variant"
+            "{context}: a burning material cannot also be flammable"
         )));
     }
     if !matches!(raw.phase, PhaseDef::Empty | PhaseDef::Solid(_)) && raw.density <= 0.0 {
@@ -623,24 +624,24 @@ fn validate_material(raw: &RawMaterial) -> Result<(), Error> {
             ],
         )?,
     }
-    if let Some(burn) = &raw.burn {
-        if burn.ignite <= 0.0 {
-            return Err(fail(format!("{context}: burning ignite must be > 0")));
+    if let Some(flammable) = &raw.flammable {
+        if flammable.ignite <= 0.0 {
+            return Err(fail(format!("{context}: flammable ignite must be > 0")));
         }
         validate_numbers(
             &context,
             &[
-                ("burning ignite", burn.ignite),
-                ("burning sealed_burn", burn.sealed_burn),
-                ("burning rate", burn.rate),
-                ("burning emit", burn.emit),
-                ("burning residue_chance", burn.residue_chance),
-                ("burning damage", burn.damage),
+                ("flammable ignite", flammable.ignite),
+                ("flammable sealed_burn", flammable.sealed_burn),
+                ("flammable rate", flammable.rate),
+                ("flammable emit", flammable.emit),
+                ("flammable residue_chance", flammable.residue_chance),
+                ("flammable damage", flammable.damage),
             ],
         )?;
-        if burn.residue.is_some() && burn.residue_chance <= 0.0 {
+        if flammable.residue.is_some() && flammable.residue_chance <= 0.0 {
             return Err(fail(format!(
-                "{context}: burning residue is set but residue_chance is 0 (it would never appear)"
+                "{context}: flammable residue is set but residue_chance is 0 (it would never appear)"
             )));
         }
     }
@@ -653,18 +654,18 @@ fn validate_material(raw: &RawMaterial) -> Result<(), Error> {
             ],
         )?;
     }
-    if let Some(ember) = &raw.ember {
+    if let Some(burning) = &raw.burning {
         validate_numbers(
             &context,
             &[
-                ("ember rate", ember.rate),
-                ("ember emit", ember.emit),
-                ("ember residue_chance", ember.residue_chance),
+                ("burning rate", burning.rate),
+                ("burning emit", burning.emit),
+                ("burning residue_chance", burning.residue_chance),
             ],
         )?;
-        if ember.residue.is_some() && ember.residue_chance <= 0.0 {
+        if burning.residue.is_some() && burning.residue_chance <= 0.0 {
             return Err(fail(format!(
-                "{context}: ember residue is set but residue_chance is 0 (it would never appear)"
+                "{context}: burning residue is set but residue_chance is 0 (it would never appear)"
             )));
         }
     }

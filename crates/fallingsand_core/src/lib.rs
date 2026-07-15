@@ -33,7 +33,7 @@ pub use item::{
     ToolSpec,
 };
 pub use material::{
-    Dynamics, Ember, EmberKind, GasDynamics, Ignition, LiquidDynamics, MaterialId, MaterialInfo,
-    Phase, PowderDynamics, Reaction, Tag, Tags,
+    Burning, BurningKind, Dynamics, GasDynamics, Ignition, LiquidDynamics, MaterialId,
+    MaterialInfo, Phase, PowderDynamics, Reaction, Tag, Tags,
 };
 pub use region::{REGION_AREA_CHUNKS, REGION_SIZE_CELLS, REGION_SIZE_CHUNKS, Region};

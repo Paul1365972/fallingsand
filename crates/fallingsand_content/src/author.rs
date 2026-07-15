@@ -263,7 +263,7 @@ pub fn gas() -> GasDef {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct BurningDef {
+pub struct FlammableDef {
     pub(crate) ignite: f32,
     pub(crate) sealed_burn: f32,
     pub(crate) rate: f32,
@@ -275,7 +275,7 @@ pub struct BurningDef {
     pub(crate) damage: f32,
 }
 
-impl BurningDef {
+impl FlammableDef {
     pub fn ignite(mut self, value: f32) -> Self {
         self.ignite = value;
         self
@@ -320,15 +320,15 @@ impl BurningDef {
 
 const DEFAULT_SEALED_BURN: f32 = 0.1;
 
-pub fn burning() -> BurningDef {
-    BurningDef {
+pub fn flammable() -> FlammableDef {
+    FlammableDef {
         sealed_burn: DEFAULT_SEALED_BURN,
-        ..BurningDef::default()
+        ..FlammableDef::default()
     }
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct EmberDef {
+pub struct BurningDef {
     pub(crate) rate: f32,
     pub(crate) sealed_burn: f32,
     pub(crate) emit: f32,
@@ -337,7 +337,7 @@ pub struct EmberDef {
     pub(crate) burnout: Option<MaterialKey>,
 }
 
-impl EmberDef {
+impl BurningDef {
     pub fn rate(mut self, value: f32) -> Self {
         self.rate = value;
         self
@@ -360,8 +360,8 @@ impl EmberDef {
     }
 }
 
-pub fn ember() -> EmberDef {
-    EmberDef::default()
+pub fn burning() -> BurningDef {
+    BurningDef::default()
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -403,8 +403,8 @@ pub struct MaterialDef {
     pub(crate) surface_bounce: Option<f32>,
     pub(crate) contact_damage: Option<f32>,
     pub(crate) tags: Option<Vec<Tag>>,
-    pub(crate) burn: Option<BurningDef>,
-    pub(crate) ember: Option<EmberDef>,
+    pub(crate) flammable: Option<FlammableDef>,
+    pub(crate) burning: Option<BurningDef>,
     pub(crate) emission: Option<EmissionDef>,
 }
 
@@ -459,13 +459,13 @@ impl MaterialDef {
         self
     }
 
-    pub fn burning(mut self, value: BurningDef) -> Self {
-        self.burn = Some(value);
+    pub fn flammable(mut self, value: FlammableDef) -> Self {
+        self.flammable = Some(value);
         self
     }
 
-    pub fn ember(mut self, value: EmberDef) -> Self {
-        self.ember = Some(value);
+    pub fn burning(mut self, value: BurningDef) -> Self {
+        self.burning = Some(value);
         self
     }
 
@@ -662,7 +662,7 @@ pub struct ThresholdDef {
 
 #[derive(Debug, Default)]
 pub struct Catalog {
-    pub(crate) ember_colors: Vec<Color>,
+    pub(crate) burning_colors: Vec<Color>,
     pub(crate) materials: Vec<(MaterialKey, MaterialDef)>,
     pub(crate) reactions: Vec<ReactionDef>,
     pub(crate) decays: Vec<DecayDef>,
@@ -672,9 +672,9 @@ pub struct Catalog {
 }
 
 impl Catalog {
-    pub fn new(ember_colors: impl IntoIterator<Item = Color>) -> Self {
+    pub fn new(burning_colors: impl IntoIterator<Item = Color>) -> Self {
         Self {
-            ember_colors: ember_colors.into_iter().collect(),
+            burning_colors: burning_colors.into_iter().collect(),
             ..Self::default()
         }
     }

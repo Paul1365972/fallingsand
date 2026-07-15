@@ -1,5 +1,5 @@
 use super::fire::{ASH, SMOKE};
-use crate::{Catalog, Tag, burning, emission, material, material_keys, solid};
+use crate::{Catalog, Tag, emission, flammable, material, material_keys, solid};
 
 material_keys! { COAL, IRON_ORE, GOLD_ORE, CRYSTAL }
 
@@ -17,8 +17,8 @@ pub fn define(catalog: &mut Catalog) {
             .hardness(0.5)
             .restitution(0.1)
             .tag(Tag::Dissolvable)
-            .burning(
-                burning()
+            .flammable(
+                flammable()
                     .ignite(0.6)
                     .rate(0.028)
                     .emit(5.0)

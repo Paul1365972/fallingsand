@@ -1,5 +1,5 @@
 use super::fire::SMOKE;
-use crate::{Catalog, Tag, burning, emission, gas, liquid, material, material_keys};
+use crate::{Catalog, Tag, emission, flammable, gas, liquid, material, material_keys};
 
 material_keys! { WATER, STEAM, OIL, LAVA, ACID }
 
@@ -37,8 +37,8 @@ pub fn define(catalog: &mut Catalog) {
         )
         .density(850.0)
         .colors([[74, 62, 36, 215], [66, 54, 30, 215], [84, 72, 44, 215]])
-        .burning(
-            burning()
+        .flammable(
+            flammable()
                 .ignite(3.0)
                 .sealed_burn(0.0)
                 .rate(0.5)

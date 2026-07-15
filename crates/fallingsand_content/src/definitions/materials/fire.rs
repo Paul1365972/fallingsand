@@ -1,4 +1,4 @@
-use crate::{Catalog, Tag, ember, emission, gas, material, material_keys, powder};
+use crate::{Catalog, Tag, burning, emission, gas, material, material_keys, powder};
 
 material_keys! { FIRE, SMOKE, ASH }
 
@@ -13,7 +13,7 @@ pub fn define(catalog: &mut Catalog) {
                 [255, 200, 64, 255],
                 [232, 88, 8, 255],
             ])
-            .ember(ember().rate(6.3).burnout(SMOKE))
+            .burning(burning().rate(6.3).burnout(SMOKE))
             .contact_damage(8.0)
             .tags([Tag::Hot])
             .emission(emission([255, 140, 32]).intensity(3.5).flicker(0.5)),

@@ -1,5 +1,5 @@
 use super::fire::{ASH, SMOKE};
-use crate::{Catalog, Tag, burning, material, material_keys, powder, solid};
+use crate::{Catalog, Tag, flammable, material, material_keys, powder, solid};
 
 material_keys! {
     STONE, DIRT, GRASS, GRAVEL, SAND, SNOW, ICE, MUD, CLAY, SANDSTONE, DEEPSTONE, BASALT,
@@ -46,8 +46,8 @@ pub fn define(catalog: &mut Catalog) {
             ])
             .hardness(0.08)
             .tag(Tag::Dissolvable)
-            .burning(
-                burning()
+            .flammable(
+                flammable()
                     .ignite(3.0)
                     .rate(5.0)
                     .emit(18.0)

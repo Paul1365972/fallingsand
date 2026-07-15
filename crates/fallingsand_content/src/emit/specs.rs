@@ -10,27 +10,27 @@ pub fn emit(content: &Content) -> TokenStream {
         let phase = phase_path(mat.phase);
         let density_milli = Literal::i32_suffixed(mat.density_milli);
         let is_hot = mat.tags.contains(fallingsand_material::Tag::Hot);
-        let ember = match &mat.ember {
-            Some(ember) => {
-                let burn = Literal::u64_suffixed(ember.burn);
-                let burn_sealed = Literal::u64_suffixed(ember.burn_sealed);
-                let emit = Literal::u64_suffixed(ember.emit);
-                let residue = option_tokens(ember.residue.map(|(threshold, id)| {
+        let burning = match &mat.burning {
+            Some(burning) => {
+                let burn = Literal::u64_suffixed(burning.burn);
+                let burn_sealed = Literal::u64_suffixed(burning.burn_sealed);
+                let emit = Literal::u64_suffixed(burning.emit);
+                let residue = option_tokens(burning.residue.map(|(threshold, id)| {
                     let threshold = Literal::u64_suffixed(threshold);
                     let id = material_id(id);
                     quote!((#threshold, #id))
                 }));
-                let burnout = material_id(ember.burnout);
-                let kind = match ember.kind {
-                    fallingsand_material::EmberKind::Flame => {
-                        quote!(crate::material::EmberKind::Flame)
+                let burnout = material_id(burning.burnout);
+                let kind = match burning.kind {
+                    fallingsand_material::BurningKind::Flame => {
+                        quote!(crate::material::BurningKind::Flame)
                     }
-                    fallingsand_material::EmberKind::Fuel => {
-                        quote!(crate::material::EmberKind::Fuel)
+                    fallingsand_material::BurningKind::Fuel => {
+                        quote!(crate::material::BurningKind::Fuel)
                     }
                 };
                 quote! {
-                    Some(crate::material::Ember {
+                    Some(crate::material::Burning {
                         burn: #burn,
                         burn_sealed: #burn_sealed,
                         emit: #emit,
@@ -63,7 +63,7 @@ pub fn emit(content: &Content) -> TokenStream {
                 const PHASE: crate::material::Phase = #phase;
                 const DENSITY_MILLI: i32 = #density_milli;
                 const IS_HOT: bool = #is_hot;
-                const EMBER: Option<crate::material::Ember> = #ember;
+                const BURNING: Option<crate::material::Burning> = #burning;
                 const DECAY: Option<(u64, crate::material::MaterialId)> = #decay;
                 const IS_REACTIVE: bool = #is_reactive;
                 const DYNAMICS: crate::material::Dynamics = #dynamics;

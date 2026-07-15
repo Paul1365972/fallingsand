@@ -1,7 +1,7 @@
 use crate::window::SimWindow;
 use fallingsand_core::content::{self, FLICKER_THRESHOLD, MatSpec, material};
 use fallingsand_core::{
-    CARDINAL_NEIGHBORS as NEIGHBORS, Cell, CellPos, Dynamics, Ember, EmberKind, GRID_GRAVITY,
+    Burning, BurningKind, CARDINAL_NEIGHBORS as NEIGHBORS, Cell, CellPos, Dynamics, GRID_GRAVITY,
     GasDynamics, LiquidDynamics, MaterialId, Phase, PowderDynamics, TICK_DT, VEL_ONE,
 };
 use fallingsand_rng::{Hash, Rng};
@@ -73,11 +73,11 @@ fn update_cell_spec<M: MatSpec>(
 ) {
     let mut rng = Hash::seed(tick).pos(pos.x, pos.y).rng();
 
-    if const { M::IS_HOT && M::EMBER.is_some() } {
+    if const { M::IS_HOT && M::BURNING.is_some() } {
         ignite_neighbors(window, pos, &mut rng, tick_byte, IgniteRate::Interaction);
     }
-    if let Some(ember) = const { M::EMBER }
-        && ember_step::<M>(window, pos, cell, ember, &mut rng, tick_byte)
+    if let Some(burning) = const { M::BURNING }
+        && burning_step::<M>(window, pos, cell, burning, &mut rng, tick_byte)
     {
         return;
     }
@@ -93,7 +93,7 @@ fn update_cell_spec<M: MatSpec>(
 }
 
 fn random_tick_spec<M: MatSpec>(window: &mut SimWindow, pos: CellPos, tick: u64, tick_byte: u8) {
-    if const { !(M::IS_HOT && M::EMBER.is_none()) } {
+    if const { !(M::IS_HOT && M::BURNING.is_none()) } {
         return;
     }
     let mut rng = Hash::seed(tick)
@@ -153,7 +153,7 @@ fn note_structural(window: &mut SimWindow, pos: CellPos, material: MaterialId) {
 fn sustained_by_fuel(window: &SimWindow, pos: CellPos) -> bool {
     NEIGHBORS.iter().any(|&(dx, dy)| {
         window.get(pos.translated(dx, dy)).is_some_and(|neighbor| {
-            content::is_flammable(neighbor.material) || content::is_fuel_ember(neighbor.material)
+            content::is_flammable(neighbor.material) || content::is_fuel_burning(neighbor.material)
         })
     })
 }
@@ -198,27 +198,27 @@ fn ignite_neighbors(
     }
 }
 
-fn ember_step<M: MatSpec>(
+fn burning_step<M: MatSpec>(
     window: &mut SimWindow,
     pos: CellPos,
     cell: Cell,
-    ember: Ember,
+    burning: Burning,
     rng: &mut Rng,
     tick_byte: u8,
 ) -> bool {
     if let Some(water) = adjacent_water(window, pos) {
-        if ember.kind == EmberKind::Flame {
+        if burning.kind == BurningKind::Flame {
             set_product(window, pos, material::STEAM, rng, tick_byte);
         } else {
-            burn_out::<M>(window, pos, ember, rng, tick_byte);
+            burn_out::<M>(window, pos, burning, rng, tick_byte);
             set_product(window, water, material::STEAM, rng, tick_byte);
         }
         return true;
     }
-    if rng.draw().below(ember.emit) {
+    if rng.draw().below(burning.emit) {
         emit_into_air(window, pos, material::FIRE, rng, tick_byte);
     }
-    if ember.kind == EmberKind::Flame && sustained_by_fuel(window, pos) {
+    if burning.kind == BurningKind::Flame && sustained_by_fuel(window, pos) {
         if rng.draw().below(FLICKER_THRESHOLD) {
             let mut flicker = cell;
             flicker.set_shade(rng.draw().bits(4) as u8);
@@ -230,12 +230,12 @@ fn ember_step<M: MatSpec>(
         return true;
     }
     let burn = if oxygen_exposed(window, pos) {
-        ember.burn
+        burning.burn
     } else {
-        ember.burn_sealed
+        burning.burn_sealed
     };
     if rng.draw().below(burn) {
-        burn_out::<M>(window, pos, ember, rng, tick_byte);
+        burn_out::<M>(window, pos, burning, rng, tick_byte);
         return true;
     }
     window.mark(pos);
@@ -245,7 +245,7 @@ fn ember_step<M: MatSpec>(
 fn burn_out<M: MatSpec>(
     window: &mut SimWindow,
     pos: CellPos,
-    ember: Ember,
+    burning: Burning,
     rng: &mut Rng,
     tick_byte: u8,
 ) {
@@ -254,9 +254,9 @@ fn burn_out<M: MatSpec>(
             window.note_structural(pos.translated(dx, dy));
         }
     }
-    let out = match ember.residue {
+    let out = match burning.residue {
         Some((threshold, id)) if rng.draw().below(threshold) => id,
-        _ => ember.burnout,
+        _ => burning.burnout,
     };
     set_product(window, pos, out, rng, tick_byte);
 }

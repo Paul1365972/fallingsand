@@ -33,11 +33,11 @@ pub fn emit(content: &Content) -> TokenStream {
         content.materials.iter().map(|mat| tags_tokens(mat.tags)),
         true,
     );
-    let is_fuel_ember = accessor_fn(
-        "is_fuel_ember",
+    let is_fuel_burning = accessor_fn(
+        "is_fuel_burning",
         quote!(bool),
         content.materials.iter().map(|mat| {
-            let value = mat.is_fuel_ember;
+            let value = mat.is_fuel_burning;
             quote!(#value)
         }),
         true,
@@ -134,7 +134,7 @@ pub fn emit(content: &Content) -> TokenStream {
         #phase
         #density_milli
         #tags
-        #is_fuel_ember
+        #is_fuel_burning
         #is_rigid_capable
         #ignition
         #material
