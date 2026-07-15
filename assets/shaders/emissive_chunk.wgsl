@@ -4,6 +4,7 @@
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var cells: texture_2d<u32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(1) var emissive_palette: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(2) var palette: texture_2d<f32>;
 
 fn hash2(cell: vec2<i32>) -> f32 {
     let h = pcg(bitcast<u32>(cell.x) * 1597334677u ^ bitcast<u32>(cell.y) * 3812015801u);
@@ -40,5 +41,6 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let n = mix(coarse, fine, 0.35) * 2.0 - 1.0;
         emission = emission * max(0.0, 1.0 + flicker * n);
     }
-    return vec4<f32>(emission, 1.0);
+    let air = 1.0 - textureLoad(palette, vec2<u32>(material, shade), 0).a;
+    return vec4<f32>(emission, air);
 }

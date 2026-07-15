@@ -29,6 +29,8 @@ pub const WALL_LAYER: usize = 6;
 pub const EMISSIVE_LAYER: usize = 7;
 pub const BLUR_H_LAYER: usize = 8;
 pub const BLUR_V_LAYER: usize = 9;
+pub const AIR_BLUR_H_LAYER: usize = 10;
+pub const AIR_BLUR_V_LAYER: usize = 11;
 
 pub const L_WORLD: usize = 0;
 pub const L_STAR: usize = 1;
@@ -39,9 +41,12 @@ pub const L_WALL: usize = 5;
 pub const L_EMISSIVE_SRC: usize = 6;
 pub const L_GLOW_TMP: usize = 7;
 pub const L_GLOW: usize = 8;
-pub const TARGET_COUNT: usize = 9;
+pub const L_AIR_TMP: usize = 9;
+pub const L_AIR: usize = 10;
+pub const TARGET_COUNT: usize = 11;
 
 const BLUR_RADIUS: f32 = 40.0;
+const AIR_BLUR_RADIUS: f32 = 12.0;
 
 pub const FAR_RATIO: Vec2 = Vec2::new(0.88, 0.92);
 pub const NEAR_RATIO: Vec2 = Vec2::new(0.72, 0.80);
@@ -150,6 +155,8 @@ pub struct LayerAssets {
     upscale: [Option<Handle<UpscaleMaterial>>; 6],
     blur_h: Handle<BlurMaterial>,
     blur_v: Handle<BlurMaterial>,
+    air_blur_h: Handle<AirBlurMaterial>,
+    air_blur_v: Handle<AirBlurMaterial>,
 }
 
 #[derive(ShaderType, Debug, Clone, Default)]
@@ -170,6 +177,24 @@ pub struct BlurMaterial {
 impl Material2d for BlurMaterial {
     fn fragment_shader() -> ShaderRef {
         "shaders/blur.wgsl".into()
+    }
+
+    fn alpha_mode(&self) -> AlphaMode2d {
+        AlphaMode2d::Opaque
+    }
+}
+
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
+pub struct AirBlurMaterial {
+    #[uniform(0)]
+    pub params: BlurParams,
+    #[texture(1)]
+    pub src: Handle<Image>,
+}
+
+impl Material2d for AirBlurMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/air_blur.wgsl".into()
     }
 
     fn alpha_mode(&self) -> AlphaMode2d {
@@ -310,12 +335,14 @@ fn native_camera(order: isize, layer: usize, native: UVec2, target: Handle<Image
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn setup_camera(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
     mut upscale_mats: ResMut<Assets<UpscaleMaterial>>,
     mut lighting_mats: ResMut<Assets<LightingMaterial>>,
     mut blur_mats: ResMut<Assets<BlurMaterial>>,
+    mut air_blur_mats: ResMut<Assets<AirBlurMaterial>>,
     shared: Res<super::chunks::RenderShared>,
     window: Single<&Window>,
 ) {
@@ -346,7 +373,7 @@ pub fn setup_camera(
 
     let blur_quad_scale = Vec3::new(native.x as f32, native.y as f32, 1.0);
     commands.spawn((
-        native_camera(-8, EMISSIVE_LAYER, native, targets[L_EMISSIVE_SRC].clone()),
+        native_camera(-10, EMISSIVE_LAYER, native, targets[L_EMISSIVE_SRC].clone()),
         LayerCamera(L_EMISSIVE_SRC),
         EmissiveCamera,
     ));
@@ -368,7 +395,7 @@ pub fn setup_camera(
     });
     commands
         .spawn((
-            native_camera(-7, BLUR_H_LAYER, native, targets[L_GLOW_TMP].clone()),
+            native_camera(-9, BLUR_H_LAYER, native, targets[L_GLOW_TMP].clone()),
             LayerCamera(L_GLOW_TMP),
         ))
         .with_children(|parent| {
@@ -382,7 +409,7 @@ pub fn setup_camera(
         });
     commands
         .spawn((
-            native_camera(-6, BLUR_V_LAYER, native, targets[L_GLOW].clone()),
+            native_camera(-8, BLUR_V_LAYER, native, targets[L_GLOW].clone()),
             LayerCamera(L_GLOW),
         ))
         .with_children(|parent| {
@@ -392,6 +419,50 @@ pub fn setup_camera(
                 MeshMaterial2d(blur_v.clone()),
                 Transform::from_scale(blur_quad_scale),
                 RenderLayers::layer(BLUR_V_LAYER),
+            ));
+        });
+    let air_blur_h = air_blur_mats.add(AirBlurMaterial {
+        params: BlurParams {
+            dir: Vec2::X,
+            radius: AIR_BLUR_RADIUS,
+            _pad: 0.0,
+        },
+        src: targets[L_EMISSIVE_SRC].clone(),
+    });
+    let air_blur_v = air_blur_mats.add(AirBlurMaterial {
+        params: BlurParams {
+            dir: Vec2::Y,
+            radius: AIR_BLUR_RADIUS,
+            _pad: 0.0,
+        },
+        src: targets[L_AIR_TMP].clone(),
+    });
+    commands
+        .spawn((
+            native_camera(-7, AIR_BLUR_H_LAYER, native, targets[L_AIR_TMP].clone()),
+            LayerCamera(L_AIR_TMP),
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                BlurQuad,
+                Mesh2d(shared.quad.clone()),
+                MeshMaterial2d(air_blur_h.clone()),
+                Transform::from_scale(blur_quad_scale),
+                RenderLayers::layer(AIR_BLUR_H_LAYER),
+            ));
+        });
+    commands
+        .spawn((
+            native_camera(-6, AIR_BLUR_V_LAYER, native, targets[L_AIR].clone()),
+            LayerCamera(L_AIR),
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                BlurQuad,
+                Mesh2d(shared.quad.clone()),
+                MeshMaterial2d(air_blur_v.clone()),
+                Transform::from_scale(blur_quad_scale),
+                RenderLayers::layer(AIR_BLUR_V_LAYER),
             ));
         });
 
@@ -426,6 +497,7 @@ pub fn setup_camera(
         world: targets[L_WORLD].clone(),
         glow: targets[L_GLOW].clone(),
         emission: targets[L_EMISSIVE_SRC].clone(),
+        air: targets[L_AIR].clone(),
     });
     let mut upscale: [Option<Handle<UpscaleMaterial>>; 6] = Default::default();
     commands.entity(composite).with_children(|parent| {
@@ -460,6 +532,8 @@ pub fn setup_camera(
         upscale,
         blur_h,
         blur_v,
+        air_blur_h,
+        air_blur_v,
     });
 }
 
@@ -593,6 +667,7 @@ pub fn rebind_targets(
     mut upscale_mats: ResMut<Assets<UpscaleMaterial>>,
     mut lighting_mats: ResMut<Assets<LightingMaterial>>,
     mut blur_mats: ResMut<Assets<BlurMaterial>>,
+    mut air_blur_mats: ResMut<Assets<AirBlurMaterial>>,
 ) {
     if !targets.is_changed() {
         return;
@@ -601,12 +676,19 @@ pub fn rebind_targets(
         material.world = targets.handles[L_WORLD].clone();
         material.glow = targets.handles[L_GLOW].clone();
         material.emission = targets.handles[L_EMISSIVE_SRC].clone();
+        material.air = targets.handles[L_AIR].clone();
     }
     if let Some(mut material) = blur_mats.get_mut(&assets.blur_h) {
         material.src = targets.handles[L_EMISSIVE_SRC].clone();
     }
     if let Some(mut material) = blur_mats.get_mut(&assets.blur_v) {
         material.src = targets.handles[L_GLOW_TMP].clone();
+    }
+    if let Some(mut material) = air_blur_mats.get_mut(&assets.air_blur_h) {
+        material.src = targets.handles[L_EMISSIVE_SRC].clone();
+    }
+    if let Some(mut material) = air_blur_mats.get_mut(&assets.air_blur_v) {
+        material.src = targets.handles[L_AIR_TMP].clone();
     }
     for (i, handle) in assets.upscale.iter().enumerate() {
         if let Some(handle) = handle

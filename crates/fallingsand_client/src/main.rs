@@ -47,6 +47,7 @@ fn main() {
         Material2dPlugin::<view::sky::LightingMaterial>::default(),
         Material2dPlugin::<view::camera::UpscaleMaterial>::default(),
         Material2dPlugin::<view::camera::BlurMaterial>::default(),
+        Material2dPlugin::<view::camera::AirBlurMaterial>::default(),
         Material2dPlugin::<view::sky::SunMaterial>::default(),
         Material2dPlugin::<view::sky::MoonMaterial>::default(),
         Material2dPlugin::<view::sky::StarfieldMaterial>::default(),

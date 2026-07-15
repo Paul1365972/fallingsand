@@ -45,6 +45,8 @@ pub struct EmissiveChunkMaterial {
     pub cells: Handle<Image>,
     #[texture(1, filterable = false)]
     pub emissive_palette: Handle<Image>,
+    #[texture(2, filterable = false)]
+    pub palette: Handle<Image>,
 }
 
 impl Material2d for EmissiveChunkMaterial {
@@ -374,6 +376,7 @@ fn full_upload(
     let emissive_material = emissive_materials.add(EmissiveChunkMaterial {
         cells: image.clone(),
         emissive_palette: shared.emissive_palette.clone(),
+        palette: shared.palette.clone(),
     });
     let emissive = commands
         .spawn((
