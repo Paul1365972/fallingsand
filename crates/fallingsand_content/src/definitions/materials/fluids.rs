@@ -71,7 +71,7 @@ pub fn define(catalog: &mut Catalog) {
         ])
         .contact_damage(30.0)
         .tags([Tag::Hot])
-        .emission(emission([255, 96, 24]).intensity(2.0)),
+        .emission(emission([255, 96, 24]).intensity(1.3)),
     );
     catalog.add(
         ACID,

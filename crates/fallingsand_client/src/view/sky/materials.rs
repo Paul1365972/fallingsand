@@ -38,6 +38,8 @@ pub struct LightingMaterial {
     pub world: Handle<Image>,
     #[texture(3)]
     pub glow: Handle<Image>,
+    #[texture(4)]
+    pub emission: Handle<Image>,
 }
 
 impl Material2d for LightingMaterial {

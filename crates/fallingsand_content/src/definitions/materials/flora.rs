@@ -108,6 +108,6 @@ pub fn define(catalog: &mut Catalog) {
                 [60, 180, 155, 255],
             ])
             .tags([Tag::Dissolvable])
-            .emission(emission([90, 220, 190]).intensity(1.1)),
+            .emission(emission([90, 220, 190]).intensity(0.8)),
     );
 }

@@ -84,7 +84,7 @@ pub fn define(catalog: &mut Catalog) {
             .tag(Tag::Dissolvable);
         if emissive {
             let [r, g, b, _] = colors[0];
-            definition = definition.emission(emission([r, g, b]).intensity(1.0));
+            definition = definition.emission(emission([r, g, b]).intensity(0.8));
         }
         catalog.add(key, definition);
     }

@@ -425,6 +425,7 @@ pub fn setup_camera(
         params: LightingParams::default(),
         world: targets[L_WORLD].clone(),
         glow: targets[L_GLOW].clone(),
+        emission: targets[L_EMISSIVE_SRC].clone(),
     });
     let mut upscale: [Option<Handle<UpscaleMaterial>>; 6] = Default::default();
     commands.entity(composite).with_children(|parent| {
@@ -599,6 +600,7 @@ pub fn rebind_targets(
     if let Some(mut material) = lighting_mats.get_mut(&assets.lighting) {
         material.world = targets.handles[L_WORLD].clone();
         material.glow = targets.handles[L_GLOW].clone();
+        material.emission = targets.handles[L_EMISSIVE_SRC].clone();
     }
     if let Some(mut material) = blur_mats.get_mut(&assets.blur_h) {
         material.src = targets.handles[L_EMISSIVE_SRC].clone();

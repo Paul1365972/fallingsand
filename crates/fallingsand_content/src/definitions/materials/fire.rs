@@ -16,7 +16,7 @@ pub fn define(catalog: &mut Catalog) {
             .ember(ember().rate(6.3).burnout(SMOKE))
             .contact_damage(8.0)
             .tags([Tag::Hot])
-            .emission(emission([255, 140, 32]).intensity(2.2).flicker(0.5)),
+            .emission(emission([255, 140, 32]).intensity(2.5).flicker(0.5)),
     );
     catalog.add(
         SMOKE,
