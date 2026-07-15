@@ -1,5 +1,5 @@
 use super::fire::SMOKE;
-use crate::{Catalog, Tag, burning, gas, liquid, material, material_keys};
+use crate::{Catalog, Tag, burning, emission, gas, liquid, material, material_keys};
 
 material_keys! { WATER, STEAM, OIL, LAVA, ACID }
 
@@ -70,7 +70,8 @@ pub fn define(catalog: &mut Catalog) {
             [224, 64, 8, 255],
         ])
         .contact_damage(30.0)
-        .tags([Tag::Hot, Tag::Emissive]),
+        .tags([Tag::Hot])
+        .emission(emission([255, 96, 24]).intensity(2.0)),
     );
     catalog.add(
         ACID,

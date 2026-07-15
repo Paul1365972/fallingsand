@@ -28,7 +28,6 @@ pub enum Phase {
 pub enum Tag {
     Dissolvable,
     Hot,
-    Emissive,
     Player,
 }
 
@@ -37,7 +36,6 @@ impl Tag {
         Some(match name {
             "Dissolvable" => Self::Dissolvable,
             "Hot" => Self::Hot,
-            "Emissive" => Self::Emissive,
             "Player" => Self::Player,
             _ => return None,
         })
@@ -159,6 +157,8 @@ pub struct MaterialInfo {
     pub surface_grip: f32,
     pub surface_bounce: f32,
     pub contact_damage: f32,
+    pub emission: [f32; 3],
+    pub flicker: f32,
 }
 
 pub const TIER0_MAX_HARDNESS: f32 = 0.35;

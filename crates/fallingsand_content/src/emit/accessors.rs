@@ -89,6 +89,11 @@ pub fn emit(content: &Content) -> TokenStream {
             let surface_grip = Literal::f32_suffixed(mat.surface_grip);
             let surface_bounce = Literal::f32_suffixed(mat.surface_bounce);
             let contact_damage = Literal::f32_suffixed(mat.contact_damage);
+            let [er, eg, eb] = mat.emission;
+            let emission_r = Literal::f32_suffixed(er);
+            let emission_g = Literal::f32_suffixed(eg);
+            let emission_b = Literal::f32_suffixed(eb);
+            let flicker = Literal::f32_suffixed(mat.flicker);
             quote! {
                 &crate::material::MaterialInfo {
                     name: #name,
@@ -99,6 +104,8 @@ pub fn emit(content: &Content) -> TokenStream {
                     surface_grip: #surface_grip,
                     surface_bounce: #surface_bounce,
                     contact_damage: #contact_damage,
+                    emission: [#emission_r, #emission_g, #emission_b],
+                    flicker: #flicker,
                 }
             }
         }),

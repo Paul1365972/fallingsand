@@ -1,5 +1,5 @@
 use super::fire::{ASH, SMOKE};
-use crate::{Catalog, Tag, burning, material, material_keys, solid};
+use crate::{Catalog, Tag, burning, emission, material, material_keys, solid};
 
 material_keys! { COAL, IRON_ORE, GOLD_ORE, CRYSTAL }
 
@@ -83,7 +83,8 @@ pub fn define(catalog: &mut Catalog) {
             .restitution(restitution)
             .tag(Tag::Dissolvable);
         if emissive {
-            definition = definition.tag(Tag::Emissive);
+            let [r, g, b, _] = colors[0];
+            definition = definition.emission(emission([r, g, b]).intensity(1.0));
         }
         catalog.add(key, definition);
     }

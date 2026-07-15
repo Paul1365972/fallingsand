@@ -358,6 +358,33 @@ pub fn ember() -> EmberDef {
     EmberDef::default()
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct EmissionDef {
+    pub(crate) color: [u8; 3],
+    pub(crate) intensity: f32,
+    pub(crate) flicker: f32,
+}
+
+impl EmissionDef {
+    pub fn intensity(mut self, value: f32) -> Self {
+        self.intensity = value;
+        self
+    }
+
+    pub fn flicker(mut self, value: f32) -> Self {
+        self.flicker = value;
+        self
+    }
+}
+
+pub fn emission(color: [u8; 3]) -> EmissionDef {
+    EmissionDef {
+        color,
+        intensity: 1.0,
+        flicker: 0.0,
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct MaterialDef {
     pub(crate) base: Option<MaterialKey>,
@@ -372,6 +399,7 @@ pub struct MaterialDef {
     pub(crate) tags: Option<Vec<Tag>>,
     pub(crate) burn: Option<BurningDef>,
     pub(crate) ember: Option<EmberDef>,
+    pub(crate) emission: Option<EmissionDef>,
 }
 
 impl MaterialDef {
@@ -432,6 +460,11 @@ impl MaterialDef {
 
     pub fn ember(mut self, value: EmberDef) -> Self {
         self.ember = Some(value);
+        self
+    }
+
+    pub fn emission(mut self, value: EmissionDef) -> Self {
+        self.emission = Some(value);
         self
     }
 }

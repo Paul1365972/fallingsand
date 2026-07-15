@@ -1,7 +1,25 @@
 #import bevy_sprite::mesh2d_vertex_output::VertexOutput
+#import bevy_sprite::mesh2d_view_bindings::globals
+#import fallingsand::layer_common::pcg
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var cells: texture_2d<u32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(1) var emissive_palette: texture_2d<f32>;
+
+fn hash2(cell: vec2<i32>) -> f32 {
+    let h = pcg(bitcast<u32>(cell.x) * 1597334677u ^ bitcast<u32>(cell.y) * 3812015801u);
+    return f32(h) / 4294967295.0;
+}
+
+fn vnoise(p: vec2<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let a = hash2(vec2<i32>(i));
+    let b = hash2(vec2<i32>(i) + vec2<i32>(1, 0));
+    let c = hash2(vec2<i32>(i) + vec2<i32>(0, 1));
+    let d = hash2(vec2<i32>(i) + vec2<i32>(1, 1));
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
@@ -11,5 +29,16 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let cell = textureLoad(cells, vec2<u32>(x, y), 0);
     let material = cell.r | (cell.g << 8u);
     let shade = cell.b >> 4u;
-    return textureLoad(emissive_palette, vec2<u32>(material, shade), 0);
+    let entry = textureLoad(emissive_palette, vec2<u32>(material, shade), 0);
+    var emission = entry.rgb;
+    let flicker = entry.a;
+    if flicker > 0.0 {
+        let world = in.world_position.xy;
+        let t = globals.time;
+        let coarse = vnoise(world * (1.0 / 18.0) + vec2<f32>(0.0, -t * 0.9));
+        let fine = vnoise(world * (1.0 / 6.0) + vec2<f32>(0.0, -t * 1.9));
+        let n = mix(coarse, fine, 0.35) * 2.0 - 1.0;
+        emission = emission * max(0.0, 1.0 + flicker * n);
+    }
+    return vec4<f32>(emission, 1.0);
 }

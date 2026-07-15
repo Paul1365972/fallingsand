@@ -1,5 +1,5 @@
 use super::fire::{ASH, SMOKE};
-use crate::{Catalog, Tag, burning, inherit, material, material_keys, solid};
+use crate::{Catalog, Tag, burning, emission, inherit, material, material_keys, solid};
 
 material_keys! { WOOD, MOSS, LEAVES, PLANKS, MUSHROOM_STEM, GLOWSHROOM }
 
@@ -107,6 +107,7 @@ pub fn define(catalog: &mut Catalog) {
                 [110, 240, 210, 255],
                 [60, 180, 155, 255],
             ])
-            .tags([Tag::Dissolvable, Tag::Emissive]),
+            .tags([Tag::Dissolvable])
+            .emission(emission([90, 220, 190]).intensity(1.1)),
     );
 }

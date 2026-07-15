@@ -1,6 +1,6 @@
 use crate::{
-    BurningDef, Catalog, EmberDef, Error, GasDef, IngredientDef, LiquidDef, MaterialDef,
-    MaterialKey, OperandDef, PhaseDef, PowderDef, ProductDef, SolidDef,
+    BurningDef, Catalog, EmberDef, EmissionDef, Error, GasDef, IngredientDef, LiquidDef,
+    MaterialDef, MaterialKey, OperandDef, PhaseDef, PowderDef, ProductDef, SolidDef,
 };
 use fallingsand_material::{
     Dynamics, Ember, EmberKind, GasDynamics, Ignition, LiquidDynamics, MaterialId, Phase,
@@ -34,6 +34,7 @@ struct RawMaterial {
     tags: Tags,
     burn: Option<BurningDef>,
     ember: Option<EmberDef>,
+    emission: Option<EmissionDef>,
 }
 
 impl RawMaterial {
@@ -51,7 +52,37 @@ impl RawMaterial {
             tags: Tags::EMPTY,
             burn: None,
             ember: None,
+            emission: None,
         }
+    }
+}
+
+const BURNING_EMISSION: EmissionDef = EmissionDef {
+    color: [255, 120, 32],
+    intensity: 1.8,
+    flicker: 0.5,
+};
+
+fn srgb_to_linear(channel: u8) -> f32 {
+    let s = channel as f32 / 255.0;
+    if s <= 0.04045 {
+        s / 12.92
+    } else {
+        ((s + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn bake_emission(def: Option<EmissionDef>) -> ([f32; 3], f32) {
+    match def {
+        Some(emission) => (
+            [
+                srgb_to_linear(emission.color[0]) * emission.intensity,
+                srgb_to_linear(emission.color[1]) * emission.intensity,
+                srgb_to_linear(emission.color[2]) * emission.intensity,
+            ],
+            emission.flicker,
+        ),
+        None => ([0.0; 3], 0.0),
     }
 }
 
@@ -70,6 +101,8 @@ pub struct Mat {
     pub surface_grip: f32,
     pub surface_bounce: f32,
     pub contact_damage: f32,
+    pub emission: [f32; 3],
+    pub flicker: f32,
     pub ember: Option<Ember>,
     pub decay: Option<(u64, MaterialId)>,
     pub reactive: bool,
@@ -148,7 +181,7 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
                 burn.colors.clone()
             },
             contact_damage: burn.damage.max(base.contact_damage),
-            tags: base.tags.union(Tags::new(&[Tag::Hot, Tag::Emissive])),
+            tags: base.tags.union(Tags::new(&[Tag::Hot])),
             ember: Some(EmberDef {
                 rate: burn.rate,
                 emit: burn.emit,
@@ -157,6 +190,7 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
                 burnout: burn.burnout.clone(),
             }),
             burn: None,
+            emission: Some(BURNING_EMISSION),
             ..base
         });
     }
@@ -245,6 +279,7 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
                 .iter()
                 .any(Option::is_some);
         let const_name = raw.name.to_ascii_uppercase();
+        let (emission, flicker) = bake_emission(raw.emission);
         materials.push(Mat {
             spec_name: camel_case(&const_name),
             name: raw.name.to_ascii_lowercase(),
@@ -252,6 +287,8 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
             phase: phase_tag(raw.phase),
             density_milli: milli(raw.density),
             colors: raw.colors.clone(),
+            emission,
+            flicker,
             tags: raw.tags,
             rigid_capable: matches!(
                 raw.phase,
@@ -505,6 +542,9 @@ fn apply_definition(raw: &mut RawMaterial, definition: &MaterialDef) {
     if let Some(value) = &definition.ember {
         raw.ember = Some(value.clone());
     }
+    if let Some(value) = definition.emission {
+        raw.emission = Some(value);
+    }
 }
 
 fn validate_material(raw: &RawMaterial) -> Result<(), Error> {
@@ -596,6 +636,15 @@ fn validate_material(raw: &RawMaterial) -> Result<(), Error> {
                 "{context}: burning residue is set but residue_chance is 0 (it would never appear)"
             )));
         }
+    }
+    if let Some(emission) = &raw.emission {
+        validate_numbers(
+            &context,
+            &[
+                ("emission intensity", emission.intensity),
+                ("emission flicker", emission.flicker),
+            ],
+        )?;
     }
     if let Some(ember) = &raw.ember {
         validate_numbers(

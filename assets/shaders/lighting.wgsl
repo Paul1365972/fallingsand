@@ -6,8 +6,7 @@
 @group(#{MATERIAL_BIND_GROUP}) @binding(2) var world_sampler: sampler;
 @group(#{MATERIAL_BIND_GROUP}) @binding(3) var glow_tex: texture_2d<f32>;
 
-const EMISSIVE_GAIN: f32 = 1.4;
-const EMISSIVE_SPILL: f32 = 0.35;
+const EMISSIVE_SPILL: f32 = 0.25;
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
@@ -16,8 +15,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let world = textureLoad(world_tex, vec2<u32>(t), 0);
     let cell = layer_cell(t, light_params.snapped_cam, native);
 
-    let e = min(textureLoad(glow_tex, vec2<u32>(t), 0).rgb * EMISSIVE_GAIN, vec3<f32>(1.0));
-    let emitters = max(glow(cell), max(e.r, max(e.g, e.b)));
+    let e = textureLoad(glow_tex, vec2<u32>(t), 0).rgb;
+    let point = glow(cell);
+    let emitters = max(point, max(e.r, max(e.g, e.b)));
 
     let ambient = 1.0 - light_params.darkness;
     let incident = clamp(ambient + emitters, 0.0, 1.0);

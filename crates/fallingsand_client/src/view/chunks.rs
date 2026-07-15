@@ -16,7 +16,7 @@ use bevy::render::{ExtractSchedule, MainWorld, Render, RenderApp, RenderSystems}
 use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d};
 use fallingsand_core::content;
-use fallingsand_core::{CHUNK_AREA, CHUNK_SIZE, Cell, CellOffset, ChunkPos, DirtyRect, Tag};
+use fallingsand_core::{CHUNK_AREA, CHUNK_SIZE, Cell, CellOffset, ChunkPos, DirtyRect};
 
 const SHADES: u32 = 16;
 const UPLOAD_RETRY_FRAMES: u8 = 3;
@@ -53,7 +53,7 @@ impl Material2d for EmissiveChunkMaterial {
     }
 
     fn alpha_mode(&self) -> AlphaMode2d {
-        AlphaMode2d::Blend
+        AlphaMode2d::Opaque
     }
 }
 
@@ -158,15 +158,19 @@ pub fn setup_shared(
 ) {
     let width = content::MATERIAL_COUNT as u32;
     let mut data = vec![0u8; (width * SHADES * 4) as usize];
-    let mut emissive_data = vec![0u8; (width * SHADES * 4) as usize];
+    // Emissive palette is HDR: RGB = linear emission radiance (color * intensity), A = flicker.
+    let mut emissive_data = vec![0u8; (width * SHADES * 16) as usize];
     for (id, material) in content::materials() {
-        let emissive = content::tags(id).contains(Tag::Emissive);
+        let [er, eg, eb] = material.emission;
+        let entry = [er, eg, eb, material.flicker];
         for shade in 0..SHADES {
             let color = material.colors[shade as usize % material.colors.len()];
             let index = ((shade * width + id.0 as u32) * 4) as usize;
             data[index..index + 4].copy_from_slice(&color);
-            if emissive {
-                emissive_data[index..index + 4].copy_from_slice(&color);
+            let e_index = ((shade * width + id.0 as u32) * 16) as usize;
+            for (channel, value) in entry.iter().enumerate() {
+                let offset = e_index + channel * 4;
+                emissive_data[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
             }
         }
     }
@@ -189,7 +193,7 @@ pub fn setup_shared(
         },
         TextureDimension::D2,
         emissive_data,
-        TextureFormat::Rgba8UnormSrgb,
+        TextureFormat::Rgba32Float,
         RenderAssetUsages::RENDER_WORLD,
     ));
     let quad = meshes.add(Rectangle::default());
