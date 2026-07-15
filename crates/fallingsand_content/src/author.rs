@@ -265,7 +265,7 @@ pub fn gas() -> GasDef {
 #[derive(Debug, Clone, Default)]
 pub struct BurningDef {
     pub(crate) ignite: f32,
-    pub(crate) smoulder: f32,
+    pub(crate) sealed_burn: f32,
     pub(crate) rate: f32,
     pub(crate) emit: f32,
     pub(crate) colors: Vec<Color>,
@@ -281,8 +281,8 @@ impl BurningDef {
         self
     }
 
-    pub fn smoulder(mut self, value: f32) -> Self {
-        self.smoulder = value;
+    pub fn sealed_burn(mut self, value: f32) -> Self {
+        self.sealed_burn = value;
         self
     }
 
@@ -318,13 +318,19 @@ impl BurningDef {
     }
 }
 
+const DEFAULT_SEALED_BURN: f32 = 0.1;
+
 pub fn burning() -> BurningDef {
-    BurningDef::default()
+    BurningDef {
+        sealed_burn: DEFAULT_SEALED_BURN,
+        ..BurningDef::default()
+    }
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct EmberDef {
     pub(crate) rate: f32,
+    pub(crate) sealed_burn: f32,
     pub(crate) emit: f32,
     pub(crate) residue: Option<MaterialKey>,
     pub(crate) residue_chance: f32,

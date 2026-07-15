@@ -165,13 +165,13 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
         let base = raws[index].clone();
         let chance = per_tick_chance(burn.ignite);
         let random_chance = per_random_tick_chance(burn.ignite);
-        let smoulder = burn.smoulder.clamp(0.0, 1.0);
+        let sealed_keep = burn.sealed_burn.clamp(0.0, 1.0);
         ignitions[index] = Some(Ignition {
             into: MaterialId(raws.len() as u16),
             open: chance_threshold(chance),
-            sealed: chance_threshold(chance * smoulder),
+            sealed: chance_threshold(chance * sealed_keep),
             open_random: chance_threshold(random_chance),
-            sealed_random: chance_threshold(random_chance * smoulder),
+            sealed_random: chance_threshold(random_chance * sealed_keep),
         });
         raws.push(RawMaterial {
             name: format!("burning_{}", base.name),
@@ -184,6 +184,7 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
             tags: base.tags.union(Tags::new(&[Tag::Hot])),
             ember: Some(EmberDef {
                 rate: burn.rate,
+                sealed_burn: burn.sealed_burn,
                 emit: burn.emit,
                 residue: burn.residue.clone(),
                 residue_chance: burn.residue_chance,
@@ -259,8 +260,14 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
                     }
                     _ => None,
                 };
+                let sealed_keep = raw_ember.sealed_burn.clamp(0.0, 1.0);
                 Some(Ember {
                     burn: chance_threshold(per_tick_chance(raw_ember.rate)),
+                    burn_sealed: if sealed_keep <= 0.0 {
+                        u64::MAX
+                    } else {
+                        chance_threshold(per_tick_chance(raw_ember.rate) * sealed_keep)
+                    },
                     emit: chance_threshold(per_tick_chance(raw_ember.emit)),
                     residue,
                     burnout: resolve(&raw_ember.burnout, &raw.name)?.unwrap_or(MaterialId::AIR),
@@ -624,7 +631,7 @@ fn validate_material(raw: &RawMaterial) -> Result<(), Error> {
             &context,
             &[
                 ("burning ignite", burn.ignite),
-                ("burning smoulder", burn.smoulder),
+                ("burning sealed_burn", burn.sealed_burn),
                 ("burning rate", burn.rate),
                 ("burning emit", burn.emit),
                 ("burning residue_chance", burn.residue_chance),

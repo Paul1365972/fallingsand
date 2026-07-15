@@ -74,15 +74,7 @@ fn update_cell_spec<M: MatSpec>(
     let mut rng = Hash::seed(tick).pos(pos.x, pos.y).rng();
 
     if const { M::IS_HOT && M::EMBER.is_some() } {
-        let open_flame = const { M::OPEN_FLAME };
-        ignite_neighbors(
-            window,
-            pos,
-            &mut rng,
-            tick_byte,
-            open_flame,
-            IgniteRate::Interaction,
-        );
+        ignite_neighbors(window, pos, &mut rng, tick_byte, IgniteRate::Interaction);
     }
     if let Some(ember) = const { M::EMBER }
         && ember_step::<M>(window, pos, cell, ember, &mut rng, tick_byte)
@@ -108,15 +100,7 @@ fn random_tick_spec<M: MatSpec>(window: &mut SimWindow, pos: CellPos, tick: u64,
         .add(RANDOM_TICK_SALT)
         .pos(pos.x, pos.y)
         .rng();
-    let open_flame = const { M::OPEN_FLAME };
-    ignite_neighbors(
-        window,
-        pos,
-        &mut rng,
-        tick_byte,
-        open_flame,
-        IgniteRate::Random,
-    );
+    ignite_neighbors(window, pos, &mut rng, tick_byte, IgniteRate::Random);
 }
 
 fn react<M: MatSpec>(
@@ -179,7 +163,6 @@ fn ignite_neighbors(
     pos: CellPos,
     rng: &mut Rng,
     tick_byte: u8,
-    open_flame: bool,
     rate: IgniteRate,
 ) {
     for (dx, dy) in NEIGHBORS {
@@ -197,7 +180,7 @@ fn ignite_neighbors(
             IgniteRate::Interaction => (ignition.open, ignition.sealed),
             IgniteRate::Random => (ignition.open_random, ignition.sealed_random),
         };
-        let threshold = if open_flame || sealed == open || oxygen_exposed(window, neighbor_pos) {
+        let threshold = if oxygen_exposed(window, neighbor_pos) {
             open
         } else {
             sealed
@@ -246,7 +229,12 @@ fn ember_step<M: MatSpec>(
         }
         return true;
     }
-    if rng.draw().below(ember.burn) {
+    let burn = if oxygen_exposed(window, pos) {
+        ember.burn
+    } else {
+        ember.burn_sealed
+    };
+    if rng.draw().below(burn) {
         burn_out::<M>(window, pos, ember, rng, tick_byte);
         return true;
     }

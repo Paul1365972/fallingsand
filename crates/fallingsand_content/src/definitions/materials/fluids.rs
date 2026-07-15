@@ -40,6 +40,7 @@ pub fn define(catalog: &mut Catalog) {
         .burning(
             burning()
                 .ignite(3.0)
+                .sealed_burn(0.0)
                 .rate(0.5)
                 .emit(16.0)
                 .colors([
