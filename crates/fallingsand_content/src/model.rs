@@ -59,7 +59,7 @@ impl RawMaterial {
 
 const BURNING_EMISSION: EmissionDef = EmissionDef {
     color: [255, 120, 32],
-    intensity: 1.8,
+    intensity: 1.4,
     flicker: 0.5,
 };
 

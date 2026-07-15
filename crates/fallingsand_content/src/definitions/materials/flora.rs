@@ -21,7 +21,7 @@ pub fn define(catalog: &mut Catalog) {
                 burning()
                     .ignite(1.0)
                     .smoulder(0.05)
-                    .rate(0.35)
+                    .rate(0.25)
                     .emit(10.0)
                     .colors([
                         [255, 150, 40, 255],
@@ -68,7 +68,16 @@ pub fn define(catalog: &mut Catalog) {
                 [78, 150, 66, 255],
                 [50, 116, 44, 255],
             ])
-            .hardness(0.03),
+            .hardness(0.03)
+            .burning(
+                burning()
+                    .ignite(3.0)
+                    .rate(2.5)
+                    .emit(18.0)
+                    .residue(ASH, 0.3)
+                    .burnout(SMOKE)
+                    .damage(7.0),
+            ),
     );
     catalog.add(
         PLANKS,
@@ -108,6 +117,6 @@ pub fn define(catalog: &mut Catalog) {
                 [60, 180, 155, 255],
             ])
             .tags([Tag::Dissolvable])
-            .emission(emission([90, 220, 190]).intensity(0.8)),
+            .emission(emission([90, 220, 190]).intensity(0.6)),
     );
 }

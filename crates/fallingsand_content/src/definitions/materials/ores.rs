@@ -21,7 +21,7 @@ pub fn define(catalog: &mut Catalog) {
                 burning()
                     .ignite(0.6)
                     .smoulder(0.2)
-                    .rate(0.04)
+                    .rate(0.028)
                     .emit(5.0)
                     .colors([
                         [240, 96, 28, 255],
@@ -84,7 +84,7 @@ pub fn define(catalog: &mut Catalog) {
             .tag(Tag::Dissolvable);
         if emissive {
             let [r, g, b, _] = colors[0];
-            definition = definition.emission(emission([r, g, b]).intensity(0.8));
+            definition = definition.emission(emission([r, g, b]).intensity(0.6));
         }
         catalog.add(key, definition);
     }

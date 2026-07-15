@@ -5,7 +5,7 @@ material_keys! { FIRE, SMOKE, ASH }
 pub fn define(catalog: &mut Catalog) {
     catalog.add(
         FIRE,
-        material(gas().drag(6.0).turbulence(52.0))
+        material(gas().drag(5.5).turbulence(80.0).redirect_keep(0.4))
             .density(0.3)
             .colors([
                 [255, 160, 32, 255],
@@ -16,7 +16,7 @@ pub fn define(catalog: &mut Catalog) {
             .ember(ember().rate(6.3).burnout(SMOKE))
             .contact_damage(8.0)
             .tags([Tag::Hot])
-            .emission(emission([255, 140, 32]).intensity(2.5).flicker(0.5)),
+            .emission(emission([255, 140, 32]).intensity(3.5).flicker(0.5)),
     );
     catalog.add(
         SMOKE,
