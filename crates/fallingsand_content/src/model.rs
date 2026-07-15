@@ -95,7 +95,6 @@ pub struct Mat {
     pub colors: Vec<[u8; 4]>,
     pub tags: Tags,
     pub rigid_capable: bool,
-    pub is_fuel_burning: bool,
     pub hardness: f32,
     pub restitution: f32,
     pub surface_grip: f32,
@@ -304,7 +303,6 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
                     rigid_capable: true
                 })
             ),
-            is_fuel_burning: raw.burning.is_some() && index >= hand_len,
             hardness: raw.hardness,
             restitution: raw.restitution,
             surface_grip: raw.surface_grip,

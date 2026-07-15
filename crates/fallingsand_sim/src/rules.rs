@@ -1,5 +1,5 @@
 use crate::window::SimWindow;
-use fallingsand_core::content::{self, FLICKER_THRESHOLD, MatSpec, material};
+use fallingsand_core::content::{self, MatSpec, material};
 use fallingsand_core::{
     Burning, BurningKind, CARDINAL_NEIGHBORS as NEIGHBORS, Cell, CellPos, Dynamics, GRID_GRAVITY,
     GasDynamics, LiquidDynamics, MaterialId, Phase, PowderDynamics, TICK_DT, VEL_ONE,
@@ -77,7 +77,7 @@ fn update_cell_spec<M: MatSpec>(
         ignite_neighbors(window, pos, &mut rng, tick_byte, IgniteRate::Interaction);
     }
     if let Some(burning) = const { M::BURNING }
-        && burning_step::<M>(window, pos, cell, burning, &mut rng, tick_byte)
+        && burning_step::<M>(window, pos, burning, &mut rng, tick_byte)
     {
         return;
     }
@@ -150,14 +150,6 @@ fn note_structural(window: &mut SimWindow, pos: CellPos, material: MaterialId) {
     }
 }
 
-fn sustained_by_fuel(window: &SimWindow, pos: CellPos) -> bool {
-    NEIGHBORS.iter().any(|&(dx, dy)| {
-        window.get(pos.translated(dx, dy)).is_some_and(|neighbor| {
-            content::is_flammable(neighbor.material) || content::is_fuel_burning(neighbor.material)
-        })
-    })
-}
-
 fn ignite_neighbors(
     window: &mut SimWindow,
     pos: CellPos,
@@ -201,7 +193,6 @@ fn ignite_neighbors(
 fn burning_step<M: MatSpec>(
     window: &mut SimWindow,
     pos: CellPos,
-    cell: Cell,
     burning: Burning,
     rng: &mut Rng,
     tick_byte: u8,
@@ -217,17 +208,6 @@ fn burning_step<M: MatSpec>(
     }
     if rng.draw().below(burning.emit) {
         emit_into_air(window, pos, material::FIRE, rng, tick_byte);
-    }
-    if burning.kind == BurningKind::Flame && sustained_by_fuel(window, pos) {
-        if rng.draw().below(FLICKER_THRESHOLD) {
-            let mut flicker = cell;
-            flicker.set_shade(rng.draw().bits(4) as u8);
-            flicker.updated = tick_byte;
-            window.set(pos, flicker);
-        } else {
-            window.mark(pos);
-        }
-        return true;
     }
     let burn = if oxygen_exposed(window, pos) {
         burning.burn

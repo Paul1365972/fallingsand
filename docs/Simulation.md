@@ -26,13 +26,13 @@ Leveling and pressure propagate as local waves over ticks. Steam condenses back 
 
 ## Sleeping
 
-Each chunk tracks a **sim rect** of cells to re-simulate; a write to a chunk or its border marks it. Sleep gates the interaction sim: an empty sim rect skips the chunk, so a settled world does no movement work; the random-tick sim ignores sleep. The rect is honest: exactly the cells iterated next tick. The **change rect** (⊆ `sim`) holds actual value changes: a write marks `change` tight and `sim` as the 3×3 Moore neighbourhood (dilating across chunk borders); a **keep-alive** mark (clinging fire, pending decay) extends `sim` by 1×1 only. Scheduling reads `sim`; replication reads `change`, so keep-alives cost zero bandwidth.
+Each chunk tracks a **sim rect** of cells to re-simulate; a write to a chunk or its border marks it. Sleep gates the interaction sim: an empty sim rect skips the chunk, so a settled world does no movement work; the random-tick sim ignores sleep. The rect is honest: exactly the cells iterated next tick. The **change rect** (⊆ `sim`) holds actual value changes: a write marks `change` tight and `sim` as the 3×3 Moore neighbourhood (dilating across chunk borders); a **keep-alive** mark (burning fuel, pending decay) extends `sim` by 1×1 only. Scheduling reads `sim`; replication reads `change`, so keep-alives cost zero bandwidth.
 
 Cell particles (aspirational, not built): cells knocked loose fly ballistically as free particles and reinsert on impact.
 
 ## Tuning units
 
-Constants are seconds-based, converted per-tick from `TICK_DT`, so behaviour is ~invariant to tick rate: rate `r` fires with `1−e^(−r·dt)` (keeps `e^(−r·dt)`), accelerations integrate as `a·dt`, durations become tick counts. The content compiler quantizes authored seconds into integer tick constants during compilation, including named tuning thresholds the simulation reads back (e.g. `content::FLICKER_THRESHOLD`). Random-tick rates scale by `CHUNK_AREA / RANDOM_TICKS_PER_CHUNK` (`per_random_tick_chance`) so a seconds-rate means the same real time under random ticks, clamped at 1.0.
+Constants are seconds-based, converted per-tick from `TICK_DT`, so behaviour is ~invariant to tick rate: rate `r` fires with `1−e^(−r·dt)` (keeps `e^(−r·dt)`), accelerations integrate as `a·dt`, durations become tick counts. The content compiler quantizes authored seconds into integer tick constants during compilation, and can emit named tuning thresholds for the simulation to read back. Random-tick rates scale by `CHUNK_AREA / RANDOM_TICKS_PER_CHUNK` (`per_random_tick_chance`) so a seconds-rate means the same real time under random ticks, clamped at 1.0.
 
 ## Combustion
 
