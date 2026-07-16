@@ -11,7 +11,7 @@ use fallingsand_core::{
     CHUNK_AREA, CHUNK_SIZE, Cell, ChunkPos, MAX_HP, Phase as MaterialPhase, REGION_SIZE_CELLS,
     SEASON_DAYS,
 };
-use fallingsand_protocol::TickProfile;
+use fallingsand_protocol::{ServerStats, TickProfile};
 use std::collections::VecDeque;
 
 const BUDGET_MS: f32 = 1000.0 / 60.0;
@@ -93,6 +93,9 @@ fn human_bytes(bytes: u64) -> String {
     format!("{value:>6.1} {unit:>3}")
 }
 
+// Phases grouped to mirror the tick pipeline: pre-sim, sim, post-sim, output.
+const PHASE_GROUPS: [usize; 4] = [3, 2, 3, 2];
+
 fn phase_lines(
     timing: &TickProfile,
     windows: &mut [StatWindow; TickProfile::PHASE_COUNT],
@@ -104,13 +107,19 @@ fn phase_lines(
         .zip(windows.iter_mut())
         .map(|((label, micros), window)| {
             let ms = window.avg(now, *micros as f32 / 1000.0);
-            format!("{label} {ms:>5.2}")
+            format!("{label} {ms:.2}")
         })
         .collect();
-    cells.chunks(5).map(|row| row.join("  ")).collect()
+    let mut lines = Vec::new();
+    let mut start = 0;
+    for len in PHASE_GROUPS {
+        lines.push(cells[start..start + len].join("  "));
+        start += len;
+    }
+    lines
 }
 
-fn render_pass_lines(diagnostics: &DiagnosticsStore) -> Vec<String> {
+fn draw_line(diagnostics: &DiagnosticsStore) -> Option<String> {
     let collect = |suffix: &str| {
         let mut passes: Vec<(&str, f64)> = diagnostics
             .iter()
@@ -128,21 +137,19 @@ fn render_pass_lines(diagnostics: &DiagnosticsStore) -> Vec<String> {
         passes.truncate(3);
         passes
     };
-    let gpu = collect("/elapsed_gpu");
-    let (label, passes) = if gpu.is_empty() {
-        ("cpu", collect("/elapsed_cpu"))
-    } else {
-        ("gpu", gpu)
-    };
+    let mut passes = collect("/elapsed_gpu");
     if passes.is_empty() {
-        return Vec::new();
+        passes = collect("/elapsed_cpu");
+    }
+    if passes.is_empty() {
+        return None;
     }
     let joined = passes
         .iter()
         .map(|(name, ms)| format!("{name} {ms:.2}"))
         .collect::<Vec<_>>()
         .join("  ");
-    vec![format!("{label}: {joined}")]
+    Some(format!("draw {joined}"))
 }
 
 pub fn setup_overlay(mut commands: Commands, mut gizmo_configs: ResMut<GizmoConfigStore>) {
@@ -229,9 +236,9 @@ pub fn update_overlay(
     let mut left_lines: Vec<String> = Vec::new();
     let mut right_lines: Vec<String> = vec![
         format!("fallingsand v{}", env!("CARGO_PKG_VERSION")),
-        format!("{fps:>3.0} fps {frame_ms:>5.1} ms ({frame_min:>5.1}/{frame_max:>5.1})"),
+        format!("fps {fps:>3.0}  frame {frame_ms:>5.1} ms ({frame_min:>4.1}-{frame_max:>4.1})"),
     ];
-    right_lines.extend(render_pass_lines(&diagnostics));
+    right_lines.extend(draw_line(&diagnostics));
 
     match game.0.ingame() {
         None => {}
@@ -309,8 +316,6 @@ fn playing_lines(
     let view = &ingame.world;
     let you = &ingame.you;
     let clock = &ingame.clock;
-    let embedded = ingame.net.is_embedded();
-    let server = ingame.net.embedded_stats().unwrap_or_default();
     let (rx_per_sec, rx_bytes) = rx_stats(ingame);
 
     let aim = game.input.held.aim;
@@ -398,86 +403,70 @@ fn playing_lines(
         .to_string();
     left_lines.push(format!("selected: {selected}"));
 
-    if embedded {
-        let timing = &server.timing;
-        let sim_ms = windows.sim_ms.avg(now, timing.sim() as f32 / 1000.0);
-        let tick_ms = windows.tick_ms.avg(now, timing.total as f32 / 1000.0);
-        right_lines.push(format!(
-            "sim  {sim_ms:>6.2} ms ({:>3.0}%) peak {:>5.2}",
-            sim_ms / BUDGET_MS * 100.0,
-            timing.peak_sim as f32 / 1000.0,
-        ));
-        right_lines.push(format!(
-            "tick {tick_ms:>6.2} ms ({:>3.0}%) peak {:>5.2}",
-            tick_ms / BUDGET_MS * 100.0,
-            timing.peak_total as f32 / 1000.0,
-        ));
-        right_lines.extend(phase_lines(timing, &mut windows.phases, now));
-        right_lines.push(format!(
-            "#{} {:>3.0} tps +{:>2.0} ms slew",
-            server.tick,
-            windows.tps.avg(now, server.tps),
-            windows.slew_ms.avg(now, server.slew_ms as f32)
-        ));
-        right_lines.push(format!(
-            "chunks L/A/B/W {:>4}/{:>4.0}/{:>4.0}/{:>4.0} | {:>4} client",
-            server.loaded_chunks,
-            windows.active_chunks.avg(now, server.active_chunks as f32),
-            windows.border_chunks.avg(now, server.border_chunks as f32),
-            windows.awake_chunks.avg(now, server.awake_chunks as f32),
-            view.chunks.len()
-        ));
-        right_lines.push(format!(
-            "active cells ~{} | regions {:>3}/{:>3} dirty",
-            human_count(windows.awake_cells.avg(now, server.awake_cells as f32) as u64),
-            server.loaded_regions,
-            server.dirty_regions
-        ));
-    } else {
-        right_lines.push(format!(
-            "tick #{} | {:>4} chunks",
-            view.server_tick,
-            view.chunks.len()
-        ));
+    if let Some(server) = ingame.net.embedded_stats() {
+        server_lines(&server, windows, now, right_lines);
     }
-
-    let mut net = format!(
+    right_lines.push(format!(
+        "client {} chunks  {} players  {:.0} particles",
+        view.chunks.len(),
+        ingame.players.names.len(),
+        windows.particles.avg(now, particle_count as f32),
+    ));
+    right_lines.push(format!(
         "net rx {}/s ({})",
         human_bytes(windows.rx_per_sec.avg(now, rx_per_sec as f32) as u64),
-        human_bytes(rx_bytes)
-    );
-    if embedded {
-        net.push_str(&format!(
-            " | tx {}/tick",
-            human_bytes(windows.tx_bytes.avg(now, server.replicated_bytes as f32) as u64)
-        ));
-    }
-    right_lines.push(net);
+        human_bytes(rx_bytes),
+    ));
     right_lines.push(format!(
-        "uploads {:>4.0}/s ({}/s) | {}px/cell {}",
+        "upload {:>4.0}/s ({}/s)  {}px/cell  {}",
         windows.uploads.rate(now, visuals.uploads as f32),
         human_bytes(windows.upload_bytes.rate(now, visuals.upload_bytes as f32) as u64),
         camera.k,
-        game.settings.render_mode.label()
+        game.settings.render_mode.label(),
     ));
+}
 
-    if embedded {
-        let mem =
-            server.loaded_chunks as u64 * CHUNK_AREA as u64 * std::mem::size_of::<Cell>() as u64;
-        right_lines.push(format!(
-            "players {:>2} | bodies {:>3} | particles {:>4.0}",
-            server.players,
-            server.pixel_bodies,
-            windows.particles.avg(now, particle_count as f32)
-        ));
-        right_lines.push(format!("mem ~{}", human_bytes(mem)));
-    } else {
-        right_lines.push(format!(
-            "players {:>2} | particles {:>4.0}",
-            ingame.players.names.len(),
-            windows.particles.avg(now, particle_count as f32)
-        ));
-    }
+fn server_lines(server: &ServerStats, windows: &mut StatWindows, now: f32, out: &mut Vec<String>) {
+    let timing = &server.timing;
+    let tick_ms = windows.tick_ms.avg(now, timing.total as f32 / 1000.0);
+    let sim_ms = windows.sim_ms.avg(now, timing.sim() as f32 / 1000.0);
+    out.push(format!(
+        "tick {tick_ms:>6.2} ms {:>3.0}%  peak {:>5.2}",
+        tick_ms / BUDGET_MS * 100.0,
+        timing.peak_total as f32 / 1000.0,
+    ));
+    out.push(format!(
+        "sim  {sim_ms:>6.2} ms {:>3.0}%  peak {:>5.2}",
+        sim_ms / BUDGET_MS * 100.0,
+        timing.peak_sim as f32 / 1000.0,
+    ));
+    out.extend(phase_lines(timing, &mut windows.phases, now));
+    out.push(format!(
+        "{:>3.0} tps  +{:>2.0} ms behind  #{}",
+        windows.tps.avg(now, server.tps),
+        windows.slew_ms.avg(now, server.slew_ms as f32),
+        server.tick,
+    ));
+    out.push(format!(
+        "chunks {} loaded  {:.0} active  {:.0} border  {:.0} awake",
+        server.loaded_chunks,
+        windows.active_chunks.avg(now, server.active_chunks as f32),
+        windows.border_chunks.avg(now, server.border_chunks as f32),
+        windows.awake_chunks.avg(now, server.awake_chunks as f32),
+    ));
+    out.push(format!(
+        "cells ~{} active  regions {}/{} dirty",
+        human_count(windows.awake_cells.avg(now, server.awake_cells as f32) as u64),
+        server.loaded_regions,
+        server.dirty_regions,
+    ));
+    let mem = server.loaded_chunks as u64 * CHUNK_AREA as u64 * std::mem::size_of::<Cell>() as u64;
+    out.push(format!(
+        "bodies {}  tx {}/tick  mem ~{}",
+        server.pixel_bodies,
+        human_bytes(windows.tx_bytes.avg(now, server.replicated_bytes as f32) as u64),
+        human_bytes(mem),
+    ));
 }
 
 pub fn draw_debug_borders(game: Res<Game>, state: Res<CameraState>, mut gizmos: Gizmos) {

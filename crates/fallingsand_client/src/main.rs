@@ -130,9 +130,12 @@ fn main() {
     );
     #[cfg(not(target_family = "wasm"))]
     app.add_systems(Update, view::icon::set_window_icons);
-    // Must be added after DefaultPlugins (needs RenderApp to exist).
+    // Must come after DefaultPlugins (needs RenderApp); Bevy already adds it
+    // under trace_tracy, so guard against a double-add.
     #[cfg(any(debug_assertions, feature = "profiling"))]
-    app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+    if !app.is_plugin_added::<bevy::render::diagnostic::RenderDiagnosticsPlugin>() {
+        app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+    }
     view::chunks::setup_render_app(&mut app);
     app.run();
 }

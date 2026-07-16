@@ -29,16 +29,16 @@ impl TickProfile {
 
     pub fn phases(&self) -> [(&'static str, u32); Self::PHASE_COUNT] {
         [
-            ("net", self.network),
+            ("network", self.network),
             ("input", self.player_input),
             ("regions", self.regions),
-            ("move", self.sim_simulate),
-            ("rnd", self.sim_random_tick),
-            ("phys", self.physics),
-            ("body", self.bodies),
-            ("hzrd", self.hazards),
-            ("repl", self.replicate),
-            ("save", self.persistence),
+            ("simulate", self.sim_simulate),
+            ("random", self.sim_random_tick),
+            ("physics", self.physics),
+            ("bodies", self.bodies),
+            ("hazards", self.hazards),
+            ("replicate", self.replicate),
+            ("persist", self.persistence),
         ]
     }
 
