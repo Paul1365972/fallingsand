@@ -367,7 +367,7 @@ fn apply(game: &mut ClientGame, io: &IoFrame, action: Action) {
 
 pub fn clamp_zoom(base: u32, index: i32) -> i32 {
     let base = base as i32;
-    index.clamp((base / 2).max(1) - base, base)
+    index.clamp((base / 2).max(1) - base, base * 3)
 }
 
 pub(super) fn flush(game: &mut ClientGame, dt: f32) {
