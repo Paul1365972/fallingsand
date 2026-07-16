@@ -15,7 +15,6 @@ use fallingsand_protocol::{
 const DOUBLE_TAP_SECS: f32 = 0.3;
 const TICK_DT: f32 = 1.0 / TICK_RATE as f32;
 const MAX_CATCHUP_TICKS: f32 = 4.0;
-const USE_REPEAT_DELAY_SECS: f32 = 0.25;
 const USE_REPEAT_INTERVAL_SECS: f32 = 0.05;
 const MAX_SWEEP_CELLS: usize = 64;
 
@@ -42,7 +41,6 @@ impl Track {
 #[derive(Default)]
 struct UsePacer {
     held: bool,
-    pressed_at: f32,
     last_emit_at: f32,
     last_aim: CellPos,
 }
@@ -73,16 +71,10 @@ impl InputCore {
         if !pacer.held {
             *pacer = UsePacer {
                 held: true,
-                pressed_at: now,
                 last_emit_at: now,
                 last_aim: aim,
             };
             self.actions.push(InputAction::Use { button, cell: aim });
-            return;
-        }
-        if now - pacer.pressed_at < USE_REPEAT_DELAY_SECS {
-            pacer.last_aim = aim;
-            pacer.last_emit_at = now;
             return;
         }
         if aim != pacer.last_aim {
@@ -199,7 +191,8 @@ fn sample(game: &mut ClientGame, io: &IoFrame, gameplay: bool) {
                     && io.raw.is_pressed(binding.button)
             })
         };
-        state.move_x = held(Action::MoveRight) as i8 - held(Action::MoveLeft) as i8;
+        state.left = held(Action::MoveLeft);
+        state.right = held(Action::MoveRight);
         state.jump = held(Action::Jump);
         state.down = held(Action::Duck);
         state.primary = held(Action::Primary) && !game.input.blocked_primary;

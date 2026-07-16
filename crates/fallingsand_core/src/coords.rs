@@ -23,11 +23,10 @@ pub fn ray_cells(start: CellPos, end: CellPos) -> impl Iterator<Item = CellPos> 
             return None;
         }
         let twice = 2 * error;
-        if twice >= dy {
+        if twice - dy > dx - twice {
             error += dy;
             x += sx;
-        }
-        if twice <= dx {
+        } else {
             error += dx;
             y += sy;
         }

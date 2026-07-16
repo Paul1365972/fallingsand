@@ -195,17 +195,13 @@ fn burning_step<M: MatSpec>(
         burning.burn
     } else {
         match burning.sealed {
-            SealedBurn::Snuff(base) => {
+            SealedBurn::Becomes(next) => {
                 let Some(mut cell) = window.get(pos) else {
                     return true;
                 };
-                cell.material = base;
+                cell.material = next;
                 cell.updated = tick_byte;
                 window.set(pos, cell);
-                return true;
-            }
-            SealedBurn::Extinguish => {
-                burn_out::<M>(window, pos, burning, rng, tick_byte);
                 return true;
             }
             SealedBurn::Smoulder(threshold) => threshold,
@@ -382,13 +378,13 @@ fn update_powder<M: MatSpec>(
                 pos,
                 vx,
                 vy,
-                d.drag_keep_q16,
-                d.drag_keep_submerged_q16,
-                d.friction_keep_q16,
+                d.air_drag_keep_q16,
+                d.submerged_drag_q16,
+                d.ground_friction_keep_q16,
                 d.cohesion_q16,
             )
         },
-        |window, cur, vx, vy, rng| repose_slide::<M>(window, cur, vx, vy, d, rng),
+        |window, cur, vx, vy, rng| topple_slide::<M>(window, cur, vx, vy, d, rng),
     );
 }
 
@@ -423,9 +419,9 @@ fn update_liquid<M: MatSpec>(
                 pos,
                 vx,
                 vy,
-                d.drag_keep_q16,
-                d.drag_keep_submerged_q16,
-                d.friction_keep_q16,
+                d.air_drag_keep_q16,
+                d.submerged_drag_q16,
+                d.ground_friction_keep_q16,
                 d.cohesion_q16,
             )
         },
@@ -451,8 +447,8 @@ fn update_gas<M: MatSpec>(
         tick_byte,
         |window, pos, vx, vy, rng| {
             *vy += GRAVITY_DV;
-            *vx = mul_q16(*vx, d.drag_keep_q16);
-            *vy = mul_q16(*vy, d.drag_keep_q16);
+            *vx = mul_q16(*vx, d.air_drag_keep_q16);
+            *vy = mul_q16(*vy, d.air_drag_keep_q16);
             if d.turbulence_q16 > 0 {
                 let r = rng.draw().bits(16) as i64 - 32768;
                 *vx += scaled_round(d.turbulence_q16 as i64 * r, 31);
@@ -470,17 +466,17 @@ fn settling_accelerate<M: MatSpec>(
     pos: CellPos,
     vx: &mut i32,
     vy: &mut i32,
-    drag_keep_q16: u32,
-    drag_keep_submerged_q16: u32,
-    friction_keep_q16: u32,
+    air_drag_keep_q16: u32,
+    submerged_drag_q16: u32,
+    ground_friction_keep_q16: u32,
     cohesion_q16: u32,
 ) {
     let ambient = ambient_density_milli(window, pos);
     *vy -= buoyant_gravity::<M>(ambient);
-    apply_drag(vx, vy, ambient, drag_keep_q16, drag_keep_submerged_q16);
+    apply_drag(vx, vy, ambient, air_drag_keep_q16, submerged_drag_q16);
 
     if supported_below::<M>(window, pos) {
-        *vx = mul_q16(*vx, friction_keep_q16);
+        *vx = mul_q16(*vx, ground_friction_keep_q16);
     }
     note_body_below(window, pos);
     cohesion::<M>(window, pos, vx, vy, cohesion_q16);
@@ -672,7 +668,7 @@ fn prefer_side(vx: i32, rng: &mut Rng) -> i32 {
     }
 }
 
-fn repose_slide<M: MatSpec>(
+fn topple_slide<M: MatSpec>(
     window: &mut SimWindow,
     cur: &mut CellPos,
     vx: &mut i32,
@@ -680,26 +676,38 @@ fn repose_slide<M: MatSpec>(
     d: PowderDynamics,
     rng: &mut Rng,
 ) -> bool {
-    let threshold = if vx.abs() >= AGITATED || vy.abs() >= AGITATED {
-        d.slide_keep_threshold
-    } else if neighbor_agitated(window, *cur) {
-        d.slide_start_threshold
+    let kinetic = vx.abs() >= AGITATED || vy.abs() >= AGITATED;
+    let loaded = window
+        .get(cur.translated(0, 1))
+        .is_some_and(|cell| content::phase(cell.material) == Phase::Powder);
+    let threshold = if kinetic {
+        d.topple_keep_threshold
+    } else if loaded || neighbor_agitated(window, *cur) {
+        d.topple_start_threshold
     } else {
         return false;
     };
-    let gain = mul_q16(vy.abs(), d.redirect_keep_q16);
+    let gain = mul_q16(vy.abs(), d.deflect_keep_q16);
     let prefer = prefer_side(*vx, rng);
+    let mut pending = false;
     for side in [prefer, -prefer] {
         if !can_enter::<M>(window, (side, 0), cur.translated(side, 0)) {
             continue;
         }
         let diag = cur.translated(side, -1);
-        if can_enter::<M>(window, (side, -1), diag) && rng.draw().below(threshold) {
+        if !can_enter::<M>(window, (side, -1), diag) {
+            continue;
+        }
+        if rng.draw().below(threshold) {
             *vx += side * gain.max(AGITATED);
             window.swap(*cur, diag);
             *cur = diag;
             return true;
         }
+        pending |= loaded;
+    }
+    if pending {
+        window.mark(*cur);
     }
     false
 }
@@ -721,7 +729,7 @@ fn ledge_flow<M: MatSpec>(
     d: LiquidDynamics,
     rng: &mut Rng,
 ) -> bool {
-    let gain = mul_q16(vy.abs(), d.redirect_keep_q16);
+    let gain = mul_q16(vy.abs(), d.deflect_keep_q16);
     let prefer = prefer_side(*vx, rng);
     let can_flow = rng.draw().below(d.flow_threshold);
     for side in [prefer, -prefer] {
@@ -755,7 +763,7 @@ fn ceiling_spread<M: MatSpec>(
     d: GasDynamics,
     rng: &mut Rng,
 ) -> bool {
-    let gain = mul_q16(vy.abs(), d.redirect_keep_q16);
+    let gain = mul_q16(vy.abs(), d.deflect_keep_q16);
     let prefer = prefer_side(*vx, rng);
     for side in [prefer, -prefer] {
         let beside = cur.translated(side, 0);

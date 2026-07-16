@@ -177,6 +177,7 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
             },
             contact_damage: flammable.damage.max(base.contact_damage),
             tags: base.tags.union(Tags::new(&[Tag::Hot])),
+            density: flammable.density.unwrap_or(base.density),
             burning: Some(BurningDef {
                 rate: flammable.rate,
                 sealed_burn: flammable.sealed_burn,
@@ -265,10 +266,9 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
                             raw_burning.rate * sealed_keep,
                         )))
                     } else {
-                        match raw_burning.base {
-                            Some(base) => SealedBurn::Snuff(base),
-                            None => SealedBurn::Extinguish,
-                        }
+                        let out =
+                            resolve(&raw_burning.burnout, &raw.name)?.unwrap_or(MaterialId::AIR);
+                        SealedBurn::Becomes(raw_burning.base.unwrap_or(out))
                     },
                     emit: chance_threshold(per_tick_chance(raw_burning.emit)),
                     residue,
@@ -573,51 +573,51 @@ fn validate_material(raw: &RawMaterial) -> Result<(), Error> {
     match raw.phase {
         PhaseDef::Empty | PhaseDef::Solid(_) => {}
         PhaseDef::Powder(PowderDef {
-            drag,
-            friction,
-            repose_start,
-            repose_keep,
-            redirect_keep,
+            air_drag,
+            ground_friction,
+            topple_start,
+            topple_keep,
+            deflect,
             cohesion,
         }) => validate_numbers(
             &context,
             &[
-                ("drag", drag),
-                ("friction", friction),
-                ("repose_start", repose_start),
-                ("repose_keep", repose_keep),
-                ("redirect_keep", redirect_keep),
+                ("air_drag", air_drag),
+                ("ground_friction", ground_friction),
+                ("topple_start", topple_start),
+                ("topple_keep", topple_keep),
+                ("deflect", deflect),
                 ("cohesion", cohesion),
             ],
         )?,
         PhaseDef::Liquid(LiquidDef {
-            drag,
-            friction,
-            redirect_keep,
+            air_drag,
+            ground_friction,
+            deflect,
             cohesion,
             flow_rate,
         }) => validate_numbers(
             &context,
             &[
-                ("drag", drag),
-                ("friction", friction),
-                ("redirect_keep", redirect_keep),
+                ("air_drag", air_drag),
+                ("ground_friction", ground_friction),
+                ("deflect", deflect),
                 ("cohesion", cohesion),
                 ("flow_rate", flow_rate),
             ],
         )?,
         PhaseDef::Gas(GasDef {
-            drag,
+            air_drag,
             cohesion,
             turbulence,
-            redirect_keep,
+            deflect,
         }) => validate_numbers(
             &context,
             &[
-                ("drag", drag),
+                ("air_drag", air_drag),
                 ("cohesion", cohesion),
                 ("turbulence", turbulence),
-                ("redirect_keep", redirect_keep),
+                ("deflect", deflect),
             ],
         )?,
     }
@@ -685,8 +685,8 @@ fn validate_number(context: &str, value: f32) -> Result<(), Error> {
     Ok(())
 }
 
-fn drag_keeps(drag: f32) -> (u32, u32) {
-    let drag_loss = 1.0 - per_tick_keep(drag);
+fn drag_keeps(air_drag: f32) -> (u32, u32) {
+    let drag_loss = 1.0 - per_tick_keep(air_drag);
     (
         q16(1.0 - drag_loss.min(0.9)),
         q16(1.0 - (drag_loss * 6.0).min(0.9)),
@@ -698,40 +698,40 @@ fn quantize_dynamics(raw: &RawMaterial) -> Dynamics {
     match raw.phase {
         PhaseDef::Empty | PhaseDef::Solid(_) => Dynamics::None,
         PhaseDef::Powder(PowderDef {
-            drag,
-            friction,
-            repose_start,
-            repose_keep,
-            redirect_keep,
+            air_drag,
+            ground_friction,
+            topple_start,
+            topple_keep,
+            deflect,
             cohesion,
         }) => {
-            let (drag_keep_q16, drag_keep_submerged_q16) = drag_keeps(drag);
+            let (air_drag_keep_q16, submerged_drag_q16) = drag_keeps(air_drag);
             Dynamics::Powder(PowderDynamics {
-                drag_keep_q16,
-                drag_keep_submerged_q16,
-                friction_keep_q16: q16(per_tick_keep(friction)),
+                air_drag_keep_q16,
+                submerged_drag_q16,
+                ground_friction_keep_q16: q16(per_tick_keep(ground_friction)),
                 cohesion_q16: q16(per_tick_chance(cohesion)),
                 restitution_q16,
-                redirect_keep_q16: q16(redirect_keep.clamp(0.0, 1.0)),
-                slide_start_threshold: chance_threshold(per_tick_chance(repose_start)),
-                slide_keep_threshold: chance_threshold(per_tick_chance(repose_keep)),
+                deflect_keep_q16: q16(deflect.clamp(0.0, 1.0)),
+                topple_start_threshold: chance_threshold(per_tick_chance(topple_start)),
+                topple_keep_threshold: chance_threshold(per_tick_chance(topple_keep)),
             })
         }
         PhaseDef::Liquid(LiquidDef {
-            drag,
-            friction,
-            redirect_keep,
+            air_drag,
+            ground_friction,
+            deflect,
             cohesion,
             flow_rate,
         }) => {
-            let (drag_keep_q16, drag_keep_submerged_q16) = drag_keeps(drag);
+            let (air_drag_keep_q16, submerged_drag_q16) = drag_keeps(air_drag);
             Dynamics::Liquid(LiquidDynamics {
-                drag_keep_q16,
-                drag_keep_submerged_q16,
-                friction_keep_q16: q16(per_tick_keep(friction)),
+                air_drag_keep_q16,
+                submerged_drag_q16,
+                ground_friction_keep_q16: q16(per_tick_keep(ground_friction)),
                 cohesion_q16: q16(per_tick_chance(cohesion)),
                 restitution_q16,
-                redirect_keep_q16: q16(redirect_keep.clamp(0.0, 1.0)),
+                deflect_keep_q16: q16(deflect.clamp(0.0, 1.0)),
                 flow_threshold: if flow_rate > 0.0 {
                     chance_threshold(per_tick_chance(flow_rate))
                 } else {
@@ -740,15 +740,15 @@ fn quantize_dynamics(raw: &RawMaterial) -> Dynamics {
             })
         }
         PhaseDef::Gas(GasDef {
-            drag,
+            air_drag,
             cohesion,
             turbulence,
-            redirect_keep,
+            deflect,
         }) => Dynamics::Gas(GasDynamics {
-            drag_keep_q16: drag_keeps(drag).0,
+            air_drag_keep_q16: drag_keeps(air_drag).0,
             cohesion_q16: q16(per_tick_chance(cohesion)),
             restitution_q16,
-            redirect_keep_q16: q16(redirect_keep.clamp(0.0, 1.0)),
+            deflect_keep_q16: q16(deflect.clamp(0.0, 1.0)),
             turbulence_q16: {
                 let dt = 1.0f32 / fallingsand_material::TICK_RATE as f32;
                 q16(turbulence * dt.sqrt() * dt * fallingsand_material::VEL_ONE as f32)

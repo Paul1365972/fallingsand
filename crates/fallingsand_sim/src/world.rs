@@ -99,7 +99,7 @@ impl CellWorld {
     }
 
     pub(crate) fn place_material(&mut self, pos: CellPos, material: MaterialId) {
-        let shade = Hash::new().pos(pos.x, pos.y).bits(4) as u8;
+        let shade = Hash::seed(self.tick).pos(pos.x, pos.y).bits(4) as u8;
         self.set_cell(pos, Cell::new(material, shade));
     }
 

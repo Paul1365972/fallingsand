@@ -74,7 +74,8 @@ impl CursorMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct InputState {
-    pub move_x: i8,
+    pub left: bool,
+    pub right: bool,
     pub jump: bool,
     pub down: bool,
     pub primary: bool,
@@ -83,10 +84,17 @@ pub struct InputState {
     pub cursor_mode: CursorMode,
 }
 
+impl InputState {
+    pub fn move_x(&self) -> i8 {
+        self.right as i8 - self.left as i8
+    }
+}
+
 impl Default for InputState {
     fn default() -> Self {
         Self {
-            move_x: 0,
+            left: false,
+            right: false,
             jump: false,
             down: false,
             primary: false,

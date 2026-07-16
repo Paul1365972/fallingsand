@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-pub use fallingsand_material::Tag;
+pub use fallingsand_material::{Fraction, PerSecond, Tag};
 
 pub type Color = [u8; 4];
 
@@ -89,50 +89,50 @@ impl SolidDef {
 
 #[derive(Debug, Clone, Copy)]
 pub struct PowderDef {
-    pub(crate) drag: f32,
-    pub(crate) friction: f32,
-    pub(crate) repose_start: f32,
-    pub(crate) repose_keep: f32,
-    pub(crate) redirect_keep: f32,
-    pub(crate) cohesion: f32,
+    pub(crate) air_drag: PerSecond,
+    pub(crate) ground_friction: PerSecond,
+    pub(crate) topple_start: PerSecond,
+    pub(crate) topple_keep: PerSecond,
+    pub(crate) deflect: Fraction,
+    pub(crate) cohesion: PerSecond,
 }
 
 impl Default for PowderDef {
     fn default() -> Self {
         Self {
-            drag: 0.0,
-            friction: 0.0,
-            repose_start: 0.0,
-            repose_keep: 0.0,
-            redirect_keep: 1.0,
+            air_drag: 0.0,
+            ground_friction: 0.0,
+            topple_start: 0.0,
+            topple_keep: 0.0,
+            deflect: 1.0,
             cohesion: 0.0,
         }
     }
 }
 
 impl PowderDef {
-    pub fn drag(mut self, value: f32) -> Self {
-        self.drag = value;
+    pub fn air_drag(mut self, value: PerSecond) -> Self {
+        self.air_drag = value;
         self
     }
 
-    pub fn friction(mut self, value: f32) -> Self {
-        self.friction = value;
+    pub fn ground_friction(mut self, value: PerSecond) -> Self {
+        self.ground_friction = value;
         self
     }
 
-    pub fn repose(mut self, start: f32, keep: f32) -> Self {
-        self.repose_start = start;
-        self.repose_keep = keep;
+    pub fn topple(mut self, start: PerSecond, keep: PerSecond) -> Self {
+        self.topple_start = start;
+        self.topple_keep = keep;
         self
     }
 
-    pub fn redirect_keep(mut self, value: f32) -> Self {
-        self.redirect_keep = value;
+    pub fn deflect(mut self, value: Fraction) -> Self {
+        self.deflect = value;
         self
     }
 
-    pub fn cohesion(mut self, value: f32) -> Self {
+    pub fn cohesion(mut self, value: PerSecond) -> Self {
         self.cohesion = value;
         self
     }
@@ -140,19 +140,19 @@ impl PowderDef {
 
 #[derive(Debug, Clone, Copy)]
 pub struct LiquidDef {
-    pub(crate) drag: f32,
-    pub(crate) friction: f32,
-    pub(crate) redirect_keep: f32,
-    pub(crate) cohesion: f32,
-    pub(crate) flow_rate: f32,
+    pub(crate) air_drag: PerSecond,
+    pub(crate) ground_friction: PerSecond,
+    pub(crate) deflect: Fraction,
+    pub(crate) cohesion: PerSecond,
+    pub(crate) flow_rate: PerSecond,
 }
 
 impl Default for LiquidDef {
     fn default() -> Self {
         Self {
-            drag: 0.0,
-            friction: 0.0,
-            redirect_keep: 1.0,
+            air_drag: 0.0,
+            ground_friction: 0.0,
+            deflect: 1.0,
             cohesion: 0.0,
             flow_rate: 0.0,
         }
@@ -160,27 +160,27 @@ impl Default for LiquidDef {
 }
 
 impl LiquidDef {
-    pub fn drag(mut self, value: f32) -> Self {
-        self.drag = value;
+    pub fn air_drag(mut self, value: PerSecond) -> Self {
+        self.air_drag = value;
         self
     }
 
-    pub fn friction(mut self, value: f32) -> Self {
-        self.friction = value;
+    pub fn ground_friction(mut self, value: PerSecond) -> Self {
+        self.ground_friction = value;
         self
     }
 
-    pub fn redirect_keep(mut self, value: f32) -> Self {
-        self.redirect_keep = value;
+    pub fn deflect(mut self, value: Fraction) -> Self {
+        self.deflect = value;
         self
     }
 
-    pub fn cohesion(mut self, value: f32) -> Self {
+    pub fn cohesion(mut self, value: PerSecond) -> Self {
         self.cohesion = value;
         self
     }
 
-    pub fn flow_rate(mut self, value: f32) -> Self {
+    pub fn flow_rate(mut self, value: PerSecond) -> Self {
         self.flow_rate = value;
         self
     }
@@ -188,30 +188,30 @@ impl LiquidDef {
 
 #[derive(Debug, Clone, Copy)]
 pub struct GasDef {
-    pub(crate) drag: f32,
-    pub(crate) cohesion: f32,
+    pub(crate) air_drag: PerSecond,
+    pub(crate) cohesion: PerSecond,
     pub(crate) turbulence: f32,
-    pub(crate) redirect_keep: f32,
+    pub(crate) deflect: Fraction,
 }
 
 impl Default for GasDef {
     fn default() -> Self {
         Self {
-            drag: 0.0,
+            air_drag: 0.0,
             cohesion: 0.0,
             turbulence: 0.0,
-            redirect_keep: 1.0,
+            deflect: 1.0,
         }
     }
 }
 
 impl GasDef {
-    pub fn drag(mut self, value: f32) -> Self {
-        self.drag = value;
+    pub fn air_drag(mut self, value: PerSecond) -> Self {
+        self.air_drag = value;
         self
     }
 
-    pub fn cohesion(mut self, value: f32) -> Self {
+    pub fn cohesion(mut self, value: PerSecond) -> Self {
         self.cohesion = value;
         self
     }
@@ -221,8 +221,8 @@ impl GasDef {
         self
     }
 
-    pub fn redirect_keep(mut self, value: f32) -> Self {
-        self.redirect_keep = value;
+    pub fn deflect(mut self, value: Fraction) -> Self {
+        self.deflect = value;
         self
     }
 }
@@ -273,34 +273,35 @@ pub fn gas() -> GasDef {
 
 #[derive(Debug, Clone, Default)]
 pub struct FlammableDef {
-    pub(crate) ignite: f32,
-    pub(crate) sealed_burn: f32,
-    pub(crate) rate: f32,
-    pub(crate) emit: f32,
+    pub(crate) ignite: PerSecond,
+    pub(crate) sealed_burn: Fraction,
+    pub(crate) rate: PerSecond,
+    pub(crate) emit: PerSecond,
     pub(crate) colors: Vec<Color>,
     pub(crate) residue: Option<MaterialKey>,
-    pub(crate) residue_chance: f32,
+    pub(crate) residue_chance: Fraction,
     pub(crate) burnout: Option<MaterialKey>,
-    pub(crate) damage: f32,
+    pub(crate) damage: PerSecond,
+    pub(crate) density: Option<f32>,
 }
 
 impl FlammableDef {
-    pub fn ignite(mut self, value: f32) -> Self {
+    pub fn ignite(mut self, value: PerSecond) -> Self {
         self.ignite = value;
         self
     }
 
-    pub fn sealed_burn(mut self, value: f32) -> Self {
+    pub fn sealed_burn(mut self, value: Fraction) -> Self {
         self.sealed_burn = value;
         self
     }
 
-    pub fn rate(mut self, value: f32) -> Self {
+    pub fn rate(mut self, value: PerSecond) -> Self {
         self.rate = value;
         self
     }
 
-    pub fn emit(mut self, value: f32) -> Self {
+    pub fn emit(mut self, value: PerSecond) -> Self {
         self.emit = value;
         self
     }
@@ -310,7 +311,7 @@ impl FlammableDef {
         self
     }
 
-    pub fn residue(mut self, material: MaterialKey, chance: f32) -> Self {
+    pub fn residue(mut self, material: MaterialKey, chance: Fraction) -> Self {
         self.residue = Some(material);
         self.residue_chance = chance;
         self
@@ -321,13 +322,18 @@ impl FlammableDef {
         self
     }
 
-    pub fn damage(mut self, value: f32) -> Self {
+    pub fn damage(mut self, value: PerSecond) -> Self {
         self.damage = value;
+        self
+    }
+
+    pub fn density(mut self, value: f32) -> Self {
+        self.density = Some(value);
         self
     }
 }
 
-const DEFAULT_SEALED_BURN: f32 = 0.1;
+const DEFAULT_SEALED_BURN: Fraction = 0.1;
 
 pub fn flammable() -> FlammableDef {
     FlammableDef {
@@ -338,27 +344,27 @@ pub fn flammable() -> FlammableDef {
 
 #[derive(Debug, Clone, Default)]
 pub struct BurningDef {
-    pub(crate) rate: f32,
-    pub(crate) sealed_burn: f32,
-    pub(crate) emit: f32,
+    pub(crate) rate: PerSecond,
+    pub(crate) sealed_burn: Fraction,
+    pub(crate) emit: PerSecond,
     pub(crate) residue: Option<MaterialKey>,
-    pub(crate) residue_chance: f32,
+    pub(crate) residue_chance: Fraction,
     pub(crate) burnout: Option<MaterialKey>,
     pub(crate) base: Option<fallingsand_material::MaterialId>,
 }
 
 impl BurningDef {
-    pub fn rate(mut self, value: f32) -> Self {
+    pub fn rate(mut self, value: PerSecond) -> Self {
         self.rate = value;
         self
     }
 
-    pub fn emit(mut self, value: f32) -> Self {
+    pub fn emit(mut self, value: PerSecond) -> Self {
         self.emit = value;
         self
     }
 
-    pub fn residue(mut self, material: MaterialKey, chance: f32) -> Self {
+    pub fn residue(mut self, material: MaterialKey, chance: Fraction) -> Self {
         self.residue = Some(material);
         self.residue_chance = chance;
         self

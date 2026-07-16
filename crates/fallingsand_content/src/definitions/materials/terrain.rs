@@ -48,9 +48,9 @@ pub fn define(catalog: &mut Catalog) {
             .tag(Tag::Dissolvable)
             .flammable(
                 flammable()
-                    .ignite(10.0)
-                    .rate(1.5)
-                    .emit(14.0)
+                    .ignite(4.0)
+                    .rate(1.2)
+                    .emit(10.0)
                     .residue(ASH, 0.3)
                     .burnout(SMOKE)
                     .damage(7.0),
@@ -61,10 +61,10 @@ pub fn define(catalog: &mut Catalog) {
         (
             GRAVEL,
             powder()
-                .drag(2.5)
-                .friction(97.0)
-                .repose(13.0, 50.0)
-                .redirect_keep(0.2),
+                .air_drag(2.5)
+                .ground_friction(97.0)
+                .topple(13.0, 50.0)
+                .deflect(0.2),
             1900.0,
             [
                 [139, 133, 125, 255],
@@ -77,10 +77,10 @@ pub fn define(catalog: &mut Catalog) {
         (
             SAND,
             powder()
-                .drag(3.0)
-                .friction(48.0)
-                .repose(36.0, 140.0)
-                .redirect_keep(0.45),
+                .air_drag(3.0)
+                .ground_friction(48.0)
+                .topple(36.0, 140.0)
+                .deflect(0.45),
             1600.0,
             [
                 [222, 192, 128, 255],
@@ -93,10 +93,10 @@ pub fn define(catalog: &mut Catalog) {
         (
             SNOW,
             powder()
-                .drag(8.0)
-                .friction(36.0)
-                .repose(48.0, 190.0)
-                .redirect_keep(0.55)
+                .air_drag(8.0)
+                .ground_friction(36.0)
+                .topple(48.0, 190.0)
+                .deflect(0.55)
                 .cohesion(0.1),
             300.0,
             [
@@ -137,10 +137,10 @@ pub fn define(catalog: &mut Catalog) {
         MUD,
         material(
             powder()
-                .drag(4.0)
-                .friction(114.0)
-                .repose(10.0, 40.0)
-                .redirect_keep(0.15)
+                .air_drag(4.0)
+                .ground_friction(114.0)
+                .topple(10.0, 40.0)
+                .deflect(0.15)
                 .cohesion(0.15),
         )
         .density(1700.0)

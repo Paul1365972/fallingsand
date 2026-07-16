@@ -7,6 +7,10 @@ pub const CHUNK_AREA: usize = CHUNK_SIZE * CHUNK_SIZE;
 
 pub const RANDOM_TICKS_PER_CHUNK: u32 = 4;
 
+pub type PerSecond = f32;
+pub type Seconds = f32;
+pub type Fraction = f32;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct MaterialId(pub u16);
 
@@ -88,8 +92,7 @@ pub enum BurningKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SealedBurn {
-    Snuff(MaterialId),
-    Extinguish,
+    Becomes(MaterialId),
     Smoulder(u64),
 }
 
@@ -105,33 +108,33 @@ pub struct Burning {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PowderDynamics {
-    pub drag_keep_q16: u32,
-    pub drag_keep_submerged_q16: u32,
-    pub friction_keep_q16: u32,
+    pub air_drag_keep_q16: u32,
+    pub submerged_drag_q16: u32,
+    pub ground_friction_keep_q16: u32,
     pub cohesion_q16: u32,
     pub restitution_q16: u32,
-    pub redirect_keep_q16: u32,
-    pub slide_start_threshold: u64,
-    pub slide_keep_threshold: u64,
+    pub deflect_keep_q16: u32,
+    pub topple_start_threshold: u64,
+    pub topple_keep_threshold: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LiquidDynamics {
-    pub drag_keep_q16: u32,
-    pub drag_keep_submerged_q16: u32,
-    pub friction_keep_q16: u32,
+    pub air_drag_keep_q16: u32,
+    pub submerged_drag_q16: u32,
+    pub ground_friction_keep_q16: u32,
     pub cohesion_q16: u32,
     pub restitution_q16: u32,
-    pub redirect_keep_q16: u32,
+    pub deflect_keep_q16: u32,
     pub flow_threshold: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GasDynamics {
-    pub drag_keep_q16: u32,
+    pub air_drag_keep_q16: u32,
     pub cohesion_q16: u32,
     pub restitution_q16: u32,
-    pub redirect_keep_q16: u32,
+    pub deflect_keep_q16: u32,
     pub turbulence_q16: u32,
 }
 

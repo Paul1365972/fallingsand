@@ -8,9 +8,9 @@ pub fn define(catalog: &mut Catalog) {
         WATER,
         material(
             liquid()
-                .drag(2.5)
-                .friction(1.2)
-                .redirect_keep(0.98)
+                .air_drag(2.5)
+                .ground_friction(1.2)
+                .deflect(0.98)
                 .cohesion(8.0),
         )
         .density(1000.0)
@@ -18,7 +18,7 @@ pub fn define(catalog: &mut Catalog) {
     );
     catalog.add(
         STEAM,
-        material(gas().drag(6.0).cohesion(0.4).turbulence(39.0))
+        material(gas().air_drag(6.0).cohesion(0.4).turbulence(39.0))
             .density(0.6)
             .colors([
                 [200, 200, 210, 90],
@@ -30,19 +30,20 @@ pub fn define(catalog: &mut Catalog) {
         OIL,
         material(
             liquid()
-                .drag(3.0)
-                .friction(6.3)
-                .redirect_keep(0.9)
+                .air_drag(3.0)
+                .ground_friction(6.3)
+                .deflect(0.9)
                 .cohesion(5.0),
         )
         .density(850.0)
         .colors([[74, 62, 36, 215], [66, 54, 30, 215], [84, 72, 44, 215]])
         .flammable(
             flammable()
-                .ignite(10.0)
+                .ignite(20.0)
                 .sealed_burn(0.0)
-                .rate(0.8)
+                .rate(0.4)
                 .emit(16.0)
+                .density(700.0)
                 .colors([
                     [255, 168, 48, 255],
                     [255, 128, 28, 255],
@@ -57,9 +58,9 @@ pub fn define(catalog: &mut Catalog) {
         LAVA,
         material(
             liquid()
-                .drag(6.0)
-                .friction(42.0)
-                .redirect_keep(0.5)
+                .air_drag(6.0)
+                .ground_friction(42.0)
+                .deflect(0.5)
                 .cohesion(1.5)
                 .flow_rate(15.0),
         )
@@ -78,9 +79,9 @@ pub fn define(catalog: &mut Catalog) {
         ACID,
         material(
             liquid()
-                .drag(2.8)
-                .friction(3.1)
-                .redirect_keep(0.95)
+                .air_drag(2.8)
+                .ground_friction(3.1)
+                .deflect(0.95)
                 .cohesion(6.0),
         )
         .density(1200.0)

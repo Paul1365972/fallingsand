@@ -5,6 +5,7 @@ use fallingsand_core::material::RANDOM_TICKS_PER_CHUNK;
 use fallingsand_core::{CHUNK_SIZE, CellPos, Chunk, ChunkPos, DirtyRect};
 use fallingsand_rng::Hash;
 use rustc_hash::FxHashMap;
+use std::collections::BTreeSet;
 use std::time::Instant;
 
 const RANDOM_TICK_SAMPLE_SALT: u64 = 0x5361_6d70_6c65_5254;
@@ -89,7 +90,7 @@ fn run_phase(world: &mut CellWorld, phase: u32, tick: u64, schedule: &Schedule, 
     let py = ((phase >> 1) & 1) as i32;
 
     let map = world.chunk_map_mut();
-    let mut origins: Vec<ChunkPos> = map
+    let origins: BTreeSet<ChunkPos> = map
         .iter()
         .filter(|(pos, chunk)| {
             let block = (pos.x >> 1, pos.y >> 1);
@@ -97,8 +98,6 @@ fn run_phase(world: &mut CellWorld, phase: u32, tick: u64, schedule: &Schedule, 
         })
         .map(|(pos, _)| ChunkPos::new(((pos.x >> 1) << 1) - 1, ((pos.y >> 1) << 1) - 1))
         .collect();
-    origins.sort_unstable_by_key(|origin| (origin.y, origin.x));
-    origins.dedup();
 
     let mut members: FxHashMap<ChunkPos, (usize, i32, i32)> = FxHashMap::default();
     for (index, &origin) in origins.iter().enumerate() {

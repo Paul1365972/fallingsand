@@ -49,7 +49,7 @@ pub fn step_physics(sim: &mut CellWorld, bodies: &mut PixelBodies, players: &mut
             &mut avatar.actor,
             &mut avatar.controller,
             StepInput {
-                move_x: input.move_x,
+                move_x: input.move_x(),
                 jump: input.jump,
                 jump_pressed,
                 down: input.down,
@@ -57,7 +57,7 @@ pub fn step_physics(sim: &mut CellWorld, bodies: &mut PixelBodies, players: &mut
             },
             avatar.stamp.own_cells(),
         );
-        let facing_left = match input.move_x {
+        let facing_left = match input.move_x() {
             x if x < 0 => true,
             x if x > 0 => false,
             _ => avatar.stamp.facing_left(),

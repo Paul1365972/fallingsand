@@ -5,7 +5,7 @@ material_keys! { FIRE, SMOKE, ASH }
 pub fn define(catalog: &mut Catalog) {
     catalog.add(
         FIRE,
-        material(gas().drag(5.5).turbulence(65.0).redirect_keep(0.4))
+        material(gas().air_drag(5.5).turbulence(65.0).deflect(0.4))
             .density(0.3)
             .colors([
                 [255, 160, 32, 255],
@@ -20,7 +20,7 @@ pub fn define(catalog: &mut Catalog) {
     );
     catalog.add(
         SMOKE,
-        material(gas().drag(7.0).cohesion(0.3).turbulence(90.0))
+        material(gas().air_drag(7.0).cohesion(0.3).turbulence(90.0))
             .density(0.4)
             .colors([[60, 58, 56, 140], [52, 50, 48, 120], [70, 68, 66, 150]]),
     );
@@ -28,10 +28,10 @@ pub fn define(catalog: &mut Catalog) {
         ASH,
         material(
             powder()
-                .drag(4.5)
-                .friction(55.0)
-                .repose(31.0, 120.0)
-                .redirect_keep(0.4),
+                .air_drag(4.5)
+                .ground_friction(55.0)
+                .topple(31.0, 120.0)
+                .deflect(0.4),
         )
         .density(550.0)
         .colors([
