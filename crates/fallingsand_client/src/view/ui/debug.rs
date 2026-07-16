@@ -11,6 +11,7 @@ use fallingsand_core::{
     CHUNK_AREA, CHUNK_SIZE, Cell, ChunkPos, MAX_HP, Phase as MaterialPhase, REGION_SIZE_CELLS,
     SEASON_DAYS,
 };
+use fallingsand_protocol::TickProfile;
 use std::collections::VecDeque;
 
 const BUDGET_MS: f32 = 1000.0 / 60.0;
@@ -56,6 +57,7 @@ pub struct StatWindows {
     upload_bytes: StatWindow,
     rx_per_sec: StatWindow,
     sim_ms: StatWindow,
+    tick_ms: StatWindow,
     tx_bytes: StatWindow,
     slew_ms: StatWindow,
     tps: StatWindow,
@@ -64,6 +66,7 @@ pub struct StatWindows {
     border_chunks: StatWindow,
     awake_chunks: StatWindow,
     particles: StatWindow,
+    phases: [StatWindow; TickProfile::PHASE_COUNT],
 }
 
 fn human_count(n: u64) -> String {
@@ -88,6 +91,58 @@ fn human_bytes(bytes: u64) -> String {
         (bytes as f64, "B")
     };
     format!("{value:>6.1} {unit:>3}")
+}
+
+fn phase_lines(
+    timing: &TickProfile,
+    windows: &mut [StatWindow; TickProfile::PHASE_COUNT],
+    now: f32,
+) -> Vec<String> {
+    let cells: Vec<String> = timing
+        .phases()
+        .iter()
+        .zip(windows.iter_mut())
+        .map(|((label, micros), window)| {
+            let ms = window.avg(now, *micros as f32 / 1000.0);
+            format!("{label} {ms:>5.2}")
+        })
+        .collect();
+    cells.chunks(5).map(|row| row.join("  ")).collect()
+}
+
+fn render_pass_lines(diagnostics: &DiagnosticsStore) -> Vec<String> {
+    let collect = |suffix: &str| {
+        let mut passes: Vec<(&str, f64)> = diagnostics
+            .iter()
+            .filter_map(|d| {
+                let name = d
+                    .path()
+                    .as_str()
+                    .strip_prefix("render/")?
+                    .strip_suffix(suffix)?;
+                let value = d.smoothed()?;
+                (value > 0.0).then_some((name, value))
+            })
+            .collect();
+        passes.sort_by(|a, b| b.1.total_cmp(&a.1));
+        passes.truncate(3);
+        passes
+    };
+    let gpu = collect("/elapsed_gpu");
+    let (label, passes) = if gpu.is_empty() {
+        ("cpu", collect("/elapsed_cpu"))
+    } else {
+        ("gpu", gpu)
+    };
+    if passes.is_empty() {
+        return Vec::new();
+    }
+    let joined = passes
+        .iter()
+        .map(|(name, ms)| format!("{name} {ms:.2}"))
+        .collect::<Vec<_>>()
+        .join("  ");
+    vec![format!("{label}: {joined}")]
 }
 
 pub fn setup_overlay(mut commands: Commands, mut gizmo_configs: ResMut<GizmoConfigStore>) {
@@ -176,6 +231,7 @@ pub fn update_overlay(
         format!("fallingsand v{}", env!("CARGO_PKG_VERSION")),
         format!("{fps:>3.0} fps {frame_ms:>5.1} ms ({frame_min:>5.1}/{frame_max:>5.1})"),
     ];
+    right_lines.extend(render_pass_lines(&diagnostics));
 
     match game.0.ingame() {
         None => {}
@@ -343,14 +399,22 @@ fn playing_lines(
     left_lines.push(format!("selected: {selected}"));
 
     if embedded {
-        let sim_ms = windows.sim_ms.avg(now, server.sim_micros as f32 / 1000.0);
-        let peak_ms = server.peak_sim_micros as f32 / 1000.0;
+        let timing = &server.timing;
+        let sim_ms = windows.sim_ms.avg(now, timing.sim() as f32 / 1000.0);
+        let tick_ms = windows.tick_ms.avg(now, timing.total as f32 / 1000.0);
         right_lines.push(format!(
-            "sim {sim_ms:>6.2} ms ({:>3.0}%) peak {peak_ms:>6.2}",
-            sim_ms / BUDGET_MS * 100.0
+            "sim  {sim_ms:>6.2} ms ({:>3.0}%) peak {:>5.2}",
+            sim_ms / BUDGET_MS * 100.0,
+            timing.peak_sim as f32 / 1000.0,
         ));
         right_lines.push(format!(
-            "tick #{} {:>3.0} tps +{:>2.0} ms",
+            "tick {tick_ms:>6.2} ms ({:>3.0}%) peak {:>5.2}",
+            tick_ms / BUDGET_MS * 100.0,
+            timing.peak_total as f32 / 1000.0,
+        ));
+        right_lines.extend(phase_lines(timing, &mut windows.phases, now));
+        right_lines.push(format!(
+            "#{} {:>3.0} tps +{:>2.0} ms slew",
             server.tick,
             windows.tps.avg(now, server.tps),
             windows.slew_ms.avg(now, server.slew_ms as f32)

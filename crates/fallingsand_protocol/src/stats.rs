@@ -1,0 +1,74 @@
+//! Server telemetry. Not wire-serialized: shared with the embedded client via a
+//! mutex and logged by the dedicated server, so changes never bump `PROTOCOL_VERSION`.
+
+const PEAK_WINDOW_TICKS: u64 = fallingsand_core::ticks_from_secs(2.0);
+
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct TickProfile {
+    pub network: u32,
+    pub player_input: u32,
+    pub regions: u32,
+    pub sim_simulate: u32,
+    pub sim_random_tick: u32,
+    pub physics: u32,
+    pub bodies: u32,
+    pub hazards: u32,
+    pub replicate: u32,
+    pub persistence: u32,
+    pub total: u32,
+    pub peak_sim: u32,
+    pub peak_total: u32,
+}
+
+impl TickProfile {
+    pub const PHASE_COUNT: usize = 10;
+
+    pub fn sim(&self) -> u32 {
+        self.sim_simulate + self.sim_random_tick
+    }
+
+    pub fn phases(&self) -> [(&'static str, u32); Self::PHASE_COUNT] {
+        [
+            ("net", self.network),
+            ("input", self.player_input),
+            ("regions", self.regions),
+            ("move", self.sim_simulate),
+            ("rnd", self.sim_random_tick),
+            ("phys", self.physics),
+            ("body", self.bodies),
+            ("hzrd", self.hazards),
+            ("repl", self.replicate),
+            ("save", self.persistence),
+        ]
+    }
+
+    pub fn finish(&mut self, tick: u64, total_micros: u32) {
+        self.total = total_micros;
+        let sim = self.sim();
+        if tick.is_multiple_of(PEAK_WINDOW_TICKS) {
+            self.peak_sim = sim;
+            self.peak_total = total_micros;
+        } else {
+            self.peak_sim = self.peak_sim.max(sim);
+            self.peak_total = self.peak_total.max(total_micros);
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct ServerStats {
+    pub tick: u64,
+    pub tps: f32,
+    pub slew_ms: u32,
+    pub loaded_chunks: usize,
+    pub active_chunks: usize,
+    pub border_chunks: usize,
+    pub awake_chunks: usize,
+    pub awake_cells: u64,
+    pub loaded_regions: u32,
+    pub dirty_regions: u32,
+    pub pixel_bodies: usize,
+    pub players: usize,
+    pub replicated_bytes: u64,
+    pub timing: TickProfile,
+}

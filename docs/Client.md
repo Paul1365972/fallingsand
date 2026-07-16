@@ -23,7 +23,7 @@ Display/input/UI only — never drives game logic. Bevy is the IO engine; game s
 
 ## UI & input
 
-- **Debug overlay** (F3): world/player context left, performance/system right; F3+G rect visualizer, F3+N game mode.
+- **Debug overlay** (F3): world/player context left, performance/system right (fps, render-pass and server-tick timings — see [Tech.md](Tech.md)); F3+G rect visualizer, F3+N game mode.
 - **Game Menu**: `Escape` opens it above death or connection status. It contains Resume, Settings, and one exit action. Embedded single player pauses and labels the exit `Save & Quit to Menu`; remote play keeps running and uses `Quit to Menu`.
 - **Settings page**: reachable from the main menu and the Game Menu (its own opaque input context, `Escape` closes back to whatever is beneath). Toggles fullscreen, vsync, render mode (`pixel-perfect`/`smooth`/`retro` camera snapping), cursor mode (`smart`/`precise`), and UI scale (`75`/`100`/`125`/`150` percent, default `100`). The exact schema persists as JSON in `saves/settings.json`; missing or invalid files use defaults. Settings reapply on boot through the `ApplyWindow` effect.
 - **Inventory UI**: see [Inventory.md](Inventory.md) — `E` overlay, server-authoritative drag & drop, always-visible hotbar; world input is suppressed while an overlay is open.

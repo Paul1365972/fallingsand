@@ -4,7 +4,8 @@ use bevy::log::{error, info, warn};
 use fallingsand_core::HOTBAR_SLOTS;
 use fallingsand_net::{Connection, ConnectionStatus};
 use fallingsand_protocol::{
-    ClientMessage, PROTOCOL_VERSION, PlayerId, ServerMessage, Stats, decode_message, encode_message,
+    ClientMessage, PROTOCOL_VERSION, PlayerId, ServerMessage, ServerStats, decode_message,
+    encode_message,
 };
 
 const STALL_SECS: f32 = 2.0;
@@ -213,7 +214,7 @@ impl Net {
         }
     }
 
-    pub fn embedded_stats(&self) -> Option<Stats> {
+    pub fn embedded_stats(&self) -> Option<ServerStats> {
         #[cfg(not(target_family = "wasm"))]
         {
             self.embedded

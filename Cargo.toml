@@ -45,6 +45,7 @@ bevy = { version = "0.19.0", default-features = false }
 
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-tracy = "0.11"
 
 bytes = "1.12.0"
 tokio = { version = "1.52.3", default-features = false }
@@ -74,6 +75,11 @@ opt-level = 3
 
 [profile.release]
 lto = "thin"
+
+[profile.perf]
+inherits = "release"
+debug = true
+strip = false
 
 [profile.dist]
 inherits = "release"

@@ -19,3 +19,11 @@ Direction: `material ← {content, core}`, `{material, rng} ← content ← core
 - **Client stays WASM-clean** — the browser build is join-only; rayon, storage, and the embedded server compile out for wasm. CI builds the client for `wasm32-unknown-unknown`.
 - Only the client depends on Bevy; only the server depends on redb.
 - One transport trait spans WebTransport and the in-memory pipe, so single player runs the real protocol, not a shortcut.
+
+## Profiling
+
+Gated so `dist` compiles it all out:
+
+- **Any build:** the server times each tick phase into `ServerStats.timing` (a `TickProfile`); the F3 overlay shows it (embedded), the dedicated server logs it.
+- **Dev + profiling builds:** `RenderDiagnosticsPlugin` adds per-render-pass CPU/GPU timings (CPU-only on WebGPU); the overlay lists the top passes.
+- **`--features profiling` (native):** streams Bevy and sim/tick `tracing` spans to Tracy. `cargo profile` / `cargo profile-server` build on `[profile.perf]` (release + symbols); connect the Tracy 0.11 GUI. `samply`/Superluminal also work on any `[profile.perf]` binary.

@@ -9,6 +9,12 @@ path = "src/main.rs"
 
 [features]
 dev = ["bevy/dynamic_linking", "bevy/dev", "bevy/embedded_watcher"]
+profiling = [
+    "bevy/trace",
+    "bevy/trace_tracy",
+    "bevy/debug",
+    "fallingsand_server/profiling",
+]
 
 [build-dependencies]
 embed-resource = "3"

@@ -16,15 +16,29 @@ const CERT_VALIDITY_DAYS: i64 = 13;
 // cwd-relative; keep the working directory stable so cached ACME certs are reused
 const CERT_DIR: &str = "saves/certs";
 
-fn main() -> anyhow::Result<()> {
-    let _ = dotenvy::dotenv();
+fn init_tracing() {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    #[cfg(feature = "tracy")]
+    {
+        use tracing_subscriber::layer::SubscriberExt;
+        use tracing_subscriber::util::SubscriberInitExt;
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(tracing_subscriber::fmt::layer().with_target(false))
+            .with(tracing_tracy::TracyLayer::default())
+            .init();
+    }
+    #[cfg(not(feature = "tracy"))]
     tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
+        .with_env_filter(filter)
         .with_target(false)
         .init();
+}
+
+fn main() -> anyhow::Result<()> {
+    let _ = dotenvy::dotenv();
+    init_tracing();
     let started = Instant::now();
     info!("fallingsand server v{}", env!("CARGO_PKG_VERSION"));
     let mut args = std::env::args().skip(1);

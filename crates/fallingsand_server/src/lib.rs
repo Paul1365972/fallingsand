@@ -38,7 +38,18 @@ pub(crate) struct WorldInfo {
     pub(crate) name: String,
 }
 
-pub type TickStats = fallingsand_protocol::Stats;
+pub type TickStats = fallingsand_protocol::ServerStats;
+
+macro_rules! timed {
+    ($slot:expr, $name:literal, $body:expr) => {{
+        #[cfg(feature = "profiling")]
+        let _span = tracing::info_span!($name).entered();
+        let start = Instant::now();
+        let result = $body;
+        $slot = start.elapsed().as_micros() as u32;
+        result
+    }};
+}
 
 pub struct WorldConfig {
     pub name: String,
@@ -183,13 +194,14 @@ impl Server {
                 let stats = self.stats();
                 if stats.tick.is_multiple_of(10 * TICK_RATE as u64) {
                     tracing::debug!(
-                        "tick {}: {} players, {}/{} chunks awake, {} bodies, sim {:.1}ms",
+                        "tick {}: {} players, {}/{} chunks awake, {} bodies, sim {:.1}ms tick {:.1}ms",
                         stats.tick,
                         stats.players,
                         stats.awake_chunks,
                         stats.loaded_chunks,
                         stats.pixel_bodies,
-                        stats.sim_micros as f64 / 1000.0,
+                        stats.timing.sim() as f64 / 1000.0,
+                        stats.timing.total as f64 / 1000.0,
                     );
                 }
             }
@@ -203,77 +215,108 @@ impl Server {
 
 impl ServerState {
     fn tick(&mut self) -> Result<(), ServerError> {
-        let disconnected = session::drain_network(
-            &mut *self.listener,
-            &mut self.sessions,
-            &mut self.players,
-            self.spawn,
-            self.sim.tick(),
-            &mut self.persistence,
-        );
-        self.remove_disconnected_players(disconnected);
-        for (player, text) in commands::run_commands(&mut self.players, &mut self.clock) {
-            self.sessions.send_to_player(
-                player,
-                &fallingsand_protocol::ServerMessage::System { text },
+        let tick_start = Instant::now();
+
+        timed!(self.stats.timing.network, "network", {
+            let disconnected = session::drain_network(
+                &mut *self.listener,
+                &mut self.sessions,
+                &mut self.players,
+                self.spawn,
+                self.sim.tick(),
+                &mut self.persistence,
             );
-        }
-        dig::apply_player_inputs(&mut self.sim, &mut self.bodies, &mut self.players);
-        inventory::apply_slot_actions(&mut self.players);
-        lifecycle::begin_revives(&mut self.players, self.spawn, self.sim.tick());
-        regions::compute_tickets(&mut self.tickets, self.spawn, &self.players);
-        regions::manage_regions(
-            &mut self.sim,
-            &mut self.regions,
-            &self.generator,
-            &mut self.persistence,
-            &self.tickets,
-            &mut self.bodies,
-        )?;
+            self.remove_disconnected_players(disconnected);
+            for (player, text) in commands::run_commands(&mut self.players, &mut self.clock) {
+                self.sessions.send_to_player(
+                    player,
+                    &fallingsand_protocol::ServerMessage::System { text },
+                );
+            }
+        });
+
+        timed!(self.stats.timing.player_input, "player_input", {
+            dig::apply_player_inputs(&mut self.sim, &mut self.bodies, &mut self.players);
+            inventory::apply_slot_actions(&mut self.players);
+            lifecycle::begin_revives(&mut self.players, self.spawn, self.sim.tick());
+        });
+
+        timed!(self.stats.timing.regions, "regions", {
+            regions::compute_tickets(&mut self.tickets, self.spawn, &self.players);
+            regions::manage_regions(
+                &mut self.sim,
+                &mut self.regions,
+                &self.generator,
+                &mut self.persistence,
+                &self.tickets,
+                &mut self.bodies,
+            )
+        })?;
+
         sim::step_simulation(&mut self.sim, &self.tickets, &mut self.stats);
-        physics::step_physics(&mut self.sim, &mut self.bodies, &mut self.players);
-        bodies::step_bodies(
-            &mut self.sim,
-            &self.tickets,
-            &mut self.bodies,
-            &mut self.players,
-            &mut self.stats,
-        );
-        hazards::apply_hazards(&self.sim, &mut self.players);
+
+        timed!(self.stats.timing.physics, "physics", {
+            physics::step_physics(&mut self.sim, &mut self.bodies, &mut self.players);
+        });
+
+        timed!(self.stats.timing.bodies, "bodies", {
+            bodies::step_bodies(
+                &mut self.sim,
+                &self.tickets,
+                &mut self.bodies,
+                &mut self.players,
+                &mut self.stats,
+            );
+        });
+
         let tick = self.sim.tick();
-        lifecycle::resolve_lethal(&mut self.sim, &mut self.bodies, &mut self.players, tick);
-        for (player, text) in lifecycle::advance_materializations(
-            &mut self.sim,
-            &mut self.bodies,
-            &mut self.players,
-            tick,
-        ) {
+        let materialized = timed!(self.stats.timing.hazards, "hazards", {
+            hazards::apply_hazards(&self.sim, &mut self.players);
+            lifecycle::resolve_lethal(&mut self.sim, &mut self.bodies, &mut self.players, tick);
+            lifecycle::advance_materializations(
+                &mut self.sim,
+                &mut self.bodies,
+                &mut self.players,
+                tick,
+            )
+        });
+        for (player, text) in materialized {
             self.sessions.send_to_player(
                 player,
                 &fallingsand_protocol::ServerMessage::System { text },
             );
         }
+
         self.clock.advance();
         self.emitter.emit(&self.players, tick);
-        replication::replicate(
-            &mut self.sessions,
-            &self.players,
-            &self.sim,
-            &self.clock,
-            &self.regions,
-            &self.generator,
-            &self.emitter.spawns,
-            &mut self.replication,
-            &mut self.stats,
-        );
-        persistence::autosave(
-            &self.sim,
-            &mut self.regions,
-            &self.world,
-            &self.clock,
-            &self.players,
-            &mut self.persistence,
-        );
+
+        timed!(self.stats.timing.replicate, "replicate", {
+            replication::replicate(
+                &mut self.sessions,
+                &self.players,
+                &self.sim,
+                &self.clock,
+                &self.regions,
+                &self.generator,
+                &self.emitter.spawns,
+                &mut self.replication,
+                &mut self.stats,
+            );
+        });
+
+        timed!(self.stats.timing.persistence, "persistence", {
+            persistence::autosave(
+                &self.sim,
+                &mut self.regions,
+                &self.world,
+                &self.clock,
+                &self.players,
+                &mut self.persistence,
+            );
+        });
+
+        let total = tick_start.elapsed().as_micros() as u32;
+        self.stats.timing.finish(tick, total);
         Ok(())
     }
 
