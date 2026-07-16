@@ -1,7 +1,7 @@
-use crate::TickStats;
 use crate::player::{PLAYER_MASS, Players};
 use crate::regions::ChunkTickets;
 use fallingsand_core::{CellPos, Fixed, TICK_DT};
+use fallingsand_protocol::ServerStats;
 use fallingsand_sim::bodies::{
     ActorDynamics, OwnerMap, PixelBody, apply_damage, detect_island, register_body,
     step_bodies as simulate_bodies, wake_covering,
@@ -36,7 +36,7 @@ pub fn step_bodies(
     tickets: &ChunkTickets,
     bodies: &mut PixelBodies,
     players: &mut Players,
-    stats: &mut TickStats,
+    stats: &mut ServerStats,
 ) {
     let damage = sim.take_damage();
     if !damage.is_empty() {

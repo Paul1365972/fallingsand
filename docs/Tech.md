@@ -22,8 +22,6 @@ Direction: `material ← {content, core}`, `{material, rng} ← content ← core
 
 ## Profiling
 
-Gated so `dist` compiles it all out:
-
-- **Any build:** the server times each tick phase into `ServerStats.timing` (a `TickProfile`); the F3 overlay shows it (embedded), the dedicated server logs it.
+- **Every build:** the server times each tick phase into `ServerStats.timing` (a `TickProfile`); the F3 overlay shows it (embedded), the dedicated server logs sim/tick times.
 - **Dev + profiling builds:** `RenderDiagnosticsPlugin` adds per-render-pass CPU/GPU timings (CPU-only on WebGPU); the overlay lists the top passes.
-- **`--features profiling` (native):** streams Bevy and sim/tick `tracing` spans to Tracy. `cargo profile` / `cargo profile-server` build on `[profile.perf]` (release + symbols); connect the Tracy 0.11 GUI. `samply`/Superluminal also work on any `[profile.perf]` binary.
+- **Tracy (native):** `cargo profile` / `cargo profile-server` build `[profile.perf]` (release + symbols) with the Tracy features (client `profiling`, server `tracy`) and stream Bevy and sim/tick `tracing` spans to the Tracy 0.11 GUI. `dist` compiles all spans out. `samply`/Superluminal also work on any `[profile.perf]` binary.

@@ -2,12 +2,12 @@ use crate::inventory::Inventory;
 use crate::player::{PlayerLife, Players};
 use crate::regions::RegionMap;
 use crate::session::Sessions;
-use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y, TickStats};
+use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y};
 use fallingsand_core::{CHUNK_SIZE, Calendar, CellOffset, ChunkPos, ItemStack};
 use fallingsand_protocol::{
     ChunkDebugRects, ChunkOp, InteractionState, InteractionStatus, ParticleSpawn,
     PlayerAvatarState, PlayerId, PlayerState, SelfAvatarState, SelfLife, SelfState, ServerMessage,
-    TickFrame, cells_to_wire,
+    ServerStats, TickFrame, cells_to_wire,
 };
 use fallingsand_sim::CellWorld;
 use fallingsand_worldgen::WorldGenerator;
@@ -55,7 +55,7 @@ pub fn replicate(
     generator: &WorldGenerator,
     particles: &[ParticleSpawn],
     replication: &mut ReplicationState,
-    stats: &mut TickStats,
+    stats: &mut ServerStats,
 ) {
     let tick = sim.tick();
     let all_players: Vec<PlayerState> = players

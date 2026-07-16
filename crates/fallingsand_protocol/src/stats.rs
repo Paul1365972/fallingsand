@@ -1,6 +1,3 @@
-//! Server telemetry. Not wire-serialized: shared with the embedded client via a
-//! mutex and logged by the dedicated server, so changes never bump `PROTOCOL_VERSION`.
-
 const PEAK_WINDOW_TICKS: u64 = fallingsand_core::ticks_from_secs(2.0);
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -13,6 +10,7 @@ pub struct TickProfile {
     pub physics: u32,
     pub bodies: u32,
     pub hazards: u32,
+    pub lifecycle: u32,
     pub replicate: u32,
     pub persistence: u32,
     pub total: u32,
@@ -21,7 +19,16 @@ pub struct TickProfile {
 }
 
 impl TickProfile {
-    pub const PHASE_COUNT: usize = 10;
+    pub const PHASE_GROUPS: [usize; 4] = [3, 2, 4, 2];
+    pub const PHASE_COUNT: usize = {
+        let mut count = 0;
+        let mut i = 0;
+        while i < Self::PHASE_GROUPS.len() {
+            count += Self::PHASE_GROUPS[i];
+            i += 1;
+        }
+        count
+    };
 
     pub fn sim(&self) -> u32 {
         self.sim_simulate + self.sim_random_tick
@@ -37,6 +44,7 @@ impl TickProfile {
             ("physics", self.physics),
             ("bodies", self.bodies),
             ("hazards", self.hazards),
+            ("lifecycle", self.lifecycle),
             ("replicate", self.replicate),
             ("persist", self.persistence),
         ]

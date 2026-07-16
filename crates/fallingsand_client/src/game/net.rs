@@ -524,13 +524,14 @@ fn start_dial(net: &mut Net, target: ConnectTarget) {
 #[cfg(not(target_family = "wasm"))]
 mod embedded {
     use super::Session;
-    use fallingsand_server::{Server, ServerConfig, ServerControl, TickStats};
+    use fallingsand_protocol::ServerStats;
+    use fallingsand_server::{Server, ServerConfig, ServerControl};
     use std::sync::{Arc, Mutex};
 
     pub struct EmbeddedServer {
         pub control: Arc<ServerControl>,
         thread: Option<std::thread::JoinHandle<()>>,
-        pub stats: Arc<Mutex<TickStats>>,
+        pub stats: Arc<Mutex<ServerStats>>,
     }
 
     impl Drop for EmbeddedServer {
@@ -545,7 +546,7 @@ mod embedded {
     pub fn launch(world_name: String) -> (Session, EmbeddedServer) {
         let (listener, dialer) = fallingsand_net::memory_listener();
         let control = Arc::new(ServerControl::default());
-        let stats = Arc::new(Mutex::new(TickStats::default()));
+        let stats = Arc::new(Mutex::new(ServerStats::default()));
 
         let thread_control = control.clone();
         let thread_stats = stats.clone();

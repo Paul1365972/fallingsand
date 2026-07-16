@@ -2,4 +2,5 @@
 /dist
 /saves
 /screenshot-*.png
+*.tracy
 .env

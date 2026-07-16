@@ -17,6 +17,17 @@ use std::collections::VecDeque;
 const BUDGET_MS: f32 = 1000.0 / 60.0;
 const STAT_WINDOW: f32 = 1.0;
 
+pub struct DiagnosticsPlugin;
+
+impl Plugin for DiagnosticsPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<StatWindows>();
+        app.add_plugins(FrameTimeDiagnosticsPlugin::default());
+        #[cfg(all(debug_assertions, not(feature = "profiling")))]
+        app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+    }
+}
+
 #[derive(Component)]
 pub(crate) struct DebugTextLeft;
 
@@ -93,33 +104,30 @@ fn human_bytes(bytes: u64) -> String {
     format!("{value:>6.1} {unit:>3}")
 }
 
-// Phases grouped to mirror the tick pipeline: pre-sim, sim, post-sim, output.
-const PHASE_GROUPS: [usize; 4] = [3, 2, 3, 2];
-
 fn phase_lines(
     timing: &TickProfile,
     windows: &mut [StatWindow; TickProfile::PHASE_COUNT],
     now: f32,
 ) -> Vec<String> {
-    let cells: Vec<String> = timing
+    let entries: Vec<String> = timing
         .phases()
         .iter()
         .zip(windows.iter_mut())
         .map(|((label, micros), window)| {
             let ms = window.avg(now, *micros as f32 / 1000.0);
-            format!("{label} {ms:.2}")
+            format!("{label} {ms:>5.2}")
         })
         .collect();
     let mut lines = Vec::new();
     let mut start = 0;
-    for len in PHASE_GROUPS {
-        lines.push(cells[start..start + len].join("  "));
+    for len in TickProfile::PHASE_GROUPS {
+        lines.push(entries[start..start + len].join("  "));
         start += len;
     }
     lines
 }
 
-fn draw_line(diagnostics: &DiagnosticsStore) -> Option<String> {
+fn render_pass_line(diagnostics: &DiagnosticsStore) -> Option<String> {
     let collect = |suffix: &str| {
         let mut passes: Vec<(&str, f64)> = diagnostics
             .iter()
@@ -238,7 +246,7 @@ pub fn update_overlay(
         format!("fallingsand v{}", env!("CARGO_PKG_VERSION")),
         format!("fps {fps:>3.0}  frame {frame_ms:>5.1} ms ({frame_min:>4.1}-{frame_max:>4.1})"),
     ];
-    right_lines.extend(draw_line(&diagnostics));
+    right_lines.extend(render_pass_line(&diagnostics));
 
     match game.0.ingame() {
         None => {}
@@ -403,8 +411,9 @@ fn playing_lines(
         .to_string();
     left_lines.push(format!("selected: {selected}"));
 
-    if let Some(server) = ingame.net.embedded_stats() {
-        server_lines(&server, windows, now, right_lines);
+    match ingame.net.embedded_stats() {
+        Some(server) => server_lines(&server, windows, now, right_lines),
+        None => right_lines.push(format!("server tick #{}", view.server_tick)),
     }
     right_lines.push(format!(
         "client {} chunks  {} players  {:.0} particles",

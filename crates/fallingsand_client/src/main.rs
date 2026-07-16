@@ -1,7 +1,6 @@
 mod game;
 mod view;
 
-use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::prelude::*;
 use bevy::render::error_handler::{ErrorType, RenderError, RenderErrorHandler, RenderErrorPolicy};
 use bevy::sprite_render::Material2dPlugin;
@@ -54,7 +53,7 @@ fn main() {
         Material2dPlugin::<view::sky::AtmosphereMaterial>::default(),
         Material2dPlugin::<view::parallax::CaveWallMaterial>::default(),
         Material2dPlugin::<view::parallax::SilhouetteMaterial>::default(),
-        FrameTimeDiagnosticsPlugin::default(),
+        view::ui::debug::DiagnosticsPlugin,
     ))
     .insert_resource(ClearColor(Color::srgb(0.08, 0.09, 0.13)))
     .insert_resource(RenderErrorHandler(render_error_policy))
@@ -65,7 +64,6 @@ fn main() {
     .init_resource::<view::players::NametagVisuals>()
     .init_resource::<view::sky::Sky>()
     .init_resource::<view::sky::ActiveLights>()
-    .init_resource::<view::ui::debug::StatWindows>()
     .add_systems(
         Startup,
         (
@@ -130,12 +128,6 @@ fn main() {
     );
     #[cfg(not(target_family = "wasm"))]
     app.add_systems(Update, view::icon::set_window_icons);
-    // Must come after DefaultPlugins (needs RenderApp); Bevy already adds it
-    // under trace_tracy, so guard against a double-add.
-    #[cfg(any(debug_assertions, feature = "profiling"))]
-    if !app.is_plugin_added::<bevy::render::diagnostic::RenderDiagnosticsPlugin>() {
-        app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
-    }
     view::chunks::setup_render_app(&mut app);
     app.run();
 }

@@ -42,28 +42,21 @@ pub fn step_scoped(
         }
     }
 
-    let simulate_micros = {
-        #[cfg(feature = "profiling")]
-        let _span = tracing::info_span!("sim_simulate").entered();
-        let start = Instant::now();
-        run_sim(
-            world,
-            tick,
-            &|pos, chunk| simulate(pos) && !chunk.sim_rect().is_empty(),
-            &|window| simulate_block(window, tick, simulate),
-        );
-        start.elapsed().as_micros() as u32
-    };
+    let simulate_micros = run_sim(
+        "simulate",
+        world,
+        tick,
+        &|pos, chunk| simulate(pos) && !chunk.sim_rect().is_empty(),
+        &|window| simulate_block(window, tick, simulate),
+    );
 
-    let random_tick_micros = {
-        #[cfg(feature = "profiling")]
-        let _span = tracing::info_span!("sim_random_tick").entered();
-        let start = Instant::now();
-        run_sim(world, tick, &|pos, _| random_tick(pos), &|window| {
-            random_tick_block(window, tick, random_tick)
-        });
-        start.elapsed().as_micros() as u32
-    };
+    let random_tick_micros = run_sim(
+        "random_tick",
+        world,
+        tick,
+        &|pos, _| random_tick(pos),
+        &|window| random_tick_block(window, tick, random_tick),
+    );
 
     SimTimings {
         simulate_micros,
@@ -71,10 +64,22 @@ pub fn step_scoped(
     }
 }
 
-fn run_sim(world: &mut CellWorld, tick: u64, schedule: &Schedule, kernel: &Kernel) {
+fn run_sim(
+    name: &'static str,
+    world: &mut CellWorld,
+    tick: u64,
+    schedule: &Schedule,
+    kernel: &Kernel,
+) -> u32 {
+    #[cfg(feature = "profiling")]
+    let _span = tracing::info_span!("sim", name).entered();
+    #[cfg(not(feature = "profiling"))]
+    let _ = name;
+    let start = Instant::now();
     for phase in 0..4 {
         run_phase(world, phase, tick, schedule, kernel);
     }
+    start.elapsed().as_micros() as u32
 }
 
 fn run_phase(world: &mut CellWorld, phase: u32, tick: u64, schedule: &Schedule, kernel: &Kernel) {
