@@ -69,14 +69,24 @@ pub enum PhaseDef {
     Gas(GasDef),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BondGroup {
+    Mineral,
+    Wood,
+    Foliage,
+    Ice,
+}
+
+pub const BOND_GROUP_COUNT: usize = 4;
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SolidDef {
-    pub(crate) rigid_capable: bool,
+    pub(crate) bond: Option<BondGroup>,
 }
 
 impl SolidDef {
-    pub fn rigid(mut self) -> Self {
-        self.rigid_capable = true;
+    pub fn rigid(mut self, group: BondGroup) -> Self {
+        self.bond = Some(group);
         self
     }
 }
@@ -673,6 +683,7 @@ pub struct Catalog {
     pub(crate) items: Vec<(ItemKey, ItemDef)>,
     pub(crate) recipes: Vec<RecipeDef>,
     pub(crate) thresholds: Vec<ThresholdDef>,
+    pub(crate) bonds: Vec<(BondGroup, BondGroup)>,
 }
 
 impl Catalog {
@@ -708,5 +719,9 @@ impl Catalog {
             name: name.into(),
             rate,
         });
+    }
+
+    pub fn bond(&mut self, a: BondGroup, b: BondGroup) {
+        self.bonds.push((a, b));
     }
 }

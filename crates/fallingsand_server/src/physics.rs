@@ -5,14 +5,14 @@ use crate::player::{
 use fallingsand_core::{CellPos, Fixed};
 use fallingsand_protocol::GameMode;
 use fallingsand_sim::CellWorld;
-use fallingsand_sim::bodies::{vacated_wake_targets, wake_covering};
+use fallingsand_sim::bodies::vacated_wake_targets;
 use fallingsand_sim::physics::{
     Footprint, PlayerParams, StepInput, footprint_at, grounded, step_player,
 };
 use fallingsand_sim::player::{DUCK_ROWS, STAND_ROWS, stamp_player, unstamp_player};
 
 pub fn step_physics(sim: &mut CellWorld, bodies: &mut PixelBodies, players: &mut Players) {
-    bodies.refresh_owners();
+    bodies.ensure_owners();
     let params = PlayerParams::default();
     let prior: Vec<_> = players
         .iter()
@@ -79,8 +79,9 @@ pub fn step_physics(sim: &mut CellWorld, bodies: &mut PixelBodies, players: &mut
                     }
                     restore_x += blocked.dvx;
                     restore_y += blocked.dvy;
-                    pixel_body.rest_secs = 0.0;
-                    pixel_body.asleep = false;
+                    if blocked.dvx != 0.0 {
+                        pixel_body.rest_secs = 0.0;
+                    }
                 }
                 None => {
                     let jx = PLAYER_MASS * blocked.dvx;
@@ -166,7 +167,7 @@ fn wake_neighbours(
     vacated: &[CellPos],
 ) {
     for pos in vacated_wake_targets(sim, &|pos| stamp.covers(pos), vacated) {
-        wake_covering(&mut bodies.bodies, &bodies.owners, pos);
+        bodies.wake_at(pos);
     }
 }
 
@@ -180,9 +181,8 @@ pub fn unstamp_and_wake(
         .map(|set| set.iter().copied().collect())
         .unwrap_or_default();
     unstamp_player(sim, stamp);
-    bodies.refresh_owners();
     for pos in vacated_wake_targets(sim, &|_| false, &vacated) {
-        wake_covering(&mut bodies.bodies, &bodies.owners, pos);
+        bodies.wake_at(pos);
     }
 }
 

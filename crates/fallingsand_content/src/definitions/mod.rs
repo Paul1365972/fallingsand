@@ -2,7 +2,7 @@ mod items;
 mod materials;
 mod reactions;
 
-use crate::Catalog;
+use crate::{BondGroup, Catalog};
 
 pub fn catalog() -> Catalog {
     let mut catalog = Catalog::new([
@@ -14,5 +14,7 @@ pub fn catalog() -> Catalog {
     materials::define(&mut catalog);
     reactions::define(&mut catalog);
     items::define(&mut catalog);
+    catalog.bond(BondGroup::Wood, BondGroup::Foliage);
+    catalog.bond(BondGroup::Ice, BondGroup::Mineral);
     catalog
 }

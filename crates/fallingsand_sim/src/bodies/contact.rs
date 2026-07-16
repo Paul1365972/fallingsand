@@ -8,7 +8,6 @@ pub(super) enum Other {
     Terrain,
     Entity {
         index: usize,
-        inv_mass: f32,
     },
     Body {
         index: usize,
@@ -47,13 +46,7 @@ fn entity_contact(
     let depth_x = entity.bbox.half_w.to_f32() + 0.5 - (cx - entity.bbox.x).to_f32().abs();
     let depth_y = entity.bbox.half_h.to_f32() + 0.5 - (cy - entity.bbox.y).to_f32().abs();
     let depth = depth_x.min(depth_y).clamp(0.5, 4.0);
-    Some((
-        Other::Entity {
-            index,
-            inv_mass: entity.inv_mass,
-        },
-        depth,
-    ))
+    Some((Other::Entity { index }, depth))
 }
 
 fn classify(
@@ -72,7 +65,7 @@ fn classify(
                 index: other_index,
                 rx: (Fixed::cell_center(obstruction.x) - other.x).to_f32(),
                 ry: (Fixed::cell_center(obstruction.y) - other.y).to_f32(),
-                resting: other.asleep || other.rest_secs > 0.0,
+                resting: other.rest_secs > 0.0,
             },
             0.5,
             other.restitution,

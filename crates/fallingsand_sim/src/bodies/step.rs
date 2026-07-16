@@ -9,13 +9,12 @@ use crate::world::CellWorld;
 use fallingsand_core::content;
 use fallingsand_core::{CellPos, ChunkPos, Fixed, Phase, TICK_DT};
 
-const SLEEP_SECS: f32 = 0.33;
+pub const SETTLE_SECS: f32 = 0.5;
 const WAKE_SPEED: f32 = 0.5;
 const SETTLE_SPEED_SQ: f32 = 100.0;
 const SETTLE_SPIN: f32 = 1.5;
 const SUPPORT_NORMAL_Y: f32 = 0.25;
 const RESTING_SPIN_KEEP: f32 = 0.5;
-const CONTACT_KEEP_PER_SEC: f32 = 0.25;
 const BLOCKED_DAMPING: f32 = 0.5;
 const FRICTION: f32 = 0.4;
 const CONTACT_ITERATIONS: usize = 4;
@@ -50,8 +49,17 @@ pub fn step_bodies(
     gravity: Fixed,
     simulated: &dyn Fn(ChunkPos) -> bool,
 ) -> Vec<(f32, f32)> {
-    let mut entity_impulses = vec![(0.0, 0.0); entities.len()];
     let entity_boxes: Vec<ActorAabb> = entities.iter().map(|entity| entity.bbox).collect();
+    let mut entity_states: Vec<PointState> = entities
+        .iter()
+        .map(|entity| PointState {
+            vx: entity.vx,
+            vy: entity.vy,
+            spin: 0.0,
+            inv_mass: entity.inv_mass,
+            inv_inertia: 0.0,
+        })
+        .collect();
 
     let mut order: Vec<usize> = (0..bodies.len()).collect();
     order.sort_unstable_by_key(|&index| {
@@ -65,7 +73,7 @@ pub fn step_bodies(
     for &index in &order {
         let frozen = !span_simulated(world, simulated, &bodies[index]);
         bodies[index].frozen = frozen;
-        if frozen || bodies[index].asleep {
+        if frozen {
             continue;
         }
         {
@@ -76,9 +84,6 @@ pub fn step_bodies(
                 && body.spin == 0.0
             {
                 body.rest_secs += TICK_DT;
-                if body.rest_secs >= SLEEP_SECS {
-                    body.asleep = true;
-                }
                 continue;
             }
         }
@@ -97,10 +102,6 @@ pub fn step_bodies(
             let travel = ((vx * vx + vy * vy).sqrt() + body.spin.abs() * radius) * TICK_DT;
             ((travel / SUBSTEP_TRAVEL).ceil() as u32).max(1)
         };
-        let substep = Substep {
-            count: substeps,
-            damping: CONTACT_KEEP_PER_SEC.powf(TICK_DT / substeps as f32),
-        };
 
         for _ in 0..substeps {
             step_substep(
@@ -109,8 +110,8 @@ pub fn step_bodies(
                 owners,
                 entities,
                 index,
-                substep,
-                &mut entity_impulses,
+                substeps,
+                &mut entity_states,
             );
         }
         let old_raster = bodies[index].raster.clone();
@@ -129,7 +130,15 @@ pub fn step_bodies(
             wake_covering(bodies, owners, pos);
         }
     }
-    entity_impulses
+
+    entities
+        .iter()
+        .zip(&entity_states)
+        .map(|(entity, state)| {
+            let mass = 1.0 / entity.inv_mass;
+            ((state.vx - entity.vx) * mass, (state.vy - entity.vy) * mass)
+        })
+        .collect()
 }
 
 fn apply_buoyancy(world: &CellWorld, body: &mut PixelBody, gravity: Fixed) {
@@ -178,12 +187,6 @@ fn apply_buoyancy(world: &CellWorld, body: &mut PixelBody, gravity: Fixed) {
 }
 
 #[derive(Clone, Copy)]
-struct Substep {
-    count: u32,
-    damping: f32,
-}
-
-#[derive(Clone, Copy)]
 struct PointState {
     vx: f32,
     vy: f32,
@@ -228,22 +231,24 @@ fn step_substep(
     owners: &OwnerMap,
     entities: &[ActorDynamics],
     index: usize,
-    substep: Substep,
-    entity_impulses: &mut [(f32, f32)],
+    substeps: u32,
+    entity_states: &mut [PointState],
 ) {
-    let sub_dt = TICK_DT / substep.count as f32;
+    let sub_dt = TICK_DT / substeps as f32;
     let (prev_x, prev_y, prev_angle) = {
         let body = &mut bodies[index];
         let prev = (body.x, body.y, body.angle);
-        body.x += body.vx.per_substep(substep.count);
-        body.y += body.vy.per_substep(substep.count);
+        body.x += body.vx.per_substep(substeps);
+        body.y += body.vy.per_substep(substeps);
         body.angle = (body.angle + body.spin * sub_dt).rem_euclid(std::f32::consts::TAU);
         prev
     };
 
     let contacts = find_contacts(world, entities, bodies, owners, index);
     let touching = !contacts.is_empty();
-    let static_only = contacts.iter().all(|contact| contact.other.is_static());
+    let restable = contacts
+        .iter()
+        .all(|contact| !matches!(contact.other, Other::Body { resting: false, .. }));
     let supported = contacts
         .iter()
         .any(|contact| contact.other.is_static() && contact.ny > SUPPORT_NORMAL_Y);
@@ -251,8 +256,6 @@ fn step_substep(
     let restitution = bodies[index].restitution;
     let mut points: Vec<PointState> = vec![state_of(&bodies[index])];
     let mut body_slots: Vec<(usize, usize)> = Vec::new();
-    let mut entity_states: Vec<PointState> = Vec::new();
-    let mut entity_slots: Vec<(usize, usize)> = Vec::new();
 
     let mut solver: Vec<SolverContact> = Vec::with_capacity(contacts.len());
     for contact in &contacts {
@@ -271,19 +274,8 @@ fn step_substep(
             }
             Other::Entity {
                 index: entity_index,
-                inv_mass,
-            } => {
-                let slot = slot_for(&mut entity_states, &mut entity_slots, entity_index, || {
-                    PointState {
-                        vx: entities[entity_index].vx,
-                        vy: entities[entity_index].vy,
-                        spin: 0.0,
-                        inv_mass,
-                        inv_inertia: 0.0,
-                    }
-                });
-                Partner::Entity { slot }
-            }
+                ..
+            } => Partner::Entity { slot: entity_index },
         };
         solver.push(SolverContact {
             rx: contact.rx,
@@ -299,7 +291,7 @@ fn step_substep(
     }
 
     for sc in &mut solver {
-        let vn = relative_vn(&points, &entity_states, sc);
+        let vn = relative_vn(&points, entity_states, sc);
         sc.bias = if -vn > BOUNCE_MIN_SPEED {
             sc.restitution * vn
         } else {
@@ -309,22 +301,7 @@ fn step_substep(
 
     for _ in 0..CONTACT_ITERATIONS {
         for i in 0..solver.len() {
-            solve_contact(&mut solver, &mut points, &mut entity_states, i);
-        }
-    }
-
-    if touching {
-        points[0].vx *= substep.damping;
-        points[0].vy *= substep.damping;
-        points[0].spin *= substep.damping;
-        for &(_, slot) in &body_slots {
-            points[slot].vx *= substep.damping;
-            points[slot].vy *= substep.damping;
-            points[slot].spin *= substep.damping;
-        }
-        for state in &mut entity_states {
-            state.vx *= substep.damping;
-            state.vy *= substep.damping;
+            solve_contact(&mut solver, &mut points, entity_states, i);
         }
     }
 
@@ -333,7 +310,7 @@ fn step_substep(
         && active.spin.abs() < SETTLE_SPIN;
     {
         let body = &mut bodies[index];
-        if touching && slow && static_only && supported {
+        if touching && slow && restable && supported {
             body.x = prev_x;
             body.y = prev_y;
             body.angle = prev_angle;
@@ -374,14 +351,7 @@ fn step_substep(
         let moved = (after.vx - before.vx).abs() + (after.vy - before.vy).abs();
         if moved > WAKE_SPEED || (after.spin - before.spin).abs() > WAKE_SPEED {
             other.rest_secs = 0.0;
-            other.asleep = false;
         }
-    }
-    for &(entity_index, slot) in &entity_slots {
-        let after = entity_states[slot];
-        let mass = 1.0 / entities[entity_index].inv_mass;
-        entity_impulses[entity_index].0 += (after.vx - entities[entity_index].vx) * mass;
-        entity_impulses[entity_index].1 += (after.vy - entities[entity_index].vy) * mass;
     }
 }
 

@@ -1,12 +1,12 @@
 use super::fire::{ASH, SMOKE};
-use crate::{Catalog, Tag, emission, flammable, material, material_keys, solid};
+use crate::{BondGroup, Catalog, Tag, emission, flammable, material, material_keys, solid};
 
 material_keys! { COAL, IRON_ORE, GOLD_ORE, CRYSTAL }
 
 pub fn define(catalog: &mut Catalog) {
     catalog.add(
         COAL,
-        material(solid().rigid())
+        material(solid().rigid(BondGroup::Mineral))
             .density(1450.0)
             .colors([
                 [52, 50, 52, 255],
@@ -75,7 +75,7 @@ pub fn define(catalog: &mut Catalog) {
             true,
         ),
     ] {
-        let mut definition = material(solid().rigid())
+        let mut definition = material(solid().rigid(BondGroup::Mineral))
             .density(density)
             .colors(colors)
             .hardness(hardness)

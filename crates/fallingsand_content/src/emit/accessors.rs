@@ -42,6 +42,15 @@ pub fn emit(content: &Content) -> TokenStream {
         }),
         true,
     );
+    let bond_group = accessor_fn(
+        "bond_group",
+        quote!(u8),
+        content.materials.iter().map(|mat| {
+            let value = mat.bond_group.unwrap_or(u8::MAX);
+            quote!(#value)
+        }),
+        true,
+    );
     let ignition = accessor_fn(
         "ignition",
         quote!(Option<crate::material::Ignition>),
@@ -98,6 +107,12 @@ pub fn emit(content: &Content) -> TokenStream {
         }),
         false,
     );
+    let bond_group_count = Literal::usize_unsuffixed(content.bond_masks.len());
+    let bond_masks = content
+        .bond_masks
+        .iter()
+        .map(|&mask| Literal::u32_suffixed(mask))
+        .collect::<Vec<_>>();
     let mut row_consts = Vec::new();
     for index in 0..len {
         let row = &content.reactions[index * len..(index + 1) * len];
@@ -122,12 +137,22 @@ pub fn emit(content: &Content) -> TokenStream {
         #density_milli
         #tags
         #is_rigid_capable
+        #bond_group
         #ignition
         #material
 
         #[inline]
         pub const fn is_flammable(id: crate::material::MaterialId) -> bool {
             ignition(id).is_some()
+        }
+
+        const BOND_MASKS: [u32; #bond_group_count] = [#(#bond_masks),*];
+
+        #[inline]
+        pub const fn bonds(a: crate::material::MaterialId, b: crate::material::MaterialId) -> bool {
+            let ga = bond_group(a);
+            let gb = bond_group(b);
+            ga != u8::MAX && gb != u8::MAX && BOND_MASKS[ga as usize] & (1 << gb) != 0
         }
 
         const NO_REACTION: crate::material::Reaction = crate::material::Reaction {

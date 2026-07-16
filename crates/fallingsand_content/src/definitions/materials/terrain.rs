@@ -1,5 +1,5 @@
 use super::fire::{ASH, SMOKE};
-use crate::{Catalog, Tag, flammable, material, material_keys, powder, solid};
+use crate::{BondGroup, Catalog, Tag, flammable, material, material_keys, powder, solid};
 
 material_keys! {
     STONE, DIRT, GRASS, GRAVEL, SAND, SNOW, ICE, MUD, CLAY, SANDSTONE, DEEPSTONE, BASALT,
@@ -9,7 +9,7 @@ material_keys! {
 pub fn define(catalog: &mut Catalog) {
     catalog.add(
         STONE,
-        material(solid().rigid())
+        material(solid().rigid(BondGroup::Mineral))
             .density(2600.0)
             .colors([
                 [110, 110, 115, 255],
@@ -120,7 +120,7 @@ pub fn define(catalog: &mut Catalog) {
 
     catalog.add(
         ICE,
-        material(solid().rigid())
+        material(solid().rigid(BondGroup::Ice))
             .density(917.0)
             .colors([
                 [158, 200, 234, 255],
@@ -168,7 +168,7 @@ pub fn define(catalog: &mut Catalog) {
     );
     catalog.add(
         SANDSTONE,
-        material(solid().rigid())
+        material(solid().rigid(BondGroup::Mineral))
             .density(2300.0)
             .colors([
                 [208, 178, 128, 255],
@@ -182,7 +182,7 @@ pub fn define(catalog: &mut Catalog) {
     );
     catalog.add(
         DEEPSTONE,
-        material(solid().rigid())
+        material(solid().rigid(BondGroup::Mineral))
             .density(2900.0)
             .colors([
                 [82, 82, 92, 255],
@@ -195,7 +195,7 @@ pub fn define(catalog: &mut Catalog) {
     );
     catalog.add(
         BASALT,
-        material(solid().rigid())
+        material(solid().rigid(BondGroup::Mineral))
             .density(3000.0)
             .colors([
                 [56, 52, 58, 255],
@@ -208,7 +208,7 @@ pub fn define(catalog: &mut Catalog) {
     );
     catalog.add(
         BRICK,
-        material(solid().rigid())
+        material(solid().rigid(BondGroup::Mineral))
             .density(2400.0)
             .colors([
                 [156, 90, 74, 255],

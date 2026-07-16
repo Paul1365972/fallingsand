@@ -3,8 +3,11 @@ mod island;
 mod rotation;
 mod step;
 
-pub use island::{apply_damage, detect_island, register_body};
-pub use step::{settle_body, step_bodies};
+pub use island::{
+    BodyParts, apply_damage, body_parts, detect_island, register_body, revive_body, stamp_raster,
+    unstamp_body,
+};
+pub use step::{SETTLE_SECS, settle_body, step_bodies};
 
 use crate::physics::ActorAabb;
 use crate::world::CellWorld;
@@ -94,12 +97,10 @@ pub struct PixelBody {
     pub rest_secs: f32,
     pub(crate) raster: Raster,
     pub frozen: bool,
-    pub asleep: bool,
 }
 
 pub fn wake_covering(bodies: &mut [PixelBody], owners: &OwnerMap, pos: CellPos) {
     if let Some(body) = owners.get(pos).and_then(|index| bodies.get_mut(index)) {
-        body.asleep = false;
         body.rest_secs = 0.0;
     }
 }

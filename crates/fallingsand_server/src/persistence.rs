@@ -2,25 +2,22 @@ use crate::WorldInfo;
 use crate::bodies::PixelBodies;
 use crate::inventory::Inventory;
 use crate::player::{AvatarSnapshot, Player, PlayerLife, Players, RestoredPlayer, ResumeSnapshot};
-use crate::regions::{
-    RegionMap, body_region_radius, collect_dirty_saves, mark_changed_regions, mark_saved,
-};
+use crate::regions::{RegionMap, collect_dirty_saves, mark_changed_regions, mark_saved};
 use fallingsand_core::{
     CHUNK_AREA, CHUNK_SIZE, Calendar, Cell, CellPos, DirtyRect, Fixed, HOTBAR_SLOTS,
     Inventory as CoreInventory, ItemId, ItemStack, MaterialId, PLAYER_SLOTS, REGION_AREA_CHUNKS,
     Region, RegionPos, content,
 };
 use fallingsand_protocol::{GameMode, PlayerUuid};
-use fallingsand_sim::CellWorld;
-use fallingsand_sim::bodies::settle_body;
+use fallingsand_sim::bodies::{BodyParts, body_parts};
+use fallingsand_sim::{CellWorld, PixelBody};
 use redb::{Database, ReadableDatabase, TableDefinition};
-use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
 
-pub const REGION_FORMAT_VERSION: u8 = 11;
-pub const WORLD_FORMAT_VERSION: u16 = 21;
+pub const REGION_FORMAT_VERSION: u8 = 12;
+pub const WORLD_FORMAT_VERSION: u16 = 22;
 const AUTOSAVE_INTERVAL_TICKS: u64 = fallingsand_core::ticks_from_secs(10.0);
 const CELL_BYTES: usize = 8;
 const RECT_BYTES: usize = 4;
@@ -38,6 +35,75 @@ pub struct WorldMeta {
     pub name: String,
     pub world_age: u64,
     pub tick: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BodyRecord {
+    pub width: u8,
+    pub height: u8,
+    pub cells: Vec<(u16, u8)>,
+    pub x: Fixed,
+    pub y: Fixed,
+    pub vx: Fixed,
+    pub vy: Fixed,
+    pub angle: f32,
+    pub spin: f32,
+    pub rest_secs: f32,
+}
+
+pub fn body_record(body: &PixelBody) -> BodyRecord {
+    let parts = body_parts(body);
+    BodyRecord {
+        width: parts.width,
+        height: parts.height,
+        cells: parts
+            .cells
+            .iter()
+            .map(|cell| (cell.material.0, cell.shade_flags))
+            .collect(),
+        x: parts.x,
+        y: parts.y,
+        vx: parts.vx,
+        vy: parts.vy,
+        angle: parts.angle,
+        spin: parts.spin,
+        rest_secs: parts.rest_secs,
+    }
+}
+
+pub fn record_to_parts(record: &BodyRecord) -> BodyParts {
+    BodyParts {
+        width: record.width,
+        height: record.height,
+        cells: record
+            .cells
+            .iter()
+            .map(|&(material, shade_flags)| {
+                let mut cell = Cell::AIR;
+                cell.material = MaterialId(material.min(content::MATERIAL_COUNT as u16 - 1));
+                cell.shade_flags = shade_flags;
+                cell.set_body(false);
+                cell
+            })
+            .collect(),
+        x: record.x,
+        y: record.y,
+        vx: record.vx,
+        vy: record.vy,
+        angle: record.angle,
+        spin: record.spin,
+        rest_secs: record.rest_secs,
+    }
+}
+
+pub fn body_home_region(body: &PixelBody) -> RegionPos {
+    CellPos::new(body.x.floor_cell(), body.y.floor_cell()).region()
+}
+
+pub struct RegionLoad {
+    pub region: Region,
+    pub bodies: Vec<BodyRecord>,
+    pub dirty: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -287,14 +353,22 @@ impl Persistence {
         Ok(())
     }
 
-    pub fn load_region(&mut self, pos: RegionPos) -> Result<Option<(Region, bool)>, StoreError> {
+    pub fn load_region(&mut self, pos: RegionPos) -> Result<Option<RegionLoad>, StoreError> {
         if let Some(blob) = self.pending_regions.get(&pos) {
-            let region = decode_region(blob)?;
+            let (region, bodies) = decode_region(blob)?;
             self.pending_regions.remove(&pos);
-            return Ok(Some((region, true)));
+            return Ok(Some(RegionLoad {
+                region,
+                bodies,
+                dirty: true,
+            }));
         }
         self.store.as_ref().map_or(Ok(None), |store| {
-            Ok(store.load_region(pos)?.map(|region| (region, false)))
+            Ok(store.load_region(pos)?.map(|(region, bodies)| RegionLoad {
+                region,
+                bodies,
+                dirty: false,
+            }))
         })
     }
 
@@ -404,7 +478,10 @@ impl WorldStore {
         Ok(())
     }
 
-    pub fn load_region(&self, pos: RegionPos) -> Result<Option<Region>, StoreError> {
+    pub fn load_region(
+        &self,
+        pos: RegionPos,
+    ) -> Result<Option<(Region, Vec<BodyRecord>)>, StoreError> {
         let read = self.db.begin_read()?;
         let table = read.open_table(REGIONS)?;
         let Some(guard) = table.get(pos.zorder_key())? else {
@@ -458,6 +535,7 @@ impl WorldStore {
 pub fn autosave(
     sim: &CellWorld,
     regions: &mut RegionMap,
+    bodies: &PixelBodies,
     info: &WorldInfo,
     clock: &Calendar,
     players: &Players,
@@ -468,7 +546,7 @@ pub fn autosave(
         return;
     }
 
-    let to_save = collect_dirty_saves(sim, regions);
+    let to_save = collect_dirty_saves(sim, regions, bodies);
     let saved_regions: Vec<_> = to_save.iter().map(|(pos, _)| *pos).collect();
     persistence.stage_regions(to_save);
     match persistence.flush_regions() {
@@ -497,38 +575,16 @@ pub fn autosave(
 pub fn save_everything(
     sim: &mut CellWorld,
     regions: &mut RegionMap,
-    bodies: &mut PixelBodies,
+    bodies: &PixelBodies,
     players: &Players,
     persistence: &mut Persistence,
     info: &WorldInfo,
     clock: &Calendar,
-    final_save: bool,
 ) {
     let started = std::time::Instant::now();
 
-    if final_save && !bodies.bodies.is_empty() {
-        let mut touched = FxHashSet::default();
-        for body in bodies.bodies.drain(..) {
-            settle_body(sim, &body);
-            let radius = body_region_radius(&body);
-            let (cx, cy) = (body.x.floor_cell(), body.y.floor_cell());
-            let min = CellPos::new(cx - radius, cy - radius).region();
-            let max = CellPos::new(cx + radius + 1, cy + radius + 1).region();
-            for region_y in min.y..=max.y {
-                for region_x in min.x..=max.x {
-                    touched.insert(RegionPos::new(region_x, region_y));
-                }
-            }
-        }
-        for pos in touched {
-            if let Some(state) = regions.states.get_mut(&pos) {
-                state.dirty = true;
-            }
-        }
-    }
-
     mark_changed_regions(sim, regions);
-    let to_save = collect_dirty_saves(sim, regions);
+    let to_save = collect_dirty_saves(sim, regions, bodies);
     let saved_regions: Vec<_> = to_save.iter().map(|(pos, _)| *pos).collect();
     persistence.stage_regions(to_save);
     let region_count = match persistence.flush_regions() {
@@ -582,10 +638,11 @@ fn parse_meta(bytes: &[u8]) -> Result<WorldMeta, StoreError> {
     Ok(postcard::from_bytes(bytes)?)
 }
 
-pub fn encode_region(region: &Region) -> Vec<u8> {
+pub fn encode_region(region: &Region, bodies: &[BodyRecord]) -> Vec<u8> {
     let mut raw = Vec::with_capacity(REGION_RAW_BYTES);
     for chunk in region.chunks() {
-        for cell in chunk.cells() {
+        for &cell in chunk.cells() {
+            let cell = if cell.is_body() { Cell::AIR } else { cell };
             raw.extend_from_slice(&cell.material.0.to_le_bytes());
             raw.extend_from_slice(&cell.vx.to_le_bytes());
             raw.extend_from_slice(&cell.vy.to_le_bytes());
@@ -597,6 +654,7 @@ pub fn encode_region(region: &Region) -> Vec<u8> {
         let rect = chunk.sim_rect();
         raw.extend_from_slice(&[rect.min_x, rect.min_y, rect.max_x, rect.max_y]);
     }
+    raw.extend_from_slice(&postcard::to_allocvec(bodies).expect("record serialization"));
     let cell_blob = lz4_flex::compress_prepend_size(&raw);
     let mut blob = Vec::with_capacity(cell_blob.len() + 1);
     blob.push(REGION_FORMAT_VERSION);
@@ -618,7 +676,7 @@ fn decode_rect(bytes: &[u8]) -> DirtyRect {
     )
 }
 
-pub fn decode_region(blob: &[u8]) -> Result<Region, StoreError> {
+pub fn decode_region(blob: &[u8]) -> Result<(Region, Vec<BodyRecord>), StoreError> {
     let (&version, compressed) = blob
         .split_first()
         .ok_or_else(|| StoreError::CorruptRegion("empty blob".into()))?;
@@ -627,12 +685,13 @@ pub fn decode_region(blob: &[u8]) -> Result<Region, StoreError> {
     }
     let raw = lz4_flex::decompress_size_prepended(compressed)
         .map_err(|err| StoreError::CorruptRegion(err.to_string()))?;
-    if raw.len() != REGION_RAW_BYTES {
+    if raw.len() < REGION_RAW_BYTES {
         return Err(StoreError::CorruptRegion(format!(
-            "expected {REGION_RAW_BYTES} bytes, got {}",
+            "expected at least {REGION_RAW_BYTES} bytes, got {}",
             raw.len()
         )));
     }
+    let bodies: Vec<BodyRecord> = postcard::from_bytes(&raw[REGION_RAW_BYTES..])?;
     let mut region = Region::new();
     let mut cursor = raw[..REGION_CELL_BYTES].chunks_exact(CELL_BYTES);
     for chunk in region.chunks_mut().iter_mut() {
@@ -653,9 +712,9 @@ pub fn decode_region(blob: &[u8]) -> Result<Region, StoreError> {
             };
         }
     }
-    let rects = raw[REGION_CELL_BYTES..].chunks_exact(RECT_BYTES);
+    let rects = raw[REGION_CELL_BYTES..REGION_RAW_BYTES].chunks_exact(RECT_BYTES);
     for (chunk, bytes) in region.chunks_mut().iter_mut().zip(rects) {
         chunk.sim = decode_rect(bytes);
     }
-    Ok(region)
+    Ok((region, bodies))
 }

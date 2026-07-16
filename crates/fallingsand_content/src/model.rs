@@ -1,6 +1,6 @@
 use crate::{
-    BurningDef, Catalog, EmissionDef, Error, FlammableDef, GasDef, IngredientDef, LiquidDef,
-    MaterialDef, MaterialKey, OperandDef, PhaseDef, PowderDef, ProductDef, SolidDef,
+    BOND_GROUP_COUNT, BurningDef, Catalog, EmissionDef, Error, FlammableDef, GasDef, IngredientDef,
+    LiquidDef, MaterialDef, MaterialKey, OperandDef, PhaseDef, PowderDef, ProductDef, SolidDef,
 };
 use fallingsand_material::{
     Burning, BurningKind, Dynamics, GasDynamics, Ignition, LiquidDynamics, MaterialId, Phase,
@@ -94,6 +94,7 @@ pub struct Mat {
     pub colors: Vec<[u8; 4]>,
     pub tags: Tags,
     pub rigid_capable: bool,
+    pub bond_group: Option<u8>,
     pub hardness: f32,
     pub restitution: f32,
     pub surface_grip: f32,
@@ -129,6 +130,7 @@ pub struct Content {
     pub recipes: Vec<RecipeOut>,
     pub item_for_material: Vec<u16>,
     pub thresholds: Vec<(String, u64)>,
+    pub bond_masks: Vec<u32>,
 }
 
 const MATERIAL_STACK_MAX: u32 = 10_000;
@@ -288,6 +290,10 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
                 .any(Option::is_some);
         let const_name = raw.name.to_ascii_uppercase();
         let (emission, flicker) = bake_emission(raw.emission);
+        let bond_group = match raw.phase {
+            PhaseDef::Solid(SolidDef { bond: Some(group) }) => Some(group as u8),
+            _ => None,
+        };
         materials.push(Mat {
             spec_name: camel_case(&const_name),
             name: raw.name.to_ascii_lowercase(),
@@ -298,12 +304,8 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
             emission,
             flicker,
             tags: raw.tags,
-            rigid_capable: matches!(
-                raw.phase,
-                PhaseDef::Solid(SolidDef {
-                    rigid_capable: true
-                })
-            ),
+            rigid_capable: bond_group.is_some(),
+            bond_group,
             hardness: raw.hardness,
             restitution: raw.restitution,
             surface_grip: raw.surface_grip,
@@ -327,6 +329,15 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
     let recipes = build_recipes(catalog, &by_name, &item_for_material)?;
     let thresholds = build_thresholds(catalog)?;
 
+    let mut bond_masks = vec![0u32; BOND_GROUP_COUNT];
+    for (group, mask) in bond_masks.iter_mut().enumerate() {
+        *mask |= 1 << group;
+    }
+    for &(a, b) in &catalog.bonds {
+        bond_masks[a as usize] |= 1 << (b as usize);
+        bond_masks[b as usize] |= 1 << (a as usize);
+    }
+
     Ok(Content {
         materials,
         ignitions,
@@ -335,6 +346,7 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
         recipes,
         item_for_material,
         thresholds,
+        bond_masks,
     })
 }
 

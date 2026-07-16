@@ -349,6 +349,7 @@ impl ServerState {
                 persistence::autosave(
                     &s.sim,
                     &mut s.regions,
+                    &s.bodies,
                     &s.world,
                     &s.clock,
                     &s.players,
@@ -366,12 +367,11 @@ impl ServerState {
         persistence::save_everything(
             &mut self.sim,
             &mut self.regions,
-            &mut self.bodies,
+            &self.bodies,
             &self.players,
             &mut self.persistence,
             &self.world,
             &self.clock,
-            true,
         );
     }
 
