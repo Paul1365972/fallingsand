@@ -338,6 +338,7 @@ pub struct BurningDef {
     pub(crate) residue: Option<MaterialKey>,
     pub(crate) residue_chance: f32,
     pub(crate) burnout: Option<MaterialKey>,
+    pub(crate) base: Option<fallingsand_material::MaterialId>,
 }
 
 impl BurningDef {

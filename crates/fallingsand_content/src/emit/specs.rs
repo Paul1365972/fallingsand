@@ -13,7 +13,19 @@ pub fn emit(content: &Content) -> TokenStream {
         let burning = match &mat.burning {
             Some(burning) => {
                 let burn = Literal::u64_suffixed(burning.burn);
-                let burn_sealed = Literal::u64_suffixed(burning.burn_sealed);
+                let sealed = match burning.sealed {
+                    fallingsand_material::SealedBurn::Snuff(id) => {
+                        let id = material_id(id);
+                        quote!(crate::material::SealedBurn::Snuff(#id))
+                    }
+                    fallingsand_material::SealedBurn::Extinguish => {
+                        quote!(crate::material::SealedBurn::Extinguish)
+                    }
+                    fallingsand_material::SealedBurn::Smoulder(threshold) => {
+                        let threshold = Literal::u64_suffixed(threshold);
+                        quote!(crate::material::SealedBurn::Smoulder(#threshold))
+                    }
+                };
                 let emit = Literal::u64_suffixed(burning.emit);
                 let residue = option_tokens(burning.residue.map(|(threshold, id)| {
                     let threshold = Literal::u64_suffixed(threshold);
@@ -32,7 +44,7 @@ pub fn emit(content: &Content) -> TokenStream {
                 quote! {
                     Some(crate::material::Burning {
                         burn: #burn,
-                        burn_sealed: #burn_sealed,
+                        sealed: #sealed,
                         emit: #emit,
                         residue: #residue,
                         burnout: #burnout,

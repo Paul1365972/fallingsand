@@ -4,8 +4,7 @@ use crate::{
 };
 use fallingsand_material::{
     Burning, BurningKind, Dynamics, GasDynamics, Ignition, LiquidDynamics, MaterialId, Phase,
-    PowderDynamics, Reaction, Tag, Tags, milli, per_random_tick_chance, per_tick_chance,
-    per_tick_keep, q16,
+    PowderDynamics, Reaction, SealedBurn, Tag, Tags, milli, per_tick_chance, per_tick_keep, q16,
 };
 use fallingsand_rng::chance_threshold;
 use std::collections::HashMap;
@@ -162,15 +161,11 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
             continue;
         };
         let base = raws[index].clone();
-        let chance = per_tick_chance(flammable.ignite);
-        let random_chance = per_random_tick_chance(flammable.ignite);
         let sealed_keep = flammable.sealed_burn.clamp(0.0, 1.0);
         ignitions[index] = Some(Ignition {
             into: MaterialId(raws.len() as u16),
-            open: chance_threshold(chance),
-            sealed: chance_threshold(chance * sealed_keep),
-            open_random: chance_threshold(random_chance),
-            sealed_random: chance_threshold(random_chance * sealed_keep),
+            open: chance_threshold(per_tick_chance(flammable.ignite)),
+            sealed: chance_threshold(per_tick_chance(flammable.ignite * sealed_keep)),
         });
         raws.push(RawMaterial {
             name: format!("burning_{}", base.name),
@@ -188,6 +183,7 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
                 residue: flammable.residue.clone(),
                 residue_chance: flammable.residue_chance,
                 burnout: flammable.burnout.clone(),
+                base: Some(MaterialId(index as u16)),
             }),
             flammable: None,
             emission: Some(BURNING_EMISSION),
@@ -263,10 +259,15 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
                 let sealed_keep = raw_burning.sealed_burn.clamp(0.0, 1.0);
                 Some(Burning {
                     burn: chance_threshold(per_tick_chance(raw_burning.rate)),
-                    burn_sealed: if sealed_keep <= 0.0 {
-                        u64::MAX
+                    sealed: if sealed_keep > 0.0 {
+                        SealedBurn::Smoulder(chance_threshold(per_tick_chance(
+                            raw_burning.rate * sealed_keep,
+                        )))
                     } else {
-                        chance_threshold(per_tick_chance(raw_burning.rate) * sealed_keep)
+                        match raw_burning.base {
+                            Some(base) => SealedBurn::Snuff(base),
+                            None => SealedBurn::Extinguish,
+                        }
                     },
                     emit: chance_threshold(per_tick_chance(raw_burning.emit)),
                     residue,

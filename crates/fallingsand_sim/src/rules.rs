@@ -2,17 +2,9 @@ use crate::window::SimWindow;
 use fallingsand_core::content::{self, MatSpec, material};
 use fallingsand_core::{
     Burning, BurningKind, CARDINAL_NEIGHBORS as NEIGHBORS, Cell, CellPos, Dynamics, GRID_GRAVITY,
-    GasDynamics, LiquidDynamics, MaterialId, Phase, PowderDynamics, TICK_DT, VEL_ONE,
+    GasDynamics, LiquidDynamics, MaterialId, Phase, PowderDynamics, SealedBurn, TICK_DT, VEL_ONE,
 };
 use fallingsand_rng::{Hash, Rng};
-
-const RANDOM_TICK_SALT: u64 = 0x5261_6e64_5469_636b;
-
-#[derive(Clone, Copy)]
-enum IgniteRate {
-    Interaction,
-    Random,
-}
 
 const VEL_MAX: i32 = 31 * VEL_ONE;
 const MAX_STEP: i32 = 31;
@@ -75,8 +67,8 @@ fn update_cell_spec<M: MatSpec>(
 ) {
     let mut rng = Hash::seed(tick).pos(pos.x, pos.y).rng();
 
-    if const { M::IS_HOT && M::BURNING.is_some() } {
-        ignite_neighbors(window, pos, &mut rng, tick_byte, IgniteRate::Interaction);
+    if const { M::IS_HOT } {
+        ignite_neighbors(window, pos, &mut rng, tick_byte);
     }
     if let Some(burning) = const { M::BURNING }
         && burning_step::<M>(window, pos, burning, &mut rng, tick_byte)
@@ -94,15 +86,12 @@ fn update_cell_spec<M: MatSpec>(
     }
 }
 
-fn random_tick_spec<M: MatSpec>(window: &mut SimWindow, pos: CellPos, tick: u64, tick_byte: u8) {
-    if const { !(M::IS_HOT && M::BURNING.is_none()) } {
-        return;
-    }
-    let mut rng = Hash::seed(tick)
-        .add(RANDOM_TICK_SALT)
-        .pos(pos.x, pos.y)
-        .rng();
-    ignite_neighbors(window, pos, &mut rng, tick_byte, IgniteRate::Random);
+fn random_tick_spec<M: MatSpec>(
+    _window: &mut SimWindow,
+    _pos: CellPos,
+    _tick: u64,
+    _tick_byte: u8,
+) {
 }
 
 fn react<M: MatSpec>(
@@ -152,13 +141,7 @@ fn note_structural(window: &mut SimWindow, pos: CellPos, material: MaterialId) {
     }
 }
 
-fn ignite_neighbors(
-    window: &mut SimWindow,
-    pos: CellPos,
-    rng: &mut Rng,
-    tick_byte: u8,
-    rate: IgniteRate,
-) {
+fn ignite_neighbors(window: &mut SimWindow, pos: CellPos, rng: &mut Rng, tick_byte: u8) {
     for (dx, dy) in NEIGHBORS {
         let neighbor_pos = pos.translated(dx, dy);
         let Some(neighbor) = window.get(neighbor_pos) else {
@@ -170,18 +153,15 @@ fn ignite_neighbors(
         let Some(ignition) = content::ignition(neighbor.material) else {
             continue;
         };
-        let (open, sealed) = match rate {
-            IgniteRate::Interaction => (ignition.open, ignition.sealed),
-            IgniteRate::Random => (ignition.open_random, ignition.sealed_random),
-        };
         let threshold = if oxygen_exposed(window, neighbor_pos) {
-            open
+            ignition.open
         } else {
-            sealed
+            ignition.sealed
         };
         if threshold == 0 {
             continue;
         }
+        window.mark(pos);
         if rng.draw().below(threshold) {
             let mut lit = neighbor;
             lit.material = ignition.into;
@@ -214,7 +194,22 @@ fn burning_step<M: MatSpec>(
     let burn = if oxygen_exposed(window, pos) {
         burning.burn
     } else {
-        burning.burn_sealed
+        match burning.sealed {
+            SealedBurn::Snuff(base) => {
+                let Some(mut cell) = window.get(pos) else {
+                    return true;
+                };
+                cell.material = base;
+                cell.updated = tick_byte;
+                window.set(pos, cell);
+                return true;
+            }
+            SealedBurn::Extinguish => {
+                burn_out::<M>(window, pos, burning, rng, tick_byte);
+                return true;
+            }
+            SealedBurn::Smoulder(threshold) => threshold,
+        }
     };
     if rng.draw().below(burn) {
         burn_out::<M>(window, pos, burning, rng, tick_byte);

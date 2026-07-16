@@ -48,9 +48,9 @@ pub fn define(catalog: &mut Catalog) {
             .tag(Tag::Dissolvable)
             .flammable(
                 flammable()
-                    .ignite(3.0)
-                    .rate(5.0)
-                    .emit(18.0)
+                    .ignite(10.0)
+                    .rate(1.5)
+                    .emit(14.0)
                     .residue(ASH, 0.3)
                     .burnout(SMOKE)
                     .damage(7.0),

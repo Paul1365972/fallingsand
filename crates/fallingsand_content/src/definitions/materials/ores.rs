@@ -19,7 +19,7 @@ pub fn define(catalog: &mut Catalog) {
             .tag(Tag::Dissolvable)
             .flammable(
                 flammable()
-                    .ignite(0.6)
+                    .ignite(2.0)
                     .rate(0.028)
                     .emit(5.0)
                     .colors([

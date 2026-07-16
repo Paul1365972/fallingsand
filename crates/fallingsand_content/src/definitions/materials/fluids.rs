@@ -39,9 +39,9 @@ pub fn define(catalog: &mut Catalog) {
         .colors([[74, 62, 36, 215], [66, 54, 30, 215], [84, 72, 44, 215]])
         .flammable(
             flammable()
-                .ignite(3.0)
+                .ignite(10.0)
                 .sealed_burn(0.0)
-                .rate(0.5)
+                .rate(0.8)
                 .emit(16.0)
                 .colors([
                     [255, 168, 48, 255],

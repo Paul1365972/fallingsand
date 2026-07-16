@@ -5,7 +5,7 @@ pub const VEL_ONE: i32 = 1024;
 pub const CHUNK_SIZE: usize = 64;
 pub const CHUNK_AREA: usize = CHUNK_SIZE * CHUNK_SIZE;
 
-pub const RANDOM_TICKS_PER_CHUNK: u32 = 16;
+pub const RANDOM_TICKS_PER_CHUNK: u32 = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct MaterialId(pub u16);
@@ -89,8 +89,6 @@ pub struct Ignition {
     pub into: MaterialId,
     pub open: u64,
     pub sealed: u64,
-    pub open_random: u64,
-    pub sealed_random: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,9 +98,16 @@ pub enum BurningKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SealedBurn {
+    Snuff(MaterialId),
+    Extinguish,
+    Smoulder(u64),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Burning {
     pub burn: u64,
-    pub burn_sealed: u64,
+    pub sealed: SealedBurn,
     pub emit: u64,
     pub residue: Option<(u64, MaterialId)>,
     pub burnout: MaterialId,
