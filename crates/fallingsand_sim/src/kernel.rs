@@ -89,16 +89,19 @@ fn run_phase(world: &mut CellWorld, phase: u32, tick: u64, schedule: &Schedule, 
     let py = ((phase >> 1) & 1) as i32;
 
     let map = world.chunk_map_mut();
-    let mut origins: Vec<ChunkPos> = Vec::new();
+    let mut origins: Vec<ChunkPos> = map
+        .iter()
+        .filter(|(pos, chunk)| {
+            let block = (pos.x >> 1, pos.y >> 1);
+            (block.0 & 1) == px && (block.1 & 1) == py && schedule(**pos, chunk)
+        })
+        .map(|(pos, _)| ChunkPos::new(((pos.x >> 1) << 1) - 1, ((pos.y >> 1) << 1) - 1))
+        .collect();
+    origins.sort_unstable_by_key(|origin| (origin.y, origin.x));
+    origins.dedup();
+
     let mut members: FxHashMap<ChunkPos, (usize, i32, i32)> = FxHashMap::default();
-    for (&pos, chunk) in map.iter() {
-        let block = (pos.x >> 1, pos.y >> 1);
-        if (block.0 & 1) != px || (block.1 & 1) != py || !schedule(pos, chunk) {
-            continue;
-        }
-        let origin = ChunkPos::new((block.0 << 1) - 1, (block.1 << 1) - 1);
-        let index = origins.len();
-        origins.push(origin);
+    for (index, &origin) in origins.iter().enumerate() {
         for sy in 0..WINDOW_CHUNKS {
             for sx in 0..WINDOW_CHUNKS {
                 members.insert(origin.translated(sx, sy), (index, sx, sy));

@@ -204,18 +204,18 @@ pub fn manage_regions(
                 pos,
                 source: Box::new(source),
             })?;
-        let region = match loaded {
-            Some(mut region) => {
+        let (region, dirty) = match loaded {
+            Some((mut region, dirty)) => {
                 strip_body_remnants(&mut region);
-                region
+                (region, dirty)
             }
-            None => generator.generate_region(pos),
+            None => (generator.generate_region(pos), false),
         };
         insert_region(sim, pos, region);
         regions.states.insert(
             pos,
             RegionState {
-                dirty: false,
+                dirty,
                 last_wanted: tick,
             },
         );

@@ -6,7 +6,7 @@ use bevy::prelude::*;
 
 pub const MAX_PLAYER_LIGHTS: usize = 32;
 const PLAYER_LIGHT_RADIUS: f32 = 40.0;
-const BURNING_LIGHT_RADIUS: f32 = 40.0;
+const BURNING_LIGHT_RADIUS: f32 = 64.0;
 
 #[derive(Resource, Default)]
 pub struct ActiveLights {
@@ -40,20 +40,14 @@ pub fn apply_lighting(
         && let Some(ingame) = game.0.ingame()
     {
         if let Some(local) = ingame.local_avatar() {
-            active.lights.push(Vec4::new(
-                local.pos.x,
-                local.pos.y,
-                PLAYER_LIGHT_RADIUS,
-                1.0,
-            ));
-            if local.burning {
-                active.lights.push(Vec4::new(
-                    local.pos.x,
-                    local.pos.y,
-                    BURNING_LIGHT_RADIUS,
-                    1.0,
-                ));
-            }
+            let radius = if local.burning {
+                BURNING_LIGHT_RADIUS
+            } else {
+                PLAYER_LIGHT_RADIUS
+            };
+            active
+                .lights
+                .push(Vec4::new(local.pos.x, local.pos.y, radius, 1.0));
         }
         let local = ingame
             .net

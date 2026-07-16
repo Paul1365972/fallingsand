@@ -287,15 +287,15 @@ impl Persistence {
         Ok(())
     }
 
-    pub fn load_region(&mut self, pos: RegionPos) -> Result<Option<Region>, StoreError> {
+    pub fn load_region(&mut self, pos: RegionPos) -> Result<Option<(Region, bool)>, StoreError> {
         if let Some(blob) = self.pending_regions.get(&pos) {
             let region = decode_region(blob)?;
             self.pending_regions.remove(&pos);
-            return Ok(Some(region));
+            return Ok(Some((region, true)));
         }
-        self.store
-            .as_ref()
-            .map_or(Ok(None), |store| store.load_region(pos))
+        self.store.as_ref().map_or(Ok(None), |store| {
+            Ok(store.load_region(pos)?.map(|region| (region, false)))
+        })
     }
 
     pub fn stage_region(&mut self, pos: RegionPos, blob: Vec<u8>) {
