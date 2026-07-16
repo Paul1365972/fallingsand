@@ -6,14 +6,18 @@ pub use keys::{Button, RawInput};
 
 use super::{ClientGame, Effect, Flow, GamePanel, IoFrame};
 use bevy::input::mouse::MouseButton;
-use fallingsand_core::{HOTBAR_SLOTS, TICK_RATE};
+use fallingsand_core::{CellPos, HOTBAR_SLOTS, TICK_RATE, ray_cells};
 use fallingsand_protocol::{
     ClientMessage, GameMode, InputAction, InputFrame, InputState, MAX_INPUT_ACTIONS_PER_FRAME,
+    UseButton,
 };
 
 const DOUBLE_TAP_SECS: f32 = 0.3;
 const TICK_DT: f32 = 1.0 / TICK_RATE as f32;
 const MAX_CATCHUP_TICKS: f32 = 4.0;
+const USE_REPEAT_DELAY_SECS: f32 = 0.25;
+const USE_REPEAT_INTERVAL_SECS: f32 = 0.05;
+const MAX_SWEEP_CELLS: usize = 64;
 
 struct Track {
     button: Button,
@@ -36,12 +40,21 @@ impl Track {
 }
 
 #[derive(Default)]
+struct UsePacer {
+    held: bool,
+    pressed_at: f32,
+    last_emit_at: f32,
+    last_aim: CellPos,
+}
+
+#[derive(Default)]
 pub struct InputCore {
     pub held: InputState,
     actions: Vec<InputAction>,
     blocked_primary: bool,
     blocked_secondary: bool,
     tracks: Vec<Track>,
+    pacers: [UsePacer; 2],
     acc: f32,
     neutral_pending: bool,
 }
@@ -49,6 +62,40 @@ pub struct InputCore {
 impl InputCore {
     pub fn queue(&mut self, action: InputAction) {
         self.actions.push(action);
+    }
+
+    fn pace_use(&mut self, button: UseButton, held: bool, aim: CellPos, now: f32) {
+        let pacer = &mut self.pacers[button as usize];
+        if !held {
+            pacer.held = false;
+            return;
+        }
+        if !pacer.held {
+            *pacer = UsePacer {
+                held: true,
+                pressed_at: now,
+                last_emit_at: now,
+                last_aim: aim,
+            };
+            self.actions.push(InputAction::Use { button, cell: aim });
+            return;
+        }
+        if now - pacer.pressed_at < USE_REPEAT_DELAY_SECS {
+            pacer.last_aim = aim;
+            pacer.last_emit_at = now;
+            return;
+        }
+        if aim != pacer.last_aim {
+            let start = pacer.last_aim;
+            pacer.last_aim = aim;
+            pacer.last_emit_at = now;
+            for cell in ray_cells(start, aim).take(MAX_SWEEP_CELLS) {
+                self.actions.push(InputAction::Use { button, cell });
+            }
+        } else if now - pacer.last_emit_at >= USE_REPEAT_INTERVAL_SECS {
+            pacer.last_emit_at = now;
+            self.actions.push(InputAction::Use { button, cell: aim });
+        }
     }
 
     fn take_actions(&mut self) -> Vec<InputAction> {
@@ -124,6 +171,12 @@ pub(super) fn resolve(game: &mut ClientGame, io: &IoFrame) {
     }
 
     sample(game, io, gameplay);
+    {
+        let input = &mut game.input;
+        let held = input.held;
+        input.pace_use(UseButton::Primary, held.primary, held.aim, io.now);
+        input.pace_use(UseButton::Secondary, held.secondary, held.aim, io.now);
+    }
     let fired = collect(&game.bindings, &mut game.input, &io.raw, &stack, io.now);
     for action in fired {
         apply(game, io, action);

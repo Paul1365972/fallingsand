@@ -4,9 +4,11 @@ use crate::player::{PlayerLife, Players};
 use fallingsand_core::content;
 use fallingsand_core::{
     CARDINAL_NEIGHBORS, CellPos, ItemId, ItemStack, MaterialId, Phase, REACH, SURVIVAL_REACH,
-    TICK_DT, Tag,
+    TICK_DT, Tag, ray_cells,
 };
-use fallingsand_protocol::{CursorMode, GameMode, InputState, InteractionState, InteractionStatus};
+use fallingsand_protocol::{
+    CursorMode, GameMode, InputState, InteractionState, InteractionStatus, UseButton,
+};
 
 const BARE_HAND_SPEED: f32 = 0.55;
 
@@ -46,9 +48,19 @@ struct InteractionContext {
     reach: f32,
 }
 
+impl InteractionContext {
+    fn with_aim(self, aim: CellPos) -> Self {
+        Self {
+            input: InputState { aim, ..self.input },
+            ..self
+        }
+    }
+}
+
 pub fn apply_player_inputs(sim: &mut World, bodies: &mut PixelBodies, players: &mut Players) {
     for (_, player) in players.iter_mut() {
         let input = player.control.input;
+        let uses = std::mem::take(&mut player.control.pending_uses);
         let survival = player.profile.mode == GameMode::Survival;
         let PlayerLife::Alive(avatar) = &mut player.life else {
             continue;
@@ -63,13 +75,28 @@ pub fn apply_player_inputs(sim: &mut World, bodies: &mut PixelBodies, players: &
         let dig = &mut avatar.dig;
         let inventory = &mut player.profile.inventory;
 
-        if input.primary {
-            active_dig(sim, bodies, &context, body, dig, inventory)
-        } else if input.secondary {
-            active_place(sim, &context, body, dig, inventory)
+        let mut tapped_dig = None;
+        for (button, cell) in uses {
+            match button {
+                UseButton::Primary if survival => tapped_dig = Some(cell),
+                UseButton::Primary => {
+                    active_dig(sim, bodies, &context.with_aim(cell), body, dig, inventory)
+                }
+                UseButton::Secondary => {
+                    active_place(sim, &context.with_aim(cell), body, dig, inventory)
+                }
+            }
+        }
+
+        if survival && input.primary {
+            active_dig(sim, bodies, &context, body, dig, inventory);
+        } else if let Some(cell) = tapped_dig {
+            active_dig(sim, bodies, &context.with_aim(cell), body, dig, inventory);
         } else {
             dig.clear_progress();
-            dig.interaction = idle_preview(sim, &context, body, inventory);
+            if !input.primary && !input.secondary {
+                dig.interaction = idle_preview(sim, &context, body, inventory);
+            }
         }
     }
 }
@@ -354,33 +381,6 @@ fn clamp_to_reach(body: &Actor, aim: CellPos, reach: f32) -> CellPos {
         (cx + dx * scale - 0.5).round() as i32,
         (cy + dy * scale - 0.5).round() as i32,
     )
-}
-
-fn ray_cells(start: CellPos, end: CellPos) -> impl Iterator<Item = CellPos> {
-    let ex = end.x as i64;
-    let ey = end.y as i64;
-    let dx = (ex - start.x as i64).abs();
-    let dy = -(ey - start.y as i64).abs();
-    let sx: i64 = if start.x < end.x { 1 } else { -1 };
-    let sy: i64 = if start.y < end.y { 1 } else { -1 };
-    let mut x = start.x as i64;
-    let mut y = start.y as i64;
-    let mut error = dx + dy;
-    std::iter::from_fn(move || {
-        if x == ex && y == ey {
-            return None;
-        }
-        let twice = 2 * error;
-        if twice >= dy {
-            error += dy;
-            x += sx;
-        }
-        if twice <= dx {
-            error += dx;
-            y += sy;
-        }
-        Some(CellPos::new(x as i32, y as i32))
-    })
 }
 
 fn last_air_before_obstruction(world: &World, start: CellPos, end: CellPos) -> Option<CellPos> {

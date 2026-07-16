@@ -8,6 +8,33 @@ const _: () = assert!(1usize << REGION_BITS == crate::region::REGION_SIZE_CHUNKS
 
 pub const CARDINAL_NEIGHBORS: [(i32, i32); 4] = [(0, -1), (-1, 0), (1, 0), (0, 1)];
 
+pub fn ray_cells(start: CellPos, end: CellPos) -> impl Iterator<Item = CellPos> {
+    let ex = end.x as i64;
+    let ey = end.y as i64;
+    let dx = (ex - start.x as i64).abs();
+    let dy = -(ey - start.y as i64).abs();
+    let sx: i64 = if start.x < end.x { 1 } else { -1 };
+    let sy: i64 = if start.y < end.y { 1 } else { -1 };
+    let mut x = start.x as i64;
+    let mut y = start.y as i64;
+    let mut error = dx + dy;
+    std::iter::from_fn(move || {
+        if x == ex && y == ey {
+            return None;
+        }
+        let twice = 2 * error;
+        if twice >= dy {
+            error += dy;
+            x += sx;
+        }
+        if twice <= dx {
+            error += dx;
+            y += sy;
+        }
+        Some(CellPos::new(x as i32, y as i32))
+    })
+}
+
 #[derive(
     Debug, Default, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
 )]

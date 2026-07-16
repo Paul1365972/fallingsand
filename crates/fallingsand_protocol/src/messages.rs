@@ -97,6 +97,12 @@ impl Default for InputState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UseButton {
+    Primary,
+    Secondary,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum InputAction {
     Jump,
@@ -104,6 +110,7 @@ pub enum InputAction {
     ToggleFlight,
     SelectSlot(u8),
     Slot(SlotAction),
+    Use { button: UseButton, cell: CellPos },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

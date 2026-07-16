@@ -457,6 +457,7 @@ fn apply_input_action(player: &mut Player, action: InputAction) {
             }
         }
         InputAction::Slot(action) => player.control.pending_slot_actions.push(action),
+        InputAction::Use { button, cell } => player.control.pending_uses.push((button, cell)),
     }
 }
 

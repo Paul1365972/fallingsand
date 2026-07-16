@@ -2,7 +2,7 @@ use crate::dig::DigState;
 use crate::inventory::Inventory;
 use crate::{MAX_AIR_SECS, MAX_HP};
 use fallingsand_core::{CellPos, Fixed};
-use fallingsand_protocol::{GameMode, InputState, PlayerId, PlayerUuid, SlotAction};
+use fallingsand_protocol::{GameMode, InputState, PlayerId, PlayerUuid, SlotAction, UseButton};
 use fallingsand_sim::PlayerStamp;
 use fallingsand_sim::physics::{Actor, Controller};
 use rustc_hash::FxHashMap;
@@ -85,6 +85,7 @@ pub struct PlayerControl {
     pub jump_pressed: bool,
     pub pending_commands: Vec<String>,
     pub pending_slot_actions: Vec<SlotAction>,
+    pub pending_uses: Vec<(UseButton, CellPos)>,
     pub revive_requested: bool,
     pub last_input_tick: u64,
     pub last_chat_tick: u64,
@@ -97,6 +98,7 @@ impl PlayerControl {
             jump_pressed: false,
             pending_commands: Vec::new(),
             pending_slot_actions: Vec::new(),
+            pending_uses: Vec::new(),
             revive_requested: false,
             last_input_tick: tick,
             last_chat_tick: 0,
@@ -108,6 +110,7 @@ impl PlayerControl {
         self.jump_pressed = false;
         self.pending_commands.clear();
         self.pending_slot_actions.clear();
+        self.pending_uses.clear();
         self.revive_requested = false;
         self.last_input_tick = tick;
     }
