@@ -62,6 +62,7 @@ pub fn step_bodies(
             continue;
         };
         if !island_simulated(sim, tickets, &island) {
+            bodies.candidates.push(seed);
             continue;
         }
         let id = bodies.next_id;

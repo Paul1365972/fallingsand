@@ -26,7 +26,9 @@ Leveling and pressure propagate as local waves over ticks. Steam condenses back 
 
 ## Sleeping
 
-Each chunk tracks a **sim rect** of cells to re-simulate; a write to a chunk or its border marks it. Sleep gates the interaction sim: an empty sim rect skips the chunk, so a settled world does no movement work; the random-tick sim ignores sleep. The rect is honest: exactly the cells iterated next tick. The **change rect** (⊆ `sim`) holds actual value changes: a write marks `change` tight and `sim` as the 3×3 Moore neighbourhood (dilating across chunk borders); a **keep-alive** mark (burning fuel, pending decay) extends `sim` by 1×1 only. Scheduling reads `sim`; replication reads `change`, so keep-alives cost zero bandwidth.
+Each chunk tracks a **sim rect** of cells to re-simulate; a write to a chunk or its border marks it. Sleep gates the interaction sim: an empty sim rect skips the chunk, so a settled world does no movement work; the random-tick sim ignores sleep. The rect is honest: exactly the cells iterated next tick. The **change rect** (⊆ `sim`) holds actual value changes: a write marks `change` tight and `sim` as the 3×3 Moore neighbourhood (dilating across chunk borders); a **keep-alive** mark (burning fuel, pending decay, a same-tick update skip) extends `sim` by 1×1 only. Scheduling reads `sim`; replication reads `change`, so keep-alives cost zero bandwidth.
+
+Sleeping is a pure optimization: evaluating a chunk's full area and evaluating only its sim rect must produce identical results. A rule whose outcome depends on anything but its marked neighbourhood, or pending stochastic work that goes quiet without a keep-alive, is a bug — stationary cells act only on deterministic conditions of their neighbours, and every state that can still act re-marks itself until resolved.
 
 Cell particles (aspirational, not built): cells knocked loose fly ballistically as free particles and reinsert on impact.
 

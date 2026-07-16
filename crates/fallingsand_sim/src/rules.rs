@@ -34,6 +34,7 @@ macro_rules! material_dispatch {
                 return;
             };
             if cell.updated == tick_byte {
+                window.mark(pos);
                 return;
             }
             match cell.material.0 {
