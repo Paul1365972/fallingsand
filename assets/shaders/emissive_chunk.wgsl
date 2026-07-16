@@ -1,26 +1,10 @@
 #import bevy_sprite::mesh2d_vertex_output::VertexOutput
 #import bevy_sprite::mesh2d_view_bindings::globals
-#import fallingsand::layer_common::pcg
+#import fallingsand::layer_common::vnoise
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var cells: texture_2d<u32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(1) var emissive_palette: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(2) var palette: texture_2d<f32>;
-
-fn hash2(cell: vec2<i32>) -> f32 {
-    let h = pcg(bitcast<u32>(cell.x) * 1597334677u ^ bitcast<u32>(cell.y) * 3812015801u);
-    return f32(h) / 4294967295.0;
-}
-
-fn vnoise(p: vec2<f32>) -> f32 {
-    let i = floor(p);
-    let f = fract(p);
-    let u = f * f * (3.0 - 2.0 * f);
-    let a = hash2(vec2<i32>(i));
-    let b = hash2(vec2<i32>(i) + vec2<i32>(1, 0));
-    let c = hash2(vec2<i32>(i) + vec2<i32>(0, 1));
-    let d = hash2(vec2<i32>(i) + vec2<i32>(1, 1));
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
-}
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {

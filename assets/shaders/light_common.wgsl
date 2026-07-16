@@ -1,7 +1,10 @@
 #define_import_path fallingsand::light_common
 
+const MAX_LIGHTS: u32 = 256u;
+const CAVE_DARK: vec3<f32> = vec3<f32>(0.01, 0.012, 0.03);
+
 struct LightingParams {
-    lights: array<vec4<f32>, 32>,
+    lights: array<vec4<f32>, MAX_LIGHTS>,
     darkness: f32,
     light_count: u32,
     snapped_cam: vec2<f32>,

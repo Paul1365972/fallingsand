@@ -19,7 +19,7 @@ const NEAR_BASE: f32 = 4.0;
 const NEAR_AMP: f32 = 45.0;
 const NEAR_WAVELENGTH: f32 = 90.0;
 
-#[derive(ShaderType, Debug, Clone, Default)]
+#[derive(ShaderType, Debug, Clone, Default, PartialEq)]
 pub struct WallParams {
     pub base_color: Vec4,
     pub world_offset: Vec2,
@@ -43,7 +43,7 @@ impl Material2d for CaveWallMaterial {
     }
 }
 
-#[derive(ShaderType, Debug, Clone, Default)]
+#[derive(ShaderType, Debug, Clone, Default, PartialEq)]
 pub struct SilhouetteParams {
     pub color: Vec4,
     pub snapped_cam: Vec2,
@@ -170,12 +170,19 @@ pub fn sync_parallax(
         return;
     }
 
-    if let Some(mut material) = wall_mats.get_mut(&assets.wall) {
-        active.write(&mut material.lighting);
+    if let Some(material) = wall_mats.get(&assets.wall) {
+        let mut lighting = material.lighting.clone();
+        active.write(&mut lighting);
         let (snapped, _) = state.layer(WALL_RATIO);
-        material.lighting.snapped_cam = snapped.as_vec2();
-        material.lighting.native_size = native;
-        material.wall.world_offset = WALL_RATIO * state.pos;
+        lighting.snapped_cam = snapped.as_vec2();
+        lighting.native_size = native;
+        let mut wall = material.wall.clone();
+        wall.world_offset = WALL_RATIO * state.pos;
+        let changed = material.lighting != lighting || material.wall != wall;
+        if changed && let Some(mut material) = wall_mats.get_mut(&assets.wall) {
+            material.lighting = lighting;
+            material.wall = wall;
+        }
     }
 
     let sky_linear = sky.color_linear;
@@ -184,12 +191,17 @@ pub fn sync_parallax(
         (&assets.far, FAR_RATIO, FAR_HAZE),
         (&assets.near, NEAR_RATIO, NEAR_HAZE),
     ] {
-        if let Some(mut material) = silhouette_mats.get_mut(handle) {
+        if let Some(material) = silhouette_mats.get(handle) {
+            let mut params = material.params.clone();
             let rgb = sky_linear * haze;
-            material.params.color = rgb.extend(1.0);
+            params.color = rgb.extend(1.0);
             let (snapped, _) = state.layer(ratio);
-            material.params.snapped_cam = snapped.as_vec2();
-            material.params.native_size = native;
+            params.snapped_cam = snapped.as_vec2();
+            params.native_size = native;
+            let changed = material.params != params;
+            if changed && let Some(mut material) = silhouette_mats.get_mut(handle) {
+                material.params = params;
+            }
         }
     }
 }

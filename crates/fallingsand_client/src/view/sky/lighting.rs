@@ -1,10 +1,11 @@
 use super::Sky;
 use super::materials::{LightingMaterial, LightingParams};
 use crate::view::Game;
-use crate::view::camera::{CameraState, LayerAssets};
+use crate::view::camera::{CameraState, LayerAssets, light_field_margin};
+use bevy::log::warn_once;
 use bevy::prelude::*;
 
-pub const MAX_PLAYER_LIGHTS: usize = 32;
+pub const MAX_PLAYER_LIGHTS: usize = 256;
 const PLAYER_LIGHT_RADIUS: f32 = 40.0;
 const BURNING_LIGHT_RADIUS: f32 = 64.0;
 
@@ -17,12 +18,17 @@ pub struct ActiveLights {
 impl ActiveLights {
     pub fn write(&self, params: &mut LightingParams) {
         params.darkness = self.darkness;
+        if self.lights.len() > MAX_PLAYER_LIGHTS {
+            warn_once!(
+                "dropping {} point lights over capacity {MAX_PLAYER_LIGHTS}",
+                self.lights.len() - MAX_PLAYER_LIGHTS
+            );
+        }
         params.light_count = self.lights.len().min(MAX_PLAYER_LIGHTS) as u32;
-        let mut array = [Vec4::ZERO; MAX_PLAYER_LIGHTS];
-        for (slot, light) in array.iter_mut().zip(self.lights.iter()) {
+        params.lights = [Vec4::ZERO; MAX_PLAYER_LIGHTS];
+        for (slot, light) in params.lights.iter_mut().zip(self.lights.iter()) {
             *slot = *light;
         }
-        params.lights = array;
     }
 }
 
@@ -69,11 +75,17 @@ pub fn apply_lighting(
         }
     }
 
-    let Some(mut material) = materials.get_mut(&assets.lighting) else {
+    let Some(material) = materials.get(&assets.lighting) else {
         return;
     };
-    active.write(&mut material.params);
+    let mut params = material.params.clone();
+    active.write(&mut params);
     let (snapped, _) = state.layer(Vec2::ZERO);
-    material.params.snapped_cam = snapped.as_vec2();
-    material.params.native_size = state.native.as_vec2();
+    params.snapped_cam = snapped.as_vec2();
+    params.native_size = state.native.as_vec2();
+    params.margin = light_field_margin(state.native);
+    let changed = material.params != params;
+    if changed && let Some(mut material) = materials.get_mut(&assets.lighting) {
+        material.params = params;
+    }
 }

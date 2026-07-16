@@ -8,7 +8,7 @@ use bevy::render::render_resource::{
 use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
 
-#[derive(ShaderType, Debug, Clone)]
+#[derive(ShaderType, Debug, Clone, PartialEq)]
 pub struct LightingParams {
     pub lights: [Vec4; MAX_PLAYER_LIGHTS],
     pub darkness: f32,
@@ -36,14 +36,12 @@ pub struct LightingMaterial {
     #[uniform(0)]
     pub params: LightingParams,
     #[texture(1)]
-    #[sampler(2)]
     pub world: Handle<Image>,
-    #[texture(3)]
-    pub glow: Handle<Image>,
+    #[texture(2)]
+    #[sampler(3)]
+    pub light: Handle<Image>,
     #[texture(4)]
     pub emission: Handle<Image>,
-    #[texture(5)]
-    pub air: Handle<Image>,
 }
 
 impl Material2d for LightingMaterial {
