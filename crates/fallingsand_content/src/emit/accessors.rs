@@ -141,11 +141,6 @@ pub fn emit(content: &Content) -> TokenStream {
         #ignition
         #material
 
-        #[inline]
-        pub const fn is_flammable(id: crate::material::MaterialId) -> bool {
-            ignition(id).is_some()
-        }
-
         const BOND_MASKS: [u32; #bond_group_count] = [#(#bond_masks),*];
 
         #[inline]

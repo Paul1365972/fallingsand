@@ -129,7 +129,6 @@ pub struct Content {
     pub items: Vec<ItemOut>,
     pub recipes: Vec<RecipeOut>,
     pub item_for_material: Vec<u16>,
-    pub thresholds: Vec<(String, u64)>,
     pub bond_masks: Vec<u32>,
 }
 
@@ -327,7 +326,6 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
 
     let (items, item_for_material) = build_items(catalog, &materials, &fuel_base)?;
     let recipes = build_recipes(catalog, &by_name, &item_for_material)?;
-    let thresholds = build_thresholds(catalog)?;
 
     let mut bond_masks = vec![0u32; BOND_GROUP_COUNT];
     for (group, mask) in bond_masks.iter_mut().enumerate() {
@@ -345,7 +343,6 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
         items,
         recipes,
         item_for_material,
-        thresholds,
         bond_masks,
     })
 }
@@ -455,19 +452,6 @@ fn build_recipes(
         recipes.push(RecipeOut { inputs, output });
     }
     Ok(recipes)
-}
-
-fn build_thresholds(catalog: &Catalog) -> Result<Vec<(String, u64)>, Error> {
-    let mut thresholds = Vec::with_capacity(catalog.thresholds.len());
-    for def in &catalog.thresholds {
-        validate_ident("threshold", &def.name)?;
-        validate_number(&format!("threshold {}", def.name), def.rate)?;
-        thresholds.push((
-            def.name.clone(),
-            chance_threshold(per_tick_chance(def.rate)),
-        ));
-    }
-    Ok(thresholds)
 }
 
 fn validate_ident(kind: &str, name: &str) -> Result<(), Error> {

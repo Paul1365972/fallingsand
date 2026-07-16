@@ -13,7 +13,7 @@ When relevant code and docs disagree, establish the intended behavior and update
 - **Fix root causes:** Use architectural fixes for recurring simulation or physics bugs rather than patching symptoms.
 - **Boil-the-ocean mode:** Nothing is holy; rework any system, architecture, or protocol freely. No backward compatibility or migrations; bump affected version constants.
 - Build features as coherent units, without duplicate paths, compatibility shims, or half-migrated abstractions.
-- Prefer self-explanatory code. Reserve comments for indispensable rationale such as `// SAFETY:`. Keep project docs terse, standalone, and free of implementation-process narration.
+- Write self-explanatory code with no comments — a comment means the code is not readable enough. Keep project docs terse, standalone, and free of implementation-process narration.
 - Only add tests when requested.
 
 ## Non-Negotiable Design
@@ -25,9 +25,9 @@ When relevant code and docs disagree, establish the intended behavior and update
 - **Body raster integrity:** A body flag corresponds to exactly one live body or player raster. Public cell writes create only unflagged cells. Players are grid residents, not collision overlays.
 - **Idle cost:** Unloaded chunks cost nothing. A settled ticketed chunk does no movement work (sleep skips it), paying only a bounded per-chunk random-tick sample. No unbounded or growing per-tick cost.
 - **Locality and speed of light:** Simulation work remains within a 64-cell window; longer-range behavior propagates locally over ticks.
-- **Suspend/resume:** Sleep, unload, and reload preserve pending activity; in-flight processes do not freeze in time. Random ticks depend only on cell contents, so ambient behaviour (lava ignition) resumes on load with nothing extra persisted.
+- **Suspend/resume:** Sleep, unload, and reload preserve pending activity; in-flight processes do not freeze in time. Pixel bodies unload as bodies and resume in motion; nothing is settled by unloading.
 - **Determinism:** The same seed and inputs produce the same result on one machine. Simulation randomness is tick-seeded and stateless; avoid iteration-order-dependent collections in simulation paths.
-- **Scheduling:** Four-phase 2x2-chunk-block scheduling produces disjoint 4x4-chunk `SimWindow`s. `sim` is exactly the area evaluated next tick and contains `change`; replication and persistence consume `change`.
+- **Scheduling:** Four-phase 2x2-chunk-block scheduling produces disjoint 4x4-chunk `SimWindow`s. `sim` is exactly the area evaluated next tick and contains `change`; replication and persistence consume `change`. Sleeping is a pure optimization: dirty-rect and full evaluation must produce identical results.
 - **Compiled content:** Typed definitions in `fallingsand_content` execute only during the core build and emit dense registries plus one monomorphized, integer-only kernel spec per material.
 - **Units:** Author tuning in seconds, not per-tick constants. Quantize at compile time.
 - **Perceptual continuity:** A visual field derived from world state accounts for every contributing cell and follows changes as they happen — no source cap, sampling stride, or wall-clock refresh that drops or delays visible change.

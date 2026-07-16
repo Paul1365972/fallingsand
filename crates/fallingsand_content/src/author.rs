@@ -12,10 +12,6 @@ impl MaterialKey {
         Self(Cow::Borrowed(name))
     }
 
-    pub fn owned(name: impl Into<String>) -> Self {
-        Self(Cow::Owned(name.into()))
-    }
-
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -668,12 +664,6 @@ pub fn recipe() -> RecipeBuilder {
     RecipeBuilder::default()
 }
 
-#[derive(Debug, Clone)]
-pub struct ThresholdDef {
-    pub(crate) name: String,
-    pub(crate) rate: f32,
-}
-
 #[derive(Debug, Default)]
 pub struct Catalog {
     pub(crate) burning_colors: Vec<Color>,
@@ -682,7 +672,6 @@ pub struct Catalog {
     pub(crate) decays: Vec<DecayDef>,
     pub(crate) items: Vec<(ItemKey, ItemDef)>,
     pub(crate) recipes: Vec<RecipeDef>,
-    pub(crate) thresholds: Vec<ThresholdDef>,
     pub(crate) bonds: Vec<(BondGroup, BondGroup)>,
 }
 
@@ -712,13 +701,6 @@ impl Catalog {
 
     pub fn craft(&mut self, definition: RecipeDef) {
         self.recipes.push(definition);
-    }
-
-    pub fn threshold(&mut self, name: impl Into<String>, rate: f32) {
-        self.thresholds.push(ThresholdDef {
-            name: name.into(),
-            rate,
-        });
     }
 
     pub fn bond(&mut self, a: BondGroup, b: BondGroup) {

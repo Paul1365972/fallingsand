@@ -31,17 +31,6 @@ pub enum Tag {
     Player,
 }
 
-impl Tag {
-    pub fn parse(name: &str) -> Option<Self> {
-        Some(match name {
-            "Dissolvable" => Self::Dissolvable,
-            "Hot" => Self::Hot,
-            "Player" => Self::Player,
-            _ => return None,
-        })
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Tags(u32);
 

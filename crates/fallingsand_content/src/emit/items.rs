@@ -1,6 +1,6 @@
 use super::material_id;
 use crate::model::{Content, ItemOut, RecipeOut};
-use proc_macro2::{Ident, Literal, Span, TokenStream};
+use proc_macro2::{Literal, TokenStream};
 use quote::quote;
 
 pub fn emit(content: &Content) -> TokenStream {
@@ -35,12 +35,6 @@ pub fn emit(content: &Content) -> TokenStream {
 
     let recipes = content.recipes.iter().map(recipe_tokens);
 
-    let thresholds = content.thresholds.iter().map(|(name, value)| {
-        let ident = Ident::new(name, Span::call_site());
-        let value = Literal::u64_suffixed(*value);
-        quote!(pub const #ident: u64 = #value;)
-    });
-
     quote! {
         pub const ITEM_COUNT: usize = #count;
 
@@ -68,8 +62,6 @@ pub fn emit(content: &Content) -> TokenStream {
         }
 
         pub const RECIPES: &[crate::item::Recipe] = &[#(#recipes),*];
-
-        #(#thresholds)*
     }
 }
 
