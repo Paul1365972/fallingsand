@@ -112,7 +112,8 @@ fn dynamics_tokens(dynamics: &fallingsand_material::Dynamics) -> TokenStream {
             let cohesion = Literal::u32_suffixed(d.cohesion_q16);
             let restitution = Literal::u32_suffixed(d.restitution_q16);
             let redirect_keep = Literal::u32_suffixed(d.redirect_keep_q16);
-            let slide = Literal::u64_suffixed(d.slide_threshold);
+            let slide_start = Literal::u64_suffixed(d.slide_start_threshold);
+            let slide_keep = Literal::u64_suffixed(d.slide_keep_threshold);
             quote! {
                 crate::material::Dynamics::Powder(crate::material::PowderDynamics {
                     drag_keep_q16: #drag_keep,
@@ -121,7 +122,8 @@ fn dynamics_tokens(dynamics: &fallingsand_material::Dynamics) -> TokenStream {
                     cohesion_q16: #cohesion,
                     restitution_q16: #restitution,
                     redirect_keep_q16: #redirect_keep,
-                    slide_threshold: #slide,
+                    slide_start_threshold: #slide_start,
+                    slide_keep_threshold: #slide_keep,
                 })
             }
         }

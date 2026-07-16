@@ -578,7 +578,8 @@ fn validate_material(raw: &RawMaterial) -> Result<(), Error> {
         PhaseDef::Powder(PowderDef {
             drag,
             friction,
-            repose,
+            repose_start,
+            repose_keep,
             redirect_keep,
             cohesion,
         }) => validate_numbers(
@@ -586,7 +587,8 @@ fn validate_material(raw: &RawMaterial) -> Result<(), Error> {
             &[
                 ("drag", drag),
                 ("friction", friction),
-                ("repose", repose),
+                ("repose_start", repose_start),
+                ("repose_keep", repose_keep),
                 ("redirect_keep", redirect_keep),
                 ("cohesion", cohesion),
             ],
@@ -701,7 +703,8 @@ fn quantize_dynamics(raw: &RawMaterial) -> Dynamics {
         PhaseDef::Powder(PowderDef {
             drag,
             friction,
-            repose,
+            repose_start,
+            repose_keep,
             redirect_keep,
             cohesion,
         }) => {
@@ -713,7 +716,8 @@ fn quantize_dynamics(raw: &RawMaterial) -> Dynamics {
                 cohesion_q16: q16(per_tick_chance(cohesion)),
                 restitution_q16,
                 redirect_keep_q16: q16(redirect_keep.clamp(0.0, 1.0)),
-                slide_threshold: chance_threshold(per_tick_chance(repose)),
+                slide_start_threshold: chance_threshold(per_tick_chance(repose_start)),
+                slide_keep_threshold: chance_threshold(per_tick_chance(repose_keep)),
             })
         }
         PhaseDef::Liquid(LiquidDef {

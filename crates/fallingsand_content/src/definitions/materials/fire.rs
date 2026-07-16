@@ -30,7 +30,7 @@ pub fn define(catalog: &mut Catalog) {
             powder()
                 .drag(4.5)
                 .friction(55.0)
-                .repose(31.0)
+                .repose(31.0, 120.0)
                 .redirect_keep(0.4),
         )
         .density(550.0)

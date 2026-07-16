@@ -85,7 +85,8 @@ impl SolidDef {
 pub struct PowderDef {
     pub(crate) drag: f32,
     pub(crate) friction: f32,
-    pub(crate) repose: f32,
+    pub(crate) repose_start: f32,
+    pub(crate) repose_keep: f32,
     pub(crate) redirect_keep: f32,
     pub(crate) cohesion: f32,
 }
@@ -95,7 +96,8 @@ impl Default for PowderDef {
         Self {
             drag: 0.0,
             friction: 0.0,
-            repose: 0.0,
+            repose_start: 0.0,
+            repose_keep: 0.0,
             redirect_keep: 1.0,
             cohesion: 0.0,
         }
@@ -113,8 +115,9 @@ impl PowderDef {
         self
     }
 
-    pub fn repose(mut self, value: f32) -> Self {
-        self.repose = value;
+    pub fn repose(mut self, start: f32, keep: f32) -> Self {
+        self.repose_start = start;
+        self.repose_keep = keep;
         self
     }
 

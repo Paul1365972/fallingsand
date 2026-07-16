@@ -21,6 +21,7 @@ const _: () = assert!(1 << VEL_BITS == VEL_ONE);
 const SETTLE: i32 = (7.5 * TICK_DT * VEL_ONE as f32) as i32;
 const SUBMERGED_DENSITY_MILLI: i32 = 100_000;
 const GRAVITY_DV: i32 = (GRID_GRAVITY * TICK_DT * TICK_DT * VEL_ONE as f32 + 0.5) as i32;
+const AGITATED: i32 = 2 * GRAVITY_DV;
 
 macro_rules! material_dispatch {
     ($(($idx:literal, $name:ident, $spec:ident)),* $(,)?) => {
@@ -654,6 +655,11 @@ fn finish<M: MatSpec>(
         window.set(cur, written);
     } else if vx != 0 || vy != 0 {
         window.mark(cur);
+        if vx.abs() >= AGITATED || vy.abs() >= AGITATED {
+            for (dx, dy) in NEIGHBORS {
+                window.mark(cur.translated(dx, dy));
+            }
+        }
     }
 }
 
@@ -679,6 +685,13 @@ fn repose_slide<M: MatSpec>(
     d: PowderDynamics,
     rng: &mut Rng,
 ) -> bool {
+    let threshold = if vx.abs() >= AGITATED || vy.abs() >= AGITATED {
+        d.slide_keep_threshold
+    } else if neighbor_agitated(window, *cur) {
+        d.slide_start_threshold
+    } else {
+        return false;
+    };
     let gain = mul_q16(vy.abs(), d.redirect_keep_q16);
     let prefer = prefer_side(*vx, rng);
     for side in [prefer, -prefer] {
@@ -686,14 +699,23 @@ fn repose_slide<M: MatSpec>(
             continue;
         }
         let diag = cur.translated(side, -1);
-        if can_enter::<M>(window, (side, -1), diag) && rng.draw().below(d.slide_threshold) {
-            *vx += side * gain;
+        if can_enter::<M>(window, (side, -1), diag) && rng.draw().below(threshold) {
+            *vx += side * gain.max(AGITATED);
             window.swap(*cur, diag);
             *cur = diag;
             return true;
         }
     }
     false
+}
+
+fn neighbor_agitated(window: &SimWindow, pos: CellPos) -> bool {
+    NEIGHBORS.iter().any(|&(dx, dy)| {
+        window.get(pos.translated(dx, dy)).is_some_and(|cell| {
+            matches!(content::phase(cell.material), Phase::Powder | Phase::Liquid)
+                && ((cell.vx as i32).abs() >= AGITATED || (cell.vy as i32).abs() >= AGITATED)
+        })
+    })
 }
 
 fn ledge_flow<M: MatSpec>(

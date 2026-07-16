@@ -63,7 +63,7 @@ pub fn define(catalog: &mut Catalog) {
             powder()
                 .drag(2.5)
                 .friction(97.0)
-                .repose(13.0)
+                .repose(13.0, 50.0)
                 .redirect_keep(0.2),
             1900.0,
             [
@@ -79,7 +79,7 @@ pub fn define(catalog: &mut Catalog) {
             powder()
                 .drag(3.0)
                 .friction(48.0)
-                .repose(36.0)
+                .repose(36.0, 140.0)
                 .redirect_keep(0.45),
             1600.0,
             [
@@ -95,7 +95,7 @@ pub fn define(catalog: &mut Catalog) {
             powder()
                 .drag(8.0)
                 .friction(36.0)
-                .repose(48.0)
+                .repose(48.0, 190.0)
                 .redirect_keep(0.55)
                 .cohesion(0.1),
             300.0,
@@ -139,7 +139,7 @@ pub fn define(catalog: &mut Catalog) {
             powder()
                 .drag(4.0)
                 .friction(114.0)
-                .repose(10.0)
+                .repose(10.0, 40.0)
                 .redirect_keep(0.15)
                 .cohesion(0.15),
         )

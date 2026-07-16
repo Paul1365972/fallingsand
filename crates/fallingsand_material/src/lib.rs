@@ -117,7 +117,8 @@ pub struct PowderDynamics {
     pub cohesion_q16: u32,
     pub restitution_q16: u32,
     pub redirect_keep_q16: u32,
-    pub slide_threshold: u64,
+    pub slide_start_threshold: u64,
+    pub slide_keep_threshold: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
