@@ -4,6 +4,8 @@ pub use fallingsand_material::{Fraction, PerSecond, Tag};
 
 pub type Color = [u8; 4];
 
+const DEFAULT_SEALED_BURN: Fraction = 0.1;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MaterialKey(Cow<'static, str>);
 
@@ -319,8 +321,6 @@ impl FlammableDef {
         self
     }
 }
-
-const DEFAULT_SEALED_BURN: Fraction = 0.1;
 
 pub fn flammable() -> FlammableDef {
     FlammableDef {

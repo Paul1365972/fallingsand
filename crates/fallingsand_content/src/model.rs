@@ -10,6 +10,13 @@ use fallingsand_material::{
 use fallingsand_rng::chance_threshold;
 use std::collections::HashMap;
 
+const MATERIAL_STACK_MAX: u32 = 10_000;
+const BURNING_EMISSION: EmissionDef = EmissionDef {
+    color: [255, 120, 32],
+    intensity: 1.4,
+    flicker: 0.5,
+};
+
 fn phase_tag(phase: PhaseDef) -> Phase {
     match phase {
         PhaseDef::Empty => Phase::Empty,
@@ -56,12 +63,6 @@ impl RawMaterial {
         }
     }
 }
-
-const BURNING_EMISSION: EmissionDef = EmissionDef {
-    color: [255, 120, 32],
-    intensity: 1.4,
-    flicker: 0.5,
-};
 
 fn srgb_to_linear(channel: u8) -> f32 {
     let s = channel as f32 / 255.0;
@@ -132,8 +133,6 @@ pub struct Content {
     pub item_for_material: Vec<u16>,
     pub bond_masks: Vec<u32>,
 }
-
-const MATERIAL_STACK_MAX: u32 = 10_000;
 
 pub fn build(catalog: &Catalog) -> Result<Content, Error> {
     let mut raws = build_materials(catalog)?;
