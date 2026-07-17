@@ -94,7 +94,6 @@ pub struct PowderDef {
     pub(crate) topple_start: PerSecond,
     pub(crate) topple_keep: PerSecond,
     pub(crate) deflect: Fraction,
-    pub(crate) cohesion: PerSecond,
 }
 
 impl Default for PowderDef {
@@ -105,7 +104,6 @@ impl Default for PowderDef {
             topple_start: 0.0,
             topple_keep: 0.0,
             deflect: 1.0,
-            cohesion: 0.0,
         }
     }
 }
@@ -129,11 +127,6 @@ impl PowderDef {
 
     pub fn deflect(mut self, value: Fraction) -> Self {
         self.deflect = value;
-        self
-    }
-
-    pub fn cohesion(mut self, value: PerSecond) -> Self {
-        self.cohesion = value;
         self
     }
 }
@@ -282,7 +275,6 @@ pub struct FlammableDef {
     pub(crate) residue_chance: Fraction,
     pub(crate) burnout: Option<MaterialKey>,
     pub(crate) damage: PerSecond,
-    pub(crate) density: Option<f32>,
 }
 
 impl FlammableDef {
@@ -324,11 +316,6 @@ impl FlammableDef {
 
     pub fn damage(mut self, value: PerSecond) -> Self {
         self.damage = value;
-        self
-    }
-
-    pub fn density(mut self, value: f32) -> Self {
-        self.density = Some(value);
         self
     }
 }

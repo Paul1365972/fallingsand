@@ -2,7 +2,8 @@ use crate::window::SimWindow;
 use fallingsand_core::content::{self, MatSpec, material};
 use fallingsand_core::{
     Burning, BurningKind, CARDINAL_NEIGHBORS as NEIGHBORS, Cell, CellPos, Dynamics, GRID_GRAVITY,
-    GasDynamics, LiquidDynamics, MaterialId, Phase, PowderDynamics, SealedBurn, TICK_DT, VEL_ONE,
+    GasDynamics, LiquidDynamics, MaterialId, Phase, PowderDynamics, Scale, SealedBurn, TICK_DT,
+    VEL_ONE,
 };
 use fallingsand_rng::{Hash, Rng};
 
@@ -342,18 +343,14 @@ fn step_cells(v: i32, rng: &mut Rng) -> i32 {
     cells * v.signum()
 }
 
-fn mul_q16(v: i32, keep_q16: u32) -> i32 {
-    scaled_round(v as i64 * keep_q16 as i64, 16)
-}
-
 fn scaled_round(product: i64, shift: u32) -> i32 {
     let half = 1i64 << (shift - 1);
     let magnitude = (product.abs() + half) >> shift;
     (if product < 0 { -magnitude } else { magnitude }) as i32
 }
 
-fn reflect(v: i32, restitution_q16: u32) -> i32 {
-    -mul_q16(v, restitution_q16)
+fn reflect(v: i32, restitution: Scale) -> i32 {
+    -restitution.apply(v)
 }
 
 fn update_powder<M: MatSpec>(
@@ -368,7 +365,7 @@ fn update_powder<M: MatSpec>(
         window,
         pos,
         cell,
-        d.restitution_q16,
+        d.restitution,
         -1,
         rng,
         tick_byte,
@@ -378,10 +375,9 @@ fn update_powder<M: MatSpec>(
                 pos,
                 vx,
                 vy,
-                d.air_drag_keep_q16,
-                d.submerged_drag_q16,
-                d.ground_friction_keep_q16,
-                d.cohesion_q16,
+                d.air_drag_keep,
+                d.submerged_drag_keep,
+                d.ground_friction_keep,
             )
         },
         |window, cur, vx, vy, rng| topple_slide::<M>(window, cur, vx, vy, d, rng),
@@ -409,7 +405,7 @@ fn update_liquid<M: MatSpec>(
         window,
         pos,
         cell,
-        d.restitution_q16,
+        d.restitution,
         -1,
         rng,
         tick_byte,
@@ -419,11 +415,11 @@ fn update_liquid<M: MatSpec>(
                 pos,
                 vx,
                 vy,
-                d.air_drag_keep_q16,
-                d.submerged_drag_q16,
-                d.ground_friction_keep_q16,
-                d.cohesion_q16,
-            )
+                d.air_drag_keep,
+                d.submerged_drag_keep,
+                d.ground_friction_keep,
+            );
+            cohesion::<M>(window, pos, vx, vy, d.cohesion);
         },
         |window, cur, vx, vy, rng| ledge_flow::<M>(window, cur, vx, vy, d, rng),
     );
@@ -441,45 +437,42 @@ fn update_gas<M: MatSpec>(
         window,
         pos,
         cell,
-        d.restitution_q16,
+        d.restitution,
         1,
         rng,
         tick_byte,
         |window, pos, vx, vy, rng| {
             *vy += GRAVITY_DV;
-            *vx = mul_q16(*vx, d.air_drag_keep_q16);
-            *vy = mul_q16(*vy, d.air_drag_keep_q16);
-            if d.turbulence_q16 > 0 {
+            *vx = d.air_drag_keep.apply(*vx);
+            *vy = d.air_drag_keep.apply(*vy);
+            if !d.turbulence.is_zero() {
                 let r = rng.draw().bits(16) as i64 - 32768;
-                *vx += scaled_round(d.turbulence_q16 as i64 * r, 31);
+                *vx += scaled_round(d.turbulence.0 as i64 * r, 31);
             }
             note_body_below(window, pos);
-            cohesion::<M>(window, pos, vx, vy, d.cohesion_q16);
+            cohesion::<M>(window, pos, vx, vy, d.cohesion);
         },
         |window, cur, vx, vy, rng| ceiling_spread::<M>(window, cur, vx, vy, d, rng),
     );
 }
 
-#[allow(clippy::too_many_arguments)]
 fn settling_accelerate<M: MatSpec>(
     window: &mut SimWindow,
     pos: CellPos,
     vx: &mut i32,
     vy: &mut i32,
-    air_drag_keep_q16: u32,
-    submerged_drag_q16: u32,
-    ground_friction_keep_q16: u32,
-    cohesion_q16: u32,
+    air_drag_keep: Scale,
+    submerged_drag_keep: Scale,
+    ground_friction_keep: Scale,
 ) {
     let ambient = ambient_density_milli(window, pos);
     *vy -= buoyant_gravity::<M>(ambient);
-    apply_drag(vx, vy, ambient, air_drag_keep_q16, submerged_drag_q16);
+    apply_drag(vx, vy, ambient, air_drag_keep, submerged_drag_keep);
 
     if supported_below::<M>(window, pos) {
-        *vx = mul_q16(*vx, ground_friction_keep_q16);
+        *vx = ground_friction_keep.apply(*vx);
     }
     note_body_below(window, pos);
-    cohesion::<M>(window, pos, vx, vy, cohesion_q16);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -487,7 +480,7 @@ fn update_mover<M: MatSpec>(
     window: &mut SimWindow,
     pos: CellPos,
     cell: Cell,
-    restitution_q16: u32,
+    restitution: Scale,
     gdir: i32,
     rng: &mut Rng,
     tick_byte: u8,
@@ -498,14 +491,14 @@ fn update_mover<M: MatSpec>(
 
     accelerate(window, pos, &mut vx, &mut vy, rng);
 
-    let (mut cur, mut moved) = traverse::<M>(window, pos, &mut vx, &mut vy, restitution_q16, rng);
+    let (mut cur, mut moved) = traverse::<M>(window, pos, &mut vx, &mut vy, restitution, rng);
     if !can_enter::<M>(window, (0, gdir), cur.translated(0, gdir)) {
         moved |= redirect(window, &mut cur, &mut vx, vy, rng);
     }
     if moved {
         note_undermined(window, pos);
     }
-    finish::<M>(window, cur, vx, vy, restitution_q16, gdir, tick_byte);
+    finish::<M>(window, cur, vx, vy, restitution, gdir, tick_byte);
 }
 
 fn buoyant_gravity<M: MatSpec>(ambient: i32) -> i32 {
@@ -514,14 +507,14 @@ fn buoyant_gravity<M: MatSpec>(ambient: i32) -> i32 {
     ((GRAVITY_DV as i64 * submerged + density / 2) / density) as i32
 }
 
-fn apply_drag(vx: &mut i32, vy: &mut i32, ambient: i32, keep_q16: u32, keep_submerged_q16: u32) {
+fn apply_drag(vx: &mut i32, vy: &mut i32, ambient: i32, keep: Scale, keep_submerged: Scale) {
     let keep = if ambient > SUBMERGED_DENSITY_MILLI {
-        keep_submerged_q16
+        keep_submerged
     } else {
-        keep_q16
+        keep
     };
-    *vx = mul_q16(*vx, keep);
-    *vy = mul_q16(*vy, keep);
+    *vx = keep.apply(*vx);
+    *vy = keep.apply(*vy);
 }
 
 fn supported_below<M: MatSpec>(window: &SimWindow, pos: CellPos) -> bool {
@@ -540,13 +533,13 @@ fn cohesion<M: MatSpec>(
     pos: CellPos,
     vx: &mut i32,
     vy: &mut i32,
-    cohesion_q16: u32,
+    cohesion: Scale,
 ) {
-    if cohesion_q16 > 0
+    if !cohesion.is_zero()
         && let Some((mean_x, mean_y)) = neighbor_mean_vel(window, pos, const { M::PHASE })
     {
-        *vx += mul_q16(mean_x - *vx, cohesion_q16);
-        *vy += mul_q16(mean_y - *vy, cohesion_q16);
+        *vx += cohesion.apply(mean_x - *vx);
+        *vy += cohesion.apply(mean_y - *vy);
     }
 }
 
@@ -555,7 +548,7 @@ fn traverse<M: MatSpec>(
     pos: CellPos,
     vx: &mut i32,
     vy: &mut i32,
-    restitution_q16: u32,
+    restitution: Scale,
     rng: &mut Rng,
 ) -> (CellPos, bool) {
     *vx = (*vx).clamp(-VEL_MAX, VEL_MAX);
@@ -586,7 +579,7 @@ fn traverse<M: MatSpec>(
                 moved = true;
                 done_x += 1;
             } else {
-                *vx = reflect(*vx, restitution_q16);
+                *vx = reflect(*vx, restitution);
                 done_x = ix;
             }
         } else {
@@ -609,7 +602,7 @@ fn finish<M: MatSpec>(
     cur: CellPos,
     mut vx: i32,
     mut vy: i32,
-    restitution_q16: u32,
+    restitution: Scale,
     gdir: i32,
     tick_byte: u8,
 ) {
@@ -618,9 +611,9 @@ fn finish<M: MatSpec>(
         let target = cur.translated(dx, dy);
         if into && !can_enter::<M>(window, (dx, dy), target) {
             if dx != 0 {
-                vx = reflect(vx, restitution_q16);
+                vx = reflect(vx, restitution);
             } else {
-                vy = reflect(vy, restitution_q16);
+                vy = reflect(vy, restitution);
             }
         }
     }
@@ -687,7 +680,7 @@ fn topple_slide<M: MatSpec>(
     } else {
         return false;
     };
-    let gain = mul_q16(vy.abs(), d.deflect_keep_q16);
+    let gain = d.deflect_keep.apply(vy.abs());
     let prefer = prefer_side(*vx, rng);
     let mut pending = false;
     for side in [prefer, -prefer] {
@@ -729,7 +722,7 @@ fn ledge_flow<M: MatSpec>(
     d: LiquidDynamics,
     rng: &mut Rng,
 ) -> bool {
-    let gain = mul_q16(vy.abs(), d.deflect_keep_q16);
+    let gain = d.deflect_keep.apply(vy.abs());
     let prefer = prefer_side(*vx, rng);
     let can_flow = rng.draw().below(d.flow_threshold);
     for side in [prefer, -prefer] {
@@ -763,7 +756,7 @@ fn ceiling_spread<M: MatSpec>(
     d: GasDynamics,
     rng: &mut Rng,
 ) -> bool {
-    let gain = mul_q16(vy.abs(), d.deflect_keep_q16);
+    let gain = d.deflect_keep.apply(vy.abs());
     let prefer = prefer_side(*vx, rng);
     for side in [prefer, -prefer] {
         let beside = cur.translated(side, 0);

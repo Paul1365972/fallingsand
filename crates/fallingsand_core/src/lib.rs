@@ -36,6 +36,6 @@ pub use item::{
 };
 pub use material::{
     Burning, BurningKind, Dynamics, GasDynamics, Ignition, LiquidDynamics, MaterialId,
-    MaterialInfo, Phase, PowderDynamics, Reaction, SealedBurn, Tag, Tags,
+    MaterialInfo, Phase, PowderDynamics, Reaction, Scale, SealedBurn, Tag, Tags,
 };
 pub use region::{REGION_AREA_CHUNKS, REGION_SIZE_CELLS, REGION_SIZE_CHUNKS, Region};

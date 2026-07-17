@@ -110,65 +110,68 @@ fn option_tokens(value: Option<TokenStream>) -> TokenStream {
     }
 }
 
+fn scale_tokens(scale: fallingsand_material::Scale) -> TokenStream {
+    let raw = Literal::u32_suffixed(scale.0);
+    quote!(crate::material::Scale(#raw))
+}
+
 fn dynamics_tokens(dynamics: &fallingsand_material::Dynamics) -> TokenStream {
     use fallingsand_material::Dynamics;
     match dynamics {
         Dynamics::None => quote!(crate::material::Dynamics::None),
         Dynamics::Powder(d) => {
-            let drag_keep = Literal::u32_suffixed(d.air_drag_keep_q16);
-            let drag_keep_submerged = Literal::u32_suffixed(d.submerged_drag_q16);
-            let friction_keep = Literal::u32_suffixed(d.ground_friction_keep_q16);
-            let cohesion = Literal::u32_suffixed(d.cohesion_q16);
-            let restitution = Literal::u32_suffixed(d.restitution_q16);
-            let redirect_keep = Literal::u32_suffixed(d.deflect_keep_q16);
+            let drag_keep = scale_tokens(d.air_drag_keep);
+            let drag_keep_submerged = scale_tokens(d.submerged_drag_keep);
+            let friction_keep = scale_tokens(d.ground_friction_keep);
+            let restitution = scale_tokens(d.restitution);
+            let redirect_keep = scale_tokens(d.deflect_keep);
             let slide_start = Literal::u64_suffixed(d.topple_start_threshold);
             let slide_keep = Literal::u64_suffixed(d.topple_keep_threshold);
             quote! {
                 crate::material::Dynamics::Powder(crate::material::PowderDynamics {
-                    air_drag_keep_q16: #drag_keep,
-                    submerged_drag_q16: #drag_keep_submerged,
-                    ground_friction_keep_q16: #friction_keep,
-                    cohesion_q16: #cohesion,
-                    restitution_q16: #restitution,
-                    deflect_keep_q16: #redirect_keep,
+                    air_drag_keep: #drag_keep,
+                    submerged_drag_keep: #drag_keep_submerged,
+                    ground_friction_keep: #friction_keep,
+                    restitution: #restitution,
+                    deflect_keep: #redirect_keep,
                     topple_start_threshold: #slide_start,
                     topple_keep_threshold: #slide_keep,
                 })
             }
         }
         Dynamics::Liquid(d) => {
-            let drag_keep = Literal::u32_suffixed(d.air_drag_keep_q16);
-            let drag_keep_submerged = Literal::u32_suffixed(d.submerged_drag_q16);
-            let friction_keep = Literal::u32_suffixed(d.ground_friction_keep_q16);
-            let cohesion = Literal::u32_suffixed(d.cohesion_q16);
-            let restitution = Literal::u32_suffixed(d.restitution_q16);
-            let redirect_keep = Literal::u32_suffixed(d.deflect_keep_q16);
+            let drag_keep = scale_tokens(d.air_drag_keep);
+            let drag_keep_submerged = scale_tokens(d.submerged_drag_keep);
+            let friction_keep = scale_tokens(d.ground_friction_keep);
+            let cohesion = scale_tokens(d.cohesion);
+            let restitution = scale_tokens(d.restitution);
+            let redirect_keep = scale_tokens(d.deflect_keep);
             let flow = Literal::u64_suffixed(d.flow_threshold);
             quote! {
                 crate::material::Dynamics::Liquid(crate::material::LiquidDynamics {
-                    air_drag_keep_q16: #drag_keep,
-                    submerged_drag_q16: #drag_keep_submerged,
-                    ground_friction_keep_q16: #friction_keep,
-                    cohesion_q16: #cohesion,
-                    restitution_q16: #restitution,
-                    deflect_keep_q16: #redirect_keep,
+                    air_drag_keep: #drag_keep,
+                    submerged_drag_keep: #drag_keep_submerged,
+                    ground_friction_keep: #friction_keep,
+                    cohesion: #cohesion,
+                    restitution: #restitution,
+                    deflect_keep: #redirect_keep,
                     flow_threshold: #flow,
                 })
             }
         }
         Dynamics::Gas(d) => {
-            let drag_keep = Literal::u32_suffixed(d.air_drag_keep_q16);
-            let cohesion = Literal::u32_suffixed(d.cohesion_q16);
-            let restitution = Literal::u32_suffixed(d.restitution_q16);
-            let redirect_keep = Literal::u32_suffixed(d.deflect_keep_q16);
-            let turbulence = Literal::u32_suffixed(d.turbulence_q16);
+            let drag_keep = scale_tokens(d.air_drag_keep);
+            let cohesion = scale_tokens(d.cohesion);
+            let restitution = scale_tokens(d.restitution);
+            let redirect_keep = scale_tokens(d.deflect_keep);
+            let turbulence = scale_tokens(d.turbulence);
             quote! {
                 crate::material::Dynamics::Gas(crate::material::GasDynamics {
-                    air_drag_keep_q16: #drag_keep,
-                    cohesion_q16: #cohesion,
-                    restitution_q16: #restitution,
-                    deflect_keep_q16: #redirect_keep,
-                    turbulence_q16: #turbulence,
+                    air_drag_keep: #drag_keep,
+                    cohesion: #cohesion,
+                    restitution: #restitution,
+                    deflect_keep: #redirect_keep,
+                    turbulence: #turbulence,
                 })
             }
         }

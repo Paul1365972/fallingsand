@@ -107,35 +107,52 @@ pub struct Burning {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Scale(pub u32);
+
+impl Scale {
+    pub const ZERO: Scale = Scale(0);
+
+    pub const fn apply(self, v: i32) -> i32 {
+        let product = v as i64 * self.0 as i64;
+        let half = 1i64 << 15;
+        let magnitude = (product.abs() + half) >> 16;
+        (if product < 0 { -magnitude } else { magnitude }) as i32
+    }
+
+    pub const fn is_zero(self) -> bool {
+        self.0 == 0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PowderDynamics {
-    pub air_drag_keep_q16: u32,
-    pub submerged_drag_q16: u32,
-    pub ground_friction_keep_q16: u32,
-    pub cohesion_q16: u32,
-    pub restitution_q16: u32,
-    pub deflect_keep_q16: u32,
+    pub air_drag_keep: Scale,
+    pub submerged_drag_keep: Scale,
+    pub ground_friction_keep: Scale,
+    pub restitution: Scale,
+    pub deflect_keep: Scale,
     pub topple_start_threshold: u64,
     pub topple_keep_threshold: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LiquidDynamics {
-    pub air_drag_keep_q16: u32,
-    pub submerged_drag_q16: u32,
-    pub ground_friction_keep_q16: u32,
-    pub cohesion_q16: u32,
-    pub restitution_q16: u32,
-    pub deflect_keep_q16: u32,
+    pub air_drag_keep: Scale,
+    pub submerged_drag_keep: Scale,
+    pub ground_friction_keep: Scale,
+    pub cohesion: Scale,
+    pub restitution: Scale,
+    pub deflect_keep: Scale,
     pub flow_threshold: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GasDynamics {
-    pub air_drag_keep_q16: u32,
-    pub cohesion_q16: u32,
-    pub restitution_q16: u32,
-    pub deflect_keep_q16: u32,
-    pub turbulence_q16: u32,
+    pub air_drag_keep: Scale,
+    pub cohesion: Scale,
+    pub restitution: Scale,
+    pub deflect_keep: Scale,
+    pub turbulence: Scale,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -184,15 +201,13 @@ pub fn per_tick_keep(rate: f32) -> f32 {
     (-rate * (1.0 / TICK_RATE as f32)).exp()
 }
 
-/// `per_tick_chance` divided by the per-cell sampling rate, preserving a seconds-rate under random
-/// ticks. Clamped at 1.0.
 pub fn per_random_tick_chance(rate: f32) -> f32 {
     let opportunities = RANDOM_TICKS_PER_CHUNK as f32 / CHUNK_AREA as f32;
     (per_tick_chance(rate) / opportunities).min(1.0)
 }
 
-pub fn q16(value: f32) -> u32 {
-    (f64::from(value) * 65536.0).round() as u32
+pub fn q16(value: f32) -> Scale {
+    Scale((f64::from(value) * 65536.0).round() as u32)
 }
 
 pub fn milli(value: f32) -> i32 {
