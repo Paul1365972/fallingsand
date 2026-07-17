@@ -1,24 +1,35 @@
 # Networking
 
-One reliable ordered stream per connection; postcard-encoded serde enums, lz4 above a size threshold. `ServerMessage` carries handshake, roster, chat, and system events plus one `TickFrame` per server tick. The frame is the tick boundary and the client's clock; an idle world still sends a tiny empty frame.
+One reliable ordered stream per connection; compact binary frames, compressed above a size threshold. The one frame per server tick is the tick boundary and the client's clock; an idle world still sends a tiny empty frame.
 
-Roster and physical presence are deliberately separate. `RosterUpsert`/`RosterRemove` maintain connected `PlayerId -> name` entries. `TickFrame.players` carries change-gated `PlayerState { player, avatar: Option<PlayerAvatarState> }`: `Some` is the replicated anchor for a live avatar, while `None` removes its nametag and camera target without claiming that the person left.
+## Invariants
 
-Each subsystem rides the frame with its own change signal:
+- **Reliable + ordered is load-bearing** — every delta applies on top of the last state; no per-chunk versioning, resync, or sequence numbers. Packet loss costs retransmit delay, never correctness — acceptable for ~10-player co-op. No prediction, reconciliation, or interpolation; state is cell-snapped at tick arrival and camera smoothing carries the feel.
+- **Raw input only** — the client sends a latest-wins held snapshot plus ordered one-shot actions; edge-sensitive intent always rides the action channel. A new discrete input is a new action variant, never a new message.
+- **Identity is a keypair** — each connection signs a server challenge; durable identity derives from the public key, never client-asserted. The private key stays client-side.
+- **Version-gated** — any wire change or compiled-content change bumps the protocol version; mismatch rejects at handshake.
 
-- **chunks** — `ChunkOp` `Load`/`Delta`/`Unload` from the sim's change rect against a per-session known-chunk set; pixel bodies and player flesh ride these deltas.
-- **players** — optional avatar anchors for presentation; the body itself is still world cells.
-- **inventory + self** — per-slot deltas and private `SelfState`, each sent only when changed. Its `SelfLife` is `Entering`, `Alive(SelfAvatarState)`, `Dead`, or `Reviving`; health, air, and interaction therefore exist exactly when the private lifecycle is alive. `SelfState.anchor` is the view-anchor cell while no avatar exists (entering, dead, reviving) and `None` when alive, giving the client a camera target for the states that have no `PlayerState` avatar.
-- **particles** — `ParticleSpawn` events (position, velocity, RGB) the server emits for dig spray. The server owns when and where they spawn; the frame carries only per-tick spawn events within interest, never simulated particle state. Emission runs on second-based accumulators (tick-rate independent), so a quiet world sends none.
+## Server → client
 
-Client -> server normally sends one `InputFrame` per client fixed tick: the held `InputState` (a latest-wins snapshot — coalescing frames replace it wholesale) plus ordered one-shot `InputAction`s, which alone carry edge-sensitive intents. Dig and place ride the action channel as `Use { button, cell }` events paced client-side: one immediate event on press (so a press+release inside one flush window still lands exactly one action), then a repeat mode that re-emits the aim cell on an interval and emits every cell traversed between aim samples along a four-connected line, making dragged strokes gapless and diagonal-free by construction. The server validates and executes each event in order; held state drives only survival dig progress and previews. A client transition that cancels held control (menu opened, avatar incapacitated) neutralizes the snapshot and emits one immediate neutral frame; otherwise held input decays to neutral after 0.5 s without frames. Session count, handshake lifetime, frame size, messages drained per tick, and actions per frame are bounded. The client carries excess actions into later frames; the server rejects an over-limit frame rather than silently dropping actions. Accepted intents live in the current player's `PlayerControl`; the authoritative session binding rejects input from a superseded connection, and takeover or lifecycle transitions clear already queued work. A new discrete input is a new `InputAction` variant, never a new message.
+Roster and physical presence are separate: roster messages maintain connected names, while the tick frame carries change-gated per-subsystem state — chunk load/delta/unload from the sim's change rect (bodies and player flesh ride these deltas), optional avatar anchors for presentation, per-slot inventory diffs, a private self state whose lifecycle carries health/air/interaction exactly while alive and a camera anchor while not, and dig-spray particle spawn events (the server decides when and where; the client only integrates and fades them).
 
-Persistent identity is an Ed25519 key, not a client-asserted UUID. Each connection starts with a random server challenge; the client signs the domain-separated nonce, the server verifies it, and `PlayerUuid` is derived from the public-key hash. The private key remains client-side. A reconnect that arrives before the old session is cleaned up takes over the same runtime player; reconnect after a completed departure restores the durable record into a new `PlayerId`.
+A wire cell is 3 bytes — material and shade, no velocity or timing; the server re-derives them. Chunk payloads are paletted containers, smallest encoding wins.
 
-The client resolves one identity once at startup and holds it for the session. The secret resolves by CLI/config override, then stored value, then generation. The display name resolves by stored value first, then CLI/config override, then generation (a name derived from the uuid) — so `--name`/`?name=` only seeds the name until one is first stored, and never overrides a saved edit. Name edits mutate that single resolved identity and persist it with the same secret, never minting a new one. An externally supplied key is never written back to storage.
+## Client → server
 
-A wire cell is 3 bytes (material + shade flags), with no velocity or timing; the server re-derives them. Chunk payloads are paletted containers (uniform / paletted / raw, smallest wins).
+One input frame per client fixed tick: the held snapshot (coalescing frames replace it wholesale) plus ordered actions. Dig and place ride the action channel as use events paced client-side: one immediate event on press — a press+release inside one flush window still lands exactly one action — then repeat mode re-emits on an interval and emits every cell traversed between aim samples along a four-connected line, so dragged strokes are gapless and diagonal-free by construction. The server validates and executes each event in order; held state drives only survival dig progress and previews.
 
-`HelloAck` carries `PROTOCOL_VERSION`; the client rejects on mismatch. Any wire change or change to `core::content` bumps it.
+A client transition that cancels held control (menu opened, avatar incapacitated) emits one immediate neutral frame; otherwise held input decays to neutral after half a second without frames. Sessions, handshake lifetime, frame size, drain rate, and actions per frame are bounded; the client carries excess actions into later frames and the server rejects an over-limit frame rather than silently dropping actions. The authoritative session binding rejects input from a superseded connection; takeover and lifecycle transitions clear queued work.
 
-Reliable + ordered is load-bearing: deltas always apply on top of the last state, with no per-chunk versioning, resync, or sequence numbers. Packet loss costs retransmit delay, never correctness, which is acceptable for ~10-player co-op. There is no prediction, reconciliation, or interpolation; state is cell-snapped at tick arrival and camera smoothing carries the feel. The shared `step_player` is the insertion point if latency later forces prediction.
+The client resolves one identity at startup and holds it for the session: key by override, then storage, then generation; name by storage first, then override, then generation — a name edit persists with the same key, never minting a new identity, and an externally supplied key is never written back.
+
+## Glossary
+
+| Term | Meaning |
+|------|---------|
+| TickFrame | the one frame per server tick: chunks, players, inventory, self, particles |
+| ChunkOp | per-chunk wire delta: load / delta / unload |
+| InputFrame | per-client-tick input: held snapshot + ordered one-shot actions |
+| InputState / InputAction | latest-wins held controls / edge-sensitive intent, including use events |
+| SelfLife | private lifecycle on the wire: entering, alive, dead, reviving |
+| PlayerState | public per-player state: id plus an optional live-avatar anchor |

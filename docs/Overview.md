@@ -9,26 +9,25 @@ Multiplayer Noita-like falling-sand game. Inspirations: Noita (world sim, destru
 3. **Performance is a feature** — sleep what can sleep, parallelize what can't.
 4. **Architecture before content** — foundations the final game grows on without rewrites.
 
+Cross-cutting principles: physics is phase-based and semi-realistic — natural behavior over artificial caps and clamps; **universality** — every matter-affecting system handles grid cells, rigid bodies, and entities, or explicitly flags the gap; the quality bar is great-not-good, with Noita and Celeste as benchmarks and human playtesting deciding feel.
+
 ## Gameplay
 
-Co-op survival for ~10 players in one persistent, infinite world; every mechanic routes through the material sim — you dig actual sand, a breached aquifer floods the base, fire spreads through what's flammable.
-
-- Infinite in all directions, content around a surface band at y≈0. Depth trades better materials for worse hazards; no bedrock — depth is gated by hardness and hazard, never fiat.
-- Bare-handed digging gated by per-material hardness. Dug material becomes stackable **material items** (very high stack caps); items craft in the inventory, and placeable items route back through the material sim. Items are a thin layer over materials, not a parallel economy.
-- Hazards are material contact (burn, drown, crush). Per-player game modes via `/gamemode`.
+Co-op survival for ~10 players in one persistent, infinite world; every mechanic routes through the material sim — you dig actual sand, a breached aquifer floods the base, fire spreads through what's flammable. Infinite in all directions around a surface band; depth trades better materials for worse hazards. Digging is gated by per-material hardness; dug matter becomes stackable items that craft and place back through the sim. Hazards are material contact: burn, drown, crush. Per-player game modes.
 
 ## Docs
 
-- [Tech.md](Tech.md) — crates and dependency rules
-- [WorldModel.md](WorldModel.md) — cells, chunks, regions, materials
-- [Simulation.md](Simulation.md) — CA kernel, scheduling, movement, sleeping
-- [Physics.md](Physics.md) — character controller, pixel bodies
-- [Server.md](Server.md) — tick loop, interest, persistence
-- [Networking.md](Networking.md) — protocol and latency
+Each system doc states its goal, its invariants, and its vocabulary; the invariants are non-negotiable design.
+
+- [Tech.md](Tech.md) — crates, dependency rules, profiling
+- [Content.md](Content.md) — compiled content and units
+- [Simulation.md](Simulation.md) — the grid, scheduling, movement, sleeping, combustion
+- [Physics.md](Physics.md) — players and pixel bodies
+- [Server.md](Server.md) — authority, tick, interest, persistence
+- [Networking.md](Networking.md) — protocol
 - [Client.md](Client.md) — rendering and UI
-- [Inventory.md](Inventory.md) — items, slots, crafting, trash
-- [Worldgen.md](Worldgen.md) — generation pipeline
-- [Deploy.md](Deploy.md) — dedicated-server networking, DNS/TLS automation
-- [Glossary.md](Glossary.md) — canonical names for core types and units
+- [Inventory.md](Inventory.md) — items, dig/place, crafting
+- [Worldgen.md](Worldgen.md) — generation
+- [Deploy.md](Deploy.md) — dedicated-server operations
 - [References.md](References.md) — prior art
-- [skysim.html](skysim.html) — browser sky/calendar simulator mirroring `core/celestial.rs`
+- [skysim.html](skysim.html) — browser sky/calendar simulator

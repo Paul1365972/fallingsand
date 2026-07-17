@@ -1,9 +1,11 @@
 # World Generation
 
-A deterministic pure function `(seed, RegionCoords) → Region`. Regions generate independently in any order — no "generate the whole world" step — so cross-border features use deterministic overlap generation, never sequential dependency.
+## Invariants
 
-Layout: a surface band at y≈0 (noise heightmap), infinite depth in progressive bands (biome/hazard/loot keyed on Y), infinite sky thinning above. Pipeline: base terrain (fBm + domain warping) → biome → material fill → ore veins → structures (ruins, mineshafts, islands) → vegetation (decorations, mushrooms, trees).
+- **A pure function** — generation maps (seed, region) to cells deterministically; regions generate independently in any order — there is no whole-world step.
+- **Overlap, not sequence** — cross-border features use deterministic overlap generation, never sequential dependency.
+- **No fiat gates** — depth is gated by hardness and hazard, never bedrock.
 
-Biome and feature definitions are hardcoded Rust, not data files, and name materials directly through `fallingsand_core::content::material::*` (UPPER handles like `material::STONE`) — no palette indirection. `examples/preview.rs` renders to PNG so generation is iterated offline.
+The benchmark is Terraria × Noita × modern Minecraft. Layout: a surface band at y≈0, infinite depth in progressive bands (biome, hazard, loot keyed on depth), infinite sky thinning above. Pipeline: base terrain (noise + domain warping) → biome → material fill → ore veins → structures → vegetation. Biomes and features are hardcoded typed Rust naming materials directly — no palette indirection or data files. A preview example renders regions to PNG for offline iteration.
 
-Coal occurs from the surface through the shallow crust; iron overlaps the early cave layer and becomes denser before deepstone. Gold and crystal remain depth rewards. This distribution supports the wood → first pickaxe → coal/iron → next tool loop near spawn without making rare deep resources surface loot.
+Ore placement carries the early progression near spawn: coal from the surface down, iron by the early caves, gold and crystal as depth rewards.
