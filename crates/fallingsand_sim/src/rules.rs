@@ -148,12 +148,16 @@ fn ignite_neighbors(window: &mut SimWindow, pos: CellPos, rng: &mut Rng, tick_by
         let Some(neighbor) = window.get(neighbor_pos) else {
             continue;
         };
-        if neighbor.updated == tick_byte {
-            continue;
-        }
         let Some(ignition) = content::ignition(neighbor.material) else {
             continue;
         };
+        if ignition.open == 0 && ignition.sealed == 0 {
+            continue;
+        }
+        window.mark(pos);
+        if neighbor.updated == tick_byte {
+            continue;
+        }
         let threshold = if oxygen_exposed(window, neighbor_pos) {
             ignition.open
         } else {
@@ -162,7 +166,6 @@ fn ignite_neighbors(window: &mut SimWindow, pos: CellPos, rng: &mut Rng, tick_by
         if threshold == 0 {
             continue;
         }
-        window.mark(pos);
         if rng.draw().below(threshold) {
             let mut lit = neighbor;
             lit.material = ignition.into;
