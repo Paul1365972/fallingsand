@@ -109,7 +109,8 @@ fn active_dig(
     dig: &mut DigState,
     inventory: &mut Inventory,
 ) {
-    let Some(target) = select_dig(world, &context.input, body, context.reach) else {
+    let Some(target) = select_dig(world, &context.input, body, context.reach, context.survival)
+    else {
         dig.clear_progress();
         dig.interaction = Some(interaction(
             context.input.aim,
@@ -235,7 +236,7 @@ fn idle_preview(
         let target = select_place(world, &context.input, body, context.reach)?;
         return Some(interaction(target, InteractionStatus::Valid, 0.0));
     }
-    let target = select_dig(world, &context.input, body, context.reach)?;
+    let target = select_dig(world, &context.input, body, context.reach, context.survival)?;
     match classify_dig(world, inventory, context, target) {
         Ok(_) => Some(interaction(target, InteractionStatus::Valid, 0.0)),
         Err(_) => None,
@@ -259,13 +260,11 @@ fn classify_dig(
         return Err(InteractionStatus::OutOfReach);
     };
     let material = cell.material;
-    if content::tags(material).contains(Tag::Player)
-        || !matches!(content::phase(material), Phase::Solid | Phase::Powder)
-    {
+    if !destructible(material, context.survival) {
         return Err(InteractionStatus::Occupied);
     }
     let item = content::item_for_material(material);
-    if item == ItemId::NONE {
+    if context.survival && item == ItemId::NONE {
         return Err(InteractionStatus::Undiggable);
     }
     let slot = context.selected_slot as usize;
@@ -292,17 +291,29 @@ fn classify_dig(
     })
 }
 
-fn select_dig(world: &World, input: &InputState, body: &Actor, reach: f32) -> Option<CellPos> {
+fn select_dig(
+    world: &World,
+    input: &InputState,
+    body: &Actor,
+    reach: f32,
+    survival: bool,
+) -> Option<CellPos> {
     let aim = input.aim;
     match input.cursor_mode {
-        CursorMode::Precise => {
-            (diggable(world, aim) && cell_distance_sq(body, aim) <= reach * reach).then_some(aim)
-        }
-        CursorMode::Smart => smart_dig_target(world, body, aim, reach),
+        CursorMode::Precise => (diggable(world, aim, survival)
+            && cell_distance_sq(body, aim) <= reach * reach)
+            .then_some(aim),
+        CursorMode::Smart => smart_dig_target(world, body, aim, reach, survival),
     }
 }
 
-fn smart_dig_target(world: &World, body: &Actor, aim: CellPos, reach: f32) -> Option<CellPos> {
+fn smart_dig_target(
+    world: &World,
+    body: &Actor,
+    aim: CellPos,
+    reach: f32,
+    survival: bool,
+) -> Option<CellPos> {
     let footprint = body.footprint();
     let aim_offset_x = aim.x as f32 + 0.5 - body.x.to_f32();
     let aim_offset_y = aim.y as f32 + 0.5 - body.y.to_f32();
@@ -323,7 +334,7 @@ fn smart_dig_target(world: &World, body: &Actor, aim: CellPos, reach: f32) -> Op
             };
             (footprint.y0..=footprint.y1)
                 .map(|y| CellPos::new(x, y))
-                .filter(|&pos| diggable(world, pos) && in_reach(pos))
+                .filter(|&pos| diggable(world, pos, survival) && in_reach(pos))
                 .min_by_key(|pos| (pos.y - aim.y).abs())
         } else {
             let y = if positive_direction {
@@ -333,7 +344,7 @@ fn smart_dig_target(world: &World, body: &Actor, aim: CellPos, reach: f32) -> Op
             };
             (footprint.x0..=footprint.x1)
                 .map(|x| CellPos::new(x, y))
-                .filter(|&pos| diggable(world, pos) && in_reach(pos))
+                .filter(|&pos| diggable(world, pos, survival) && in_reach(pos))
                 .min_by_key(|pos| (pos.x - aim.x).abs())
         };
         if let Some(target) = nearest_target {
@@ -398,11 +409,21 @@ fn last_air_before_obstruction(world: &World, start: CellPos, end: CellPos) -> O
     last
 }
 
-fn diggable(world: &World, pos: CellPos) -> bool {
-    world.get_cell(pos).is_some_and(|cell| {
-        !content::tags(cell.material).contains(Tag::Player)
-            && matches!(content::phase(cell.material), Phase::Solid | Phase::Powder)
-    })
+fn destructible(material: MaterialId, survival: bool) -> bool {
+    if content::tags(material).contains(Tag::Player) {
+        return false;
+    }
+    match content::phase(material) {
+        Phase::Solid | Phase::Powder => true,
+        Phase::Liquid | Phase::Gas => !survival,
+        Phase::Empty => false,
+    }
+}
+
+fn diggable(world: &World, pos: CellPos, survival: bool) -> bool {
+    world
+        .get_cell(pos)
+        .is_some_and(|cell| destructible(cell.material, survival))
 }
 
 fn cell_distance_sq(body: &Actor, pos: CellPos) -> f32 {
