@@ -20,8 +20,10 @@ Direction: `material ← {content, core}`, `{material, rng} ← content ← core
 - Only the client depends on Bevy; only the server depends on redb.
 - One transport trait spans WebTransport and the in-memory pipe, so single player runs the real protocol, not a shortcut.
 
-## Profiling
+## Verifying cell rules
 
-- **Every build:** the server times each tick phase; the F3 overlay shows it (embedded), the dedicated server logs sim/tick times.
-- **Dev + profiling builds:** per-render-pass CPU/GPU timings feed the overlay (CPU-only on WebGPU).
-- **Tracy (native):** `cargo profile` / `cargo profile-server` build the perf profile (release + symbols) and stream tracing spans to the Tracy GUI; `dist` compiles all spans out. samply/Superluminal also work on any perf binary.
+Verify behavior with a temporary example (deleted before commit) that drives the real kernel:
+
+- Build a `CellWorld`, insert fresh chunks one chunk beyond the scenario on every side (a chunk simulates only with its full 3×3 loaded), place cells with `fill_material` / `clear_cell`, and step with `step_scoped(&mut world, &|_| true, &|_| true)` — keep the random-tick closure on, it is part of behavior.
+- Measure, don't eyeball: print regions top-down (Y is up), count cells per material for conservation, track per-column tops for leveling, and check `awake_counts()` to prove settling actually sleeps.
+- For realistic coverage, place the example in `fallingsand_server` and insert `WorldGenerator::generate_region` output — multiple bodies on real terrain expose scheduling and wake bugs that single-basin tubs cannot.

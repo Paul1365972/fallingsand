@@ -25,6 +25,7 @@ A cell is eight heap-free bytes: material, velocity, shade, a body flag, and an 
 ## Scheduling
 
 - Chunks group into 2×2 blocks run in four phases by block parity; a worker owns its block plus a one-chunk halo, and same-phase windows share no chunks — race-free without locks. A chunk simulates only when its whole 3×3 neighbourhood is loaded; frontier chunks defer, keeping their rects.
+- Rows scan bottom-up so a faller vacates space the cell above enters the same tick; the horizontal direction alternates per row and tick to cancel scan bias.
 - Random ticks are a second, sleep-independent pass scoped to a bounded chunk range around each player: each chunk samples a few tick-seeded cells for ambient processes. Reserved infrastructure for plant growth and decay; nothing uses it today.
 - The kernel monomorphizes per material, so a cell's own properties are constants and dead branches vanish; one movement kernel per phase, taking exactly its phase's coefficients. Integer-only — grid determinism is independent of float semantics. Tuning is authored in real units and compiled to integers; see [Content.md](Content.md).
 
@@ -32,11 +33,11 @@ A cell is eight heap-free bytes: material, velocity, shade, a body flag, and an 
 
 Every moving cell integrates its velocity locally each tick; a settled cell writes nothing. In order:
 
-- **Accelerate** — gravity (gases and fire rise) minus buoyancy from the displaced fluid, then air drag; a lighter liquid under a denser one swaps up directly; rising gases sway by turbulence.
+- **Accelerate** — gravity (gases and fire rise) minus buoyancy from the displaced fluid, then drag by the medium above; a lighter liquid under a denser one swaps up directly; a submerged liquid dives diagonally into adjacent air pockets, so bubbles wander as they rise; rising gases sway by turbulence.
 - **Contact friction** — resting on a blocked face bleeds horizontal velocity by ground friction.
 - **Cohesion** — liquid and gas velocity pulls toward the mean of like-phase neighbours, forming coherent jets.
-- **Traverse** — step cell-by-cell along the velocity, fractional speed by tick-seeded chance, reach capped inside the 64-cell window. Steps are cardinal: a diagonal needs an open orthogonal cell, so corners seal for free.
-- **Collide & redirect** — a blocked face reflects by restitution (near-inelastic); a blocked fall that can descend diagonally converts to sideways velocity by deflect — ledge jets for liquids, repose slides for powders. Powder topple is static/kinetic friction: a stationary grain holds any slope until a moving powder or liquid neighbour agitates it (start rate); a moving grain slides readily (keep rate) and agitates its own neighbours, so avalanches propagate through motion and die with it — never through sleep accidents. One exception: a grain loaded from above with an open slide path is pending work and keeps rolling its start rate, so a dug-out face collapses instead of standing on friction. A liquid that can't descend spreads one cell across a level surface with no velocity gain.
+- **Traverse** — step cell-by-cell along the velocity, fractional speed by tick-seeded chance, reach capped inside the 64-cell window. Steps are cardinal: a diagonal needs an open orthogonal cell, so corners seal for free. A swap stamps both cells: stamped matter cannot be displaced again that tick, stamped air still admits velocity-backed traversal, and a mover refused by a stamp holds its velocity and retries instead of reflecting.
+- **Collide & redirect** — a blocked face reflects by restitution (near-inelastic); a blocked fall that can descend diagonally converts to sideways velocity by deflect — ledge jets for liquids, repose slides for powders. Powder topple is static/kinetic friction: a stationary grain holds any slope until a moving powder or liquid neighbour agitates it (start rate); a moving grain slides readily (keep rate) and agitates its own neighbours, so avalanches propagate through motion and die with it — never through sleep accidents. One exception: a grain loaded from above with an open slide path is pending work and keeps rolling its start rate, so a dug-out face collapses instead of standing on friction. A liquid that can't descend spreads one cell across a level surface with no velocity gain. Redirects yield right of way to a denser faller directly above the target, so gaps fill from above, not from the sides.
 - **Settle** — velocity into a blocked face dies and sub-threshold velocity snaps to zero, so a supported cell nets no change and its chunk sleeps.
 
 Leveling and pressure propagate as local waves over ticks. Steam condenses back to water so gas pockets resolve.
@@ -68,3 +69,5 @@ A water neighbour quenches: a flame dies to steam keeping the water; a burning f
 | Keep-alive | a sim-rect mark without a change: pending work that must be re-evaluated |
 | Burning twin | the synthesized burning material of a flammable fuel |
 | Random tick | bounded tick-seeded per-chunk ambient sample, independent of sleep |
+| Displacement budget | a swapped cell is stamped and can't be displaced again that tick; stamped air still admits velocity-backed traversal |
+| Right of way | sideways redirects refuse a gap with a denser faller directly above it; the faller fills it |

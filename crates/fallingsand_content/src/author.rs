@@ -139,7 +139,7 @@ pub struct LiquidDef {
     pub(crate) ground_friction: PerSecond,
     pub(crate) deflect: Fraction,
     pub(crate) cohesion: PerSecond,
-    pub(crate) flow_rate: PerSecond,
+    pub(crate) flow_rate: Option<PerSecond>,
 }
 
 impl Default for LiquidDef {
@@ -149,7 +149,7 @@ impl Default for LiquidDef {
             ground_friction: 0.0,
             deflect: 1.0,
             cohesion: 0.0,
-            flow_rate: 0.0,
+            flow_rate: None,
         }
     }
 }
@@ -176,7 +176,7 @@ impl LiquidDef {
     }
 
     pub fn flow_rate(mut self, value: PerSecond) -> Self {
-        self.flow_rate = value;
+        self.flow_rate = Some(value);
         self
     }
 }

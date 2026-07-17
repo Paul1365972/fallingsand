@@ -593,16 +593,25 @@ fn validate_material(raw: &RawMaterial) -> Result<(), Error> {
             deflect,
             cohesion,
             flow_rate,
-        }) => validate_numbers(
-            &context,
-            &[
-                ("air_drag", air_drag),
-                ("ground_friction", ground_friction),
-                ("deflect", deflect),
-                ("cohesion", cohesion),
-                ("flow_rate", flow_rate),
-            ],
-        )?,
+        }) => {
+            validate_numbers(
+                &context,
+                &[
+                    ("air_drag", air_drag),
+                    ("ground_friction", ground_friction),
+                    ("deflect", deflect),
+                    ("cohesion", cohesion),
+                ],
+            )?;
+            if let Some(rate) = flow_rate {
+                validate_number(&format!("{context}: flow_rate"), rate)?;
+                if rate <= 0.0 {
+                    return Err(fail(format!(
+                        "{context}: flow_rate must be > 0"
+                    )));
+                }
+            }
+        }
         PhaseDef::Gas(GasDef {
             air_drag,
             cohesion,
@@ -727,11 +736,8 @@ fn quantize_dynamics(raw: &RawMaterial) -> Dynamics {
                 cohesion: q16(per_tick_chance(cohesion)),
                 restitution,
                 deflect_keep: q16(deflect.clamp(0.0, 1.0)),
-                flow_threshold: if flow_rate > 0.0 {
-                    chance_threshold(per_tick_chance(flow_rate))
-                } else {
-                    u64::MAX
-                },
+                flow_threshold: flow_rate
+                    .map_or(u64::MAX, |rate| chance_threshold(per_tick_chance(rate))),
             })
         }
         PhaseDef::Gas(GasDef {

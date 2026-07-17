@@ -12,7 +12,6 @@ const MAX_STEP: i32 = 31;
 const VEL_BITS: u32 = VEL_ONE.trailing_zeros();
 const _: () = assert!(1 << VEL_BITS == VEL_ONE);
 const SETTLE: i32 = (7.5 * TICK_DT * VEL_ONE as f32) as i32;
-const SUBMERGED_DENSITY_MILLI: i32 = 100_000;
 const GRAVITY_DV: i32 = (GRID_GRAVITY * TICK_DT * TICK_DT * VEL_ONE as f32 + 0.5) as i32;
 const AGITATED: i32 = 2 * GRAVITY_DV;
 
@@ -320,10 +319,14 @@ fn neighbor_mean_vel(window: &SimWindow, pos: CellPos, phase: Phase) -> Option<(
     (count > 0).then(|| (sum_x / count, sum_y / count))
 }
 
-fn can_enter<M: MatSpec>(window: &SimWindow, dir: (i32, i32), target: CellPos) -> bool {
-    let Some(cell) = window.get(target) else {
-        return false;
-    };
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Entry {
+    Open,
+    Busy,
+    Blocked,
+}
+
+fn admits<M: MatSpec>(dir: (i32, i32), cell: Cell) -> bool {
     if !matches!(
         content::phase(cell.material),
         Phase::Empty | Phase::Liquid | Phase::Gas
@@ -337,6 +340,62 @@ fn can_enter<M: MatSpec>(window: &SimWindow, dir: (i32, i32), target: CellPos) -
         dy if dy > 0 => density < target_density,
         _ => density > target_density || cell.is_air(),
     }
+}
+
+fn can_enter<M: MatSpec>(window: &SimWindow, dir: (i32, i32), target: CellPos) -> bool {
+    window
+        .get(target)
+        .is_some_and(|cell| admits::<M>(dir, cell))
+}
+
+fn entry<M: MatSpec>(
+    window: &SimWindow,
+    dir: (i32, i32),
+    target: CellPos,
+    tick_byte: u8,
+    allow_stamped_air: bool,
+) -> Entry {
+    let Some(cell) = window.get(target) else {
+        return Entry::Blocked;
+    };
+    if !admits::<M>(dir, cell) {
+        return Entry::Blocked;
+    }
+    if cell.updated == tick_byte && !(allow_stamped_air && cell.is_air()) {
+        return Entry::Busy;
+    }
+    Entry::Open
+}
+
+fn traverse_entry<M: MatSpec>(
+    window: &SimWindow,
+    dir: (i32, i32),
+    target: CellPos,
+    tick_byte: u8,
+) -> Entry {
+    entry::<M>(window, dir, target, tick_byte, true)
+}
+
+fn redirect_entry<M: MatSpec>(
+    window: &SimWindow,
+    dir: (i32, i32),
+    target: CellPos,
+    tick_byte: u8,
+) -> Entry {
+    entry::<M>(window, dir, target, tick_byte, false)
+}
+
+fn yields_to_faller(window: &SimWindow, target: CellPos) -> bool {
+    let Some(occupant) = window.get(target) else {
+        return false;
+    };
+    let Some(above) = window.get(target.translated(0, 1)) else {
+        return false;
+    };
+    matches!(
+        content::phase(above.material),
+        Phase::Liquid | Phase::Powder
+    ) && content::density_milli(above.material) > content::density_milli(occupant.material)
 }
 
 fn step_cells(v: i32, rng: &mut Rng) -> i32 {
@@ -383,7 +442,7 @@ fn update_powder<M: MatSpec>(
                 d.ground_friction_keep,
             )
         },
-        |window, cur, vx, vy, rng| topple_slide::<M>(window, cur, vx, vy, d, rng),
+        |window, cur, vx, vy, rng| topple_slide::<M>(window, cur, vx, vy, d, rng, tick_byte),
     );
 }
 
@@ -400,8 +459,29 @@ fn update_liquid<M: MatSpec>(
         && content::phase(top.material) == Phase::Liquid
         && content::density_milli(top.material) > const { M::DENSITY_MILLI }
     {
-        window.swap(pos, above);
-        return;
+        if top.updated != tick_byte {
+            window.swap(pos, above);
+            return;
+        }
+        window.mark(pos);
+    }
+
+    let submerged = window
+        .get(above)
+        .is_some_and(|top| top.material == cell.material);
+    if submerged && rng.draw().bit() {
+        let side = if rng.draw().bit() { 1 } else { -1 };
+        let bubble = pos.translated(side, -1);
+        let dives = window
+            .get(pos.translated(side, 0))
+            .is_some_and(|beside| beside.material == cell.material)
+            && window
+                .get(bubble)
+                .is_some_and(|hole| hole.is_air() && hole.updated != tick_byte);
+        if dives {
+            window.swap(pos, bubble);
+            return;
+        }
     }
 
     update_mover::<M>(
@@ -424,7 +504,7 @@ fn update_liquid<M: MatSpec>(
             );
             cohesion::<M>(window, pos, vx, vy, d.cohesion);
         },
-        |window, cur, vx, vy, rng| ledge_flow::<M>(window, cur, vx, vy, d, rng),
+        |window, cur, vx, vy, rng| ledge_flow::<M>(window, cur, vx, vy, d, rng, tick_byte),
     );
 }
 
@@ -455,7 +535,7 @@ fn update_gas<M: MatSpec>(
             note_body_below(window, pos);
             cohesion::<M>(window, pos, vx, vy, d.cohesion);
         },
-        |window, cur, vx, vy, rng| ceiling_spread::<M>(window, cur, vx, vy, d, rng),
+        |window, cur, vx, vy, rng| ceiling_spread::<M>(window, cur, vx, vy, d, rng, tick_byte),
     );
 }
 
@@ -470,8 +550,16 @@ fn settling_accelerate<M: MatSpec>(
 ) {
     let ambient = ambient_density_milli(window, pos);
     *vy -= buoyant_gravity::<M>(ambient);
-    apply_drag(vx, vy, ambient, air_drag_keep, submerged_drag_keep);
-
+    let immersed = window
+        .get(pos.translated(0, 1))
+        .is_some_and(|above| content::phase(above.material) == Phase::Liquid);
+    let keep = if immersed {
+        submerged_drag_keep
+    } else {
+        air_drag_keep
+    };
+    *vx = keep.apply(*vx);
+    *vy = keep.apply(*vy);
     if supported_below::<M>(window, pos) {
         *vx = ground_friction_keep.apply(*vx);
     }
@@ -494,7 +582,8 @@ fn update_mover<M: MatSpec>(
 
     accelerate(window, pos, &mut vx, &mut vy, rng);
 
-    let (mut cur, mut moved) = traverse::<M>(window, pos, &mut vx, &mut vy, restitution, rng);
+    let (mut cur, mut moved) =
+        traverse::<M>(window, pos, &mut vx, &mut vy, restitution, rng, tick_byte);
     if !can_enter::<M>(window, (0, gdir), cur.translated(0, gdir)) {
         moved |= redirect(window, &mut cur, &mut vx, vy, rng);
     }
@@ -508,16 +597,6 @@ fn buoyant_gravity<M: MatSpec>(ambient: i32) -> i32 {
     let density = const { M::DENSITY_MILLI } as i64;
     let submerged = (density - ambient as i64).clamp(0, density);
     ((GRAVITY_DV as i64 * submerged + density / 2) / density) as i32
-}
-
-fn apply_drag(vx: &mut i32, vy: &mut i32, ambient: i32, keep: Scale, keep_submerged: Scale) {
-    let keep = if ambient > SUBMERGED_DENSITY_MILLI {
-        keep_submerged
-    } else {
-        keep
-    };
-    *vx = keep.apply(*vx);
-    *vy = keep.apply(*vy);
 }
 
 fn supported_below<M: MatSpec>(window: &SimWindow, pos: CellPos) -> bool {
@@ -553,6 +632,7 @@ fn traverse<M: MatSpec>(
     vy: &mut i32,
     restitution: Scale,
     rng: &mut Rng,
+    tick_byte: u8,
 ) -> (CellPos, bool) {
     *vx = (*vx).clamp(-VEL_MAX, VEL_MAX);
     *vy = (*vy).clamp(-VEL_MAX, VEL_MAX);
@@ -576,24 +656,38 @@ fn traverse<M: MatSpec>(
         };
         if step_x {
             let next = cur.translated(sx, 0);
-            if can_enter::<M>(window, (sx, 0), next) {
-                window.swap(cur, next);
-                cur = next;
-                moved = true;
-                done_x += 1;
-            } else {
-                *vx = reflect(*vx, restitution);
-                done_x = ix;
+            match traverse_entry::<M>(window, (sx, 0), next, tick_byte) {
+                Entry::Open => {
+                    window.swap(cur, next);
+                    cur = next;
+                    moved = true;
+                    done_x += 1;
+                }
+                Entry::Busy => {
+                    window.mark(cur);
+                    done_x = ix;
+                }
+                Entry::Blocked => {
+                    *vx = reflect(*vx, restitution);
+                    done_x = ix;
+                }
             }
         } else {
             let next = cur.translated(0, sy);
-            if can_enter::<M>(window, (0, sy), next) {
-                window.swap(cur, next);
-                cur = next;
-                moved = true;
-                done_y += 1;
-            } else {
-                done_y = iy;
+            match traverse_entry::<M>(window, (0, sy), next, tick_byte) {
+                Entry::Open => {
+                    window.swap(cur, next);
+                    cur = next;
+                    moved = true;
+                    done_y += 1;
+                }
+                Entry::Busy => {
+                    window.mark(cur);
+                    done_y = iy;
+                }
+                Entry::Blocked => {
+                    done_y = iy;
+                }
             }
         }
     }
@@ -671,6 +765,7 @@ fn topple_slide<M: MatSpec>(
     vy: i32,
     d: PowderDynamics,
     rng: &mut Rng,
+    tick_byte: u8,
 ) -> bool {
     let kinetic = vx.abs() >= AGITATED || vy.abs() >= AGITATED;
     let loaded = window
@@ -687,12 +782,22 @@ fn topple_slide<M: MatSpec>(
     let prefer = prefer_side(*vx, rng);
     let mut pending = false;
     for side in [prefer, -prefer] {
-        if !can_enter::<M>(window, (side, 0), cur.translated(side, 0)) {
-            continue;
+        match redirect_entry::<M>(window, (side, 0), cur.translated(side, 0), tick_byte) {
+            Entry::Blocked => continue,
+            Entry::Busy => {
+                pending = true;
+                continue;
+            }
+            Entry::Open => {}
         }
         let diag = cur.translated(side, -1);
-        if !can_enter::<M>(window, (side, -1), diag) {
-            continue;
+        match redirect_entry::<M>(window, (side, -1), diag, tick_byte) {
+            Entry::Blocked => continue,
+            Entry::Busy => {
+                pending = true;
+                continue;
+            }
+            Entry::Open => {}
         }
         if rng.draw().below(threshold) {
             *vx += side * gain.max(AGITATED);
@@ -724,13 +829,24 @@ fn ledge_flow<M: MatSpec>(
     vy: i32,
     d: LiquidDynamics,
     rng: &mut Rng,
+    tick_byte: u8,
 ) -> bool {
     let gain = d.deflect_keep.apply(vy.abs());
     let prefer = prefer_side(*vx, rng);
     let can_flow = rng.draw().below(d.flow_threshold);
+    let mut pending = false;
     for side in [prefer, -prefer] {
         let beside = cur.translated(side, 0);
-        if !can_enter::<M>(window, (side, 0), beside) {
+        match redirect_entry::<M>(window, (side, 0), beside, tick_byte) {
+            Entry::Blocked => continue,
+            Entry::Busy => {
+                pending = true;
+                continue;
+            }
+            Entry::Open => {}
+        }
+        if yields_to_faller(window, beside) {
+            pending = true;
             continue;
         }
         if !can_flow {
@@ -738,7 +854,9 @@ fn ledge_flow<M: MatSpec>(
             return false;
         }
         let diag = cur.translated(side, -1);
-        if can_enter::<M>(window, (side, -1), diag) {
+        if redirect_entry::<M>(window, (side, -1), diag, tick_byte) == Entry::Open
+            && !yields_to_faller(window, diag)
+        {
             *vx += side * gain;
             window.swap(*cur, diag);
             *cur = diag;
@@ -747,6 +865,9 @@ fn ledge_flow<M: MatSpec>(
         window.swap(*cur, beside);
         *cur = beside;
         return true;
+    }
+    if pending {
+        window.mark(*cur);
     }
     false
 }
@@ -758,16 +879,23 @@ fn ceiling_spread<M: MatSpec>(
     vy: i32,
     d: GasDynamics,
     rng: &mut Rng,
+    tick_byte: u8,
 ) -> bool {
     let gain = d.deflect_keep.apply(vy.abs());
     let prefer = prefer_side(*vx, rng);
+    let mut pending = false;
     for side in [prefer, -prefer] {
         let beside = cur.translated(side, 0);
-        if !can_enter::<M>(window, (side, 0), beside) {
-            continue;
+        match redirect_entry::<M>(window, (side, 0), beside, tick_byte) {
+            Entry::Blocked => continue,
+            Entry::Busy => {
+                pending = true;
+                continue;
+            }
+            Entry::Open => {}
         }
         let diag = cur.translated(side, 1);
-        if can_enter::<M>(window, (side, 1), diag) {
+        if redirect_entry::<M>(window, (side, 1), diag, tick_byte) == Entry::Open {
             *vx += side * gain;
             window.swap(*cur, diag);
             *cur = diag;
@@ -776,6 +904,9 @@ fn ceiling_spread<M: MatSpec>(
         window.swap(*cur, beside);
         *cur = beside;
         return true;
+    }
+    if pending {
+        window.mark(*cur);
     }
     false
 }
