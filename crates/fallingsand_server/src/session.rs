@@ -385,7 +385,18 @@ fn handle_hello(
                     return false;
                 }
             };
-            let restored = restored.map(restore_player);
+            let restored = match restored.map(restore_player).transpose() {
+                Ok(restored) => restored,
+                Err(err) => {
+                    tracing::error!("failed to restore player {uuid}: {err}");
+                    reject(
+                        sessions,
+                        session_id,
+                        "player data could not be loaded".into(),
+                    );
+                    return false;
+                }
+            };
             players.insert(Player::new(
                 player_id,
                 uuid,

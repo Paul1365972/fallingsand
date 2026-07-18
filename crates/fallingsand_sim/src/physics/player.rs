@@ -5,7 +5,7 @@ use super::{
 };
 use crate::player::{DUCK_ROWS, STAND_ROWS};
 use fallingsand_core::content;
-use fallingsand_core::{CellPos, Fixed, Phase, TICK_DT};
+use fallingsand_core::{CellPos, Phase, Subcell, TICK_DT};
 
 const MIN_GRIP: f32 = 0.06;
 const COYOTE_SECS: f32 = 0.1;
@@ -16,52 +16,52 @@ const CEILING_VAR_JUMP_GRACE: f32 = 0.15;
 const SWIM_CONTROL_MIN_SUBMERSION: f32 = 0.5;
 const BANK_VAULT_MIN_SUBMERSION: f32 = 0.2;
 const BANK_VAULT_MAX_SUBMERSION: f32 = 0.95;
-const BANK_VAULT_MAX_SINK: Fixed = Fixed::vel_per_sec(20.0);
+const BANK_VAULT_MAX_SINK: Subcell = Subcell::from_cells_per_second(20.0);
 const BANK_PROBE_CELLS: i32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PlayerParams {
-    pub max_run: Fixed,
-    pub run_accel: Fixed,
-    pub run_reduce: Fixed,
-    pub air_mult: Fixed,
-    pub duck_friction: Fixed,
-    pub duck_run_mult: Fixed,
-    pub gravity: Fixed,
-    pub half_grav_threshold: Fixed,
-    pub max_fall: Fixed,
-    pub fast_max_fall: Fixed,
-    pub fast_max_accel: Fixed,
-    pub jump_speed: Fixed,
-    pub jump_h_boost: Fixed,
-    pub swim_thrust: Fixed,
+    pub max_run: Subcell,
+    pub run_accel: Subcell,
+    pub run_reduce: Subcell,
+    pub air_mult: f32,
+    pub duck_friction: Subcell,
+    pub duck_run_mult: f32,
+    pub gravity: Subcell,
+    pub half_grav_threshold: Subcell,
+    pub max_fall: Subcell,
+    pub fast_max_fall: Subcell,
+    pub fast_max_accel: Subcell,
+    pub jump_speed: Subcell,
+    pub jump_h_boost: Subcell,
+    pub swim_thrust: Subcell,
     pub density: f32,
-    pub wade_run_mult: Fixed,
-    pub fly_max: Fixed,
-    pub fly_accel: Fixed,
+    pub wade_run_mult: f32,
+    pub fly_max: Subcell,
+    pub fly_accel: Subcell,
 }
 
 impl Default for PlayerParams {
     fn default() -> Self {
         Self {
-            max_run: Fixed::vel_per_sec(90.0),
-            run_accel: Fixed::accel_per_sec2(1000.0),
-            run_reduce: Fixed::accel_per_sec2(400.0),
-            air_mult: Fixed::from_f32(0.65),
-            duck_friction: Fixed::accel_per_sec2(500.0),
-            duck_run_mult: Fixed::from_f32(0.4),
-            gravity: Fixed::accel_per_sec2(900.0),
-            half_grav_threshold: Fixed::vel_per_sec(40.0),
-            max_fall: Fixed::vel_per_sec(160.0),
-            fast_max_fall: Fixed::vel_per_sec(240.0),
-            fast_max_accel: Fixed::accel_per_sec2(300.0),
-            jump_speed: Fixed::vel_per_sec(105.0),
-            jump_h_boost: Fixed::vel_per_sec(40.0),
-            swim_thrust: Fixed::accel_per_sec2(450.0),
+            max_run: Subcell::from_cells_per_second(90.0),
+            run_accel: Subcell::from_cells_per_second_squared(1000.0),
+            run_reduce: Subcell::from_cells_per_second_squared(400.0),
+            air_mult: 0.65,
+            duck_friction: Subcell::from_cells_per_second_squared(500.0),
+            duck_run_mult: 0.4,
+            gravity: Subcell::from_cells_per_second_squared(900.0),
+            half_grav_threshold: Subcell::from_cells_per_second(40.0),
+            max_fall: Subcell::from_cells_per_second(160.0),
+            fast_max_fall: Subcell::from_cells_per_second(240.0),
+            fast_max_accel: Subcell::from_cells_per_second_squared(300.0),
+            jump_speed: Subcell::from_cells_per_second(105.0),
+            jump_h_boost: Subcell::from_cells_per_second(40.0),
+            swim_thrust: Subcell::from_cells_per_second_squared(450.0),
             density: 1050.0,
-            wade_run_mult: Fixed::from_f32(0.5),
-            fly_max: Fixed::vel_per_sec(160.0),
-            fly_accel: Fixed::accel_per_sec2(1200.0),
+            wade_run_mult: 0.5,
+            fly_max: Subcell::from_cells_per_second(160.0),
+            fly_accel: Subcell::from_cells_per_second_squared(1200.0),
         }
     }
 }
@@ -71,12 +71,12 @@ pub struct Controller {
     coyote: f32,
     buffer: f32,
     var_jump_timer: f32,
-    var_jump_speed: Fixed,
-    max_fall: Fixed,
+    var_jump_speed: Subcell,
+    max_fall: Subcell,
     duck_step: f32,
 }
 
-fn approach(value: Fixed, target: Fixed, delta: Fixed) -> Fixed {
+fn approach(value: Subcell, target: Subcell, delta: Subcell) -> Subcell {
     if value < target {
         (value + delta).min(target)
     } else {
@@ -84,8 +84,8 @@ fn approach(value: Fixed, target: Fixed, delta: Fixed) -> Fixed {
     }
 }
 
-fn same_direction(v: Fixed, dir: i32) -> bool {
-    (dir > 0 && v > Fixed::ZERO) || (dir < 0 && v < Fixed::ZERO)
+fn same_direction(v: Subcell, dir: i32) -> bool {
+    (dir > 0 && v > Subcell::ZERO) || (dir < 0 && v < Subcell::ZERO)
 }
 
 fn ground_grip<W: CellSource>(world: &W, body: &Actor) -> f32 {
@@ -164,8 +164,8 @@ fn fly_update<W: CellSource>(
     ctrl.var_jump_timer = 0.0;
     step_height(world, body, ctrl, STAND_ROWS as i32);
     let move_y = jump_held as i32 - down_held as i32;
-    body.vx = approach(body.vx, params.fly_max.mul_int(move_x), params.fly_accel);
-    body.vy = approach(body.vy, params.fly_max.mul_int(move_y), params.fly_accel);
+    body.vx = approach(body.vx, params.fly_max.times(move_x), params.fly_accel);
+    body.vy = approach(body.vy, params.fly_max.times(move_y), params.fly_accel);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -188,34 +188,33 @@ fn normal_update<W: CellSource>(
     step_height(world, body, ctrl, target_rows);
 
     let grip = if body.on_ground {
-        Fixed::from_f32(ground_grip(world, body))
+        ground_grip(world, body)
     } else {
-        Fixed::ONE
+        1.0
     };
     if body.on_ground && body.rows() < STAND_ROWS as i32 {
-        let target = params.max_run.mul(params.duck_run_mult).mul_int(move_x);
+        let target = params.max_run.scaled_by(params.duck_run_mult).times(move_x);
         let rate = if move_x == 0 {
             params.duck_friction
         } else {
             params.run_accel
         };
-        body.vx = approach(body.vx, target, rate.mul(grip));
+        body.vx = approach(body.vx, target, rate.scaled_by(grip));
     } else {
         let mult = if body.on_ground {
             grip
         } else {
             params.air_mult
         };
-        let wade = Fixed::ONE
-            - (Fixed::ONE - params.wade_run_mult).mul(Fixed::from_f32(submersion.fraction));
-        let max_run = params.max_run.mul(wade);
-        let target = max_run.mul_int(move_x);
+        let wade = 1.0 - (1.0 - params.wade_run_mult) * submersion.fraction;
+        let max_run = params.max_run.scaled_by(wade);
+        let target = max_run.times(move_x);
         let rate = if same_direction(body.vx, move_x) && body.vx.abs() > max_run {
             params.run_reduce
         } else {
             params.run_accel
         };
-        body.vx = approach(body.vx, target, rate.mul(mult));
+        body.vx = approach(body.vx, target, rate.scaled_by(mult));
     }
 
     ctrl.max_fall = ctrl.max_fall.max(params.max_fall);
@@ -235,8 +234,8 @@ fn normal_update<W: CellSource>(
             1.0
         };
         let assist = assist + (1.0 - assist) * submersion.fraction;
-        let net = params.gravity.mul(Fixed::from_f32(assist - buoyancy));
-        if net >= Fixed::ZERO {
+        let net = params.gravity.scaled_by(assist - buoyancy);
+        if net >= Subcell::ZERO {
             body.vy = approach(body.vy, -ctrl.max_fall, net);
         } else {
             body.vy -= net;
@@ -245,21 +244,21 @@ fn normal_update<W: CellSource>(
         if move_y != 0 && submersion.fraction > 0.0 {
             let thrust = params
                 .swim_thrust
-                .mul(Fixed::from_f32(submersion.fraction))
-                .mul_int(move_y);
+                .scaled_by(submersion.fraction)
+                .times(move_y);
             body.vy += thrust;
         }
     }
 
     if submersion.fraction > 0.0 {
-        let vx = body.vx.vel_f32();
-        let vy = body.vy.vel_f32();
+        let vx = body.vx.to_cells_per_second();
+        let vy = body.vy.to_cells_per_second();
         let rel_x = vx - submersion.flow_vx;
         let rel_y = vy - submersion.flow_vy;
         let speed = rel_x.hypot(rel_y);
         let drag = fluid_drag(speed, submersion.fraction);
-        body.vx = Fixed::vel_per_sec(vx - rel_x * drag);
-        body.vy = Fixed::vel_per_sec(vy - rel_y * drag);
+        body.vx = Subcell::from_cells_per_second(vx - rel_x * drag);
+        body.vy = Subcell::from_cells_per_second(vy - rel_y * drag);
     }
 
     if ctrl.var_jump_timer > 0.0 {
@@ -273,13 +272,13 @@ fn normal_update<W: CellSource>(
     if ctrl.buffer > 0.0 {
         if ctrl.coyote > 0.0 {
             let weight = (1.0 - buoyancy).clamp(0.0, 1.0);
-            jump(params, body, ctrl, move_x, Fixed::from_f32(weight.sqrt()));
+            jump(params, body, ctrl, move_x, weight.sqrt());
         } else if submersion.fraction >= BANK_VAULT_MIN_SUBMERSION
             && submersion.fraction <= BANK_VAULT_MAX_SUBMERSION
             && body.vy >= -BANK_VAULT_MAX_SINK
             && bank_ahead(world, body, move_x)
         {
-            jump(params, body, ctrl, move_x, Fixed::ONE);
+            jump(params, body, ctrl, move_x, 1.0);
         }
     }
 }
@@ -304,11 +303,11 @@ fn bank_ahead<W: CellSource>(world: &W, body: &Actor, move_x: i32) -> bool {
     false
 }
 
-fn jump(params: &PlayerParams, body: &mut Actor, ctrl: &mut Controller, move_x: i32, scale: Fixed) {
+fn jump(params: &PlayerParams, body: &mut Actor, ctrl: &mut Controller, move_x: i32, scale: f32) {
     ctrl.buffer = 0.0;
     ctrl.coyote = 0.0;
-    body.vx += params.jump_h_boost.mul(scale).mul_int(move_x);
-    body.vy = params.jump_speed.mul(scale);
+    body.vx += params.jump_h_boost.scaled_by(scale).times(move_x);
+    body.vy = params.jump_speed.scaled_by(scale);
     ctrl.var_jump_timer = VAR_JUMP_TIME;
     ctrl.var_jump_speed = body.vy;
 }
@@ -336,7 +335,7 @@ fn step_height<W: CellSource>(
             }
         }
     }
-    body.y += Fixed::from_int(next / 2 - rows / 2);
-    body.half_h = Fixed::from_int(next).mul(Fixed::HALF);
+    body.y += Subcell::from_cells((next / 2 - rows / 2) as f32);
+    body.half_h = Subcell::from_cells(next as f32).scaled_by(0.5);
     ctrl.duck_step += DUCK_STEP_SECS;
 }

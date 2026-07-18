@@ -1,5 +1,5 @@
 [package]
-name = "fallingsand_rng"
+name = "fallingsand_math"
 version.workspace = true
 edition.workspace = true
 

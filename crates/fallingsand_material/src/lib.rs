@@ -1,16 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-pub const TICK_RATE: u32 = 60;
-pub const VEL_ONE: i32 = 1024;
-pub const CHUNK_SIZE: usize = 64;
-pub const CHUNK_AREA: usize = CHUNK_SIZE * CHUNK_SIZE;
-
-pub const RANDOM_TICKS_PER_CHUNK: u32 = 4;
-
-pub type PerSecond = f32;
-pub type Seconds = f32;
-pub type Fraction = f32;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct MaterialId(pub u16);
 
@@ -107,10 +96,16 @@ pub struct Burning {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Scale(pub u32);
+pub struct VelocityFactor(u32);
 
-impl Scale {
-    pub const ZERO: Scale = Scale(0);
+impl VelocityFactor {
+    pub const fn from_raw(raw: u32) -> Self {
+        Self(raw)
+    }
+
+    pub const fn raw(self) -> u32 {
+        self.0
+    }
 
     pub const fn apply(self, v: i32) -> i32 {
         let product = v as i64 * self.0 as i64;
@@ -126,33 +121,33 @@ impl Scale {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PowderDynamics {
-    pub air_drag_keep: Scale,
-    pub submerged_drag_keep: Scale,
-    pub ground_friction_keep: Scale,
-    pub restitution: Scale,
-    pub deflect_keep: Scale,
+    pub air_drag_keep: VelocityFactor,
+    pub submerged_drag_keep: VelocityFactor,
+    pub ground_friction_keep: VelocityFactor,
+    pub restitution: VelocityFactor,
+    pub deflect_keep: VelocityFactor,
     pub topple_start_threshold: u64,
     pub topple_keep_threshold: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LiquidDynamics {
-    pub air_drag_keep: Scale,
-    pub submerged_drag_keep: Scale,
-    pub ground_friction_keep: Scale,
-    pub cohesion: Scale,
-    pub restitution: Scale,
-    pub deflect_keep: Scale,
+    pub air_drag_keep: VelocityFactor,
+    pub submerged_drag_keep: VelocityFactor,
+    pub ground_friction_keep: VelocityFactor,
+    pub cohesion: VelocityFactor,
+    pub restitution: VelocityFactor,
+    pub deflect_keep: VelocityFactor,
     pub flow_threshold: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GasDynamics {
-    pub air_drag_keep: Scale,
-    pub cohesion: Scale,
-    pub restitution: Scale,
-    pub deflect_keep: Scale,
-    pub turbulence: Scale,
+    pub air_drag_keep: VelocityFactor,
+    pub cohesion: VelocityFactor,
+    pub restitution: VelocityFactor,
+    pub deflect_keep: VelocityFactor,
+    pub turbulence_q16: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -175,41 +170,4 @@ pub struct MaterialInfo {
     pub contact_damage: f32,
     pub emission: [f32; 3],
     pub flicker: f32,
-}
-
-pub const TIER0_MAX_HARDNESS: f32 = 0.35;
-pub const TIER1_MAX_HARDNESS: f32 = 1.0;
-pub const TIER2_MAX_HARDNESS: f32 = 2.0;
-
-pub const fn mining_tier_from_hardness(hardness: f32) -> u8 {
-    if hardness <= TIER0_MAX_HARDNESS {
-        0
-    } else if hardness <= TIER1_MAX_HARDNESS {
-        1
-    } else if hardness <= TIER2_MAX_HARDNESS {
-        2
-    } else {
-        3
-    }
-}
-
-pub fn per_tick_chance(rate: f32) -> f32 {
-    1.0 - (-rate * (1.0 / TICK_RATE as f32)).exp()
-}
-
-pub fn per_tick_keep(rate: f32) -> f32 {
-    (-rate * (1.0 / TICK_RATE as f32)).exp()
-}
-
-pub fn per_random_tick_chance(rate: f32) -> f32 {
-    let opportunities = RANDOM_TICKS_PER_CHUNK as f32 / CHUNK_AREA as f32;
-    (per_tick_chance(rate) / opportunities).min(1.0)
-}
-
-pub fn q16(value: f32) -> Scale {
-    Scale((f64::from(value) * 65536.0).round() as u32)
-}
-
-pub fn milli(value: f32) -> i32 {
-    (f64::from(value) * 1000.0).round() as i32
 }

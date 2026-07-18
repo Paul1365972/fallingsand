@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+fallingsand_math = { workspace = true }
 fallingsand_material = { workspace = true }
 serde = { workspace = true }
 

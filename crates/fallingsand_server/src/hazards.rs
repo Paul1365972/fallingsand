@@ -1,5 +1,5 @@
 use crate::player::{PlayerLife, Players};
-use crate::{MAX_AIR_SECS, MAX_HP};
+use crate::{MAX_AIR_SECONDS, MAX_HEALTH};
 use fallingsand_core::content;
 use fallingsand_core::{CellPos, Phase, TICK_DT, Tag};
 use fallingsand_protocol::GameMode;
@@ -65,7 +65,7 @@ pub fn apply_hazards(sim: &CellWorld, players: &mut Players) {
             continue;
         };
         if !survival {
-            avatar.air = MAX_AIR_SECS;
+            avatar.air = MAX_AIR_SECONDS;
             avatar.burning_secs = 0.0;
             avatar.pending_crush_dv = 0.0;
             continue;
@@ -88,7 +88,7 @@ pub fn apply_hazards(sim: &CellWorld, players: &mut Players) {
                 damage += DROWN_DPS * TICK_DT;
             }
         } else {
-            avatar.air = (avatar.air + AIR_REFILL_MULT * TICK_DT).min(MAX_AIR_SECS);
+            avatar.air = (avatar.air + AIR_REFILL_MULT * TICK_DT).min(MAX_AIR_SECONDS);
         }
         damage += crush_damage(std::mem::take(&mut avatar.pending_crush_dv));
         if damage > 0.0 {
@@ -96,8 +96,8 @@ pub fn apply_hazards(sim: &CellWorld, players: &mut Players) {
             avatar.health.regen_delay_ticks = REGEN_DELAY_TICKS;
         } else if avatar.health.regen_delay_ticks > 0 {
             avatar.health.regen_delay_ticks -= 1;
-        } else if avatar.health.hp < MAX_HP {
-            avatar.health.hp = (avatar.health.hp + REGEN_RATE * TICK_DT).min(MAX_HP);
+        } else if avatar.health.hp < MAX_HEALTH {
+            avatar.health.hp = (avatar.health.hp + REGEN_RATE * TICK_DT).min(MAX_HEALTH);
         }
     }
 }

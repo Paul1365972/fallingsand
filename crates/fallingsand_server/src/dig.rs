@@ -3,14 +3,15 @@ use crate::inventory::Inventory;
 use crate::player::{PlayerLife, Players};
 use fallingsand_core::content;
 use fallingsand_core::{
-    CARDINAL_NEIGHBORS, CellPos, ItemId, ItemStack, MaterialId, Phase, REACH, SURVIVAL_REACH,
-    TICK_DT, Tag, ray_cells,
+    CARDINAL_NEIGHBORS, CellPos, ItemId, ItemStack, MaterialId, Phase, TICK_DT, Tag, ray_cells,
 };
 use fallingsand_protocol::{
     CursorMode, GameMode, InputState, InteractionState, InteractionStatus, UseButton,
 };
 
 const BARE_HAND_SPEED: f32 = 0.55;
+const CREATIVE_REACH: f32 = 100.0;
+const SURVIVAL_REACH: f32 = 20.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MiningMethod {
@@ -69,7 +70,11 @@ pub fn apply_player_inputs(sim: &mut World, bodies: &mut PixelBodies, players: &
             input,
             selected_slot: player.profile.selected_slot,
             survival,
-            reach: if survival { SURVIVAL_REACH } else { REACH },
+            reach: if survival {
+                SURVIVAL_REACH
+            } else {
+                CREATIVE_REACH
+            },
         };
         let body = &avatar.actor;
         let dig = &mut avatar.dig;
@@ -315,8 +320,8 @@ fn smart_dig_target(
     survival: bool,
 ) -> Option<CellPos> {
     let footprint = body.footprint();
-    let aim_offset_x = aim.x as f32 + 0.5 - body.x.to_f32();
-    let aim_offset_y = aim.y as f32 + 0.5 - body.y.to_f32();
+    let aim_offset_x = aim.x as f32 + 0.5 - body.x.to_cells();
+    let aim_offset_y = aim.y as f32 + 0.5 - body.y.to_cells();
     let max_distance = reach.ceil() as i32 + 1;
     let sweep_horizontally = aim_offset_x.abs() >= aim_offset_y.abs();
     let positive_direction = (if sweep_horizontally {
@@ -379,8 +384,8 @@ fn miss_reason(body: &Actor, input: &InputState, reach: f32) -> InteractionStatu
 }
 
 fn clamp_to_reach(body: &Actor, aim: CellPos, reach: f32) -> CellPos {
-    let cx = body.x.to_f32();
-    let cy = body.y.to_f32();
+    let cx = body.x.to_cells();
+    let cy = body.y.to_cells();
     let dx = aim.x as f32 + 0.5 - cx;
     let dy = aim.y as f32 + 0.5 - cy;
     let dist = (dx * dx + dy * dy).sqrt();
@@ -427,8 +432,8 @@ fn diggable(world: &World, pos: CellPos, survival: bool) -> bool {
 }
 
 fn cell_distance_sq(body: &Actor, pos: CellPos) -> f32 {
-    let dx = pos.x as f32 + 0.5 - body.x.to_f32();
-    let dy = pos.y as f32 + 0.5 - body.y.to_f32();
+    let dx = pos.x as f32 + 0.5 - body.x.to_cells();
+    let dy = pos.y as f32 + 0.5 - body.y.to_cells();
     dx * dx + dy * dy
 }
 

@@ -5,7 +5,7 @@ edition.workspace = true
 
 [dependencies]
 fallingsand_core = { workspace = true }
-fallingsand_rng = { workspace = true }
+fallingsand_math = { workspace = true }
 fastnoise-lite = { workspace = true }
 
 [dev-dependencies]

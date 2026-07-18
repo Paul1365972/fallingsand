@@ -4,7 +4,7 @@ use super::{
 };
 use crate::world::CellWorld;
 use fallingsand_core::content;
-use fallingsand_core::{Cell, CellPos, Fixed, Phase};
+use fallingsand_core::{Cell, CellPos, Phase, Subcell};
 use rustc_hash::FxHashSet;
 use std::collections::VecDeque;
 
@@ -154,10 +154,10 @@ pub fn register_body(world: &mut CellWorld, id: u32, island: &[CellPos]) -> Pixe
         com_local: shape.com,
         pivot: pivot_of(width, height),
         angle_steps: angle_steps_for(width, height),
-        x: Fixed::from_cell(min_x).add_f32(shape.com.0),
-        y: Fixed::from_cell(min_y).add_f32(shape.com.1),
-        vx: Fixed::ZERO,
-        vy: Fixed::ZERO,
+        x: Subcell::from_cell(min_x).add_cells(shape.com.0),
+        y: Subcell::from_cell(min_y).add_cells(shape.com.1),
+        vx: Subcell::ZERO,
+        vy: Subcell::ZERO,
         angle: 0.0,
         spin: 0.0,
         inv_mass: 1.0 / shape.mass,
@@ -235,10 +235,10 @@ pub struct BodyParts {
     pub width: u8,
     pub height: u8,
     pub cells: Vec<Cell>,
-    pub x: Fixed,
-    pub y: Fixed,
-    pub vx: Fixed,
-    pub vy: Fixed,
+    pub x: Subcell,
+    pub y: Subcell,
+    pub vx: Subcell,
+    pub vy: Subcell,
     pub angle: f32,
     pub spin: f32,
     pub rest_secs: f32,
@@ -415,10 +415,10 @@ fn split_body(
             com_local: shape.com,
             pivot: pivot_of(part_w, part_h),
             angle_steps: angle_steps_for(part_w, part_h),
-            x: body.x.add_f32(rx),
-            y: body.y.add_f32(ry),
-            vx: body.vx.add_f32(-body.spin * ry),
-            vy: body.vy.add_f32(body.spin * rx),
+            x: body.x.add_cells(rx),
+            y: body.y.add_cells(ry),
+            vx: body.vx.add_cells(-body.spin * ry),
+            vy: body.vy.add_cells(body.spin * rx),
             angle: body.angle,
             spin: body.spin,
             inv_mass: 1.0 / shape.mass,

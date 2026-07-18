@@ -2,7 +2,7 @@ use super::rotation::quantize_step;
 use super::{ActorDynamics, OwnerMap, PixelBody};
 use crate::world::CellWorld;
 use fallingsand_core::content;
-use fallingsand_core::{CARDINAL_NEIGHBORS, CellPos, Fixed, Phase};
+use fallingsand_core::{CARDINAL_NEIGHBORS, CellPos, Phase, Subcell};
 
 pub(super) enum Other {
     Terrain,
@@ -42,9 +42,12 @@ fn entity_contact(
         .iter()
         .position(|entity| entity.bbox.contains_cell(obstruction))?;
     let entity = &entities[index];
-    let (cx, cy) = (Fixed::cell_center(contact.x), Fixed::cell_center(contact.y));
-    let depth_x = entity.bbox.half_w.to_f32() + 0.5 - (cx - entity.bbox.x).to_f32().abs();
-    let depth_y = entity.bbox.half_h.to_f32() + 0.5 - (cy - entity.bbox.y).to_f32().abs();
+    let (cx, cy) = (
+        Subcell::cell_center(contact.x),
+        Subcell::cell_center(contact.y),
+    );
+    let depth_x = entity.bbox.half_w.to_cells() + 0.5 - (cx - entity.bbox.x).to_cells().abs();
+    let depth_y = entity.bbox.half_h.to_cells() + 0.5 - (cy - entity.bbox.y).to_cells().abs();
     let depth = depth_x.min(depth_y).clamp(0.5, 4.0);
     Some((Other::Entity { index }, depth))
 }
@@ -63,8 +66,8 @@ fn classify(
         return Some((
             Other::Body {
                 index: other_index,
-                rx: (Fixed::cell_center(obstruction.x) - other.x).to_f32(),
-                ry: (Fixed::cell_center(obstruction.y) - other.y).to_f32(),
+                rx: (Subcell::cell_center(obstruction.x) - other.x).to_cells(),
+                ry: (Subcell::cell_center(obstruction.y) - other.y).to_cells(),
                 resting: other.rest_secs > 0.0,
             },
             0.5,
@@ -108,8 +111,8 @@ pub(super) fn find_contacts(
     let mut contacts: Vec<Contact> = Vec::new();
     for &(lx, ly) in &body.perimeter {
         let pos = body.body_cell(pivot_cell, step, lx, ly);
-        let rx = (Fixed::cell_center(pos.x) - body.x).to_f32();
-        let ry = (Fixed::cell_center(pos.y) - body.y).to_f32();
+        let rx = (Subcell::cell_center(pos.x) - body.x).to_cells();
+        let ry = (Subcell::cell_center(pos.y) - body.y).to_cells();
         for (dx, dy) in CARDINAL_NEIGHBORS {
             let obstruction = pos.translated(dx, dy);
             if body.raster.covers(obstruction) {

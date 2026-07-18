@@ -4,9 +4,9 @@ use crate::inventory::Inventory;
 use crate::player::{AvatarSnapshot, Player, PlayerLife, Players, RestoredPlayer, ResumeSnapshot};
 use crate::regions::{RegionMap, collect_dirty_saves, mark_changed_regions, mark_saved};
 use fallingsand_core::{
-    CHUNK_AREA, CHUNK_SIZE, Calendar, Cell, CellPos, DirtyRect, Fixed, HOTBAR_SLOTS,
+    CHUNK_AREA, CHUNK_SIZE, Calendar, Cell, CellPos, DirtyRect, HOTBAR_SLOTS,
     Inventory as CoreInventory, ItemId, ItemStack, MaterialId, PLAYER_SLOTS, REGION_AREA_CHUNKS,
-    Region, RegionPos, content,
+    Region, RegionPos, Subcell, content,
 };
 use fallingsand_protocol::{GameMode, PlayerUuid};
 use fallingsand_sim::bodies::{BodyParts, body_parts};
@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 pub const REGION_FORMAT_VERSION: u8 = 12;
-pub const WORLD_FORMAT_VERSION: u16 = 22;
+pub const WORLD_FORMAT_VERSION: u16 = 23;
 const AUTOSAVE_INTERVAL_TICKS: u64 = fallingsand_core::ticks_from_secs(10.0);
 const CELL_BYTES: usize = 8;
 const RECT_BYTES: usize = 4;
@@ -42,10 +42,10 @@ pub struct BodyRecord {
     pub width: u8,
     pub height: u8,
     pub cells: Vec<(u16, u8)>,
-    pub x: Fixed,
-    pub y: Fixed,
-    pub vx: Fixed,
-    pub vy: Fixed,
+    pub x: Subcell,
+    pub y: Subcell,
+    pub vx: Subcell,
+    pub vy: Subcell,
     pub angle: f32,
     pub spin: f32,
     pub rest_secs: f32,
@@ -80,7 +80,7 @@ pub fn record_to_parts(record: &BodyRecord) -> BodyParts {
             .iter()
             .map(|&(material, shade_flags)| {
                 let mut cell = Cell::AIR;
-                cell.material = MaterialId(material.min(content::MATERIAL_COUNT as u16 - 1));
+                cell.material = MaterialId(material);
                 cell.shade_flags = shade_flags;
                 cell.set_body(false);
                 cell
@@ -135,10 +135,10 @@ pub enum ResumeState {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AvatarRecord {
-    pub x: Fixed,
-    pub y: Fixed,
-    pub vx: Fixed,
-    pub vy: Fixed,
+    pub x: Subcell,
+    pub y: Subcell,
+    pub vx: Subcell,
+    pub vy: Subcell,
     pub hp: f32,
     pub regen_delay_ticks: u64,
     pub air: f32,
@@ -178,63 +178,95 @@ impl From<&AvatarSnapshot> for AvatarRecord {
     }
 }
 
-pub fn stack_to_record(stack: Option<ItemStack>) -> SlotRecord {
-    let stack = stack.filter(|s| s.count > 0)?;
-    let name = content::try_item(stack.item)?.name.to_owned();
-    Some(StackRecord {
-        item: name,
+pub fn stack_to_record(stack: Option<ItemStack>) -> Result<SlotRecord, StoreError> {
+    let Some(stack) = stack.filter(|stack| stack.count > 0) else {
+        return Ok(None);
+    };
+    let item = content::try_item(stack.item).filter(|_| stack.item != ItemId::NONE);
+    let item =
+        item.ok_or_else(|| StoreError::CorruptPlayer(format!("invalid item id {}", stack.item.0)))?;
+    if stack.count > item.stack_max {
+        return Err(StoreError::CorruptPlayer(format!(
+            "{} of item {:?} exceeds stack limit {}",
+            stack.count, item.name, item.stack_max
+        )));
+    }
+    Ok(Some(StackRecord {
+        item: item.name.to_owned(),
         count: stack.count,
-    })
+    }))
 }
 
-pub fn stack_from_record(record: &SlotRecord) -> Option<ItemStack> {
-    let StackRecord { item: name, count } = record.as_ref()?;
+pub fn stack_from_record(record: &SlotRecord) -> Result<Option<ItemStack>, StoreError> {
+    let Some(StackRecord { item: name, count }) = record.as_ref() else {
+        return Ok(None);
+    };
     if *count == 0 {
-        return None;
+        return Ok(None);
     }
     match content::item_id_of(name) {
-        Some(id) if id != ItemId::NONE => Some(ItemStack::new(id, *count)),
-        _ => {
-            tracing::warn!("dropping {count} of unknown item {name:?}");
-            None
+        Some(id) if id != ItemId::NONE => {
+            let item = content::item(id);
+            if *count > item.stack_max {
+                return Err(StoreError::CorruptPlayer(format!(
+                    "{count} of item {name:?} exceeds stack limit {}",
+                    item.stack_max
+                )));
+            }
+            Ok(Some(ItemStack::new(id, *count)))
         }
+        _ => Err(StoreError::CorruptPlayer(format!(
+            "unknown item {name:?} with count {count}"
+        ))),
     }
 }
 
-pub fn slots_to_record(inv: &CoreInventory) -> Vec<SlotRecord> {
+pub fn slots_to_record(inv: &CoreInventory) -> Result<Vec<SlotRecord>, StoreError> {
     inv.slots
         .iter()
         .map(|slot| stack_to_record(*slot))
         .collect()
 }
 
-pub fn player_slots_from_record(list: &[SlotRecord]) -> CoreInventory {
+pub fn player_slots_from_record(list: &[SlotRecord]) -> Result<CoreInventory, StoreError> {
+    if list.len() != PLAYER_SLOTS {
+        return Err(StoreError::CorruptPlayer(format!(
+            "expected {PLAYER_SLOTS} inventory slots, got {}",
+            list.len()
+        )));
+    }
     let mut inv = CoreInventory::with_capacity(PLAYER_SLOTS);
     for (slot, record) in inv.slots.iter_mut().zip(list) {
-        *slot = stack_from_record(record);
+        *slot = stack_from_record(record)?;
     }
-    inv
+    Ok(inv)
 }
 
-pub fn restore_player(record: PlayerRecord) -> RestoredPlayer {
+pub fn restore_player(record: PlayerRecord) -> Result<RestoredPlayer, StoreError> {
+    if record.selected as usize >= HOTBAR_SLOTS {
+        return Err(StoreError::CorruptPlayer(format!(
+            "invalid selected slot {}",
+            record.selected
+        )));
+    }
     let resume = match record.resume {
         ResumeState::Alive(record) => ResumeSnapshot::Alive(record.into()),
         ResumeState::Dead { view_anchor } => ResumeSnapshot::Dead { view_anchor },
     };
-    RestoredPlayer {
+    Ok(RestoredPlayer {
         mode: record.mode,
-        selected_slot: record.selected.min(HOTBAR_SLOTS as u8 - 1),
+        selected_slot: record.selected,
         inventory: Inventory::with(
-            player_slots_from_record(&record.inventory),
-            stack_from_record(&record.cursor),
-            stack_from_record(&record.trash),
+            player_slots_from_record(&record.inventory)?,
+            stack_from_record(&record.cursor)?,
+            stack_from_record(&record.trash)?,
         ),
         history: record.history,
         resume,
-    }
+    })
 }
 
-pub fn snapshot_player(player: &Player) -> PlayerRecord {
+pub fn snapshot_player(player: &Player) -> Result<PlayerRecord, StoreError> {
     let resume = match &player.life {
         PlayerLife::Entering(entering) => {
             ResumeState::Alive(AvatarRecord::from(&entering.materialization.template))
@@ -250,15 +282,15 @@ pub fn snapshot_player(player: &Player) -> PlayerRecord {
             view_anchor: reviving.death.view_anchor,
         },
     };
-    PlayerRecord {
+    Ok(PlayerRecord {
         mode: player.profile.mode,
         selected: player.profile.selected_slot,
-        inventory: slots_to_record(&player.profile.inventory.inner),
-        cursor: stack_to_record(player.profile.inventory.cursor),
-        trash: stack_to_record(player.profile.inventory.trash),
+        inventory: slots_to_record(&player.profile.inventory.inner)?,
+        cursor: stack_to_record(player.profile.inventory.cursor)?,
+        trash: stack_to_record(player.profile.inventory.trash)?,
         history: player.profile.history.clone(),
         resume,
-    }
+    })
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -269,6 +301,8 @@ pub enum StoreError {
     CorruptRegion(String),
     #[error("corrupt record: {0}")]
     CorruptRecord(#[from] postcard::Error),
+    #[error("corrupt player record: {0}")]
+    CorruptPlayer(String),
     #[error(
         "unsupported world format {0} (current {WORLD_FORMAT_VERSION}); pre-release worlds carry no migrations — delete the world and create a new one"
     )]
@@ -560,7 +594,10 @@ pub fn autosave(
     }
 
     for (_, player) in players.iter() {
-        persistence.stage_player(player.uuid, snapshot_player(player));
+        match snapshot_player(player) {
+            Ok(record) => persistence.stage_player(player.uuid, record),
+            Err(err) => tracing::error!("failed to snapshot player {}: {err}", player.uuid),
+        }
     }
     if let Err(err) = persistence.flush_players() {
         tracing::error!("player autosave failed: {err}");
@@ -599,7 +636,10 @@ pub fn save_everything(
     };
 
     for (_, player) in players.iter() {
-        persistence.stage_player(player.uuid, snapshot_player(player));
+        match snapshot_player(player) {
+            Ok(record) => persistence.stage_player(player.uuid, record),
+            Err(err) => tracing::error!("failed to snapshot player {}: {err}", player.uuid),
+        }
     }
     let player_count = match persistence.flush_players() {
         Ok(count) => count,
@@ -692,6 +732,17 @@ pub fn decode_region(blob: &[u8]) -> Result<(Region, Vec<BodyRecord>), StoreErro
         )));
     }
     let bodies: Vec<BodyRecord> = postcard::from_bytes(&raw[REGION_RAW_BYTES..])?;
+    for (body_index, body) in bodies.iter().enumerate() {
+        if let Some((material, _)) = body
+            .cells
+            .iter()
+            .find(|(material, _)| *material as usize >= content::MATERIAL_COUNT)
+        {
+            return Err(StoreError::CorruptRegion(format!(
+                "body {body_index} has invalid material id {material}"
+            )));
+        }
+    }
     let mut region = Region::new();
     let mut cursor = raw[..REGION_CELL_BYTES].chunks_exact(CELL_BYTES);
     for chunk in region.chunks_mut().iter_mut() {

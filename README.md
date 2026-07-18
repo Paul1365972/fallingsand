@@ -11,13 +11,13 @@ Play the latest web build at [paul1365972.github.io/fallingsand](https://paul136
 assets/                   # Client assets
 docs/                     # Design docs
 crates/
-├── fallingsand_material  # Shared leaf: material types, tick constants, quantization math
+├── fallingsand_math      # Tick/subcell constants and tick-seeded stateless randomness
+├── fallingsand_material  # Runtime material schema
 ├── fallingsand_content   # Host-only typed content (materials, reactions, items, recipes, tuning); build-time codegen
 ├── fallingsand_core      # Shared foundation: coords, cells/chunks/regions, compile-time content
 ├── fallingsand_sim       # Simulation kernel: per-material CA passes, dirty rects, sleeping, physics
 ├── fallingsand_protocol  # All client↔server messages: serde types, framing, versioning
 ├── fallingsand_net       # Transport trait; backends: WebTransport (native + wasm), in-memory
-├── fallingsand_rng       # Tick-seeded stateless randomness (splitmix64)
 ├── fallingsand_worldgen  # Deterministic procedural generation
 ├── fallingsand_server    # Authoritative server: library + dedicated headless binary
 └── fallingsand_client    # Bevy app; builds the `fallingsand` binary (native + WASM)

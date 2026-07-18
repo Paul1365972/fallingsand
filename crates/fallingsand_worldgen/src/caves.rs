@@ -3,7 +3,16 @@ use crate::biomes::{
     SHAFT_WIDTH,
 };
 use crate::noise::{Field, noise_seed};
+use fallingsand_math::Hash;
 use fastnoise_lite::{DomainWarpType, FastNoiseLite, FractalType, NoiseType};
+
+const TUNNEL_A_SALT: Hash = Hash::label("worldgen.tunnel_a");
+const TUNNEL_A_WARP_SALT: Hash = Hash::label("worldgen.tunnel_a_warp");
+const TUNNEL_B_SALT: Hash = Hash::label("worldgen.tunnel_b");
+const TUNNEL_B_WARP_SALT: Hash = Hash::label("worldgen.tunnel_b_warp");
+const CHEESE_SALT: Hash = Hash::label("worldgen.cheese");
+const CAVERN_RARITY_SALT: Hash = Hash::label("worldgen.cavern_rarity");
+const SHAFT_SALT: Hash = Hash::label("worldgen.shaft");
 
 pub struct Caves {
     pub tunnel_a: Field,
@@ -15,8 +24,8 @@ pub struct Caves {
 
 impl Caves {
     pub fn new(seed: u64) -> Self {
-        let warp = |purpose: &str| {
-            let mut warp = FastNoiseLite::with_seed(noise_seed(seed, purpose));
+        let warp = |salt: Hash| {
+            let mut warp = FastNoiseLite::with_seed(noise_seed(seed, salt));
             warp.set_domain_warp_type(Some(DomainWarpType::OpenSimplex2));
             warp.set_domain_warp_amp(Some(60.0));
             warp.set_frequency(Some(0.006));
@@ -24,30 +33,38 @@ impl Caves {
             warp.set_fractal_octaves(Some(2));
             warp
         };
-        let tunnel = |purpose: &str, frequency: f32| {
-            let mut noise = FastNoiseLite::with_seed(noise_seed(seed, purpose));
+        let tunnel = |salt: Hash, frequency: f32| {
+            let mut noise = FastNoiseLite::with_seed(noise_seed(seed, salt));
             noise.set_noise_type(Some(NoiseType::OpenSimplex2S));
             noise.set_frequency(Some(frequency));
             noise
         };
 
-        let mut cheese = FastNoiseLite::with_seed(noise_seed(seed, "cheese"));
+        let mut cheese = FastNoiseLite::with_seed(noise_seed(seed, CHEESE_SALT));
         cheese.set_noise_type(Some(NoiseType::OpenSimplex2S));
         cheese.set_fractal_type(Some(FractalType::FBm));
         cheese.set_fractal_octaves(Some(3));
         cheese.set_frequency(Some(0.004));
 
-        let mut rarity = FastNoiseLite::with_seed(noise_seed(seed, "cavern_rarity"));
+        let mut rarity = FastNoiseLite::with_seed(noise_seed(seed, CAVERN_RARITY_SALT));
         rarity.set_noise_type(Some(NoiseType::OpenSimplex2));
         rarity.set_frequency(Some(0.0007));
 
-        let mut shaft = FastNoiseLite::with_seed(noise_seed(seed, "shaft"));
+        let mut shaft = FastNoiseLite::with_seed(noise_seed(seed, SHAFT_SALT));
         shaft.set_noise_type(Some(NoiseType::OpenSimplex2));
         shaft.set_frequency(Some(0.0013));
 
         Self {
-            tunnel_a: Field::new(tunnel("tunnel_a", 0.006), Some(warp("tunnel_a_warp")), 4),
-            tunnel_b: Field::new(tunnel("tunnel_b", 0.0075), Some(warp("tunnel_b_warp")), 4),
+            tunnel_a: Field::new(
+                tunnel(TUNNEL_A_SALT, 0.006),
+                Some(warp(TUNNEL_A_WARP_SALT)),
+                4,
+            ),
+            tunnel_b: Field::new(
+                tunnel(TUNNEL_B_SALT, 0.0075),
+                Some(warp(TUNNEL_B_WARP_SALT)),
+                4,
+            ),
             cheese: Field::new(cheese, None, 4),
             rarity: Field::new(rarity, None, 32),
             shaft,

@@ -1,5 +1,5 @@
 use super::{accessor_fn, colors_tokens, material_id, phase_path, tags_tokens};
-use crate::model::Content;
+use crate::model::{Content, mining_tier_from_hardness};
 use fallingsand_material::Reaction;
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
@@ -78,9 +78,7 @@ pub fn emit(content: &Content) -> TokenStream {
             let name = &mat.name;
             let colors = colors_tokens(&mat.colors);
             let hardness = Literal::f32_suffixed(mat.hardness);
-            let mining_tier = Literal::u8_suffixed(
-                fallingsand_material::mining_tier_from_hardness(mat.hardness),
-            );
+            let mining_tier = Literal::u8_suffixed(mining_tier_from_hardness(mat.hardness));
             let restitution = Literal::f32_suffixed(mat.restitution);
             let surface_grip = Literal::f32_suffixed(mat.surface_grip);
             let surface_bounce = Literal::f32_suffixed(mat.surface_bounce);

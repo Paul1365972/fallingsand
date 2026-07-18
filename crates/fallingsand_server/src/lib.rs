@@ -32,7 +32,7 @@ pub(crate) use fallingsand_core::TICK_RATE;
 pub(crate) const TICK_DURATION: Duration = Duration::from_nanos(1_000_000_000 / TICK_RATE as u64);
 pub(crate) const INTEREST_RADIUS_X: i32 = 6;
 pub(crate) const INTEREST_RADIUS_Y: i32 = 4;
-pub(crate) use fallingsand_core::{MAX_AIR_SECS, MAX_HP};
+pub(crate) use fallingsand_core::{MAX_AIR_SECONDS, MAX_HEALTH};
 
 pub(crate) struct WorldInfo {
     pub(crate) seed: u64,
@@ -384,7 +384,10 @@ impl ServerState {
             if let Some(avatar) = player.avatar_mut() {
                 physics::unstamp_and_wake(&mut self.sim, &mut self.bodies, &mut avatar.stamp);
             }
-            self.persistence.stage_player(player.uuid, record);
+            match record {
+                Ok(record) => self.persistence.stage_player(player.uuid, record),
+                Err(err) => tracing::error!("failed to snapshot player {}: {err}", player.uuid),
+            }
         }
         if let Err(err) = self.persistence.flush_players() {
             tracing::error!("failed to save disconnected players: {err}");

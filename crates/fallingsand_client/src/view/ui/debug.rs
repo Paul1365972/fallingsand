@@ -8,7 +8,7 @@ use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use fallingsand_core::content;
 use fallingsand_core::{
-    CHUNK_AREA, CHUNK_SIZE, Cell, ChunkPos, MAX_HP, Phase as MaterialPhase, REGION_SIZE_CELLS,
+    CHUNK_AREA, CHUNK_SIZE, Cell, ChunkPos, MAX_HEALTH, Phase as MaterialPhase, REGION_SIZE_CELLS,
     SEASON_DAYS,
 };
 use fallingsand_protocol::{ServerStats, TickProfile};
@@ -376,7 +376,7 @@ fn playing_lines(
         left_lines.push(String::new());
         left_lines.push(format!(
             "hp {:>3.0}/{:.0} air {:>4.1}s{}",
-            avatar.hp, MAX_HP, avatar.air, burning
+            avatar.hp, MAX_HEALTH, avatar.air, burning
         ));
         left_lines.push(format!(
             "pos {:.1},{:.1} {}",

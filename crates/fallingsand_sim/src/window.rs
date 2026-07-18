@@ -3,7 +3,7 @@ use fallingsand_core::{CHUNK_SIZE, Cell, CellPos, Chunk, ChunkPos};
 pub const WINDOW_CHUNKS: i32 = 4;
 pub const WINDOW_SLOTS: usize = (WINDOW_CHUNKS * WINDOW_CHUNKS) as usize;
 pub const SPEED_OF_LIGHT: i32 = CHUNK_SIZE as i32;
-const _: () = assert!(SPEED_OF_LIGHT as usize == CHUNK_SIZE && WINDOW_CHUNKS == 4);
+const _: () = assert!(SPEED_OF_LIGHT as usize <= ((WINDOW_CHUNKS as usize - 2) / 2) * CHUNK_SIZE);
 
 pub struct SimWindow<'a> {
     origin: ChunkPos,
@@ -63,12 +63,13 @@ impl<'a> SimWindow<'a> {
         let chunk = pos.chunk();
         let sx = chunk.x.wrapping_sub(self.origin.x);
         let sy = chunk.y.wrapping_sub(self.origin.y);
+        let in_window = (0..WINDOW_CHUNKS).contains(&sx) && (0..WINDOW_CHUNKS).contains(&sy);
         debug_assert!(
-            (0..WINDOW_CHUNKS).contains(&sx) && (0..WINDOW_CHUNKS).contains(&sy),
+            in_window,
             "speed-of-light ({SPEED_OF_LIGHT}) violation: access at {pos:?} escapes window at {:?}",
             self.origin
         );
-        if !(0..WINDOW_CHUNKS).contains(&sx) || !(0..WINDOW_CHUNKS).contains(&sy) {
+        if !in_window {
             return None;
         }
         Some((sy * WINDOW_CHUNKS + sx) as usize)

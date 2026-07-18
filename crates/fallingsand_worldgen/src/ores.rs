@@ -1,6 +1,8 @@
 use crate::biomes::{ORE_ANCHOR_GRID, ORE_MARGIN, WorldDef};
 use fallingsand_core::MaterialId;
-use fallingsand_rng::Hash;
+use fallingsand_math::Hash;
+
+const ORE_VEIN_SALT: Hash = Hash::label("worldgen.ore_vein");
 
 pub(crate) struct VeinCell {
     pub x: i32,
@@ -23,7 +25,10 @@ pub(crate) fn veins_for_rect(
     let anchor_max_y = (max_y + ORE_MARGIN).div_euclid(ORE_ANCHOR_GRID);
     for anchor_y in anchor_min_y..=anchor_max_y {
         for anchor_x in anchor_min_x..=anchor_max_x {
-            let mut rng = Hash::seed(seed).bytes(b"ore").pos(anchor_x, anchor_y).rng();
+            let mut rng = Hash::seed(seed)
+                .salt(ORE_VEIN_SALT)
+                .pos(anchor_x, anchor_y)
+                .rng();
             let center_x = anchor_x * ORE_ANCHOR_GRID + rng.draw().range(0, ORE_ANCHOR_GRID - 1);
             let center_y = anchor_y * ORE_ANCHOR_GRID + rng.draw().range(0, ORE_ANCHOR_GRID - 1);
             let Some(ore) = def.ores.iter().find(|ore| {

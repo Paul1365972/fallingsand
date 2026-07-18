@@ -6,7 +6,7 @@ The world is one cellular automaton: every pixel is matter. Physics is phase-bas
 
 - **Conservation of mass** — cells are created or destroyed only by a physical cause.
 - **One cell, one owner** — a cell belongs to terrain, one rigid body, or one player raster; double occupancy is an architecture bug, not a tuning problem.
-- **Determinism** — the same seed and inputs produce the same result on one machine; simulation randomness is tick-seeded and stateless, and simulation paths avoid iteration-order-dependent collections.
+- **Determinism** — the same seed and inputs produce the same result on one machine; every random domain has a compile-time string-labeled salt, simulation randomness is tick-seeded and stateless, and simulation paths avoid iteration-order-dependent collections.
 - **Locality (speed of light)** — no update reaches farther than 64 cells in one tick; longer-range behavior propagates locally over ticks. A queued between-tick world-event list is the sanctioned escape hatch — none exists today.
 - **Idle cost** — unloaded chunks cost nothing; a settled ticketed chunk does no movement work, paying only a bounded random-tick sample. No unbounded or growing per-tick cost.
 - **Sleeping is a pure optimization** — evaluating a chunk's full area and evaluating only its sim rect must produce identical results. A rule whose outcome depends on anything outside its marked neighbourhood, or pending stochastic work that goes quiet without a keep-alive, is a bug.

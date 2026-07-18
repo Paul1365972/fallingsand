@@ -1,18 +1,19 @@
-use crate::window::SimWindow;
+use crate::window::{SPEED_OF_LIGHT, SimWindow};
 use fallingsand_core::content::{self, MatSpec, material};
 use fallingsand_core::{
-    Burning, BurningKind, CARDINAL_NEIGHBORS as NEIGHBORS, Cell, CellPos, Dynamics, GRID_GRAVITY,
-    GasDynamics, LiquidDynamics, MaterialId, Phase, PowderDynamics, Scale, SealedBurn, TICK_DT,
-    VEL_ONE,
+    Burning, BurningKind, CARDINAL_NEIGHBORS as NEIGHBORS, Cell, CellPos, Dynamics, GasDynamics,
+    LiquidDynamics, MaterialId, Phase, PowderDynamics, SealedBurn, TICK_DT, VelocityFactor,
 };
-use fallingsand_rng::{Hash, Rng};
+use fallingsand_math::{Hash, Rng, SUBCELL_BITS, SUBCELL_UNITS_PER_CELL};
 
-const VEL_MAX: i32 = 31 * VEL_ONE;
+const GRID_GRAVITY: f32 = 600.0;
+const CELL_UPDATE_SALT: Hash = Hash::label("simulation.cell_update");
 const MAX_STEP: i32 = 31;
-const VEL_BITS: u32 = VEL_ONE.trailing_zeros();
-const _: () = assert!(1 << VEL_BITS == VEL_ONE);
-const SETTLE: i32 = (7.5 * TICK_DT * VEL_ONE as f32) as i32;
-const GRAVITY_DV: i32 = (GRID_GRAVITY * TICK_DT * TICK_DT * VEL_ONE as f32 + 0.5) as i32;
+const _: () = assert!(MAX_STEP < SPEED_OF_LIGHT);
+const MAX_VELOCITY_RAW: i32 = MAX_STEP * SUBCELL_UNITS_PER_CELL;
+const SETTLE: i32 = (7.5 * TICK_DT * SUBCELL_UNITS_PER_CELL as f32) as i32;
+const GRAVITY_DV: i32 =
+    (GRID_GRAVITY * TICK_DT * TICK_DT * SUBCELL_UNITS_PER_CELL as f32 + 0.5) as i32;
 const AGITATED: i32 = 2 * GRAVITY_DV;
 
 macro_rules! material_dispatch {
@@ -65,7 +66,10 @@ fn update_cell_spec<M: MatSpec>(
     tick: u64,
     tick_byte: u8,
 ) {
-    let mut rng = Hash::seed(tick).pos(pos.x, pos.y).rng();
+    let mut rng = Hash::seed(tick)
+        .salt(CELL_UPDATE_SALT)
+        .pos(pos.x, pos.y)
+        .rng();
 
     if const { M::IS_HOT } {
         ignite_neighbors(window, pos, &mut rng, tick_byte);
@@ -400,8 +404,8 @@ fn yields_to_faller(window: &SimWindow, target: CellPos) -> bool {
 
 fn step_cells(v: i32, rng: &mut Rng) -> i32 {
     let mag = v.abs();
-    let fractional = (rng.draw().bits(VEL_BITS) as i32) < mag % VEL_ONE;
-    let cells = (mag / VEL_ONE + fractional as i32).min(MAX_STEP);
+    let fractional = (rng.draw().bits(SUBCELL_BITS) as i32) < mag % SUBCELL_UNITS_PER_CELL;
+    let cells = (mag / SUBCELL_UNITS_PER_CELL + fractional as i32).min(MAX_STEP);
     cells * v.signum()
 }
 
@@ -411,7 +415,7 @@ fn scaled_round(product: i64, shift: u32) -> i32 {
     (if product < 0 { -magnitude } else { magnitude }) as i32
 }
 
-fn reflect(v: i32, restitution: Scale) -> i32 {
+fn reflect(v: i32, restitution: VelocityFactor) -> i32 {
     -restitution.apply(v)
 }
 
@@ -528,9 +532,9 @@ fn update_gas<M: MatSpec>(
             *vy += GRAVITY_DV;
             *vx = d.air_drag_keep.apply(*vx);
             *vy = d.air_drag_keep.apply(*vy);
-            if !d.turbulence.is_zero() {
+            if d.turbulence_q16 != 0 {
                 let r = rng.draw().bits(16) as i64 - 32768;
-                *vx += scaled_round(d.turbulence.0 as i64 * r, 31);
+                *vx += scaled_round(d.turbulence_q16 as i64 * r, 31);
             }
             note_body_below(window, pos);
             cohesion::<M>(window, pos, vx, vy, d.cohesion);
@@ -544,9 +548,9 @@ fn settling_accelerate<M: MatSpec>(
     pos: CellPos,
     vx: &mut i32,
     vy: &mut i32,
-    air_drag_keep: Scale,
-    submerged_drag_keep: Scale,
-    ground_friction_keep: Scale,
+    air_drag_keep: VelocityFactor,
+    submerged_drag_keep: VelocityFactor,
+    ground_friction_keep: VelocityFactor,
 ) {
     let ambient = ambient_density_milli(window, pos);
     *vy -= buoyant_gravity::<M>(ambient);
@@ -571,7 +575,7 @@ fn update_mover<M: MatSpec>(
     window: &mut SimWindow,
     pos: CellPos,
     cell: Cell,
-    restitution: Scale,
+    restitution: VelocityFactor,
     gdir: i32,
     rng: &mut Rng,
     tick_byte: u8,
@@ -615,7 +619,7 @@ fn cohesion<M: MatSpec>(
     pos: CellPos,
     vx: &mut i32,
     vy: &mut i32,
-    cohesion: Scale,
+    cohesion: VelocityFactor,
 ) {
     if !cohesion.is_zero()
         && let Some((mean_x, mean_y)) = neighbor_mean_vel(window, pos, const { M::PHASE })
@@ -630,12 +634,12 @@ fn traverse<M: MatSpec>(
     pos: CellPos,
     vx: &mut i32,
     vy: &mut i32,
-    restitution: Scale,
+    restitution: VelocityFactor,
     rng: &mut Rng,
     tick_byte: u8,
 ) -> (CellPos, bool) {
-    *vx = (*vx).clamp(-VEL_MAX, VEL_MAX);
-    *vy = (*vy).clamp(-VEL_MAX, VEL_MAX);
+    *vx = (*vx).clamp(-MAX_VELOCITY_RAW, MAX_VELOCITY_RAW);
+    *vy = (*vy).clamp(-MAX_VELOCITY_RAW, MAX_VELOCITY_RAW);
 
     let tx = step_cells(*vx, rng);
     let ty = step_cells(*vy, rng);
@@ -699,7 +703,7 @@ fn finish<M: MatSpec>(
     cur: CellPos,
     mut vx: i32,
     mut vy: i32,
-    restitution: Scale,
+    restitution: VelocityFactor,
     gdir: i32,
     tick_byte: u8,
 ) {
@@ -723,8 +727,8 @@ fn finish<M: MatSpec>(
             vy = 0;
         }
     }
-    vx = vx.clamp(-VEL_MAX, VEL_MAX);
-    vy = vy.clamp(-VEL_MAX, VEL_MAX);
+    vx = vx.clamp(-MAX_VELOCITY_RAW, MAX_VELOCITY_RAW);
+    vy = vy.clamp(-MAX_VELOCITY_RAW, MAX_VELOCITY_RAW);
 
     let Some(current) = window.get(cur) else {
         return;

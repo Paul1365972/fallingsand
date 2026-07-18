@@ -1,6 +1,8 @@
 use fallingsand_core::{CHUNK_SIZE, Cell, CellPos, Chunk, ChunkPos, MaterialId};
-use fallingsand_rng::Hash;
+use fallingsand_math::Hash;
 use rustc_hash::FxHashMap;
+
+const CELL_SHADE_SALT: Hash = Hash::label("simulation.cell_shade");
 
 #[derive(Default)]
 pub struct CellWorld {
@@ -99,7 +101,10 @@ impl CellWorld {
     }
 
     pub(crate) fn place_material(&mut self, pos: CellPos, material: MaterialId) {
-        let shade = Hash::seed(self.tick).pos(pos.x, pos.y).bits(4) as u8;
+        let shade = Hash::seed(self.tick)
+            .salt(CELL_SHADE_SALT)
+            .pos(pos.x, pos.y)
+            .bits(4) as u8;
         self.set_cell(pos, Cell::new(material, shade));
     }
 

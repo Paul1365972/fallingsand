@@ -1,14 +1,15 @@
 use crate::rules;
 use crate::window::{SimWindow, WINDOW_CHUNKS};
 use crate::world::CellWorld;
-use fallingsand_core::material::RANDOM_TICKS_PER_CHUNK;
 use fallingsand_core::{CHUNK_SIZE, CellPos, Chunk, ChunkPos, DirtyRect};
-use fallingsand_rng::Hash;
+use fallingsand_math::Hash;
 use rustc_hash::FxHashMap;
 use std::collections::BTreeSet;
 use std::time::Instant;
 
-const RANDOM_TICK_SAMPLE_SALT: u64 = 0x5361_6d70_6c65_5254;
+const _: () = assert!(WINDOW_CHUNKS == 4);
+const RANDOM_TICKS_PER_CHUNK: u32 = 4;
+const RANDOM_TICK_SAMPLE_SALT: Hash = Hash::label("simulation.random_tick_sample");
 
 type Simulate<'a> = dyn Fn(ChunkPos) -> bool + Sync + 'a;
 type Schedule<'a> = dyn Fn(ChunkPos, &Chunk) -> bool + 'a;
@@ -200,7 +201,7 @@ fn random_tick_block(window: &mut SimWindow, tick: u64, simulate: &Simulate) {
             let cp = window.origin().translated(ox as i32 + 1, oy as i32 + 1);
             let base = cp.base_cell();
             let mut rng = Hash::seed(tick)
-                .add(RANDOM_TICK_SAMPLE_SALT)
+                .salt(RANDOM_TICK_SAMPLE_SALT)
                 .pos(cp.x, cp.y)
                 .rng();
             for _ in 0..RANDOM_TICKS_PER_CHUNK {

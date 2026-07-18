@@ -12,7 +12,9 @@ pub use step::{SETTLE_SECS, settle_body, step_bodies};
 use crate::physics::ActorAabb;
 use crate::world::CellWorld;
 use fallingsand_core::content;
-use fallingsand_core::{CARDINAL_NEIGHBORS as NEIGHBORS, Cell, CellPos, Fixed, MaterialId, Phase};
+use fallingsand_core::{
+    CARDINAL_NEIGHBORS as NEIGHBORS, Cell, CellPos, MaterialId, Phase, Subcell,
+};
 use rotation::{ANGLE_STEPS, ANGLE_STEPS_LARGE, LARGE_BODY_EXTENT, quantize_step, rotate_offset};
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -85,10 +87,10 @@ pub struct PixelBody {
     pub(crate) com_local: (f32, f32),
     pub(crate) pivot: (i32, i32),
     pub(crate) angle_steps: u32,
-    pub x: Fixed,
-    pub y: Fixed,
-    pub vx: Fixed,
-    pub vy: Fixed,
+    pub x: Subcell,
+    pub y: Subcell,
+    pub vx: Subcell,
+    pub vy: Subcell,
     pub angle: f32,
     pub spin: f32,
     pub(crate) inv_mass: f32,
@@ -156,11 +158,11 @@ impl PixelBody {
         self.offset_with(sin, cos, lx, ly)
     }
 
-    fn pivot_cell(&self, x: Fixed, y: Fixed) -> CellPos {
+    fn pivot_cell(&self, x: Subcell, y: Subcell) -> CellPos {
         let (px, py) = self.pivot;
         let ox = px as f32 + 0.5 - self.com_local.0;
         let oy = py as f32 + 0.5 - self.com_local.1;
-        CellPos::new(x.add_f32(ox).floor_cell(), y.add_f32(oy).floor_cell())
+        CellPos::new(x.add_cells(ox).floor_cell(), y.add_cells(oy).floor_cell())
     }
 
     fn body_cell(&self, pivot_cell: CellPos, step: u32, lx: u8, ly: u8) -> CellPos {
@@ -187,7 +189,7 @@ fn angle_steps_for(width: u8, height: u8) -> u32 {
     }
 }
 
-fn rasterize_at(body: &PixelBody, x: Fixed, y: Fixed, angle: f32) -> Raster {
+fn rasterize_at(body: &PixelBody, x: Subcell, y: Subcell, angle: f32) -> Raster {
     let step = quantize_step(angle, body.angle_steps);
     let pivot_cell = body.pivot_cell(x, y);
     let mut raster = Raster::default();

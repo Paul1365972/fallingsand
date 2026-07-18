@@ -1,12 +1,13 @@
 use crate::player::{PlayerLife, Players};
 use fallingsand_core::content;
 use fallingsand_core::{CellPos, TICK_DT};
+use fallingsand_math::{Hash, Rng};
 use fallingsand_protocol::{InteractionStatus, ParticleSpawn, PlayerId};
-use fallingsand_rng::{Hash, Rng};
 use std::collections::BTreeMap;
 use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
 
 const SPRAY_INTERVAL: f32 = 1.0 / 12.0;
+const DIG_SPRAY_SALT: Hash = Hash::label("server.dig_spray");
 
 #[derive(Default)]
 pub struct ParticleEmitter {
@@ -46,7 +47,11 @@ impl ParticleEmitter {
             let mut count = 0;
             while *accum >= SPRAY_INTERVAL {
                 *accum -= SPRAY_INTERVAL;
-                let mut rng = Hash::seed(tick).add(id.0 as u64).add(count).rng();
+                let mut rng = Hash::seed(tick)
+                    .salt(DIG_SPRAY_SALT)
+                    .add(id.0 as u64)
+                    .add(count)
+                    .rng();
                 self.spawns.push(spray(target, material, &mut rng));
                 count += 1;
             }

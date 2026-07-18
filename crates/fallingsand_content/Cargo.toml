@@ -5,7 +5,7 @@ edition.workspace = true
 
 [dependencies]
 fallingsand_material = { workspace = true }
-fallingsand_rng = { workspace = true }
+fallingsand_math = { workspace = true }
 proc-macro2 = { workspace = true }
 quote = { workspace = true }
 syn = { version = "2", features = ["full", "parsing"] }

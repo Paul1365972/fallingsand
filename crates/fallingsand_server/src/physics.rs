@@ -2,7 +2,7 @@ use crate::bodies::PixelBodies;
 use crate::player::{
     Avatar, AvatarSnapshot, Health, PLAYER_HALF_H, PLAYER_HALF_W, PLAYER_MASS, PlayerLife, Players,
 };
-use fallingsand_core::{CellPos, Fixed};
+use fallingsand_core::{CellPos, Subcell};
 use fallingsand_protocol::GameMode;
 use fallingsand_sim::CellWorld;
 use fallingsand_sim::bodies::vacated_wake_targets;
@@ -37,8 +37,8 @@ pub fn step_physics(sim: &mut CellWorld, bodies: &mut PixelBodies, players: &mut
         if jx != 0.0 || jy != 0.0 {
             let dvx = jx / PLAYER_MASS;
             let dvy = jy / PLAYER_MASS;
-            avatar.actor.vx = avatar.actor.vx.add_vel_f32(dvx);
-            avatar.actor.vy = avatar.actor.vy.add_vel_f32(dvy);
+            avatar.actor.vx = avatar.actor.vx.add_cells_per_second(dvx);
+            avatar.actor.vy = avatar.actor.vy.add_cells_per_second(dvy);
             avatar.pending_crush_dv = avatar.pending_crush_dv.max(dvx.hypot(dvy));
         }
 
@@ -90,8 +90,8 @@ pub fn step_physics(sim: &mut CellWorld, bodies: &mut PixelBodies, players: &mut
                 }
             }
         }
-        avatar.actor.vx = avatar.actor.vx.add_vel_f32(restore_x);
-        avatar.actor.vy = avatar.actor.vy.add_vel_f32(restore_y);
+        avatar.actor.vx = avatar.actor.vx.add_cells_per_second(restore_x);
+        avatar.actor.vy = avatar.actor.vy.add_cells_per_second(restore_y);
     }
 
     for (pos, jx, jy) in shoves {
@@ -140,11 +140,11 @@ fn commit_pose(
             1 => {
                 avatar.actor.y = snapshot.y;
                 avatar.actor.half_h = snapshot.half_h;
-                avatar.actor.vy = Fixed::ZERO;
+                avatar.actor.vy = Subcell::ZERO;
             }
             2 => {
                 avatar.actor.x = snapshot.x;
-                avatar.actor.vx = Fixed::ZERO;
+                avatar.actor.vx = Subcell::ZERO;
             }
             _ => {}
         }
@@ -155,8 +155,8 @@ fn commit_pose(
         return;
     }
     avatar.actor = snapshot;
-    avatar.actor.vx = Fixed::ZERO;
-    avatar.actor.vy = Fixed::ZERO;
+    avatar.actor.vx = Subcell::ZERO;
+    avatar.actor.vy = Subcell::ZERO;
     avatar.actor.on_ground = grounded(sim, &avatar.actor, avatar.stamp.own_cells());
 }
 
@@ -207,7 +207,10 @@ pub fn try_materialize(
     let (x, y) = if candidate == saved {
         (template.x, template.y)
     } else {
-        (Fixed::from_cell(candidate.x), Fixed::from_cell(candidate.y))
+        (
+            Subcell::from_cell(candidate.x),
+            Subcell::from_cell(candidate.y),
+        )
     };
     let mut actor = fallingsand_sim::physics::Actor::new(x, y, PLAYER_HALF_W, PLAYER_HALF_H);
     actor.vx = template.vx;
@@ -228,18 +231,18 @@ pub fn try_materialize(
         let Some(vacated) = stamp_player(sim, &mut stamp, fp, false) else {
             continue;
         };
-        actor.y += Fixed::from_int(rows / 2 - STAND_ROWS as i32 / 2);
-        actor.half_h = Fixed::from_int(rows).mul(Fixed::HALF);
+        actor.y += Subcell::from_cells((rows / 2 - STAND_ROWS as i32 / 2) as f32);
+        actor.half_h = Subcell::from_cells(rows as f32).scaled_by(0.5);
         wake_neighbours(sim, bodies, &stamp, &vacated);
         return Some(Avatar {
             actor,
             stamp,
             controller: Default::default(),
             health: Health {
-                hp: template.hp.clamp(0.0, crate::MAX_HP),
+                hp: template.hp.clamp(0.0, crate::MAX_HEALTH),
                 regen_delay_ticks: template.regen_delay_ticks,
             },
-            air: template.air.clamp(0.0, crate::MAX_AIR_SECS),
+            air: template.air.clamp(0.0, crate::MAX_AIR_SECONDS),
             burning_secs: template.burning.max(0.0),
             flying: template.flying,
             dig: Default::default(),

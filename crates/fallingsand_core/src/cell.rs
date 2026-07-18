@@ -1,9 +1,6 @@
 use crate::material::MaterialId;
 use serde::{Deserialize, Serialize};
 
-pub use fallingsand_material::VEL_ONE;
-const _: () = assert!(VEL_ONE == crate::Fixed::ONE.raw() as i32);
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(C)]
 pub struct Cell {
@@ -13,8 +10,6 @@ pub struct Cell {
     pub shade_flags: u8,
     pub updated: u8,
 }
-
-const _: () = assert!(size_of::<Cell>() == 8);
 
 impl Cell {
     pub const AIR: Self = Self {

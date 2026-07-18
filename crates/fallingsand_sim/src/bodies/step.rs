@@ -7,7 +7,7 @@ use super::{
 use crate::physics::{ActorAabb, BOUNCE_MIN_SPEED, fluid_drag};
 use crate::world::CellWorld;
 use fallingsand_core::content;
-use fallingsand_core::{CellPos, ChunkPos, Fixed, Phase, TICK_DT};
+use fallingsand_core::{CellPos, ChunkPos, Phase, Subcell, TICK_DT};
 
 pub const SETTLE_SECS: f32 = 0.5;
 const WAKE_SPEED: f32 = 0.5;
@@ -46,7 +46,7 @@ pub fn step_bodies(
     bodies: &mut [PixelBody],
     owners: &mut OwnerMap,
     entities: &[ActorDynamics],
-    gravity: Fixed,
+    gravity: Subcell,
     simulated: &dyn Fn(ChunkPos) -> bool,
 ) -> Vec<(f32, f32)> {
     let entity_boxes: Vec<ActorAabb> = entities.iter().map(|entity| entity.bbox).collect();
@@ -79,8 +79,8 @@ pub fn step_bodies(
         {
             let body = &mut bodies[index];
             if body.rest_secs > 0.0
-                && body.vx == Fixed::ZERO
-                && body.vy == Fixed::ZERO
+                && body.vx == Subcell::ZERO
+                && body.vy == Subcell::ZERO
                 && body.spin == 0.0
             {
                 body.rest_secs += TICK_DT;
@@ -95,10 +95,10 @@ pub fn step_bodies(
         let substeps = {
             let body = &mut bodies[index];
             apply_buoyancy(world, body, gravity);
-            body.vy = body.vy.add_vel_f32(gravity.to_f32() * TICK_DT);
+            body.vy += gravity;
 
             let radius = 0.5 * (body.width as f32).hypot(body.height as f32);
-            let (vx, vy) = (body.vx.vel_f32(), body.vy.vel_f32());
+            let (vx, vy) = (body.vx.to_cells_per_second(), body.vy.to_cells_per_second());
             let travel = ((vx * vx + vy * vy).sqrt() + body.spin.abs() * radius) * TICK_DT;
             ((travel / SUBSTEP_TRAVEL).ceil() as u32).max(1)
         };
@@ -141,7 +141,7 @@ pub fn step_bodies(
         .collect()
 }
 
-fn apply_buoyancy(world: &CellWorld, body: &mut PixelBody, gravity: Fixed) {
+fn apply_buoyancy(world: &CellWorld, body: &mut PixelBody, gravity: Subcell) {
     const BEARING: [(i32, i32); 3] = [(0, -1), (-1, 0), (1, 0)];
     let step = quantize_step(body.angle, body.angle_steps);
     let pivot_cell = body.pivot_cell(body.x, body.y);
@@ -175,14 +175,14 @@ fn apply_buoyancy(world: &CellWorld, body: &mut PixelBody, gravity: Fixed) {
     let submersion = wet as f32 / body.perimeter.len().max(1) as f32;
     let buoyant =
         submersion * count as f32 * (density_sum / samples as f32) / REFERENCE_DENSITY_MILLI;
-    body.vy = body
-        .vy
-        .add_vel_f32(-gravity.to_f32() * buoyant * body.inv_mass * TICK_DT);
-    let speed = body.vx.vel_f32().hypot(body.vy.vel_f32());
+    body.vy -= gravity.scaled_by(buoyant * body.inv_mass);
+    let speed = body
+        .vx
+        .to_cells_per_second()
+        .hypot(body.vy.to_cells_per_second());
     let drag = fluid_drag(speed, submersion);
-    let keep = Fixed::from_f32(1.0 - drag);
-    body.vx = body.vx.mul(keep);
-    body.vy = body.vy.mul(keep);
+    body.vx = body.vx.scaled_by(1.0 - drag);
+    body.vy = body.vy.scaled_by(1.0 - drag);
     body.spin *= 1.0 - drag;
 }
 
@@ -314,8 +314,8 @@ fn step_substep(
             body.x = prev_x;
             body.y = prev_y;
             body.angle = prev_angle;
-            body.vx = Fixed::ZERO;
-            body.vy = Fixed::ZERO;
+            body.vx = Subcell::ZERO;
+            body.vy = Subcell::ZERO;
             body.spin = 0.0;
             body.rest_secs += sub_dt;
         } else {
@@ -326,11 +326,11 @@ fn step_substep(
             });
             if let Some(deepest) = deepest {
                 let correction = (deepest.depth * PENETRATION_CORRECTION).min(1.0);
-                body.x = body.x.add_f32(deepest.nx * correction);
-                body.y = body.y.add_f32(deepest.ny * correction);
+                body.x = body.x.add_cells(deepest.nx * correction);
+                body.y = body.y.add_cells(deepest.ny * correction);
             }
-            body.vx = Fixed::vel_per_sec(active.vx);
-            body.vy = Fixed::vel_per_sec(active.vy);
+            body.vx = Subcell::from_cells_per_second(active.vx);
+            body.vy = Subcell::from_cells_per_second(active.vy);
             let spin = if touching && slow && supported {
                 active.spin * RESTING_SPIN_KEEP
             } else {
@@ -345,8 +345,8 @@ fn step_substep(
         let before = state_of(&bodies[other_index]);
         let after = points[slot];
         let other = &mut bodies[other_index];
-        other.vx = Fixed::vel_per_sec(after.vx);
-        other.vy = Fixed::vel_per_sec(after.vy);
+        other.vx = Subcell::from_cells_per_second(after.vx);
+        other.vy = Subcell::from_cells_per_second(after.vy);
         other.spin = after.spin;
         let moved = (after.vx - before.vx).abs() + (after.vy - before.vy).abs();
         if moved > WAKE_SPEED || (after.spin - before.spin).abs() > WAKE_SPEED {
@@ -357,8 +357,8 @@ fn step_substep(
 
 fn state_of(body: &PixelBody) -> PointState {
     PointState {
-        vx: body.vx.vel_f32(),
-        vy: body.vy.vel_f32(),
+        vx: body.vx.to_cells_per_second(),
+        vy: body.vy.to_cells_per_second(),
         spin: body.spin,
         inv_mass: body.inv_mass,
         inv_inertia: body.inv_inertia,
@@ -481,8 +481,8 @@ fn restamp(
     world: &mut CellWorld,
     entities: &[ActorAabb],
     body: &mut PixelBody,
-    start_x: Fixed,
-    start_y: Fixed,
+    start_x: Subcell,
+    start_y: Subcell,
     start_angle: f32,
 ) -> Vec<CellPos> {
     let full = (body.x, body.y, body.angle);
@@ -509,8 +509,8 @@ fn restamp(
             match attempt {
                 1 => body.spin *= BLOCKED_DAMPING,
                 2 => {
-                    body.vx = body.vx.mul(Fixed::from_f32(BLOCKED_DAMPING));
-                    body.vy = body.vy.mul(Fixed::from_f32(BLOCKED_DAMPING));
+                    body.vx = body.vx.scaled_by(BLOCKED_DAMPING);
+                    body.vy = body.vy.scaled_by(BLOCKED_DAMPING);
                 }
                 _ => {}
             }
@@ -521,8 +521,8 @@ fn restamp(
     body.x = start_x;
     body.y = start_y;
     body.angle = start_angle;
-    body.vx = body.vx.mul(Fixed::from_f32(BLOCKED_DAMPING));
-    body.vy = body.vy.mul(Fixed::from_f32(BLOCKED_DAMPING));
+    body.vx = body.vx.scaled_by(BLOCKED_DAMPING);
+    body.vy = body.vy.scaled_by(BLOCKED_DAMPING);
     body.spin *= BLOCKED_DAMPING;
     Vec::new()
 }

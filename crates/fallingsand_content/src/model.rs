@@ -4,10 +4,9 @@ use crate::{
 };
 use fallingsand_material::{
     Burning, BurningKind, Dynamics, GasDynamics, Ignition, LiquidDynamics, MaterialId, Phase,
-    PowderDynamics, Reaction, Scale, SealedBurn, Tag, Tags, milli, per_tick_chance, per_tick_keep,
-    q16,
+    PowderDynamics, Reaction, SealedBurn, Tag, Tags, VelocityFactor,
 };
-use fallingsand_rng::chance_threshold;
+use fallingsand_math::{SUBCELL_UNITS_PER_CELL, TICK_DT, chance_threshold};
 use std::collections::HashMap;
 
 const MATERIAL_STACK_MAX: u32 = 10_000;
@@ -16,6 +15,38 @@ const BURNING_EMISSION: EmissionDef = EmissionDef {
     intensity: 1.4,
     flicker: 0.5,
 };
+
+fn per_tick_chance(rate: f32) -> f32 {
+    1.0 - (-rate * TICK_DT).exp()
+}
+
+fn per_tick_keep(rate: f32) -> f32 {
+    (-rate * TICK_DT).exp()
+}
+
+fn quantize_q16(value: f32) -> u32 {
+    (f64::from(value) * 65536.0).round() as u32
+}
+
+fn velocity_factor(value: f32) -> VelocityFactor {
+    VelocityFactor::from_raw(quantize_q16(value))
+}
+
+fn milli(value: f32) -> i32 {
+    (f64::from(value) * 1000.0).round() as i32
+}
+
+pub(crate) const fn mining_tier_from_hardness(hardness: f32) -> u8 {
+    if hardness <= 0.35 {
+        0
+    } else if hardness <= 1.0 {
+        1
+    } else if hardness <= 2.0 {
+        2
+    } else {
+        3
+    }
+}
 
 fn phase_tag(phase: PhaseDef) -> Phase {
     match phase {
@@ -606,9 +637,7 @@ fn validate_material(raw: &RawMaterial) -> Result<(), Error> {
             if let Some(rate) = flow_rate {
                 validate_number(&format!("{context}: flow_rate"), rate)?;
                 if rate <= 0.0 {
-                    return Err(fail(format!(
-                        "{context}: flow_rate must be > 0"
-                    )));
+                    return Err(fail(format!("{context}: flow_rate must be > 0")));
                 }
             }
         }
@@ -691,16 +720,16 @@ fn validate_number(context: &str, value: f32) -> Result<(), Error> {
     Ok(())
 }
 
-fn drag_keeps(air_drag: f32) -> (Scale, Scale) {
+fn drag_keeps(air_drag: f32) -> (VelocityFactor, VelocityFactor) {
     let drag_loss = 1.0 - per_tick_keep(air_drag);
     (
-        q16(1.0 - drag_loss.min(0.9)),
-        q16(1.0 - (drag_loss * 6.0).min(0.9)),
+        velocity_factor(1.0 - drag_loss.min(0.9)),
+        velocity_factor(1.0 - (drag_loss * 6.0).min(0.9)),
     )
 }
 
 fn quantize_dynamics(raw: &RawMaterial) -> Dynamics {
-    let restitution = q16(raw.restitution.clamp(0.0, 1.0));
+    let restitution = velocity_factor(raw.restitution.clamp(0.0, 1.0));
     match raw.phase {
         PhaseDef::Empty | PhaseDef::Solid(_) => Dynamics::None,
         PhaseDef::Powder(PowderDef {
@@ -714,9 +743,9 @@ fn quantize_dynamics(raw: &RawMaterial) -> Dynamics {
             Dynamics::Powder(PowderDynamics {
                 air_drag_keep,
                 submerged_drag_keep,
-                ground_friction_keep: q16(per_tick_keep(ground_friction)),
+                ground_friction_keep: velocity_factor(per_tick_keep(ground_friction)),
                 restitution,
-                deflect_keep: q16(deflect.clamp(0.0, 1.0)),
+                deflect_keep: velocity_factor(deflect.clamp(0.0, 1.0)),
                 topple_start_threshold: chance_threshold(per_tick_chance(topple_start)),
                 topple_keep_threshold: chance_threshold(per_tick_chance(topple_keep)),
             })
@@ -732,10 +761,10 @@ fn quantize_dynamics(raw: &RawMaterial) -> Dynamics {
             Dynamics::Liquid(LiquidDynamics {
                 air_drag_keep,
                 submerged_drag_keep,
-                ground_friction_keep: q16(per_tick_keep(ground_friction)),
-                cohesion: q16(per_tick_chance(cohesion)),
+                ground_friction_keep: velocity_factor(per_tick_keep(ground_friction)),
+                cohesion: velocity_factor(per_tick_chance(cohesion)),
                 restitution,
-                deflect_keep: q16(deflect.clamp(0.0, 1.0)),
+                deflect_keep: velocity_factor(deflect.clamp(0.0, 1.0)),
                 flow_threshold: flow_rate
                     .map_or(u64::MAX, |rate| chance_threshold(per_tick_chance(rate))),
             })
@@ -747,13 +776,12 @@ fn quantize_dynamics(raw: &RawMaterial) -> Dynamics {
             deflect,
         }) => Dynamics::Gas(GasDynamics {
             air_drag_keep: drag_keeps(air_drag).0,
-            cohesion: q16(per_tick_chance(cohesion)),
+            cohesion: velocity_factor(per_tick_chance(cohesion)),
             restitution,
-            deflect_keep: q16(deflect.clamp(0.0, 1.0)),
-            turbulence: {
-                let dt = 1.0f32 / fallingsand_material::TICK_RATE as f32;
-                q16(turbulence * dt.sqrt() * dt * fallingsand_material::VEL_ONE as f32)
-            },
+            deflect_keep: velocity_factor(deflect.clamp(0.0, 1.0)),
+            turbulence_q16: quantize_q16(
+                turbulence * TICK_DT.sqrt() * TICK_DT * SUBCELL_UNITS_PER_CELL as f32,
+            ),
         }),
     }
 }
@@ -765,14 +793,14 @@ enum Operand {
 
 #[derive(Clone, Copy)]
 enum Product {
-    Fixed(MaterialId),
+    Material(MaterialId),
     Same,
 }
 
 impl Product {
     fn resolve(self, operand_id: MaterialId) -> MaterialId {
         match self {
-            Self::Fixed(id) => id,
+            Self::Material(id) => id,
             Self::Same => operand_id,
         }
     }
@@ -800,7 +828,7 @@ fn expand_reactions(
                 ProductDef::Material(key) => by_name
                     .get(key.as_str())
                     .copied()
-                    .map(Product::Fixed)
+                    .map(Product::Material)
                     .ok_or_else(|| fail(format!("reactions: unknown material `{key}`"))),
                 ProductDef::Same(tag) => match operand {
                     OperandDef::Tag(operand_tag) if operand_tag == tag => Ok(Product::Same),

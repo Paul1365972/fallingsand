@@ -1,16 +1,18 @@
 use crate::dig::DigState;
 use crate::inventory::Inventory;
-use crate::{MAX_AIR_SECS, MAX_HP};
-use fallingsand_core::{CellPos, Fixed};
+use crate::{MAX_AIR_SECONDS, MAX_HEALTH};
+use fallingsand_core::{CellPos, Subcell};
 use fallingsand_protocol::{GameMode, InputState, PlayerId, PlayerUuid, SlotAction, UseButton};
 use fallingsand_sim::PlayerStamp;
 use fallingsand_sim::physics::{Actor, Controller};
 use rustc_hash::FxHashMap;
 use std::collections::BTreeMap;
 
-pub const PLAYER_HALF_W: Fixed = Fixed::from_f32(fallingsand_sim::player::PLAYER_COLS as f32 * 0.5);
-pub const PLAYER_HALF_H: Fixed = Fixed::from_f32(fallingsand_sim::player::STAND_ROWS as f32 * 0.5);
-pub const PLAYER_MASS: f32 = 4.0 * PLAYER_HALF_W.to_f32() * PLAYER_HALF_H.to_f32();
+pub const PLAYER_HALF_W: Subcell =
+    Subcell::from_cells(fallingsand_sim::player::PLAYER_COLS as f32 * 0.5);
+pub const PLAYER_HALF_H: Subcell =
+    Subcell::from_cells(fallingsand_sim::player::STAND_ROWS as f32 * 0.5);
+pub const PLAYER_MASS: f32 = 4.0 * PLAYER_HALF_W.to_cells() * PLAYER_HALF_H.to_cells();
 
 #[derive(Default)]
 pub struct Players {
@@ -204,10 +206,10 @@ pub enum ResumeSnapshot {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AvatarSnapshot {
-    pub x: Fixed,
-    pub y: Fixed,
-    pub vx: Fixed,
-    pub vy: Fixed,
+    pub x: Subcell,
+    pub y: Subcell,
+    pub vx: Subcell,
+    pub vy: Subcell,
     pub hp: f32,
     pub regen_delay_ticks: u64,
     pub air: f32,
@@ -218,7 +220,7 @@ pub struct AvatarSnapshot {
 impl Default for Health {
     fn default() -> Self {
         Self {
-            hp: MAX_HP,
+            hp: MAX_HEALTH,
             regen_delay_ticks: 0,
         }
     }
@@ -421,15 +423,15 @@ impl AvatarSnapshot {
         record.hp = if record.hp.is_finite() {
             record.hp
         } else {
-            MAX_HP
+            MAX_HEALTH
         }
-        .clamp(0.0, MAX_HP);
+        .clamp(0.0, MAX_HEALTH);
         record.air = if record.air.is_finite() {
             record.air
         } else {
-            MAX_AIR_SECS
+            MAX_AIR_SECONDS
         }
-        .clamp(0.0, MAX_AIR_SECS);
+        .clamp(0.0, MAX_AIR_SECONDS);
         record.burning = if record.burning.is_finite() {
             record.burning
         } else {
@@ -441,13 +443,13 @@ impl AvatarSnapshot {
 
     pub fn fresh(spawn: CellPos) -> Self {
         Self {
-            x: Fixed::from_cell(spawn.x),
-            y: Fixed::from_cell(spawn.y),
-            vx: Fixed::ZERO,
-            vy: Fixed::ZERO,
-            hp: MAX_HP,
+            x: Subcell::from_cell(spawn.x),
+            y: Subcell::from_cell(spawn.y),
+            vx: Subcell::ZERO,
+            vy: Subcell::ZERO,
+            hp: MAX_HEALTH,
             regen_delay_ticks: 0,
-            air: MAX_AIR_SECS,
+            air: MAX_AIR_SECONDS,
             burning: 0.0,
             flying: false,
         }
@@ -461,8 +463,9 @@ impl AvatarSnapshot {
         Self {
             x: avatar.actor.x,
             y: avatar.actor.y
-                + Fixed::from_int(
-                    fallingsand_sim::player::STAND_ROWS as i32 / 2 - avatar.actor.rows() / 2,
+                + Subcell::from_cells(
+                    (fallingsand_sim::player::STAND_ROWS as i32 / 2 - avatar.actor.rows() / 2)
+                        as f32,
                 ),
             vx: avatar.actor.vx,
             vy: avatar.actor.vy,

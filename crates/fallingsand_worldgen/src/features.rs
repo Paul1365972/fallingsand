@@ -5,7 +5,7 @@ use crate::biomes::{
 use crate::terrain::Terrain;
 use fallingsand_core::MaterialId;
 use fallingsand_core::content::material;
-use fallingsand_rng::Hash;
+use fallingsand_math::Hash;
 
 pub(crate) struct FeatureCell {
     pub x: i32,
@@ -15,6 +15,11 @@ pub(crate) struct FeatureCell {
 
 const GROUND_SCAN: i32 = 40;
 const MAX_SLOPE: i32 = 5;
+const TREE_SALT: Hash = Hash::label("worldgen.tree");
+const DECOR_SALT: Hash = Hash::label("worldgen.decor");
+const CEILING_DECOR_SALT: Hash = Hash::label("worldgen.ceiling_decor");
+const FLOOR_DECOR_SALT: Hash = Hash::label("worldgen.floor_decor");
+const MUSHROOM_SALT: Hash = Hash::label("worldgen.mushroom");
 
 pub struct Clip {
     pub min_x: i32,
@@ -51,7 +56,7 @@ pub(crate) fn trees_for_rect(
     let candidate = |x: i32| -> Option<Hash> {
         let biome = &def.biomes[terrain.biome_at(biome_count, x)];
         let tree = biome.tree.as_ref()?;
-        let hash = Hash::seed(seed).bytes(b"tree").pos(x, 0);
+        let hash = Hash::seed(seed).salt(TREE_SALT).pos(x, 0);
         hash.chance(tree.density).then_some(hash)
     };
 
@@ -154,7 +159,7 @@ pub(crate) fn decorations_for_rect(
     let mut cells = Vec::new();
     for x in clip.min_x..=clip.max_x {
         if !Hash::seed(seed)
-            .bytes(b"decor")
+            .salt(DECOR_SALT)
             .pos(x, 0)
             .chance(DECOR_COLUMN_CHANCE)
         {
@@ -204,7 +209,10 @@ fn ceiling_site(
     cells: &mut Vec<FeatureCell>,
     clip: &Clip,
 ) {
-    let mut rng = Hash::seed(seed).bytes(b"ceiling").pos(x, top_air).rng();
+    let mut rng = Hash::seed(seed)
+        .salt(CEILING_DECOR_SALT)
+        .pos(x, top_air)
+        .rng();
     let depth = surface - top_air;
     if depth < VINE_MAX_DEPTH && rng.draw().chance(biome.vine_chance) {
         let length = rng.draw().range(3, 10);
@@ -232,7 +240,10 @@ fn floor_site(
     cells: &mut Vec<FeatureCell>,
     clip: &Clip,
 ) {
-    let mut rng = Hash::seed(seed).bytes(b"floor").pos(x, bottom_air).rng();
+    let mut rng = Hash::seed(seed)
+        .salt(FLOOR_DECOR_SALT)
+        .pos(x, bottom_air)
+        .rng();
     if rng.draw().chance(0.35) {
         let length = rng.draw().range(2, 5);
         let depth = surface - bottom_air;
@@ -262,7 +273,7 @@ pub(crate) fn mushrooms_for_rect(
     for anchor_y in anchor_min_y..=anchor_max_y {
         for anchor_x in anchor_min_x..=anchor_max_x {
             let mut rng = Hash::seed(seed)
-                .bytes(b"mushroom")
+                .salt(MUSHROOM_SALT)
                 .pos(anchor_x, anchor_y)
                 .rng();
             if !rng.draw().chance(MUSHROOM_CHANCE) {

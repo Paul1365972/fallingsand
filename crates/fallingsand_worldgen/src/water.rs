@@ -2,7 +2,11 @@ use crate::biomes::{AQUIFER_MIN_DEPTH, AQUIFER_THRESHOLD, Band, Biome, SHALLOW_A
 use crate::noise::{Field, noise_seed};
 use fallingsand_core::MaterialId;
 use fallingsand_core::content::material;
+use fallingsand_math::Hash;
 use fastnoise_lite::{FastNoiseLite, FractalType, NoiseType};
+
+const AQUIFER_SALT: Hash = Hash::label("worldgen.aquifer");
+const LAVA_SALT: Hash = Hash::label("worldgen.lava");
 
 pub struct Waters {
     pub aquifer: Field,
@@ -11,13 +15,13 @@ pub struct Waters {
 
 impl Waters {
     pub fn new(seed: u64) -> Self {
-        let mut aquifer = FastNoiseLite::with_seed(noise_seed(seed, "aquifer"));
+        let mut aquifer = FastNoiseLite::with_seed(noise_seed(seed, AQUIFER_SALT));
         aquifer.set_noise_type(Some(NoiseType::OpenSimplex2S));
         aquifer.set_fractal_type(Some(FractalType::FBm));
         aquifer.set_fractal_octaves(Some(2));
         aquifer.set_frequency(Some(0.0035));
 
-        let mut lava = FastNoiseLite::with_seed(noise_seed(seed, "lava"));
+        let mut lava = FastNoiseLite::with_seed(noise_seed(seed, LAVA_SALT));
         lava.set_noise_type(Some(NoiseType::OpenSimplex2S));
         lava.set_fractal_type(Some(FractalType::FBm));
         lava.set_fractal_octaves(Some(2));

@@ -4,7 +4,7 @@ use crate::game::{ClientGame, InGame};
 use crate::view::Game;
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
-use fallingsand_core::{HOTBAR_SLOTS, ItemStack, MAX_AIR_SECS, MAX_HP};
+use fallingsand_core::{HOTBAR_SLOTS, ItemStack, MAX_AIR_SECONDS, MAX_HEALTH};
 use fallingsand_protocol::{GameMode, SelfLife};
 
 const SLOT_SIZE: f32 = 42.0;
@@ -181,7 +181,7 @@ pub fn hud_status(
     let avatar = you.life.avatar();
     let (hp, air) = avatar.map_or((0.0, 0.0), |avatar| (avatar.hp, avatar.air));
 
-    let width = percent((hp / MAX_HP * 100.0).clamp(0.0, 100.0));
+    let width = percent((hp / MAX_HEALTH * 100.0).clamp(0.0, 100.0));
     for mut node in &mut fill {
         if node.width != width {
             node.width = width;
@@ -194,14 +194,14 @@ pub fn hud_status(
         }
     }
 
-    let show = you.mode == GameMode::Survival && avatar.is_some() && air < MAX_AIR_SECS - 0.05;
+    let show = you.mode == GameMode::Survival && avatar.is_some() && air < MAX_AIR_SECONDS - 0.05;
     let display = if show { Display::Flex } else { Display::None };
     for mut node in &mut bar {
         if node.display != display {
             node.display = display;
         }
     }
-    let width = percent((air / MAX_AIR_SECS * 100.0).clamp(0.0, 100.0));
+    let width = percent((air / MAX_AIR_SECONDS * 100.0).clamp(0.0, 100.0));
     for mut node in &mut air_fill {
         if node.width != width {
             node.width = width;
@@ -328,7 +328,7 @@ fn spawn_hud(commands: &mut Commands, game: &ClientGame, icons: &ItemIcons) {
             ));
             parent.spawn((
                 HealthLabel,
-                Text::new(format!("{MAX_HP:.0}")),
+                Text::new(format!("{MAX_HEALTH:.0}")),
                 TextFont {
                     font_size: FontSize::Px(10.0),
                     ..default()

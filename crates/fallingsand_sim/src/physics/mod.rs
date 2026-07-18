@@ -6,7 +6,8 @@ pub use player::{Controller, PlayerParams, step_player};
 
 use crate::world::CellWorld;
 use fallingsand_core::content;
-use fallingsand_core::{Cell, CellPos, Fixed, Phase, TICK_DT, TICK_RATE, VEL_ONE};
+use fallingsand_core::{Cell, CellPos, Phase, Subcell, TICK_DT, TICK_RATE};
+use fallingsand_math::SUBCELL_UNITS_PER_CELL;
 use rustc_hash::FxHashSet;
 
 pub(crate) const BOUNCE_MIN_SPEED: f32 = 30.0;
@@ -30,26 +31,26 @@ impl CellSource for CellWorld {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Actor {
-    pub x: Fixed,
-    pub y: Fixed,
-    pub vx: Fixed,
-    pub vy: Fixed,
-    pub half_w: Fixed,
-    pub half_h: Fixed,
-    pub climb_debt: Fixed,
+    pub x: Subcell,
+    pub y: Subcell,
+    pub vx: Subcell,
+    pub vy: Subcell,
+    pub half_w: Subcell,
+    pub half_h: Subcell,
+    pub climb_debt: Subcell,
     pub on_ground: bool,
 }
 
 impl Actor {
-    pub fn new(x: Fixed, y: Fixed, half_w: Fixed, half_h: Fixed) -> Self {
+    pub fn new(x: Subcell, y: Subcell, half_w: Subcell, half_h: Subcell) -> Self {
         Self {
             x,
             y,
-            vx: Fixed::ZERO,
-            vy: Fixed::ZERO,
+            vx: Subcell::ZERO,
+            vy: Subcell::ZERO,
             half_w,
             half_h,
-            climb_debt: Fixed::ZERO,
+            climb_debt: Subcell::ZERO,
             on_ground: false,
         }
     }
@@ -63,7 +64,7 @@ impl Actor {
     }
 
     pub fn rows(&self) -> i32 {
-        self.half_h.mul_int(2).round_int().max(1)
+        self.half_h.times(2).round_cells().max(1)
     }
 }
 
@@ -81,9 +82,9 @@ impl Footprint {
     }
 }
 
-pub fn footprint_at(cx: Fixed, cy: Fixed, half_w: Fixed, half_h: Fixed) -> Footprint {
-    let w = half_w.mul_int(2).round_int().max(1);
-    let h = half_h.mul_int(2).round_int().max(1);
+pub fn footprint_at(cx: Subcell, cy: Subcell, half_w: Subcell, half_h: Subcell) -> Footprint {
+    let w = half_w.times(2).round_cells().max(1);
+    let h = half_h.times(2).round_cells().max(1);
     let x0 = cx.floor_cell() - w / 2;
     let y0 = cy.floor_cell() - h / 2;
     Footprint {
@@ -102,24 +103,24 @@ fn own_covers(own: OwnCells, pos: CellPos) -> bool {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActorAabb {
-    pub x: Fixed,
-    pub y: Fixed,
-    pub half_w: Fixed,
-    pub half_h: Fixed,
+    pub x: Subcell,
+    pub y: Subcell,
+    pub half_w: Subcell,
+    pub half_h: Subcell,
 }
 
 impl ActorAabb {
     pub fn contains_cell(&self, pos: CellPos) -> bool {
-        let (cx, cy) = (Fixed::cell_center(pos.x), Fixed::cell_center(pos.y));
+        let (cx, cy) = (Subcell::cell_center(pos.x), Subcell::cell_center(pos.y));
         (cx - self.x).abs() <= self.half_w && (cy - self.y).abs() <= self.half_h
     }
 
     pub fn from_footprint(fp: Footprint) -> Self {
-        let half_w = Fixed::from_int(fp.x1 - fp.x0 + 1).mul(Fixed::HALF);
-        let half_h = Fixed::from_int(fp.y1 - fp.y0 + 1).mul(Fixed::HALF);
+        let half_w = Subcell::from_cells((fp.x1 - fp.x0 + 1) as f32).scaled_by(0.5);
+        let half_h = Subcell::from_cells((fp.y1 - fp.y0 + 1) as f32).scaled_by(0.5);
         Self {
-            x: Fixed::from_cell(fp.x0) + half_w,
-            y: Fixed::from_cell(fp.y0) + half_h,
+            x: Subcell::from_cell(fp.x0) + half_w,
+            y: Subcell::from_cell(fp.y0) + half_h,
             half_w,
             half_h,
         }
@@ -153,8 +154,8 @@ enum Obstacle {
 fn walk_footprint<W: CellSource>(
     world: &W,
     body: &Actor,
-    cx: Fixed,
-    cy: Fixed,
+    cx: Subcell,
+    cy: Subcell,
     own: OwnCells,
     mut visit: impl FnMut(Obstacle) -> std::ops::ControlFlow<()>,
 ) {
@@ -185,8 +186,8 @@ fn walk_footprint<W: CellSource>(
 fn rect_blocked<W: CellSource>(
     world: &W,
     body: &Actor,
-    cx: Fixed,
-    cy: Fixed,
+    cx: Subcell,
+    cy: Subcell,
     own: OwnCells,
 ) -> bool {
     let mut blocked = false;
@@ -200,8 +201,8 @@ fn rect_blocked<W: CellSource>(
 fn supported_at<W: CellSource>(
     world: &W,
     body: &Actor,
-    cx: Fixed,
-    cy: Fixed,
+    cx: Subcell,
+    cy: Subcell,
     own: OwnCells,
 ) -> bool {
     let next = footprint_at(cx, cy, body.half_w, body.half_h);
@@ -213,7 +214,7 @@ fn supported_at<W: CellSource>(
 }
 
 pub fn grounded<W: CellSource>(world: &W, body: &Actor, own: OwnCells) -> bool {
-    body.vy <= Fixed::ZERO && supported_at(world, body, body.x, body.y, own)
+    body.vy <= Subcell::ZERO && supported_at(world, body, body.x, body.y, own)
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -255,7 +256,7 @@ fn ring_submersion<W: CellSource>(world: &W, body: &Actor) -> Submersion {
         return Submersion::default();
     }
     let per_cell = 1.0 / liquid as f32;
-    let to_per_sec = TICK_RATE as f32 / VEL_ONE as f32;
+    let to_per_sec = TICK_RATE as f32 / SUBCELL_UNITS_PER_CELL as f32;
     Submersion {
         fraction: liquid as f32 / total as f32,
         liquid_density: density_sum / liquid as f32,

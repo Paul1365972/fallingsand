@@ -1,3 +1,12 @@
+pub const TICK_RATE: u32 = 60;
+pub const TICK_DT: f32 = 1.0 / TICK_RATE as f32;
+pub const SUBCELL_BITS: u32 = 10;
+pub const SUBCELL_UNITS_PER_CELL: i32 = 1 << SUBCELL_BITS;
+
+pub const fn ticks_from_secs(secs: f32) -> u64 {
+    (secs * TICK_RATE as f32 + 0.5) as u64
+}
+
 const GOLDEN: u64 = 0x9e37_79b9_7f4a_7c15;
 
 #[inline]
@@ -26,30 +35,30 @@ impl Hash {
         Hash(seed)
     }
 
+    pub const fn label(label: &str) -> Self {
+        let bytes = label.as_bytes();
+        let mut hash = Self::new();
+        let mut index = 0;
+        while index < bytes.len() {
+            hash = hash.add(bytes[index] as u64);
+            index += 1;
+        }
+        hash
+    }
+
     #[inline]
     pub const fn add(self, value: u64) -> Self {
         Hash(mix(self.0.wrapping_mul(GOLDEN).wrapping_add(value)))
     }
 
     #[inline]
-    pub const fn pos(self, x: i32, y: i32) -> Self {
-        self.add(pack(x, y))
+    pub const fn salt(self, salt: Self) -> Self {
+        self.add(salt.0)
     }
 
     #[inline]
-    pub fn bytes(self, bytes: &[u8]) -> Self {
-        let mut hash = self;
-        let mut chunks = bytes.chunks_exact(8);
-        for chunk in &mut chunks {
-            hash = hash.add(u64::from_le_bytes(chunk.try_into().unwrap()));
-        }
-        let rest = chunks.remainder();
-        if !rest.is_empty() {
-            let mut buf = [0u8; 8];
-            buf[..rest.len()].copy_from_slice(rest);
-            hash = hash.add(u64::from_le_bytes(buf));
-        }
-        hash
+    pub const fn pos(self, x: i32, y: i32) -> Self {
+        self.add(pack(x, y))
     }
 
     #[inline]

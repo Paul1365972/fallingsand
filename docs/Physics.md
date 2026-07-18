@@ -42,7 +42,7 @@ There is no body protocol or renderer: body cells ride ordinary chunk deltas and
 | Avatar | the physical realization of an alive player: actor, raster, health, interaction, deferred physical state |
 | Actor | kinematic controller whose observable pose is its integer footprint |
 | Footprint | floor-anchored integer cell rect; collision, raster, wire, and hazards all read it |
-| Fixed | fixed-point continuous pose/velocity; exact in saves, never on the wire |
+| Subcell | fixed-point continuous pose and per-tick motion; exact in saves, never on the wire |
 | Flesh | the player's inert body material — body-flagged, undiggable, voided on region load as a crash artifact |
 | PixelBody | rigid body made of cells: buffer + pose + spin + mass over flagged world cells |
 | Bond group | authored connectivity class deciding which rigid materials hold together |

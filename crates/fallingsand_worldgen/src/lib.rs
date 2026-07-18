@@ -17,7 +17,7 @@ use fallingsand_core::{
     Cell, CellOffset, CellPos, ChunkOffset, DirtyRect, MaterialId, REGION_SIZE_CELLS,
     REGION_SIZE_CHUNKS, Region, RegionPos,
 };
-use fallingsand_rng::Hash;
+use fallingsand_math::Hash;
 use noise::Cached;
 use terrain::Terrain;
 use water::Waters;
@@ -31,6 +31,10 @@ pub struct WorldGenerator {
 }
 
 const MARGIN: i32 = 64;
+const MOSS_SALT: Hash = Hash::label("worldgen.moss");
+const SOIL_SALT: Hash = Hash::label("worldgen.soil");
+const TUFT_SALT: Hash = Hash::label("worldgen.tuft");
+const CELL_SHADE_SALT: Hash = Hash::label("worldgen.cell_shade");
 
 #[derive(Clone, Copy)]
 struct Column {
@@ -161,7 +165,7 @@ impl Ctx<'_> {
             && depth < MOSS_MAX_DEPTH as f32
             && depth > 8.0
             && Hash::seed(generator.seed)
-                .bytes(b"moss")
+                .salt(MOSS_SALT)
                 .pos(x, y)
                 .chance(MOSS_CHANCE)
         {
@@ -174,7 +178,7 @@ impl Ctx<'_> {
             }
         }
 
-        let jitter = Hash::seed(generator.seed).bytes(b"soil").pos(x, y).bits(2) as f32
+        let jitter = Hash::seed(generator.seed).salt(SOIL_SALT).pos(x, y).bits(2) as f32
             * biomes::SOIL_TRANSITION_JITTER
             * 0.5;
         let layered = depth + jitter;
@@ -244,7 +248,7 @@ impl WorldGenerator {
             Some((floor, level)) => (base_surface.min(floor), Some(level)),
             None => (base_surface, None),
         };
-        let mut tuft_rng = Hash::seed(self.seed).bytes(b"tuft").pos(x, 0).rng();
+        let mut tuft_rng = Hash::seed(self.seed).salt(TUFT_SALT).pos(x, 0).rng();
         let tuft_height = if surface > self.def.sea_level + 2
             && pond_level.is_none_or(|level| surface > level)
             && tuft_rng.draw().chance(biome.tuft_chance)
@@ -440,5 +444,6 @@ fn region_set(region: &mut Region, base_x: i32, base_y: i32, x: i32, y: i32, cel
 }
 
 fn shaded(seed: u64, material: MaterialId, x: i32, y: i32) -> Cell {
-    Cell::new(material, Hash::seed(seed).pos(x, y).bits(4) as u8)
+    let shade = Hash::seed(seed).salt(CELL_SHADE_SALT).pos(x, y).bits(4) as u8;
+    Cell::new(material, shade)
 }

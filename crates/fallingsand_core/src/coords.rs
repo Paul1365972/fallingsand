@@ -1,10 +1,10 @@
+use crate::chunk::CHUNK_SIZE;
+use crate::region::REGION_SIZE_CHUNKS;
 use serde::{Deserialize, Serialize};
 
-const CHUNK_BITS: u32 = 6;
-const REGION_BITS: u32 = 3;
-
-const _: () = assert!(1usize << CHUNK_BITS == crate::chunk::CHUNK_SIZE);
-const _: () = assert!(1usize << REGION_BITS == crate::region::REGION_SIZE_CHUNKS);
+const _: () = assert!(CHUNK_SIZE.is_power_of_two() && REGION_SIZE_CHUNKS.is_power_of_two());
+const CHUNK_BITS: u32 = CHUNK_SIZE.trailing_zeros();
+const REGION_BITS: u32 = REGION_SIZE_CHUNKS.trailing_zeros();
 
 pub const CARDINAL_NEIGHBORS: [(i32, i32); 4] = [(0, -1), (-1, 0), (1, 0), (0, 1)];
 
@@ -174,9 +174,7 @@ const fn interleave(v: u32) -> u64 {
 
 impl CellOffset {
     pub const fn new(x: u8, y: u8) -> Self {
-        debug_assert!(
-            (x as usize) < crate::chunk::CHUNK_SIZE && (y as usize) < crate::chunk::CHUNK_SIZE
-        );
+        debug_assert!((x as usize) < CHUNK_SIZE && (y as usize) < CHUNK_SIZE);
         Self { x, y }
     }
 
@@ -194,10 +192,7 @@ impl CellOffset {
 
 impl ChunkOffset {
     pub const fn new(x: u8, y: u8) -> Self {
-        debug_assert!(
-            (x as usize) < crate::region::REGION_SIZE_CHUNKS
-                && (y as usize) < crate::region::REGION_SIZE_CHUNKS
-        );
+        debug_assert!((x as usize) < REGION_SIZE_CHUNKS && (y as usize) < REGION_SIZE_CHUNKS);
         Self { x, y }
     }
 

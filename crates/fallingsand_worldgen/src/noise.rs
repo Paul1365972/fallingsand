@@ -1,8 +1,8 @@
-use fallingsand_rng::Hash;
+use fallingsand_math::Hash;
 use fastnoise_lite::FastNoiseLite;
 
-pub fn noise_seed(seed: u64, purpose: &str) -> i32 {
-    Hash::seed(seed).bytes(purpose.as_bytes()).get() as i32
+pub fn noise_seed(seed: u64, salt: Hash) -> i32 {
+    Hash::seed(seed).salt(salt).get() as i32
 }
 
 pub struct Field {

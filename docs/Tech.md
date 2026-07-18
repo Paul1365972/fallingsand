@@ -1,19 +1,19 @@
 # Crates & Dependencies
 
 ```
-fallingsand_material  # Shared leaf: material vocabulary, tick constants, quantization
+fallingsand_math      # Tick/subcell constants and tick-seeded stateless randomness
+fallingsand_material  # Runtime material schema
 fallingsand_content   # Host-only typed definitions, validation, quantization, codegen
 fallingsand_core      # Coords, cells/chunks/regions, generated content module
 fallingsand_sim       # CA kernel, dirty rects, sleeping, physics
 fallingsand_protocol  # Client↔server messages
 fallingsand_net       # Transport trait: WebTransport (native + wasm), in-memory
 fallingsand_worldgen  # Procedural generation
-fallingsand_rng       # Tick-seeded stateless randomness
 fallingsand_server    # Authoritative server: library + dedicated binary
 fallingsand_client    # Plain-Rust game core + bevy IO shell (game/ vs view/); native + WASM
 ```
 
-Direction: `material ← {content, core}`, `{material, rng} ← content ← core(build)`, `rng ← {sim, worldgen, client}`, `core ← {sim, worldgen, server, client}`, `core ← sim ← server`, `core ← protocol ← {server, client}`; the client reaches the sim only through the embedded server.
+Direction: `{math, material} ← content ← core(build)`, `{math, material} ← core`, `math ← {sim, worldgen, server}`, `core ← {sim, worldgen, protocol, server, client}`, `sim ← server`, `protocol ← {server, client}`; the client reaches the sim only through the embedded server.
 
 - Content compiles in during the core build — see [Content.md](Content.md).
 - The client stays WASM-clean: the browser build is join-only; rayon, storage, and the embedded server compile out. CI builds for `wasm32-unknown-unknown`.

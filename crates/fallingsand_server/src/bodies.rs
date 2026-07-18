@@ -1,6 +1,6 @@
 use crate::player::{PLAYER_MASS, Players};
 use crate::regions::ChunkTickets;
-use fallingsand_core::{CellPos, Fixed};
+use fallingsand_core::{CellPos, Subcell};
 use fallingsand_protocol::ServerStats;
 use fallingsand_sim::bodies::{
     ActorDynamics, OwnerMap, PixelBody, SETTLE_SECS, apply_damage, detect_island, register_body,
@@ -8,7 +8,7 @@ use fallingsand_sim::bodies::{
 };
 use fallingsand_sim::{ActorAabb, CellWorld};
 
-pub const BODY_GRAVITY: Fixed = Fixed::from_int(-400);
+pub const BODY_GRAVITY: Subcell = Subcell::from_cells_per_second_squared(-400.0);
 
 #[derive(Default)]
 pub struct PixelBodies {
@@ -96,8 +96,8 @@ pub fn step_bodies(
         actor_players.push(id);
         entities.push(ActorDynamics {
             bbox: ActorAabb::from_footprint(avatar.actor.footprint()),
-            vx: avatar.actor.vx.vel_f32(),
-            vy: avatar.actor.vy.vel_f32(),
+            vx: avatar.actor.vx.to_cells_per_second(),
+            vy: avatar.actor.vy.to_cells_per_second(),
             inv_mass: 1.0 / PLAYER_MASS,
         });
     }

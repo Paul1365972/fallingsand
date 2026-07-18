@@ -1,6 +1,6 @@
 use crate::biomes::{POND_ANCHOR_GRID, WorldDef};
 use crate::noise::{Field, noise_seed};
-use fallingsand_rng::Hash;
+use fallingsand_math::Hash;
 use fastnoise_lite::{DomainWarpType, FastNoiseLite, FractalType, NoiseType};
 
 pub struct Terrain {
@@ -28,57 +28,70 @@ const MOUNTAIN_AMPLITUDE: f32 = 260.0;
 const MOUNTAIN_MASK_START: f32 = 0.18;
 const BIOME_CELL: i32 = 1400;
 const BIOME_BLEND_CELLS: i32 = 64;
+const CONTINENT_SALT: Hash = Hash::label("worldgen.continent");
+const HILLS_SALT: Hash = Hash::label("worldgen.hills");
+const DETAIL_SALT: Hash = Hash::label("worldgen.detail");
+const MESA_SALT: Hash = Hash::label("worldgen.mesa");
+const CANYON_SALT: Hash = Hash::label("worldgen.canyon");
+const RIVER_SALT: Hash = Hash::label("worldgen.river");
+const MOUNTAIN_MASK_SALT: Hash = Hash::label("worldgen.mountain_mask");
+const RIDGE_SALT: Hash = Hash::label("worldgen.ridge");
+const BAND_EDGE_SALT: Hash = Hash::label("worldgen.band_edge");
+const SHAPE_SALT: Hash = Hash::label("worldgen.shape");
+const SHAPE_WARP_SALT: Hash = Hash::label("worldgen.shape_warp");
+const BIOME_CELL_SALT: Hash = Hash::label("worldgen.biome_cell");
+const POND_SALT: Hash = Hash::label("worldgen.pond");
 
 impl Terrain {
     pub fn new(seed: u64) -> Self {
-        let mut continent = FastNoiseLite::with_seed(noise_seed(seed, "continent"));
+        let mut continent = FastNoiseLite::with_seed(noise_seed(seed, CONTINENT_SALT));
         continent.set_noise_type(Some(NoiseType::OpenSimplex2));
         continent.set_fractal_type(Some(FractalType::FBm));
         continent.set_fractal_octaves(Some(3));
         continent.set_frequency(Some(0.0006));
 
-        let mut hills = FastNoiseLite::with_seed(noise_seed(seed, "hills"));
+        let mut hills = FastNoiseLite::with_seed(noise_seed(seed, HILLS_SALT));
         hills.set_noise_type(Some(NoiseType::OpenSimplex2));
         hills.set_fractal_type(Some(FractalType::FBm));
         hills.set_fractal_octaves(Some(4));
         hills.set_frequency(Some(0.004));
 
-        let mut detail = FastNoiseLite::with_seed(noise_seed(seed, "detail"));
+        let mut detail = FastNoiseLite::with_seed(noise_seed(seed, DETAIL_SALT));
         detail.set_noise_type(Some(NoiseType::OpenSimplex2));
         detail.set_frequency(Some(0.035));
 
-        let mut mesa = FastNoiseLite::with_seed(noise_seed(seed, "mesa"));
+        let mut mesa = FastNoiseLite::with_seed(noise_seed(seed, MESA_SALT));
         mesa.set_noise_type(Some(NoiseType::OpenSimplex2));
         mesa.set_frequency(Some(0.0016));
 
-        let mut canyon = FastNoiseLite::with_seed(noise_seed(seed, "canyon"));
+        let mut canyon = FastNoiseLite::with_seed(noise_seed(seed, CANYON_SALT));
         canyon.set_noise_type(Some(NoiseType::OpenSimplex2));
         canyon.set_frequency(Some(0.0008));
 
-        let mut river = FastNoiseLite::with_seed(noise_seed(seed, "river"));
+        let mut river = FastNoiseLite::with_seed(noise_seed(seed, RIVER_SALT));
         river.set_noise_type(Some(NoiseType::OpenSimplex2));
         river.set_frequency(Some(0.0007));
 
-        let mut mountain_mask = FastNoiseLite::with_seed(noise_seed(seed, "mountain_mask"));
+        let mut mountain_mask = FastNoiseLite::with_seed(noise_seed(seed, MOUNTAIN_MASK_SALT));
         mountain_mask.set_noise_type(Some(NoiseType::OpenSimplex2));
         mountain_mask.set_frequency(Some(0.00025));
 
-        let mut ridge = FastNoiseLite::with_seed(noise_seed(seed, "ridge"));
+        let mut ridge = FastNoiseLite::with_seed(noise_seed(seed, RIDGE_SALT));
         ridge.set_noise_type(Some(NoiseType::OpenSimplex2));
         ridge.set_fractal_type(Some(FractalType::FBm));
         ridge.set_fractal_octaves(Some(2));
         ridge.set_frequency(Some(0.0025));
 
-        let mut band_edge = FastNoiseLite::with_seed(noise_seed(seed, "band_edge"));
+        let mut band_edge = FastNoiseLite::with_seed(noise_seed(seed, BAND_EDGE_SALT));
         band_edge.set_noise_type(Some(NoiseType::OpenSimplex2));
         band_edge.set_frequency(Some(0.004));
 
-        let mut shape = FastNoiseLite::with_seed(noise_seed(seed, "shape"));
+        let mut shape = FastNoiseLite::with_seed(noise_seed(seed, SHAPE_SALT));
         shape.set_noise_type(Some(NoiseType::OpenSimplex2S));
         shape.set_fractal_type(Some(FractalType::FBm));
         shape.set_fractal_octaves(Some(3));
         shape.set_frequency(Some(0.02));
-        let mut shape_warp = FastNoiseLite::with_seed(noise_seed(seed, "shape_warp"));
+        let mut shape_warp = FastNoiseLite::with_seed(noise_seed(seed, SHAPE_WARP_SALT));
         shape_warp.set_domain_warp_type(Some(DomainWarpType::OpenSimplex2));
         shape_warp.set_domain_warp_amp(Some(30.0));
         shape_warp.set_frequency(Some(0.01));
@@ -100,7 +113,7 @@ impl Terrain {
 
     fn biome_of_cell(&self, count: usize, cell: i32) -> usize {
         Hash::seed(self.seed)
-            .bytes(b"biome_cell")
+            .salt(BIOME_CELL_SALT)
             .pos(cell, 0)
             .range(0, count as i32 - 1) as usize
     }
@@ -190,7 +203,7 @@ impl Terrain {
         }
         let cell = x.div_euclid(POND_ANCHOR_GRID);
         for anchor in [cell - 1, cell, cell + 1] {
-            let mut rng = Hash::seed(self.seed).bytes(b"pond").pos(anchor, 0).rng();
+            let mut rng = Hash::seed(self.seed).salt(POND_SALT).pos(anchor, 0).rng();
             if !rng.draw().chance(chance) {
                 continue;
             }

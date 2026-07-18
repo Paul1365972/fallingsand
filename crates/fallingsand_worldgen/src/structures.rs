@@ -6,7 +6,7 @@ use crate::biomes::{
 use crate::features::Clip;
 use fallingsand_core::MaterialId;
 use fallingsand_core::content::material;
-use fallingsand_rng::{Hash, Rng};
+use fallingsand_math::{Hash, Rng};
 
 pub(crate) struct StructureCell {
     pub x: i32,
@@ -38,6 +38,9 @@ impl Builder<'_> {
 }
 
 const GROUND_SCAN: i32 = 48;
+const RUIN_SALT: Hash = Hash::label("worldgen.ruin");
+const MINESHAFT_SALT: Hash = Hash::label("worldgen.mineshaft");
+const ISLAND_SALT: Hash = Hash::label("worldgen.island");
 
 pub(crate) fn structures_for_rect(
     seed: u64,
@@ -69,7 +72,7 @@ fn ruins(
     let anchor_min = (builder.clip.min_x - STRUCTURE_MARGIN).div_euclid(grid);
     let anchor_max = (builder.clip.max_x + STRUCTURE_MARGIN).div_euclid(grid);
     for anchor in anchor_min..=anchor_max {
-        let mut rng = Hash::seed(seed).bytes(b"ruin").pos(anchor, 0).rng();
+        let mut rng = Hash::seed(seed).salt(RUIN_SALT).pos(anchor, 0).rng();
         if !rng.draw().chance(RUIN_CHANCE) {
             continue;
         }
@@ -180,7 +183,7 @@ fn mineshafts(seed: u64, builder: &mut Builder) {
     for anchor_y in anchor_min_y..=anchor_max_y {
         for anchor_x in anchor_min_x..=anchor_max_x {
             let mut rng = Hash::seed(seed)
-                .bytes(b"mineshaft")
+                .salt(MINESHAFT_SALT)
                 .pos(anchor_x, anchor_y)
                 .rng();
             if !rng.draw().chance(MINESHAFT_CHANCE) {
@@ -241,7 +244,7 @@ fn islands(seed: u64, builder: &mut Builder) {
     for anchor_y in anchor_min_y..=anchor_max_y {
         for anchor_x in anchor_min_x..=anchor_max_x {
             let mut rng = Hash::seed(seed)
-                .bytes(b"island")
+                .salt(ISLAND_SALT)
                 .pos(anchor_x, anchor_y)
                 .rng();
             if !rng.draw().chance(ISLAND_CHANCE) {

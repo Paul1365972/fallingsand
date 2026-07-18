@@ -113,8 +113,8 @@ fn advance_search(
 
 fn footprint_inside_window(candidate: CellPos, window: SearchWindow) -> bool {
     let fp = fallingsand_sim::physics::footprint_at(
-        fallingsand_core::Fixed::from_cell(candidate.x),
-        fallingsand_core::Fixed::from_cell(candidate.y),
+        fallingsand_core::Subcell::from_cell(candidate.x),
+        fallingsand_core::Subcell::from_cell(candidate.y),
         crate::player::PLAYER_HALF_W,
         crate::player::PLAYER_HALF_H,
     );
