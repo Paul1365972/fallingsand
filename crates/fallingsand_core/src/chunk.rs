@@ -149,7 +149,7 @@ impl Chunk {
             for y in rect.min_y..=rect.max_y {
                 let row = (y as usize) * CHUNK_SIZE;
                 for x in rect.min_x as usize..=rect.max_x as usize {
-                    self.cells[row + x].flags &= !(Cell::SIMULATED | Cell::DISPLACED);
+                    self.cells[row + x].flags &= !Cell::MOVED;
                 }
             }
         }

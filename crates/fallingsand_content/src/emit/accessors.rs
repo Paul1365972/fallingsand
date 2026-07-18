@@ -51,6 +51,16 @@ pub fn emit(content: &Content) -> TokenStream {
         }),
         true,
     );
+    let restitution_q16 = accessor_fn(
+        "restitution_q16",
+        quote!(u32),
+        content.materials.iter().map(|mat| {
+            let raw = (f64::from(mat.restitution.clamp(0.0, 1.0)) * 65536.0).round() as u32;
+            let value = Literal::u32_suffixed(raw);
+            quote!(#value)
+        }),
+        true,
+    );
     let ignition = accessor_fn(
         "ignition",
         quote!(Option<crate::material::Ignition>),
@@ -136,6 +146,7 @@ pub fn emit(content: &Content) -> TokenStream {
         #tags
         #is_rigid_capable
         #bond_group
+        #restitution_q16
         #ignition
         #material
 

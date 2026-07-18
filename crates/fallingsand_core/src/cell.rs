@@ -11,9 +11,8 @@ pub struct Cell {
 }
 
 impl Cell {
-    pub const SIMULATED: u8 = 0x01;
-    pub const DISPLACED: u8 = 0x02;
-    pub const BODY: u8 = 0x04;
+    pub const MOVED: u8 = 0x01;
+    pub const BODY: u8 = 0x02;
 
     pub const AIR: Self = Self {
         material: MaterialId::AIR,
@@ -42,10 +41,6 @@ impl Cell {
     pub fn set_vel(&mut self, vx: i32, vy: i32) {
         self.vx = vx.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
         self.vy = vy.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
-    }
-
-    pub const fn touched(self) -> bool {
-        self.flags & (Self::SIMULATED | Self::DISPLACED) != 0
     }
 
     pub const fn is_body(self) -> bool {

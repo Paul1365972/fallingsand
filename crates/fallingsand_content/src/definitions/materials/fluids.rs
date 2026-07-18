@@ -12,12 +12,13 @@ pub fn define(catalog: &mut Catalog) {
         WATER,
         material(
             liquid()
-                .air_drag(2.5)
-                .ground_friction(1.2)
+                .air_drag(0.15)
+                .ground_friction(0.1)
                 .deflect(0.98)
-                .cohesion(8.0),
+                .cohesion(3.0),
         )
         .density(1000.0)
+        .restitution(0.35)
         .colors([[44, 96, 200, 190], [40, 90, 192, 190], [48, 102, 208, 190]]),
     );
     catalog.add(
@@ -34,8 +35,8 @@ pub fn define(catalog: &mut Catalog) {
         OIL,
         material(
             liquid()
-                .air_drag(3.0)
-                .ground_friction(6.3)
+                .air_drag(1.2)
+                .ground_friction(2.0)
                 .deflect(0.9)
                 .cohesion(5.0),
         )
@@ -65,7 +66,7 @@ pub fn define(catalog: &mut Catalog) {
                 .ground_friction(42.0)
                 .deflect(0.5)
                 .cohesion(1.5)
-                .flow_rate(15.0),
+                .flow_rate(8.0),
         )
         .density(2800.0)
         .colors([
@@ -82,8 +83,8 @@ pub fn define(catalog: &mut Catalog) {
         ACID,
         material(
             liquid()
-                .air_drag(2.8)
-                .ground_friction(3.1)
+                .air_drag(0.8)
+                .ground_friction(1.0)
                 .deflect(0.95)
                 .cohesion(6.0),
         )

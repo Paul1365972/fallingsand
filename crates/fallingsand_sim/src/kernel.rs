@@ -73,13 +73,13 @@ pub fn step_scoped(
         .par_iter_mut()
         .for_each(|(pos, chunk)| chunk.begin_tick(ready.contains(pos)));
 
-    let simulate_micros = run_sim(
-        "simulate",
-        world,
-        tick,
-        &|pos, chunk| simulate(pos) && !chunk.sim_rect().is_empty(),
-        &|window| simulate_block(window, tick, simulate),
-    );
+    let awake = |pos: ChunkPos, chunk: &Chunk| simulate(pos) && !chunk.sim_rect().is_empty();
+    let effect_micros = run_sim("effects", world, tick, &awake, &|window| {
+        simulate_block(window, tick, simulate, rules::effect_cell)
+    });
+    let movement_micros = run_sim("movement", world, tick, &awake, &|window| {
+        simulate_block(window, tick, simulate, rules::move_cell)
+    });
 
     let random_tick_micros = run_sim(
         "random_tick",
@@ -90,7 +90,7 @@ pub fn step_scoped(
     );
 
     SimTimings {
-        simulate_micros,
+        simulate_micros: effect_micros + movement_micros,
         random_tick_micros,
     }
 }
@@ -173,7 +173,12 @@ fn owned_chunks(window: &SimWindow, simulate: &Simulate) -> [[bool; 2]; 2] {
     owned
 }
 
-fn simulate_block(window: &mut SimWindow, tick: u64, simulate: &Simulate) {
+fn simulate_block(
+    window: &mut SimWindow,
+    tick: u64,
+    simulate: &Simulate,
+    rule: fn(&mut SimWindow, CellPos, u64),
+) {
     let owned = owned_chunks(window, simulate);
     let mut rects = [[DirtyRect::EMPTY; 2]; 2];
     for (oy, row) in owned.iter().enumerate() {
@@ -205,7 +210,7 @@ fn simulate_block(window: &mut SimWindow, tick: u64, simulate: &Simulate) {
             for i in 0..=(end - start) {
                 let lx = if reverse { end - i } else { start + i };
                 let pos = CellPos::new(origin_cell.x + ox as i32 * size + lx, origin_cell.y + gy);
-                rules::update_cell(window, pos, tick);
+                rule(window, pos, tick);
             }
         }
     }

@@ -74,12 +74,7 @@ impl<'a> SimWindow<'a> {
         self.slots[slot].as_ref().map(|c| c.get(pos.offset()))
     }
 
-    pub fn set(&mut self, pos: CellPos, mut cell: Cell) {
-        cell.flags |= Cell::SIMULATED;
-        self.write(pos, cell);
-    }
-
-    fn write(&mut self, pos: CellPos, cell: Cell) {
+    pub fn set(&mut self, pos: CellPos, cell: Cell) {
         let Some(slot) = self.slot_of(pos) else {
             return;
         };
@@ -132,9 +127,9 @@ impl<'a> SimWindow<'a> {
             debug_assert!(false, "swap with unloaded cell");
             return;
         };
-        moving.flags |= Cell::SIMULATED;
-        displaced.flags |= Cell::DISPLACED;
-        self.write(mover, displaced);
-        self.write(target, moving);
+        moving.flags |= Cell::MOVED;
+        displaced.flags |= Cell::MOVED;
+        self.set(mover, displaced);
+        self.set(target, moving);
     }
 }
