@@ -1,7 +1,11 @@
 use super::fire::SMOKE;
-use crate::{Catalog, Tag, emission, flammable, gas, liquid, material, material_keys};
+use crate::{Catalog, MaterialKey, Tag, emission, flammable, gas, liquid, material};
 
-material_keys! { WATER, STEAM, OIL, LAVA, ACID }
+pub const WATER: MaterialKey = MaterialKey::new("WATER");
+pub const STEAM: MaterialKey = MaterialKey::new("STEAM");
+pub const OIL: MaterialKey = MaterialKey::new("OIL");
+pub const LAVA: MaterialKey = MaterialKey::new("LAVA");
+pub const ACID: MaterialKey = MaterialKey::new("ACID");
 
 pub fn define(catalog: &mut Catalog) {
     catalog.add(

@@ -1,6 +1,7 @@
-use crate::{Catalog, Tag, empty, material, material_keys, solid};
+use crate::{Catalog, MaterialKey, Tag, empty, material, solid};
 
-material_keys! { AIR, FLESH }
+pub const AIR: MaterialKey = MaterialKey::new("AIR");
+pub const FLESH: MaterialKey = MaterialKey::new("FLESH");
 
 pub fn define(catalog: &mut Catalog) {
     catalog.add(AIR, material(empty()).density(1.2).colors([[0, 0, 0, 0]]));

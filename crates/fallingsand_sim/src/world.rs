@@ -62,8 +62,7 @@ impl CellWorld {
             return;
         };
         let old = chunk.get(pos.offset());
-        cell.set_body(false);
-        cell.updated = self.tick as u8;
+        cell.flags = 0;
         chunk.set(pos.offset(), cell);
         if old.is_body() {
             self.damage.push(pos);
@@ -75,7 +74,7 @@ impl CellWorld {
         let Some(chunk) = self.chunks.get_mut(&pos.chunk()) else {
             return;
         };
-        cell.updated = self.tick as u8;
+        cell.flags &= Cell::BODY;
         chunk.set(pos.offset(), cell);
         self.mark_sim_border(pos);
     }

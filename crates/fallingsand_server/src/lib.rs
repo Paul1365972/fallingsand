@@ -208,10 +208,7 @@ impl ServerState {
         slot: fn(&mut TickProfile) -> &mut u32,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        #[cfg(feature = "profiling")]
         let _span = tracing::info_span!("phase", name).entered();
-        #[cfg(not(feature = "profiling"))]
-        let _ = name;
         let start = Instant::now();
         let result = f(self);
         *slot(&mut self.stats.timing) = start.elapsed().as_micros() as u32;

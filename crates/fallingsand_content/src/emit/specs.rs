@@ -10,6 +10,18 @@ pub fn emit(content: &Content) -> TokenStream {
         let phase = phase_path(mat.phase);
         let density_milli = Literal::i32_suffixed(mat.density_milli);
         let is_hot = mat.tags.contains(fallingsand_material::Tag::Hot);
+        let ignition = option_tokens(content.ignitions[index].as_ref().map(|ignition| {
+            let into = material_id(ignition.into);
+            let open = Literal::u64_suffixed(ignition.open);
+            let sealed = Literal::u64_suffixed(ignition.sealed);
+            quote! {
+                crate::material::Ignition {
+                    into: #into,
+                    open: #open,
+                    sealed: #sealed,
+                }
+            }
+        }));
         let burning = match &mat.burning {
             Some(burning) => {
                 let burn = Literal::u64_suffixed(burning.burn);
@@ -72,6 +84,7 @@ pub fn emit(content: &Content) -> TokenStream {
                 const PHASE: crate::material::Phase = #phase;
                 const DENSITY_MILLI: i32 = #density_milli;
                 const IS_HOT: bool = #is_hot;
+                const IGNITION: Option<crate::material::Ignition> = #ignition;
                 const BURNING: Option<crate::material::Burning> = #burning;
                 const DECAY: Option<(u64, crate::material::MaterialId)> = #decay;
                 const IS_REACTIVE: bool = #is_reactive;

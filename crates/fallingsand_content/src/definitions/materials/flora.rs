@@ -1,9 +1,12 @@
 use super::fire::{ASH, SMOKE};
-use crate::{
-    BondGroup, Catalog, Tag, emission, flammable, inherit, material, material_keys, solid,
-};
+use crate::{BondGroup, Catalog, MaterialKey, Tag, emission, flammable, inherit, material, solid};
 
-material_keys! { WOOD, MOSS, LEAVES, PLANKS, MUSHROOM_STEM, GLOWSHROOM }
+pub const WOOD: MaterialKey = MaterialKey::new("WOOD");
+pub const MOSS: MaterialKey = MaterialKey::new("MOSS");
+pub const LEAVES: MaterialKey = MaterialKey::new("LEAVES");
+pub const PLANKS: MaterialKey = MaterialKey::new("PLANKS");
+pub const MUSHROOM_STEM: MaterialKey = MaterialKey::new("MUSHROOM_STEM");
+pub const GLOWSHROOM: MaterialKey = MaterialKey::new("GLOWSHROOM");
 
 pub fn define(catalog: &mut Catalog) {
     catalog.add(

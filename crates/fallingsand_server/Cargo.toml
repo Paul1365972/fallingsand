@@ -8,14 +8,13 @@ name = "fallingsand_server"
 path = "src/main.rs"
 
 [features]
-profiling = ["fallingsand_sim/profiling"]
-tracy = ["profiling", "dep:tracing-tracy"]
+tracy = ["dep:tracing-tracy"]
 
 [dependencies]
 fallingsand_core = { workspace = true }
-fallingsand_sim = { workspace = true, features = ["parallel"] }
+fallingsand_sim = { workspace = true }
 fallingsand_protocol = { workspace = true }
-fallingsand_net = { workspace = true, features = ["wt-native"] }
+fallingsand_net = { workspace = true }
 fallingsand_worldgen = { workspace = true }
 fallingsand_math = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "time"] }

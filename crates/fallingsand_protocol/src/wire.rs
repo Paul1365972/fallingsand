@@ -69,7 +69,7 @@ pub fn decode_message<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, WireError>
 
 fn cell_entry(cell: Cell) -> [u8; CELL_WIRE_BYTES] {
     let material = cell.material.0.to_le_bytes();
-    [material[0], material[1], cell.shade_flags]
+    [material[0], material[1], cell.shade]
 }
 
 fn entry_cell(entry: &[u8]) -> Result<Cell, WireError> {
@@ -81,8 +81,9 @@ fn entry_cell(entry: &[u8]) -> Result<Cell, WireError> {
         material: MaterialId(material),
         vx: 0,
         vy: 0,
-        shade_flags: entry[2],
-        updated: 0,
+        shade: entry[2],
+        flags: 0,
+        aux: 0,
     })
 }
 
@@ -104,7 +105,7 @@ pub fn cells_to_wire(cells: &[Cell]) -> Vec<u8> {
     let mut lookup: FxHashMap<u32, u8> = FxHashMap::default();
     let mut indices: Vec<u8> = Vec::with_capacity(cells.len());
     for &cell in cells {
-        let key = cell.material.0 as u32 | (cell.shade_flags as u32) << 16;
+        let key = cell.material.0 as u32 | (cell.shade as u32) << 16;
         match lookup.entry(key) {
             std::collections::hash_map::Entry::Occupied(entry) => indices.push(*entry.get()),
             std::collections::hash_map::Entry::Vacant(entry) => {

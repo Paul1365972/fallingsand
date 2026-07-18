@@ -9,7 +9,7 @@ path = "src/main.rs"
 
 [features]
 dev = ["bevy/dynamic_linking", "bevy/dev", "bevy/embedded_watcher"]
-profiling = ["bevy/trace_tracy", "fallingsand_server/profiling"]
+tracy = ["bevy/trace_tracy"]
 
 [build-dependencies]
 embed-resource = "3"
@@ -42,7 +42,6 @@ serde = { workspace = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 fallingsand_server = { workspace = true }
-fallingsand_net = { workspace = true, features = ["wt-native"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 winit = { version = "0.30", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png"] }
@@ -67,6 +66,5 @@ bevy = { workspace = true, features = [
     "webgpu",
     "png",
 ] }
-fallingsand_net = { workspace = true, features = ["wt-wasm"] }
 getrandom = { workspace = true, features = ["wasm_js"] }
 web-sys = { version = "0.3", features = ["Window", "Location", "Storage", "UrlSearchParams"] }

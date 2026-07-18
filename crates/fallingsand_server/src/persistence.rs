@@ -17,13 +17,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
 
-pub const REGION_FORMAT_VERSION: u8 = 12;
+pub const REGION_FORMAT_VERSION: u8 = 18;
 pub const WORLD_FORMAT_VERSION: u16 = 23;
 const AUTOSAVE_INTERVAL_TICKS: u64 = fallingsand_core::ticks_from_secs(10.0);
-const CELL_BYTES: usize = 8;
-const RECT_BYTES: usize = 4;
-const REGION_CELL_BYTES: usize = REGION_AREA_CHUNKS * CHUNK_AREA * CELL_BYTES;
-const REGION_RAW_BYTES: usize = REGION_CELL_BYTES + REGION_AREA_CHUNKS * RECT_BYTES;
 
 const REGIONS: TableDefinition<u64, &[u8]> = TableDefinition::new("regions");
 const PLAYERS: TableDefinition<u128, &[u8]> = TableDefinition::new("players");
@@ -60,7 +56,7 @@ pub fn body_record(body: &PixelBody) -> BodyRecord {
         cells: parts
             .cells
             .iter()
-            .map(|cell| (cell.material.0, cell.shade_flags))
+            .map(|cell| (cell.material.0, cell.shade))
             .collect(),
         x: parts.x,
         y: parts.y,
@@ -79,11 +75,10 @@ pub fn record_to_parts(record: &BodyRecord) -> BodyParts {
         cells: record
             .cells
             .iter()
-            .map(|&(material, shade_flags)| {
+            .map(|&(material, shade)| {
                 let mut cell = Cell::AIR;
                 cell.material = MaterialId(material);
-                cell.shade_flags = shade_flags;
-                cell.set_body(false);
+                cell.shade = shade;
                 cell
             })
             .collect(),
@@ -728,41 +723,91 @@ fn parse_meta(bytes: &[u8]) -> Result<WorldMeta, StoreError> {
     Ok(postcard::from_bytes(bytes)?)
 }
 
-pub fn encode_region(region: &Region, bodies: &[BodyRecord]) -> Result<Vec<u8>, StoreError> {
-    let mut raw = Vec::with_capacity(REGION_RAW_BYTES);
-    for chunk in region.chunks() {
-        for &cell in chunk.cells() {
-            let cell = if cell.is_body() { Cell::AIR } else { cell };
-            if cell.material.0 as usize >= content::MATERIAL_COUNT {
-                return Err(StoreError::CorruptRegion(format!(
-                    "runtime cell has invalid material id {}",
-                    cell.material.0
-                )));
-            }
-            raw.extend_from_slice(&cell.material.0.to_le_bytes());
-            raw.extend_from_slice(&cell.vx.to_le_bytes());
-            raw.extend_from_slice(&cell.vy.to_le_bytes());
-            raw.push(cell.shade_flags);
-            raw.push(cell.updated);
+#[derive(Serialize, Deserialize)]
+struct CellRecord {
+    material: u16,
+    vx: i16,
+    vy: i16,
+    shade: u8,
+    aux: u8,
+}
+
+impl From<Cell> for CellRecord {
+    fn from(cell: Cell) -> Self {
+        let cell = if cell.is_body() { Cell::AIR } else { cell };
+        Self {
+            material: cell.material.0,
+            vx: cell.vx,
+            vy: cell.vy,
+            shade: cell.shade,
+            aux: cell.aux,
         }
     }
-    for chunk in region.chunks() {
-        let rect = validate_rect(chunk.sim_rect())?;
-        raw.extend_from_slice(&[rect.min_x, rect.min_y, rect.max_x, rect.max_y]);
+}
+
+impl CellRecord {
+    fn restore(&self) -> Result<Cell, StoreError> {
+        if self.material as usize >= content::MATERIAL_COUNT {
+            return Err(StoreError::CorruptRegion(format!(
+                "invalid material id {}",
+                self.material
+            )));
+        }
+        Ok(Cell {
+            material: MaterialId(self.material),
+            vx: self.vx,
+            vy: self.vy,
+            shade: self.shade,
+            flags: 0,
+            aux: self.aux,
+        })
     }
+}
+
+#[derive(Serialize, Deserialize)]
+struct ChunkRecord {
+    cells: Vec<CellRecord>,
+    sim: DirtyRect,
+}
+
+#[derive(Serialize, Deserialize)]
+struct RegionRecord {
+    chunks: Vec<ChunkRecord>,
+    bodies: Vec<BodyRecord>,
+}
+
+pub fn encode_region(region: &Region, bodies: &[BodyRecord]) -> Result<Vec<u8>, StoreError> {
     for (index, body) in bodies.iter().enumerate() {
         validate_body_record(index, body)?;
     }
-    raw.extend_from_slice(&postcard::to_allocvec(bodies)?);
-    let cell_blob = lz4_flex::compress_prepend_size(&raw);
-    let mut blob = Vec::with_capacity(cell_blob.len() + 1);
+    let chunks = region
+        .chunks()
+        .iter()
+        .map(|chunk| {
+            let cells: Vec<CellRecord> = chunk.cells().iter().map(|&cell| cell.into()).collect();
+            for record in &cells {
+                if record.material as usize >= content::MATERIAL_COUNT {
+                    return Err(StoreError::CorruptRegion(format!(
+                        "runtime cell has invalid material id {}",
+                        record.material
+                    )));
+                }
+            }
+            Ok(ChunkRecord {
+                cells,
+                sim: validate_rect(chunk.sim_rect())?,
+            })
+        })
+        .collect::<Result<Vec<_>, StoreError>>()?;
+    let record = RegionRecord {
+        chunks,
+        bodies: bodies.to_vec(),
+    };
+    let compressed = lz4_flex::compress_prepend_size(&postcard::to_allocvec(&record)?);
+    let mut blob = Vec::with_capacity(compressed.len() + 1);
     blob.push(REGION_FORMAT_VERSION);
-    blob.extend_from_slice(&cell_blob);
+    blob.extend_from_slice(&compressed);
     Ok(blob)
-}
-
-fn decode_rect(bytes: &[u8]) -> Result<DirtyRect, StoreError> {
-    validate_rect(DirtyRect::new(bytes[0], bytes[1], bytes[2], bytes[3]))
 }
 
 fn validate_rect(rect: DirtyRect) -> Result<DirtyRect, StoreError> {
@@ -851,39 +896,28 @@ pub fn decode_region(blob: &[u8]) -> Result<(Region, Vec<BodyRecord>), StoreErro
     }
     let raw = lz4_flex::decompress_size_prepended(compressed)
         .map_err(|err| StoreError::CorruptRegion(err.to_string()))?;
-    if raw.len() < REGION_RAW_BYTES {
+    let record: RegionRecord = postcard::from_bytes(&raw)?;
+    if record.chunks.len() != REGION_AREA_CHUNKS {
         return Err(StoreError::CorruptRegion(format!(
-            "expected at least {REGION_RAW_BYTES} bytes, got {}",
-            raw.len()
+            "expected {REGION_AREA_CHUNKS} chunks, got {}",
+            record.chunks.len()
         )));
     }
-    let bodies: Vec<BodyRecord> = postcard::from_bytes(&raw[REGION_RAW_BYTES..])?;
-    for (body_index, body) in bodies.iter().enumerate() {
+    for (body_index, body) in record.bodies.iter().enumerate() {
         validate_body_record(body_index, body)?;
     }
     let mut region = Region::new();
-    let mut cursor = raw[..REGION_CELL_BYTES].chunks_exact(CELL_BYTES);
-    for chunk in region.chunks_mut().iter_mut() {
-        for cell in chunk.cells_mut() {
-            let raw_cell = cursor.next().expect("length checked");
-            let material = u16::from_le_bytes([raw_cell[0], raw_cell[1]]);
-            if material as usize >= fallingsand_core::content::MATERIAL_COUNT {
-                return Err(StoreError::CorruptRegion(format!(
-                    "invalid material id {material}"
-                )));
-            }
-            *cell = Cell {
-                material: MaterialId(material),
-                vx: i16::from_le_bytes([raw_cell[2], raw_cell[3]]),
-                vy: i16::from_le_bytes([raw_cell[4], raw_cell[5]]),
-                shade_flags: raw_cell[6],
-                updated: raw_cell[7],
-            };
+    for (chunk, stored) in region.chunks_mut().iter_mut().zip(&record.chunks) {
+        if stored.cells.len() != CHUNK_AREA {
+            return Err(StoreError::CorruptRegion(format!(
+                "expected {CHUNK_AREA} cells per chunk, got {}",
+                stored.cells.len()
+            )));
         }
+        for (cell, stored_cell) in chunk.cells_mut().iter_mut().zip(&stored.cells) {
+            *cell = stored_cell.restore()?;
+        }
+        chunk.sim = validate_rect(stored.sim)?;
     }
-    let rects = raw[REGION_CELL_BYTES..REGION_RAW_BYTES].chunks_exact(RECT_BYTES);
-    for (chunk, bytes) in region.chunks_mut().iter_mut().zip(rects) {
-        chunk.sim = decode_rect(bytes)?;
-    }
-    Ok((region, bodies))
+    Ok((region, record.bodies))
 }

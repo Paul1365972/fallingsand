@@ -2,7 +2,8 @@ use crate::window::{SPEED_OF_LIGHT, SimWindow};
 use fallingsand_core::content::{self, MatSpec, material};
 use fallingsand_core::{
     Burning, BurningKind, CARDINAL_NEIGHBORS as NEIGHBORS, Cell, CellPos, Dynamics, GasDynamics,
-    LiquidDynamics, MaterialId, Phase, PowderDynamics, SealedBurn, TICK_DT, VelocityFactor,
+    Ignition, LiquidDynamics, MaterialId, Phase, PowderDynamics, SealedBurn, TICK_DT, Tag,
+    VelocityFactor,
 };
 use fallingsand_math::{Hash, Rng, SUBCELL_BITS, SUBCELL_UNITS_PER_CELL};
 
@@ -18,39 +19,29 @@ const AGITATED: i32 = 2 * GRAVITY_DV;
 
 macro_rules! material_dispatch {
     ($(($idx:literal, $name:ident, $spec:ident)),* $(,)?) => {
-        pub(crate) fn update_cell(
-            window: &mut SimWindow,
-            pos: CellPos,
-            tick: u64,
-            tick_byte: u8,
-        ) {
+        pub(crate) fn update_cell(window: &mut SimWindow, pos: CellPos, tick: u64) {
             let Some(cell) = window.get(pos) else {
                 return;
             };
-            if cell.updated == tick_byte {
+            if cell.touched() {
                 window.mark(pos);
                 return;
             }
             match cell.material.0 {
                 $( $idx => update_cell_spec::<content::specs::$spec>(
-                    window, pos, cell, tick, tick_byte,
+                    window, pos, cell, tick,
                 ), )*
                 _ => unreachable!("invalid material id"),
             }
         }
 
-        pub(crate) fn random_tick(
-            window: &mut SimWindow,
-            pos: CellPos,
-            tick: u64,
-            tick_byte: u8,
-        ) {
+        pub(crate) fn random_tick(window: &mut SimWindow, pos: CellPos, tick: u64) {
             let Some(cell) = window.get(pos) else {
                 return;
             };
             match cell.material.0 {
                 $( $idx => random_tick_spec::<content::specs::$spec>(
-                    window, pos, tick, tick_byte,
+                    window, pos, tick,
                 ), )*
                 _ => unreachable!("invalid material id"),
             }
@@ -59,52 +50,36 @@ macro_rules! material_dispatch {
 }
 fallingsand_core::for_each_material!(material_dispatch);
 
-fn update_cell_spec<M: MatSpec>(
-    window: &mut SimWindow,
-    pos: CellPos,
-    cell: Cell,
-    tick: u64,
-    tick_byte: u8,
-) {
+fn update_cell_spec<M: MatSpec>(window: &mut SimWindow, pos: CellPos, cell: Cell, tick: u64) {
     let mut rng = Hash::seed(tick)
         .salt(CELL_UPDATE_SALT)
         .pos(pos.x, pos.y)
         .rng();
 
-    if const { M::IS_HOT } {
-        ignite_neighbors(window, pos, &mut rng, tick_byte);
-    }
     if let Some(burning) = const { M::BURNING }
-        && burning_step::<M>(window, pos, burning, &mut rng, tick_byte)
+        && burning_step::<M>(window, pos, burning, &mut rng)
     {
         return;
     }
-    if const { M::IS_REACTIVE } && react::<M>(window, pos, cell, &mut rng, tick_byte) {
+    if let Some(ignition) = const { M::IGNITION }
+        && ignite_step(window, pos, ignition, &mut rng)
+    {
+        return;
+    }
+    if const { M::IS_REACTIVE } && react::<M>(window, pos, cell, &mut rng) {
         return;
     }
     match const { M::DYNAMICS } {
         Dynamics::None => {}
-        Dynamics::Powder(d) => update_powder::<M>(window, pos, cell, d, &mut rng, tick_byte),
-        Dynamics::Liquid(d) => update_liquid::<M>(window, pos, cell, d, &mut rng, tick_byte),
-        Dynamics::Gas(d) => update_gas::<M>(window, pos, cell, d, &mut rng, tick_byte),
+        Dynamics::Powder(d) => update_powder::<M>(window, pos, cell, d, &mut rng),
+        Dynamics::Liquid(d) => update_liquid::<M>(window, pos, cell, d, &mut rng),
+        Dynamics::Gas(d) => update_gas::<M>(window, pos, cell, d, &mut rng),
     }
 }
 
-fn random_tick_spec<M: MatSpec>(
-    _window: &mut SimWindow,
-    _pos: CellPos,
-    _tick: u64,
-    _tick_byte: u8,
-) {
-}
+fn random_tick_spec<M: MatSpec>(_window: &mut SimWindow, _pos: CellPos, _tick: u64) {}
 
-fn react<M: MatSpec>(
-    window: &mut SimWindow,
-    pos: CellPos,
-    cell: Cell,
-    rng: &mut Rng,
-    tick_byte: u8,
-) -> bool {
+fn react<M: MatSpec>(window: &mut SimWindow, pos: CellPos, cell: Cell, rng: &mut Rng) -> bool {
     let mut keep = false;
     for (dx, dy) in NEIGHBORS {
         let neighbor_pos = pos.translated(dx, dy);
@@ -117,15 +92,15 @@ fn react<M: MatSpec>(
             if rng.draw().below(reaction.threshold) {
                 note_structural(window, pos, cell.material);
                 note_structural(window, neighbor_pos, neighbor.material);
-                set_product(window, pos, reaction.becomes, rng, tick_byte);
-                set_product(window, neighbor_pos, reaction.other_becomes, rng, tick_byte);
+                set_product(window, pos, reaction.becomes, rng);
+                set_product(window, neighbor_pos, reaction.other_becomes, rng);
                 return true;
             }
         }
     }
     if let Some((threshold, product)) = const { M::DECAY } {
         if rng.draw().below(threshold) {
-            set_product(window, pos, product, rng, tick_byte);
+            set_product(window, pos, product, rng);
             return true;
         }
         keep = true;
@@ -145,38 +120,42 @@ fn note_structural(window: &mut SimWindow, pos: CellPos, material: MaterialId) {
     }
 }
 
-fn ignite_neighbors(window: &mut SimWindow, pos: CellPos, rng: &mut Rng, tick_byte: u8) {
-    for (dx, dy) in NEIGHBORS {
-        let neighbor_pos = pos.translated(dx, dy);
-        let Some(neighbor) = window.get(neighbor_pos) else {
-            continue;
-        };
-        let Some(ignition) = content::ignition(neighbor.material) else {
-            continue;
-        };
-        if ignition.open == 0 && ignition.sealed == 0 {
-            continue;
-        }
-        window.mark(pos);
-        if neighbor.updated == tick_byte {
-            continue;
-        }
-        let threshold = if oxygen_exposed(window, neighbor_pos) {
-            ignition.open
-        } else {
-            ignition.sealed
-        };
-        if threshold == 0 {
-            continue;
-        }
+fn ignite_step(window: &mut SimWindow, pos: CellPos, ignition: Ignition, rng: &mut Rng) -> bool {
+    if ignition.open == 0 && ignition.sealed == 0 {
+        return false;
+    }
+    let hot_neighbors = NEIGHBORS
+        .iter()
+        .filter(|&&(dx, dy)| {
+            window
+                .get(pos.translated(dx, dy))
+                .is_some_and(|neighbor| content::tags(neighbor.material).contains(Tag::Hot))
+        })
+        .count();
+    if hot_neighbors == 0 {
+        return false;
+    }
+    let threshold = if oxygen_exposed(window, pos) {
+        ignition.open
+    } else {
+        ignition.sealed
+    };
+    if threshold == 0 {
+        return false;
+    }
+    window.mark(pos);
+    for _ in 0..hot_neighbors {
         if rng.draw().below(threshold) {
-            let mut lit = neighbor;
+            let Some(mut lit) = window.get(pos) else {
+                return true;
+            };
             lit.material = ignition.into;
             lit.set_body(false);
-            lit.updated = tick_byte;
-            window.set(neighbor_pos, lit);
+            window.set(pos, lit);
+            return true;
         }
     }
+    false
 }
 
 fn burning_step<M: MatSpec>(
@@ -184,19 +163,18 @@ fn burning_step<M: MatSpec>(
     pos: CellPos,
     burning: Burning,
     rng: &mut Rng,
-    tick_byte: u8,
 ) -> bool {
     if let Some(water) = adjacent_water(window, pos) {
         if burning.kind == BurningKind::Flame {
-            set_product(window, pos, material::STEAM, rng, tick_byte);
+            set_product(window, pos, material::STEAM, rng);
         } else {
-            burn_out::<M>(window, pos, burning, rng, tick_byte);
-            set_product(window, water, material::STEAM, rng, tick_byte);
+            burn_out::<M>(window, pos, burning, rng);
+            set_product(window, water, material::STEAM, rng);
         }
         return true;
     }
     if rng.draw().below(burning.emit) {
-        emit_into_air(window, pos, material::FIRE, rng, tick_byte);
+        emit_into_air(window, pos, material::FIRE, rng);
     }
     let burn = if oxygen_exposed(window, pos) {
         burning.burn
@@ -207,7 +185,6 @@ fn burning_step<M: MatSpec>(
                     return true;
                 };
                 cell.material = next;
-                cell.updated = tick_byte;
                 window.set(pos, cell);
                 return true;
             }
@@ -215,20 +192,14 @@ fn burning_step<M: MatSpec>(
         }
     };
     if rng.draw().below(burn) {
-        burn_out::<M>(window, pos, burning, rng, tick_byte);
+        burn_out::<M>(window, pos, burning, rng);
         return true;
     }
     window.mark(pos);
     false
 }
 
-fn burn_out<M: MatSpec>(
-    window: &mut SimWindow,
-    pos: CellPos,
-    burning: Burning,
-    rng: &mut Rng,
-    tick_byte: u8,
-) {
+fn burn_out<M: MatSpec>(window: &mut SimWindow, pos: CellPos, burning: Burning, rng: &mut Rng) {
     if const { matches!(M::PHASE, Phase::Solid) } {
         for (dx, dy) in NEIGHBORS {
             window.note_structural(pos.translated(dx, dy));
@@ -238,23 +209,17 @@ fn burn_out<M: MatSpec>(
         Some((threshold, id)) if rng.draw().below(threshold) => id,
         _ => burning.burnout,
     };
-    set_product(window, pos, out, rng, tick_byte);
+    set_product(window, pos, out, rng);
 }
 
-fn emit_into_air(
-    window: &mut SimWindow,
-    pos: CellPos,
-    material: MaterialId,
-    rng: &mut Rng,
-    tick_byte: u8,
-) {
+fn emit_into_air(window: &mut SimWindow, pos: CellPos, material: MaterialId, rng: &mut Rng) {
     let (dx, dy) = NEIGHBORS[rng.draw().bits(2) as usize];
     let target = pos.translated(dx, dy);
     if window
         .get(target)
         .is_some_and(|neighbor| neighbor.material == MaterialId::AIR)
     {
-        set_product(window, target, material, rng, tick_byte);
+        set_product(window, target, material, rng);
     }
 }
 
@@ -276,16 +241,8 @@ fn oxygen_exposed(window: &SimWindow, pos: CellPos) -> bool {
     })
 }
 
-fn set_product(
-    window: &mut SimWindow,
-    pos: CellPos,
-    material: MaterialId,
-    rng: &mut Rng,
-    tick_byte: u8,
-) {
-    let mut cell = Cell::new(material, rng.draw().bits(4) as u8);
-    cell.updated = tick_byte;
-    window.set(pos, cell);
+fn set_product(window: &mut SimWindow, pos: CellPos, material: MaterialId, rng: &mut Rng) {
+    window.set(pos, Cell::new(material, rng.draw().bits(4) as u8));
 }
 
 fn note_undermined(window: &mut SimWindow, vacated: CellPos) {
@@ -356,8 +313,7 @@ fn entry<M: MatSpec>(
     window: &SimWindow,
     dir: (i32, i32),
     target: CellPos,
-    tick_byte: u8,
-    allow_stamped_air: bool,
+    allow_touched_air: bool,
 ) -> Entry {
     let Some(cell) = window.get(target) else {
         return Entry::Blocked;
@@ -365,28 +321,18 @@ fn entry<M: MatSpec>(
     if !admits::<M>(dir, cell) {
         return Entry::Blocked;
     }
-    if cell.updated == tick_byte && !(allow_stamped_air && cell.is_air()) {
+    if cell.touched() && !(allow_touched_air && cell.is_air()) {
         return Entry::Busy;
     }
     Entry::Open
 }
 
-fn traverse_entry<M: MatSpec>(
-    window: &SimWindow,
-    dir: (i32, i32),
-    target: CellPos,
-    tick_byte: u8,
-) -> Entry {
-    entry::<M>(window, dir, target, tick_byte, true)
+fn traverse_entry<M: MatSpec>(window: &SimWindow, dir: (i32, i32), target: CellPos) -> Entry {
+    entry::<M>(window, dir, target, true)
 }
 
-fn redirect_entry<M: MatSpec>(
-    window: &SimWindow,
-    dir: (i32, i32),
-    target: CellPos,
-    tick_byte: u8,
-) -> Entry {
-    entry::<M>(window, dir, target, tick_byte, false)
+fn redirect_entry<M: MatSpec>(window: &SimWindow, dir: (i32, i32), target: CellPos) -> Entry {
+    entry::<M>(window, dir, target, false)
 }
 
 fn yields_to_faller(window: &SimWindow, target: CellPos) -> bool {
@@ -425,7 +371,6 @@ fn update_powder<M: MatSpec>(
     cell: Cell,
     d: PowderDynamics,
     rng: &mut Rng,
-    tick_byte: u8,
 ) {
     update_mover::<M>(
         window,
@@ -434,7 +379,6 @@ fn update_powder<M: MatSpec>(
         d.restitution,
         -1,
         rng,
-        tick_byte,
         |window, pos, vx, vy, _rng| {
             settling_accelerate::<M>(
                 window,
@@ -446,7 +390,7 @@ fn update_powder<M: MatSpec>(
                 d.ground_friction_keep,
             )
         },
-        |window, cur, vx, vy, rng| topple_slide::<M>(window, cur, vx, vy, d, rng, tick_byte),
+        |window, cur, vx, vy, rng| topple_slide::<M>(window, cur, vx, vy, d, rng),
     );
 }
 
@@ -456,14 +400,13 @@ fn update_liquid<M: MatSpec>(
     cell: Cell,
     d: LiquidDynamics,
     rng: &mut Rng,
-    tick_byte: u8,
 ) {
     let above = pos.translated(0, 1);
     if let Some(top) = window.get(above)
         && content::phase(top.material) == Phase::Liquid
         && content::density_milli(top.material) > const { M::DENSITY_MILLI }
     {
-        if top.updated != tick_byte {
+        if !top.touched() {
             window.swap(pos, above);
             return;
         }
@@ -481,7 +424,7 @@ fn update_liquid<M: MatSpec>(
             .is_some_and(|beside| beside.material == cell.material)
             && window
                 .get(bubble)
-                .is_some_and(|hole| hole.is_air() && hole.updated != tick_byte);
+                .is_some_and(|hole| hole.is_air() && !hole.touched());
         if dives {
             window.swap(pos, bubble);
             return;
@@ -495,7 +438,6 @@ fn update_liquid<M: MatSpec>(
         d.restitution,
         -1,
         rng,
-        tick_byte,
         |window, pos, vx, vy, _rng| {
             settling_accelerate::<M>(
                 window,
@@ -508,7 +450,7 @@ fn update_liquid<M: MatSpec>(
             );
             cohesion::<M>(window, pos, vx, vy, d.cohesion);
         },
-        |window, cur, vx, vy, rng| ledge_flow::<M>(window, cur, vx, vy, d, rng, tick_byte),
+        |window, cur, vx, vy, rng| ledge_flow::<M>(window, cur, vx, vy, d, rng),
     );
 }
 
@@ -518,7 +460,6 @@ fn update_gas<M: MatSpec>(
     cell: Cell,
     d: GasDynamics,
     rng: &mut Rng,
-    tick_byte: u8,
 ) {
     update_mover::<M>(
         window,
@@ -527,7 +468,6 @@ fn update_gas<M: MatSpec>(
         d.restitution,
         1,
         rng,
-        tick_byte,
         |window, pos, vx, vy, rng| {
             *vy += GRAVITY_DV;
             *vx = d.air_drag_keep.apply(*vx);
@@ -539,7 +479,7 @@ fn update_gas<M: MatSpec>(
             note_body_below(window, pos);
             cohesion::<M>(window, pos, vx, vy, d.cohesion);
         },
-        |window, cur, vx, vy, rng| ceiling_spread::<M>(window, cur, vx, vy, d, rng, tick_byte),
+        |window, cur, vx, vy, rng| ceiling_spread::<M>(window, cur, vx, vy, d, rng),
     );
 }
 
@@ -578,7 +518,6 @@ fn update_mover<M: MatSpec>(
     restitution: VelocityFactor,
     gdir: i32,
     rng: &mut Rng,
-    tick_byte: u8,
     accelerate: impl FnOnce(&mut SimWindow, CellPos, &mut i32, &mut i32, &mut Rng),
     redirect: impl FnOnce(&mut SimWindow, &mut CellPos, &mut i32, i32, &mut Rng) -> bool,
 ) {
@@ -586,15 +525,14 @@ fn update_mover<M: MatSpec>(
 
     accelerate(window, pos, &mut vx, &mut vy, rng);
 
-    let (mut cur, mut moved) =
-        traverse::<M>(window, pos, &mut vx, &mut vy, restitution, rng, tick_byte);
+    let (mut cur, mut moved) = traverse::<M>(window, pos, &mut vx, &mut vy, restitution, rng);
     if !can_enter::<M>(window, (0, gdir), cur.translated(0, gdir)) {
         moved |= redirect(window, &mut cur, &mut vx, vy, rng);
     }
     if moved {
         note_undermined(window, pos);
     }
-    finish::<M>(window, cur, vx, vy, restitution, gdir, tick_byte);
+    finish::<M>(window, cur, vx, vy, restitution, gdir);
 }
 
 fn buoyant_gravity<M: MatSpec>(ambient: i32) -> i32 {
@@ -636,7 +574,6 @@ fn traverse<M: MatSpec>(
     vy: &mut i32,
     restitution: VelocityFactor,
     rng: &mut Rng,
-    tick_byte: u8,
 ) -> (CellPos, bool) {
     *vx = (*vx).clamp(-MAX_VELOCITY_RAW, MAX_VELOCITY_RAW);
     *vy = (*vy).clamp(-MAX_VELOCITY_RAW, MAX_VELOCITY_RAW);
@@ -660,7 +597,7 @@ fn traverse<M: MatSpec>(
         };
         if step_x {
             let next = cur.translated(sx, 0);
-            match traverse_entry::<M>(window, (sx, 0), next, tick_byte) {
+            match traverse_entry::<M>(window, (sx, 0), next) {
                 Entry::Open => {
                     window.swap(cur, next);
                     cur = next;
@@ -678,7 +615,7 @@ fn traverse<M: MatSpec>(
             }
         } else {
             let next = cur.translated(0, sy);
-            match traverse_entry::<M>(window, (0, sy), next, tick_byte) {
+            match traverse_entry::<M>(window, (0, sy), next) {
                 Entry::Open => {
                     window.swap(cur, next);
                     cur = next;
@@ -705,7 +642,6 @@ fn finish<M: MatSpec>(
     mut vy: i32,
     restitution: VelocityFactor,
     gdir: i32,
-    tick_byte: u8,
 ) {
     for (dx, dy) in NEIGHBORS {
         let into = if dx != 0 { vx * dx > 0 } else { vy * dy > 0 };
@@ -736,7 +672,6 @@ fn finish<M: MatSpec>(
     if current.vx as i32 != vx || current.vy as i32 != vy {
         let mut written = current;
         written.set_vel(vx, vy);
-        written.updated = tick_byte;
         window.set(cur, written);
     } else if vx != 0 || vy != 0 {
         window.mark(cur);
@@ -769,7 +704,6 @@ fn topple_slide<M: MatSpec>(
     vy: i32,
     d: PowderDynamics,
     rng: &mut Rng,
-    tick_byte: u8,
 ) -> bool {
     let kinetic = vx.abs() >= AGITATED || vy.abs() >= AGITATED;
     let loaded = window
@@ -786,7 +720,7 @@ fn topple_slide<M: MatSpec>(
     let prefer = prefer_side(*vx, rng);
     let mut pending = false;
     for side in [prefer, -prefer] {
-        match redirect_entry::<M>(window, (side, 0), cur.translated(side, 0), tick_byte) {
+        match redirect_entry::<M>(window, (side, 0), cur.translated(side, 0)) {
             Entry::Blocked => continue,
             Entry::Busy => {
                 pending = true;
@@ -795,7 +729,7 @@ fn topple_slide<M: MatSpec>(
             Entry::Open => {}
         }
         let diag = cur.translated(side, -1);
-        match redirect_entry::<M>(window, (side, -1), diag, tick_byte) {
+        match redirect_entry::<M>(window, (side, -1), diag) {
             Entry::Blocked => continue,
             Entry::Busy => {
                 pending = true;
@@ -833,7 +767,6 @@ fn ledge_flow<M: MatSpec>(
     vy: i32,
     d: LiquidDynamics,
     rng: &mut Rng,
-    tick_byte: u8,
 ) -> bool {
     let gain = d.deflect_keep.apply(vy.abs());
     let prefer = prefer_side(*vx, rng);
@@ -841,7 +774,7 @@ fn ledge_flow<M: MatSpec>(
     let mut pending = false;
     for side in [prefer, -prefer] {
         let beside = cur.translated(side, 0);
-        match redirect_entry::<M>(window, (side, 0), beside, tick_byte) {
+        match redirect_entry::<M>(window, (side, 0), beside) {
             Entry::Blocked => continue,
             Entry::Busy => {
                 pending = true;
@@ -858,7 +791,7 @@ fn ledge_flow<M: MatSpec>(
             return false;
         }
         let diag = cur.translated(side, -1);
-        if redirect_entry::<M>(window, (side, -1), diag, tick_byte) == Entry::Open
+        if redirect_entry::<M>(window, (side, -1), diag) == Entry::Open
             && !yields_to_faller(window, diag)
         {
             *vx += side * gain;
@@ -883,14 +816,13 @@ fn ceiling_spread<M: MatSpec>(
     vy: i32,
     d: GasDynamics,
     rng: &mut Rng,
-    tick_byte: u8,
 ) -> bool {
     let gain = d.deflect_keep.apply(vy.abs());
     let prefer = prefer_side(*vx, rng);
     let mut pending = false;
     for side in [prefer, -prefer] {
         let beside = cur.translated(side, 0);
-        match redirect_entry::<M>(window, (side, 0), beside, tick_byte) {
+        match redirect_entry::<M>(window, (side, 0), beside) {
             Entry::Blocked => continue,
             Entry::Busy => {
                 pending = true;
@@ -899,7 +831,7 @@ fn ceiling_spread<M: MatSpec>(
             Entry::Open => {}
         }
         let diag = cur.translated(side, 1);
-        if redirect_entry::<M>(window, (side, 1), diag, tick_byte) == Entry::Open {
+        if redirect_entry::<M>(window, (side, 1), diag) == Entry::Open {
             *vx += side * gain;
             window.swap(*cur, diag);
             *cur = diag;

@@ -1,6 +1,8 @@
-use crate::{Catalog, Tag, burning, emission, gas, material, material_keys, powder};
+use crate::{Catalog, MaterialKey, Tag, burning, emission, gas, material, powder};
 
-material_keys! { FIRE, SMOKE, ASH }
+pub const FIRE: MaterialKey = MaterialKey::new("FIRE");
+pub const SMOKE: MaterialKey = MaterialKey::new("SMOKE");
+pub const ASH: MaterialKey = MaterialKey::new("ASH");
 
 pub fn define(catalog: &mut Catalog) {
     catalog.add(

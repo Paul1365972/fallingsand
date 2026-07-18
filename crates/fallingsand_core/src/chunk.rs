@@ -143,11 +143,22 @@ impl Chunk {
         &mut self.cells
     }
 
-    pub fn swap_rects(&mut self) {
-        self.prev_change = self.change;
-        self.change = DirtyRect::EMPTY;
-        self.prev_sim = self.sim;
-        self.sim = DirtyRect::EMPTY;
+    pub fn begin_tick(&mut self, roll: bool) {
+        let rect = self.sim_rect();
+        if !rect.is_empty() {
+            for y in rect.min_y..=rect.max_y {
+                let row = (y as usize) * CHUNK_SIZE;
+                for x in rect.min_x as usize..=rect.max_x as usize {
+                    self.cells[row + x].flags &= !(Cell::SIMULATED | Cell::DISPLACED);
+                }
+            }
+        }
+        if roll {
+            self.prev_change = self.change;
+            self.change = DirtyRect::EMPTY;
+            self.prev_sim = self.sim;
+            self.sim = DirtyRect::EMPTY;
+        }
     }
 
     pub fn change_rect(&self) -> DirtyRect {

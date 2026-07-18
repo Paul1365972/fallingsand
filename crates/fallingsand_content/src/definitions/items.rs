@@ -2,9 +2,14 @@ use super::materials::flora::{PLANKS, WOOD};
 use super::materials::fluids::WATER;
 use super::materials::ores::{COAL, GOLD_ORE, IRON_ORE};
 use super::materials::terrain::{CLAY, GRAVEL, SAND, SANDSTONE, STONE};
-use crate::{Catalog, item, item_keys, recipe};
+use crate::{Catalog, ItemKey, item, recipe};
 
-item_keys! { STICK, IRON_INGOT, GOLD_INGOT, WOODEN_PICKAXE, STONE_PICKAXE, IRON_PICKAXE }
+pub const STICK: ItemKey = ItemKey::new("STICK");
+pub const IRON_INGOT: ItemKey = ItemKey::new("IRON_INGOT");
+pub const GOLD_INGOT: ItemKey = ItemKey::new("GOLD_INGOT");
+pub const WOODEN_PICKAXE: ItemKey = ItemKey::new("WOODEN_PICKAXE");
+pub const STONE_PICKAXE: ItemKey = ItemKey::new("STONE_PICKAXE");
+pub const IRON_PICKAXE: ItemKey = ItemKey::new("IRON_PICKAXE");
 
 pub fn define(catalog: &mut Catalog) {
     catalog.add_item(STICK, item("Stick").stack(99));

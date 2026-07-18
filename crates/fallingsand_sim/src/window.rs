@@ -8,7 +8,6 @@ const _: () = assert!(SPEED_OF_LIGHT as usize <= ((WINDOW_CHUNKS as usize - 2) /
 pub struct SimWindow<'a> {
     origin: ChunkPos,
     slots: [Option<&'a mut Chunk>; WINDOW_SLOTS],
-    tick: u64,
     structural: Vec<CellPos>,
     damage: Vec<CellPos>,
 }
@@ -19,15 +18,10 @@ pub(crate) struct WindowParts {
 }
 
 impl<'a> SimWindow<'a> {
-    pub(crate) fn new(
-        origin: ChunkPos,
-        slots: [Option<&'a mut Chunk>; WINDOW_SLOTS],
-        tick: u64,
-    ) -> Self {
+    pub(crate) fn new(origin: ChunkPos, slots: [Option<&'a mut Chunk>; WINDOW_SLOTS]) -> Self {
         Self {
             origin,
             slots,
-            tick,
             structural: Vec::new(),
             damage: Vec::new(),
         }
@@ -80,7 +74,12 @@ impl<'a> SimWindow<'a> {
         self.slots[slot].as_ref().map(|c| c.get(pos.offset()))
     }
 
-    pub fn set(&mut self, pos: CellPos, cell: Cell) {
+    pub fn set(&mut self, pos: CellPos, mut cell: Cell) {
+        cell.flags |= Cell::SIMULATED;
+        self.write(pos, cell);
+    }
+
+    fn write(&mut self, pos: CellPos, cell: Cell) {
         let Some(slot) = self.slot_of(pos) else {
             return;
         };
@@ -128,15 +127,14 @@ impl<'a> SimWindow<'a> {
         chunk.sim.mark(pos.offset());
     }
 
-    pub fn swap(&mut self, a: CellPos, b: CellPos) {
-        let (Some(mut cell_a), Some(mut cell_b)) = (self.get(a), self.get(b)) else {
+    pub fn swap(&mut self, mover: CellPos, target: CellPos) {
+        let (Some(mut moving), Some(mut displaced)) = (self.get(mover), self.get(target)) else {
             debug_assert!(false, "swap with unloaded cell");
             return;
         };
-        let tick_byte = self.tick as u8;
-        cell_a.updated = tick_byte;
-        cell_b.updated = tick_byte;
-        self.set(a, cell_b);
-        self.set(b, cell_a);
+        moving.flags |= Cell::SIMULATED;
+        displaced.flags |= Cell::DISPLACED;
+        self.write(mover, displaced);
+        self.write(target, moving);
     }
 }

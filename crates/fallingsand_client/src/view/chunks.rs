@@ -212,7 +212,7 @@ fn pack_rect(cells: &[Cell; CHUNK_AREA], rect: DirtyRect) -> Vec<u8> {
         for x in rect.min_x..=rect.max_x {
             let cell = cells[CellOffset::new(x, y).index()];
             data.extend_from_slice(&cell.material.0.to_le_bytes());
-            data.push(cell.shade_flags);
+            data.push(cell.shade);
             data.push(0);
         }
     }

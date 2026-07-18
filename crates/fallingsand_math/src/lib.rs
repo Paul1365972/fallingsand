@@ -110,6 +110,11 @@ impl Hash {
         let span = (max as i64 - min as i64) as u64 + 1;
         (min as i64 + ((self.0 as u128 * span as u128) >> 64) as i64) as i32
     }
+
+    #[inline]
+    pub fn choose<T: Copy>(self, items: &[T]) -> T {
+        items[self.range(0, items.len() as i32 - 1) as usize]
+    }
 }
 
 impl Default for Hash {

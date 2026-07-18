@@ -74,7 +74,7 @@ fn main() {
                     let cell_x = cell_off.x as usize;
                     let cell_y = cell_off.y as usize;
                     let material = fallingsand_core::content::material(cell.material);
-                    let color = material.colors[cell.shade() as usize % material.colors.len()];
+                    let color = material.colors[cell.shade as usize % material.colors.len()];
                     let px = origin_x + chunk_x + cell_x;
                     let py = origin_y + (size - 1 - (chunk_y + cell_y));
                     let index = (py * width + px) * 4;

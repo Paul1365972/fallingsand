@@ -13,7 +13,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let y = min(u32((1.0 - in.uv.y) * f32(dims.y)), dims.y - 1u);
     let cell = textureLoad(cells, vec2<u32>(x, y), 0);
     let material = cell.r | (cell.g << 8u);
-    let shade = cell.b >> 4u;
+    let shade = cell.b & 15u;
     let entry = textureLoad(emissive_palette, vec2<u32>(material, shade), 0);
     var emission = entry.rgb;
     let flicker = entry.a;

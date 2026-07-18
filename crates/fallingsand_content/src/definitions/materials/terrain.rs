@@ -1,10 +1,19 @@
 use super::fire::{ASH, SMOKE};
-use crate::{BondGroup, Catalog, Tag, flammable, material, material_keys, powder, solid};
+use crate::{BondGroup, Catalog, MaterialKey, Tag, flammable, material, powder, solid};
 
-material_keys! {
-    STONE, DIRT, GRASS, GRAVEL, SAND, SNOW, ICE, MUD, CLAY, SANDSTONE, DEEPSTONE, BASALT,
-    BRICK,
-}
+pub const STONE: MaterialKey = MaterialKey::new("STONE");
+pub const DIRT: MaterialKey = MaterialKey::new("DIRT");
+pub const GRASS: MaterialKey = MaterialKey::new("GRASS");
+pub const GRAVEL: MaterialKey = MaterialKey::new("GRAVEL");
+pub const SAND: MaterialKey = MaterialKey::new("SAND");
+pub const SNOW: MaterialKey = MaterialKey::new("SNOW");
+pub const ICE: MaterialKey = MaterialKey::new("ICE");
+pub const MUD: MaterialKey = MaterialKey::new("MUD");
+pub const CLAY: MaterialKey = MaterialKey::new("CLAY");
+pub const SANDSTONE: MaterialKey = MaterialKey::new("SANDSTONE");
+pub const DEEPSTONE: MaterialKey = MaterialKey::new("DEEPSTONE");
+pub const BASALT: MaterialKey = MaterialKey::new("BASALT");
+pub const BRICK: MaterialKey = MaterialKey::new("BRICK");
 
 pub fn define(catalog: &mut Catalog) {
     catalog.add(

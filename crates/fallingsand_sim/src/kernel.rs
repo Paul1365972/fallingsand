@@ -3,13 +3,43 @@ use crate::window::{SimWindow, WINDOW_CHUNKS};
 use crate::world::CellWorld;
 use fallingsand_core::{CHUNK_SIZE, CellPos, Chunk, ChunkPos, DirtyRect};
 use fallingsand_math::Hash;
-use rustc_hash::FxHashMap;
+use rayon::prelude::*;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::BTreeSet;
 use std::time::Instant;
 
 const _: () = assert!(WINDOW_CHUNKS == 4);
 const RANDOM_TICKS_PER_CHUNK: u32 = 4;
 const RANDOM_TICK_SAMPLE_SALT: Hash = Hash::label("simulation.random_tick_sample");
+const PHASE_ORDER_SALT: Hash = Hash::label("simulation.phase_order");
+const ROW_DIRECTION_SALT: Hash = Hash::label("simulation.row_direction");
+
+const PHASE_ORDERS: [[u32; 4]; 24] = [
+    [0, 1, 2, 3],
+    [0, 1, 3, 2],
+    [0, 2, 1, 3],
+    [0, 2, 3, 1],
+    [0, 3, 1, 2],
+    [0, 3, 2, 1],
+    [1, 0, 2, 3],
+    [1, 0, 3, 2],
+    [1, 2, 0, 3],
+    [1, 2, 3, 0],
+    [1, 3, 0, 2],
+    [1, 3, 2, 0],
+    [2, 0, 1, 3],
+    [2, 0, 3, 1],
+    [2, 1, 0, 3],
+    [2, 1, 3, 0],
+    [2, 3, 0, 1],
+    [2, 3, 1, 0],
+    [3, 0, 1, 2],
+    [3, 0, 2, 1],
+    [3, 1, 0, 2],
+    [3, 1, 2, 0],
+    [3, 2, 0, 1],
+    [3, 2, 1, 0],
+];
 
 type Simulate<'a> = dyn Fn(ChunkPos) -> bool + Sync + 'a;
 type Schedule<'a> = dyn Fn(ChunkPos, &Chunk) -> bool + 'a;
@@ -29,7 +59,7 @@ pub fn step_scoped(
     world.advance_tick();
     let tick = world.tick();
 
-    let ready: Vec<ChunkPos> = world
+    let ready: FxHashSet<ChunkPos> = world
         .chunks()
         .filter(|&(pos, _)| {
             simulate(pos)
@@ -38,11 +68,10 @@ pub fn step_scoped(
         })
         .map(|(pos, _)| pos)
         .collect();
-    for pos in ready {
-        if let Some(chunk) = world.chunk_map_mut().get_mut(&pos) {
-            chunk.swap_rects();
-        }
-    }
+    world
+        .chunk_map_mut()
+        .par_iter_mut()
+        .for_each(|(pos, chunk)| chunk.begin_tick(ready.contains(pos)));
 
     let simulate_micros = run_sim(
         "simulate",
@@ -73,19 +102,18 @@ fn run_sim(
     schedule: &Schedule,
     kernel: &Kernel,
 ) -> u32 {
-    #[cfg(feature = "profiling")]
     let _span = tracing::info_span!("sim", name).entered();
-    #[cfg(not(feature = "profiling"))]
-    let _ = name;
     let start = Instant::now();
-    for phase in 0..4 {
-        run_phase(world, phase, tick, schedule, kernel);
+    let order = Hash::seed(tick)
+        .salt(PHASE_ORDER_SALT)
+        .choose(&PHASE_ORDERS);
+    for phase in order {
+        run_phase(world, phase, schedule, kernel);
     }
     start.elapsed().as_micros() as u32
 }
 
-fn run_phase(world: &mut CellWorld, phase: u32, tick: u64, schedule: &Schedule, kernel: &Kernel) {
-    #[cfg(feature = "profiling")]
+fn run_phase(world: &mut CellWorld, phase: u32, schedule: &Schedule, kernel: &Kernel) {
     let _span = tracing::info_span!("sim_phase", phase).entered();
     let px = (phase & 1) as i32;
     let py = ((phase >> 1) & 1) as i32;
@@ -111,7 +139,7 @@ fn run_phase(world: &mut CellWorld, phase: u32, tick: u64, schedule: &Schedule, 
 
     let mut windows: Vec<SimWindow> = origins
         .iter()
-        .map(|&origin| SimWindow::new(origin, std::array::from_fn(|_| None), tick))
+        .map(|&origin| SimWindow::new(origin, std::array::from_fn(|_| None)))
         .collect();
     for (&pos, chunk) in map.iter_mut() {
         if let Some(&(index, sx, sy)) = members.get(&pos) {
@@ -119,15 +147,7 @@ fn run_phase(world: &mut CellWorld, phase: u32, tick: u64, schedule: &Schedule, 
         }
     }
 
-    #[cfg(feature = "parallel")]
-    {
-        use rayon::prelude::*;
-        windows.par_iter_mut().for_each(kernel);
-    }
-    #[cfg(not(feature = "parallel"))]
-    for window in windows.iter_mut() {
-        kernel(window);
-    }
+    windows.par_iter_mut().for_each(kernel);
 
     let mut structural: Vec<CellPos> = Vec::new();
     let mut damage: Vec<CellPos> = Vec::new();
@@ -166,13 +186,15 @@ fn simulate_block(window: &mut SimWindow, tick: u64, simulate: &Simulate) {
         }
     }
 
-    let tick_byte = tick as u8;
     let size = CHUNK_SIZE as i32;
     let origin_cell = window.origin().translated(1, 1).base_cell();
     for gy in 0..2 * size {
         let oy = (gy / size) as usize;
         let ly = (gy % size) as u8;
-        let reverse = (tick as i32 + gy) & 1 == 1;
+        let reverse = Hash::seed(tick)
+            .salt(ROW_DIRECTION_SALT)
+            .pos(0, origin_cell.y + gy)
+            .bit();
         for ox_index in 0..2usize {
             let ox = if reverse { 1 - ox_index } else { ox_index };
             let rect = rects[oy][ox];
@@ -183,7 +205,7 @@ fn simulate_block(window: &mut SimWindow, tick: u64, simulate: &Simulate) {
             for i in 0..=(end - start) {
                 let lx = if reverse { end - i } else { start + i };
                 let pos = CellPos::new(origin_cell.x + ox as i32 * size + lx, origin_cell.y + gy);
-                rules::update_cell(window, pos, tick, tick_byte);
+                rules::update_cell(window, pos, tick);
             }
         }
     }
@@ -191,7 +213,6 @@ fn simulate_block(window: &mut SimWindow, tick: u64, simulate: &Simulate) {
 
 fn random_tick_block(window: &mut SimWindow, tick: u64, simulate: &Simulate) {
     let owned = owned_chunks(window, simulate);
-    let tick_byte = tick as u8;
     let size = CHUNK_SIZE as i32;
     for (oy, row) in owned.iter().enumerate() {
         for (ox, &is_owned) in row.iter().enumerate() {
@@ -208,7 +229,7 @@ fn random_tick_block(window: &mut SimWindow, tick: u64, simulate: &Simulate) {
                 let lx = rng.draw().range(0, size - 1);
                 let ly = rng.draw().range(0, size - 1);
                 let pos = CellPos::new(base.x + lx, base.y + ly);
-                rules::random_tick(window, pos, tick, tick_byte);
+                rules::random_tick(window, pos, tick);
             }
         }
     }

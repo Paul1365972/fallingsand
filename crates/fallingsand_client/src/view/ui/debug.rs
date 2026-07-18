@@ -23,7 +23,7 @@ impl Plugin for DiagnosticsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<StatWindows>();
         app.add_plugins(FrameTimeDiagnosticsPlugin::default());
-        #[cfg(all(debug_assertions, not(feature = "profiling")))]
+        #[cfg(all(debug_assertions, not(feature = "tracy")))]
         app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
     }
 }

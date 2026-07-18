@@ -1,19 +1,14 @@
-#[cfg(any(
-    all(feature = "wt-native", not(target_family = "wasm")),
-    all(feature = "wt-wasm", target_family = "wasm", target_os = "unknown")
-))]
 mod framing;
 pub mod memory;
-#[cfg(all(feature = "wt-native", not(target_family = "wasm")))]
+#[cfg(not(target_family = "wasm"))]
 pub mod wt_native;
-#[cfg(all(feature = "wt-wasm", target_family = "wasm", target_os = "unknown"))]
+#[cfg(all(target_family = "wasm", target_os = "unknown"))]
 pub mod wt_wasm;
 
 pub use memory::{MemoryDialer, MemoryListener, memory_listener};
 
 pub const DEFAULT_PORT: u16 = 4433;
 
-#[cfg(any(feature = "wt-native", feature = "wt-wasm"))]
 pub(crate) fn normalize_server_url(input: &str) -> Result<url::Url, url::ParseError> {
     let input = input.trim();
     let with_scheme = if input.contains("://") {
@@ -28,7 +23,6 @@ pub(crate) fn normalize_server_url(input: &str) -> Result<url::Url, url::ParseEr
     Ok(url)
 }
 
-#[cfg(any(feature = "wt-native", feature = "wt-wasm"))]
 fn authority_has_port(with_scheme: &str) -> bool {
     let Some((_, rest)) = with_scheme.split_once("://") else {
         return false;

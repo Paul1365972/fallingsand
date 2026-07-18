@@ -1,7 +1,10 @@
 use super::fire::{ASH, SMOKE};
-use crate::{BondGroup, Catalog, Tag, emission, flammable, material, material_keys, solid};
+use crate::{BondGroup, Catalog, MaterialKey, Tag, emission, flammable, material, solid};
 
-material_keys! { COAL, IRON_ORE, GOLD_ORE, CRYSTAL }
+pub const COAL: MaterialKey = MaterialKey::new("COAL");
+pub const IRON_ORE: MaterialKey = MaterialKey::new("IRON_ORE");
+pub const GOLD_ORE: MaterialKey = MaterialKey::new("GOLD_ORE");
+pub const CRYSTAL: MaterialKey = MaterialKey::new("CRYSTAL");
 
 pub fn define(catalog: &mut Catalog) {
     catalog.add(

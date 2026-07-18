@@ -20,12 +20,13 @@ The world is one cellular automaton: every pixel is matter. Physics is phase-bas
 | Chunk | 64×64 cells | dirty tracking, sleeping, replication, rendering |
 | Region | 8×8 chunks | generation, storage, load/unload |
 
-A cell is a compact heap-free value containing material, velocity, shade, body ownership, and an updated-this-tick stamp. Every cell is a particle — velocity drives all grid movement. Burning is a material, not a flag: a lit fuel transmutes into its synthesized burning twin and probabilistic burnout *is* the burn duration; there is no per-cell HP. Heavier per-cell state (temperature, say) would be a separate per-chunk plane most chunks skip.
+A cell is a compact heap-free value: material, velocity, shade, a runtime flags byte — tick-local simulation state and body ownership, never persisted — and a persistent per-material aux byte. Every cell is a particle — velocity drives all grid movement. Burning is a material, not a flag: a lit fuel transmutes into its synthesized burning twin and probabilistic burnout *is* the burn duration; there is no per-cell HP.
 
 ## Scheduling
 
 - Chunks group into 2×2 blocks run in four phases by block parity; a worker owns its block plus a one-chunk halo, and same-phase windows share no chunks — race-free without locks. A chunk simulates only when its whole 3×3 neighbourhood is loaded; frontier chunks defer, keeping their rects.
-- Rows scan bottom-up so a faller vacates space the cell above enters the same tick; the horizontal direction alternates per row and tick to cancel scan bias.
+- Every tick-local simulation flag is clear when the first phase begins: each chunk starts the tick by clearing them inside its sim rect, then ready chunks roll their rects. All writes go through one choke point that both stamps and marks, so stamped cells always lie inside that rect — no stale tick-local state survives, awake, frontier, or freshly loaded.
+- Rows scan bottom-up so a faller vacates space the cell above enters the same tick; the horizontal direction is tick-hashed per world row and the four phases run in a tick-hashed order to cancel scan bias.
 - Random ticks are a second, sleep-independent pass scoped to a bounded chunk range around each player: each chunk samples a few tick-seeded cells for ambient processes. Reserved infrastructure for plant growth and decay; nothing uses it today.
 - The kernel monomorphizes per material, so a cell's own properties are constants and dead branches vanish; one movement kernel per phase, taking exactly its phase's coefficients. Integer-only — grid determinism is independent of float semantics. Tuning is authored in real units and compiled to integers; see [Content.md](Content.md).
 
@@ -36,7 +37,7 @@ Every moving cell integrates its velocity locally each tick; a settled cell writ
 - **Accelerate** — gravity (gases and fire rise) minus buoyancy from the displaced fluid, then drag by the medium above; a lighter liquid under a denser one swaps up directly; a submerged liquid dives diagonally into adjacent air pockets, so bubbles wander as they rise; rising gases sway by turbulence.
 - **Contact friction** — resting on a blocked face bleeds horizontal velocity by ground friction.
 - **Cohesion** — liquid and gas velocity pulls toward the mean of like-phase neighbours, forming coherent jets.
-- **Traverse** — step cell-by-cell along the velocity, fractional speed by tick-seeded chance, reach capped inside the 64-cell window. Steps are cardinal: a diagonal needs an open orthogonal cell, so corners seal for free. A swap stamps both cells: stamped matter cannot be displaced again that tick, stamped air still admits velocity-backed traversal, and a mover refused by a stamp holds its velocity and retries instead of reflecting.
+- **Traverse** — step cell-by-cell along the velocity, fractional speed by tick-seeded chance, reach capped inside the 64-cell window. Steps are cardinal: a diagonal needs an open orthogonal cell, so corners seal for free. A swap marks the mover simulated and the occupant displaced: touched matter cannot be displaced again that tick, touched air still admits velocity-backed traversal, and a mover refused by a touched cell holds its velocity and retries instead of reflecting.
 - **Collide & redirect** — a blocked face reflects by restitution (near-inelastic); a blocked fall that can descend diagonally converts to sideways velocity by deflect — ledge jets for liquids, repose slides for powders. Powder topple is static/kinetic friction: a stationary grain holds any slope until a moving powder or liquid neighbour agitates it (start rate); a moving grain slides readily (keep rate) and agitates its own neighbours, so avalanches propagate through motion and die with it — never through sleep accidents. One exception: a grain loaded from above with an open slide path is pending work and keeps rolling its start rate, so a dug-out face collapses instead of standing on friction. A liquid that can't descend spreads one cell across a level surface with no velocity gain. Redirects yield right of way to a denser faller directly above the target, so gaps fill from above, not from the sides.
 - **Settle** — velocity into a blocked face dies and sub-threshold velocity snaps to zero, so a supported cell nets no change and its chunk sleeps.
 
@@ -50,7 +51,7 @@ Each chunk tracks two rects. The **sim rect** is honest: exactly the cells re-si
 
 Each flammable fuel authors one flammable block and receives a synthesized burning twin — same phase and dynamics, its own palette, hot with baked emission. Three local stages:
 
-- **Ignite** — every hot cell (flame, burning fuel, lava) transmutes adjacent flammables into their burning twins at the *fuel's* ignite rate, keeping velocity and shade — igniting oil keeps flowing. A hot↔flammable adjacency is pending work and keeps itself marked, so a settled lava shore still catches a log that lands on it while a fuel-less lava lake sleeps for free. Burning fuel igniting its own material is the propagation front; free flames add plume and secondary ignition above.
+- **Ignite** — a flammable beside a hot cell (flame, burning fuel, lava) transmutes *itself* into its burning twin at its ignite rate, keeping velocity and shade — igniting oil keeps flowing. The fuel reads only its own neighbourhood: oxygen is judged at the fuel's surface, and the fuel owns the pending-work keep-alive whenever a roll is possible, so a settled lava shore still catches a log that lands on it while a fuel-less lava lake — and a fully sealed fuel — sleeps for free. Burning fuel igniting its own material is the propagation front; free flames add plume and secondary ignition above.
 - **Burn** — a burning cell damages entities, emits fire into adjacent air, and burns out at its rate — that rate *is* the burn duration; residue leaves ash, otherwise burnout resolves to smoke so the front self-exposes to oxygen.
 - **Sealed** — without adjacent oxygen, ignition and burning scale by the fuel's sealed fraction, monotonically: a positive fraction smoulders; zero means the fuel needs air — it never catches sealed, and a sealed burning cell snuffs back to its unburned material. A sealed free flame burns out to smoke.
 
@@ -66,8 +67,11 @@ A water neighbour quenches: a flame dies to steam keeping the water; a burning f
 | SimWindow | a worker's 4×4-chunk view: simulates the inner 2×2 block, reads one chunk beyond |
 | Speed of light | max reach of one update = one chunk = 64 cells |
 | Cell velocity | per-cell fixed-point cells/tick; sim-only, persisted, never on the wire |
+| Flags byte | runtime per-cell flags — tick-local simulated / displaced state and body ownership; never persisted |
+| Aux byte | persistent per-material per-cell state; zero for materials that define none |
+| Tick start | the per-chunk sweep clearing tick-local flags in the sim rect, then rolling rects for ready chunks |
 | Keep-alive | a sim-rect mark without a change: pending work that must be re-evaluated |
 | Burning twin | the synthesized burning material of a flammable fuel |
 | Random tick | bounded tick-seeded per-chunk ambient sample, independent of sleep |
-| Displacement budget | a swapped cell is stamped and can't be displaced again that tick; stamped air still admits velocity-backed traversal |
+| Displacement budget | a swapped cell is marked and can't be displaced again that tick; touched air still admits velocity-backed traversal |
 | Right of way | sideways redirects refuse a gap with a denser faller directly above it; the faller fills it |

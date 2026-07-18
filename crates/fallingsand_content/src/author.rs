@@ -25,13 +25,6 @@ impl std::fmt::Display for MaterialKey {
     }
 }
 
-#[macro_export]
-macro_rules! material_keys {
-    ($($name:ident),* $(,)?) => {
-        $(pub const $name: $crate::MaterialKey = $crate::MaterialKey::new(stringify!($name));)*
-    };
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ItemKey(Cow<'static, str>);
 
@@ -49,13 +42,6 @@ impl std::fmt::Display for ItemKey {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(formatter)
     }
-}
-
-#[macro_export]
-macro_rules! item_keys {
-    ($($name:ident),* $(,)?) => {
-        $(pub const $name: $crate::ItemKey = $crate::ItemKey::new(stringify!($name));)*
-    };
 }
 
 #[derive(Debug, Clone, Copy)]

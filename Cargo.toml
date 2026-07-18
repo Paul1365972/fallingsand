@@ -22,7 +22,7 @@ fallingsand_content = { path = "crates/fallingsand_content" }
 fallingsand_core = { path = "crates/fallingsand_core" }
 fallingsand_material = { path = "crates/fallingsand_material" }
 fallingsand_math = { path = "crates/fallingsand_math" }
-fallingsand_sim = { path = "crates/fallingsand_sim", default-features = false }
+fallingsand_sim = { path = "crates/fallingsand_sim" }
 fallingsand_protocol = { path = "crates/fallingsand_protocol" }
 fallingsand_net = { path = "crates/fallingsand_net" }
 fallingsand_worldgen = { path = "crates/fallingsand_worldgen" }
