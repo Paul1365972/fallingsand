@@ -6,14 +6,13 @@ pub use keys::{Button, RawInput};
 
 use super::{ClientGame, Effect, Flow, GamePanel, IoFrame};
 use bevy::input::mouse::MouseButton;
-use fallingsand_core::{CellPos, HOTBAR_SLOTS, TICK_RATE, ray_cells};
+use fallingsand_core::{CellPos, HOTBAR_SLOTS, TICK_DT, ray_cells};
 use fallingsand_protocol::{
     ClientMessage, GameMode, InputAction, InputFrame, InputState, MAX_INPUT_ACTIONS_PER_FRAME,
     UseButton,
 };
 
 const DOUBLE_TAP_SECS: f32 = 0.3;
-const TICK_DT: f32 = 1.0 / TICK_RATE as f32;
 const MAX_CATCHUP_TICKS: f32 = 4.0;
 const USE_REPEAT_INTERVAL_SECS: f32 = 0.05;
 const MAX_SWEEP_CELLS: usize = 64;

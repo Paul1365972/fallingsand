@@ -145,7 +145,7 @@ pub(crate) fn collect_dirty_saves(
     sim: &CellWorld,
     regions: &RegionMap,
     bodies: &PixelBodies,
-) -> Vec<(RegionPos, Vec<u8>)> {
+) -> Result<Vec<(RegionPos, Vec<u8>)>, StoreError> {
     let mut out = Vec::new();
     for (pos, state) in &regions.states {
         if !state.dirty {
@@ -157,9 +157,9 @@ pub(crate) fn collect_dirty_saves(
             .filter(|body| body_home_region(body) == *pos)
             .map(body_record)
             .collect();
-        out.push((*pos, encode_region(&snapshot_region(sim, *pos), &records)));
+        out.push((*pos, encode_region(&snapshot_region(sim, *pos), &records)?));
     }
-    out
+    Ok(out)
 }
 
 pub(crate) fn mark_saved(regions: &mut RegionMap, positions: impl IntoIterator<Item = RegionPos>) {
@@ -291,7 +291,7 @@ pub fn manage_regions(
         regions.states.remove(&pos).expect("state exists");
         let region = extract_region(sim, pos);
         let records = unloading.remove(&pos).unwrap_or_default();
-        persistence.stage_region(pos, encode_region(&region, &records));
+        persistence.stage_region(pos, encode_region(&region, &records)?);
     }
     if let Err(err) = persistence.flush_regions() {
         tracing::error!("failed to save unloaded regions: {err}");

@@ -1,4 +1,4 @@
-use crate::persistence::{Persistence, restore_player};
+use crate::persistence::{Persistence, StoreError, restore_player};
 use crate::player::{Player, PlayerLife, Players};
 use crate::replication::SessionReplication;
 use ed25519_dalek::{Signature, VerifyingKey};
@@ -126,7 +126,7 @@ pub fn drain_network(
     spawn: fallingsand_core::CellPos,
     tick: u64,
     persistence: &mut Persistence,
-) -> Vec<PlayerId> {
+) -> Result<Vec<PlayerId>, StoreError> {
     while let Some(mut conn) = listener.poll_accept() {
         if sessions.entries.len() >= MAX_SESSIONS {
             conn.close("server session limit reached");
@@ -173,7 +173,7 @@ pub fn drain_network(
                         spawn,
                         tick,
                         &mut roster_upserts,
-                    ) {
+                    )? {
                         break;
                     }
                 }
@@ -283,7 +283,7 @@ pub fn drain_network(
             });
         }
     }
-    roster_removes
+    Ok(roster_removes)
 }
 
 fn poll_messages(sessions: &mut Sessions, id: SessionId) -> Vec<ClientMessage> {
@@ -329,12 +329,12 @@ fn handle_hello(
     spawn: fallingsand_core::CellPos,
     tick: u64,
     roster_upserts: &mut Vec<(PlayerId, String)>,
-) -> bool {
+) -> Result<bool, StoreError> {
     let Some(session) = sessions.entries.get(&session_id) else {
-        return false;
+        return Ok(false);
     };
     let SessionPhase::Challenged { nonce, .. } = session.phase else {
-        return true;
+        return Ok(true);
     };
     if protocol_version != PROTOCOL_VERSION {
         reject(
@@ -344,7 +344,7 @@ fn handle_hello(
                 "protocol version mismatch: server {PROTOCOL_VERSION}, client {protocol_version}"
             ),
         );
-        return false;
+        return Ok(false);
     }
     if !authenticate_identity(nonce, uuid, public_key, signature) {
         tracing::warn!("rejected unauthenticated identity for {name}");
@@ -353,7 +353,7 @@ fn handle_hello(
             session_id,
             "identity authentication failed".into(),
         );
-        return false;
+        return Ok(false);
     }
 
     let (player_id, joined, renamed) = match players.id_for_uuid(uuid) {
@@ -371,32 +371,15 @@ fn handle_hello(
                     session_id,
                     "server player id space exhausted".into(),
                 );
-                return false;
+                return Ok(false);
             };
-            let restored = match persistence.load_player(uuid) {
-                Ok(record) => record,
-                Err(err) => {
-                    tracing::error!("failed to load player {uuid}: {err}");
-                    reject(
-                        sessions,
-                        session_id,
-                        "player data could not be loaded".into(),
-                    );
-                    return false;
-                }
-            };
-            let restored = match restored.map(restore_player).transpose() {
-                Ok(restored) => restored,
-                Err(err) => {
-                    tracing::error!("failed to restore player {uuid}: {err}");
-                    reject(
-                        sessions,
-                        session_id,
-                        "player data could not be loaded".into(),
-                    );
-                    return false;
-                }
-            };
+            let restored = persistence
+                .load_player(uuid)
+                .and_then(|record| record.map(restore_player).transpose())
+                .map_err(|source| StoreError::PlayerLoad {
+                    uuid,
+                    source: Box::new(source),
+                })?;
             players.insert(Player::new(
                 player_id,
                 uuid,
@@ -442,7 +425,7 @@ fn handle_hello(
         roster_upserts.push((player_id, name.clone()));
     }
     tracing::info!("{name} ({uuid}) joined as player {}", player_id.0);
-    true
+    Ok(true)
 }
 
 fn apply_input_action(player: &mut Player, action: InputAction) {

@@ -8,7 +8,7 @@ use fallingsand_core::{Cell, CellPos, Phase, Subcell};
 use rustc_hash::FxHashSet;
 use std::collections::VecDeque;
 
-const MAX_ISLAND_EXTENT: i32 = 48;
+pub const MAX_BODY_EXTENT: u8 = 48;
 const MAX_ISLAND_CELLS: usize = 2048;
 
 fn pivot_of(width: u8, height: u8) -> (i32, i32) {
@@ -115,8 +115,8 @@ pub fn detect_island(world: &CellWorld, seed: CellPos) -> Option<Vec<CellPos>> {
             max_x = max_x.max(next.x);
             min_y = min_y.min(next.y);
             max_y = max_y.max(next.y);
-            if max_x - min_x >= MAX_ISLAND_EXTENT
-                || max_y - min_y >= MAX_ISLAND_EXTENT
+            if max_x - min_x >= MAX_BODY_EXTENT as i32
+                || max_y - min_y >= MAX_BODY_EXTENT as i32
                 || visited.len() >= MAX_ISLAND_CELLS
             {
                 return None;
@@ -417,8 +417,8 @@ fn split_body(
             angle_steps: angle_steps_for(part_w, part_h),
             x: body.x.add_cells(rx),
             y: body.y.add_cells(ry),
-            vx: body.vx.add_cells(-body.spin * ry),
-            vy: body.vy.add_cells(body.spin * rx),
+            vx: body.vx.add_cells_per_second(-body.spin * ry),
+            vy: body.vy.add_cells_per_second(body.spin * rx),
             angle: body.angle,
             spin: body.spin,
             inv_mass: 1.0 / shape.mass,

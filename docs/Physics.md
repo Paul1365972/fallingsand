@@ -13,7 +13,7 @@ Everything physical is grid-resident: players and rigid bodies are real cells in
 
 ## Player
 
-An alive avatar is a 3×N raster of inert, body-flagged flesh cells stamped transactionally each tick — the shade pattern is the character art. Height steps at most one row per tick between ducked and standing, feet-row invariant; a row only grows into free headroom. The observable pose is integer cells: collision, raster, wire, hazards, and rendering all derive from one floor-anchored footprint; sub-cell motion is an internal accumulator, snapped flush on a blocked axis.
+An alive avatar is a 3×N raster of inert, body-flagged flesh cells stamped transactionally each tick — the shade pattern is the character art. Height changes at 50 rows/s, never more than one row per tick, between ducked and standing; feet stay invariant and a row grows only into free headroom. The observable pose is integer cells: collision, raster, wire, hazards, and rendering all derive from one floor-anchored footprint; sub-cell motion is an internal accumulator, snapped flush on a blocked axis.
 
 The controller is Celeste ported to cells/s, tuned server-side (coyote time, jump buffer, variable height, corner correction, step assists) plus swimming, swept per-axis cell-by-cell against solid *and powder* cells — powders are walls, digging is the way through. Surfaces contribute authored grip and bounce, distinct from the CA's cell-vs-cell restitution and friction. Submersion is estimated from the ring around the raster, drags toward the local liquid velocity, and throttles run speed.
 
@@ -30,7 +30,7 @@ A rigid body is a motion record — cell buffer, pose, velocity, spin, mass, ine
 - **Contacts** — found against the exact cells the body occupies, with cardinal normals off the true obstruction — never a sampled vote or constant fallback. A sequential-impulse solver accumulates clamped equal-and-opposite impulses reading each partner's live velocity. Dissipation comes only from authored restitution and friction plus the resting snap — no blanket contact damping.
 - **Players couple through the solver** — the player's own sweep only blocks its position against body cells; entity velocity state is shared across every body in the tick, so several touching bodies can never each re-apply the same reaction.
 - **Buoyancy** — from liquid bearing on the raster, plus drag: wood floats, stone sinks, no special cases.
-- **Damage** — any write unflagging a body cell feeds a damage queue reconciled before stepping: solid products re-adopted (a moving log keeps its fire), bodies split by bond connectivity or despawned when empty.
+- **Damage** — any write unflagging a body cell feeds a damage queue reconciled before stepping: solid products re-adopted (a moving log keeps its fire), bodies split by bond connectivity or despawned when empty; every fragment inherits the parent's point velocity at its new center.
 - **Lifecycle: active → resting → settled** — a slow body supported by static ground (or a resting body) rests; a standing player neither blocks rest nor wakes it — only horizontal pushes, damage, undermining, or fluid do. After ~half a second at rest the raster is written back as unflagged terrain in place and the body ceases to exist; later support removal re-detects it through the structural queue.
 
 There is no body protocol or renderer: body cells ride ordinary chunk deltas and render as terrain.

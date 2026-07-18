@@ -9,12 +9,12 @@ use bevy::prelude::*;
 use fallingsand_core::content;
 use fallingsand_core::{
     CHUNK_AREA, CHUNK_SIZE, Cell, ChunkPos, MAX_HEALTH, Phase as MaterialPhase, REGION_SIZE_CELLS,
-    SEASON_DAYS,
+    SEASON_DAYS, TICK_RATE,
 };
 use fallingsand_protocol::{ServerStats, TickProfile};
 use std::collections::VecDeque;
 
-const BUDGET_MS: f32 = 1000.0 / 60.0;
+const BUDGET_MS: f32 = 1000.0 / TICK_RATE as f32;
 const STAT_WINDOW: f32 = 1.0;
 
 pub struct DiagnosticsPlugin;

@@ -196,7 +196,7 @@ impl Server {
             timer.sleep();
         }
         tracing::info!("stopping server");
-        self.state.save_all();
+        self.state.save_all()?;
         Ok(())
     }
 }
@@ -232,16 +232,17 @@ impl ServerState {
                     s.spawn,
                     s.sim.tick(),
                     &mut s.persistence,
-                );
-                s.remove_disconnected_players(disconnected);
+                )?;
+                s.remove_disconnected_players(disconnected)?;
                 for (player, text) in commands::run_commands(&mut s.players, &mut s.clock) {
                     s.sessions.send_to_player(
                         player,
                         &fallingsand_protocol::ServerMessage::System { text },
                     );
                 }
+                Ok::<(), persistence::StoreError>(())
             },
-        );
+        )?;
 
         self.timed(
             "player_input",
@@ -354,16 +355,16 @@ impl ServerState {
                     &s.clock,
                     &s.players,
                     &mut s.persistence,
-                );
+                )
             },
-        );
+        )?;
 
         let total = tick_start.elapsed().as_micros() as u32;
         self.stats.timing.finish(tick, total);
         Ok(())
     }
 
-    fn save_all(&mut self) {
+    fn save_all(&mut self) -> Result<(), persistence::StoreError> {
         persistence::save_everything(
             &mut self.sim,
             &mut self.regions,
@@ -372,26 +373,33 @@ impl ServerState {
             &mut self.persistence,
             &self.world,
             &self.clock,
-        );
+        )
     }
 
-    fn remove_disconnected_players(&mut self, disconnected: Vec<fallingsand_protocol::PlayerId>) {
-        for id in disconnected {
+    fn remove_disconnected_players(
+        &mut self,
+        disconnected: Vec<fallingsand_protocol::PlayerId>,
+    ) -> Result<(), persistence::StoreError> {
+        let mut snapshots = Vec::new();
+        for &id in &disconnected {
+            let Some(player) = self.players.get(id) else {
+                continue;
+            };
+            snapshots.push((id, player.uuid, persistence::snapshot_player(player)?));
+        }
+        for (id, uuid, record) in snapshots {
             let Some(mut player) = self.players.remove(id) else {
                 continue;
             };
-            let record = persistence::snapshot_player(&player);
             if let Some(avatar) = player.avatar_mut() {
                 physics::unstamp_and_wake(&mut self.sim, &mut self.bodies, &mut avatar.stamp);
             }
-            match record {
-                Ok(record) => self.persistence.stage_player(player.uuid, record),
-                Err(err) => tracing::error!("failed to snapshot player {}: {err}", player.uuid),
-            }
+            self.persistence.stage_player(uuid, record);
         }
         if let Err(err) = self.persistence.flush_players() {
             tracing::error!("failed to save disconnected players: {err}");
         }
+        Ok(())
     }
 }
 

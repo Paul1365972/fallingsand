@@ -9,7 +9,7 @@ use fallingsand_core::{CellPos, Phase, Subcell, TICK_DT};
 
 const MIN_GRIP: f32 = 0.06;
 const COYOTE_SECS: f32 = 0.1;
-const DUCK_STEP_SECS: f32 = 1.0 / 60.0;
+const POSTURE_STEP_INTERVAL_SECS: f32 = 1.0 / 50.0;
 const BUFFER_SECS: f32 = 0.1;
 const VAR_JUMP_TIME: f32 = 0.2;
 const CEILING_VAR_JUMP_GRACE: f32 = 0.15;
@@ -129,7 +129,7 @@ pub fn step_player<W: CellSource>(
         (ctrl.coyote - TICK_DT).max(0.0)
     };
     ctrl.var_jump_timer = (ctrl.var_jump_timer - TICK_DT).max(0.0);
-    ctrl.duck_step = (ctrl.duck_step - TICK_DT).max(-DUCK_STEP_SECS);
+    ctrl.duck_step = (ctrl.duck_step - TICK_DT).max(-POSTURE_STEP_INTERVAL_SECS);
 
     let move_x = input.move_x.clamp(-1, 1) as i32;
     let submersion = ring_submersion(world, body);
@@ -337,5 +337,5 @@ fn step_height<W: CellSource>(
     }
     body.y += Subcell::from_cells((next / 2 - rows / 2) as f32);
     body.half_h = Subcell::from_cells(next as f32).scaled_by(0.5);
-    ctrl.duck_step += DUCK_STEP_SECS;
+    ctrl.duck_step += POSTURE_STEP_INTERVAL_SECS;
 }

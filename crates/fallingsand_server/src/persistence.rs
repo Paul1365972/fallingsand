@@ -5,11 +5,12 @@ use crate::player::{AvatarSnapshot, Player, PlayerLife, Players, RestoredPlayer,
 use crate::regions::{RegionMap, collect_dirty_saves, mark_changed_regions, mark_saved};
 use fallingsand_core::{
     CHUNK_AREA, CHUNK_SIZE, Calendar, Cell, CellPos, DirtyRect, HOTBAR_SLOTS,
-    Inventory as CoreInventory, ItemId, ItemStack, MaterialId, PLAYER_SLOTS, REGION_AREA_CHUNKS,
-    Region, RegionPos, Subcell, content,
+    Inventory as CoreInventory, ItemId, ItemStack, MAX_AIR_SECONDS, MAX_HEALTH, MaterialId,
+    PLAYER_SLOTS, Phase, REGION_AREA_CHUNKS, Region, RegionPos, Subcell, content,
 };
+use fallingsand_math::SUBCELL_UNITS_PER_CELL;
 use fallingsand_protocol::{GameMode, PlayerUuid};
-use fallingsand_sim::bodies::{BodyParts, body_parts};
+use fallingsand_sim::bodies::{BodyParts, MAX_BODY_EXTENT, body_parts};
 use fallingsand_sim::{CellWorld, PixelBody};
 use redb::{Database, ReadableDatabase, TableDefinition};
 use serde::{Deserialize, Serialize};
@@ -146,6 +147,38 @@ pub struct AvatarRecord {
     pub flying: bool,
 }
 
+fn subcell_position_fits(value: Subcell) -> bool {
+    let cell = value.raw().div_euclid(i64::from(SUBCELL_UNITS_PER_CELL));
+    i32::try_from(cell).is_ok()
+}
+
+fn validate_avatar_record(record: &AvatarRecord) -> Result<(), StoreError> {
+    if !subcell_position_fits(record.x) || !subcell_position_fits(record.y) {
+        return Err(StoreError::CorruptPlayer(
+            "avatar position is outside the cell coordinate range".into(),
+        ));
+    }
+    if !record.hp.is_finite() || !(0.0..=MAX_HEALTH).contains(&record.hp) {
+        return Err(StoreError::CorruptPlayer(format!(
+            "invalid avatar health {}",
+            record.hp
+        )));
+    }
+    if !record.air.is_finite() || !(0.0..=MAX_AIR_SECONDS).contains(&record.air) {
+        return Err(StoreError::CorruptPlayer(format!(
+            "invalid avatar air {}",
+            record.air
+        )));
+    }
+    if !record.burning.is_finite() || record.burning < 0.0 {
+        return Err(StoreError::CorruptPlayer(format!(
+            "invalid avatar burning duration {}",
+            record.burning
+        )));
+    }
+    Ok(())
+}
+
 impl From<AvatarRecord> for AvatarSnapshot {
     fn from(record: AvatarRecord) -> Self {
         Self {
@@ -179,9 +212,15 @@ impl From<&AvatarSnapshot> for AvatarRecord {
 }
 
 pub fn stack_to_record(stack: Option<ItemStack>) -> Result<SlotRecord, StoreError> {
-    let Some(stack) = stack.filter(|stack| stack.count > 0) else {
+    let Some(stack) = stack else {
         return Ok(None);
     };
+    if stack.count == 0 {
+        return Err(StoreError::CorruptPlayer(format!(
+            "item {} has an empty stack",
+            stack.item.0
+        )));
+    }
     let item = content::try_item(stack.item).filter(|_| stack.item != ItemId::NONE);
     let item =
         item.ok_or_else(|| StoreError::CorruptPlayer(format!("invalid item id {}", stack.item.0)))?;
@@ -202,7 +241,9 @@ pub fn stack_from_record(record: &SlotRecord) -> Result<Option<ItemStack>, Store
         return Ok(None);
     };
     if *count == 0 {
-        return Ok(None);
+        return Err(StoreError::CorruptPlayer(format!(
+            "item {name:?} has an empty stack"
+        )));
     }
     match content::item_id_of(name) {
         Some(id) if id != ItemId::NONE => {
@@ -250,7 +291,10 @@ pub fn restore_player(record: PlayerRecord) -> Result<RestoredPlayer, StoreError
         )));
     }
     let resume = match record.resume {
-        ResumeState::Alive(record) => ResumeSnapshot::Alive(record.into()),
+        ResumeState::Alive(record) => {
+            validate_avatar_record(&record)?;
+            ResumeSnapshot::Alive(record.into())
+        }
         ResumeState::Dead { view_anchor } => ResumeSnapshot::Dead { view_anchor },
     };
     Ok(RestoredPlayer {
@@ -282,7 +326,7 @@ pub fn snapshot_player(player: &Player) -> Result<PlayerRecord, StoreError> {
             view_anchor: reviving.death.view_anchor,
         },
     };
-    Ok(PlayerRecord {
+    let record = PlayerRecord {
         mode: player.profile.mode,
         selected: player.profile.selected_slot,
         inventory: slots_to_record(&player.profile.inventory.inner)?,
@@ -290,7 +334,17 @@ pub fn snapshot_player(player: &Player) -> Result<PlayerRecord, StoreError> {
         trash: stack_to_record(player.profile.inventory.trash)?,
         history: player.profile.history.clone(),
         resume,
-    })
+    };
+    if record.selected as usize >= HOTBAR_SLOTS {
+        return Err(StoreError::CorruptPlayer(format!(
+            "invalid selected slot {}",
+            record.selected
+        )));
+    }
+    if let ResumeState::Alive(avatar) = &record.resume {
+        validate_avatar_record(avatar)?;
+    }
+    Ok(record)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -303,6 +357,12 @@ pub enum StoreError {
     CorruptRecord(#[from] postcard::Error),
     #[error("corrupt player record: {0}")]
     CorruptPlayer(String),
+    #[error("failed to load player {uuid}: {source}")]
+    PlayerLoad {
+        uuid: PlayerUuid,
+        #[source]
+        source: Box<StoreError>,
+    },
     #[error(
         "unsupported world format {0} (current {WORLD_FORMAT_VERSION}); pre-release worlds carry no migrations — delete the world and create a new one"
     )]
@@ -574,13 +634,15 @@ pub fn autosave(
     clock: &Calendar,
     players: &Players,
     persistence: &mut Persistence,
-) {
+) -> Result<(), StoreError> {
     let tick = sim.tick();
     if tick == 0 || !tick.is_multiple_of(AUTOSAVE_INTERVAL_TICKS) {
-        return;
+        return Ok(());
     }
 
-    let to_save = collect_dirty_saves(sim, regions, bodies);
+    let player_records = snapshot_players(players)?;
+
+    let to_save = collect_dirty_saves(sim, regions, bodies)?;
     let saved_regions: Vec<_> = to_save.iter().map(|(pos, _)| *pos).collect();
     persistence.stage_regions(to_save);
     match persistence.flush_regions() {
@@ -593,11 +655,8 @@ pub fn autosave(
         Err(err) => tracing::error!("autosave failed: {err}"),
     }
 
-    for (_, player) in players.iter() {
-        match snapshot_player(player) {
-            Ok(record) => persistence.stage_player(player.uuid, record),
-            Err(err) => tracing::error!("failed to snapshot player {}: {err}", player.uuid),
-        }
+    for (uuid, record) in player_records {
+        persistence.stage_player(uuid, record);
     }
     if let Err(err) = persistence.flush_players() {
         tracing::error!("player autosave failed: {err}");
@@ -606,6 +665,7 @@ pub fn autosave(
     if let Err(err) = persistence.flush_meta() {
         tracing::error!("meta autosave failed: {err}");
     }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -617,47 +677,37 @@ pub fn save_everything(
     persistence: &mut Persistence,
     info: &WorldInfo,
     clock: &Calendar,
-) {
+) -> Result<(), StoreError> {
     let started = std::time::Instant::now();
+    let player_records = snapshot_players(players)?;
 
     mark_changed_regions(sim, regions);
-    let to_save = collect_dirty_saves(sim, regions, bodies);
+    let to_save = collect_dirty_saves(sim, regions, bodies)?;
     let saved_regions: Vec<_> = to_save.iter().map(|(pos, _)| *pos).collect();
     persistence.stage_regions(to_save);
-    let region_count = match persistence.flush_regions() {
-        Ok(count) => {
-            mark_saved(regions, saved_regions);
-            count
-        }
-        Err(err) => {
-            tracing::error!("final save failed: {err}");
-            0
-        }
-    };
+    let region_count = persistence.flush_regions()?;
+    mark_saved(regions, saved_regions);
 
-    for (_, player) in players.iter() {
-        match snapshot_player(player) {
-            Ok(record) => persistence.stage_player(player.uuid, record),
-            Err(err) => tracing::error!("failed to snapshot player {}: {err}", player.uuid),
-        }
+    for (uuid, record) in player_records {
+        persistence.stage_player(uuid, record);
     }
-    let player_count = match persistence.flush_players() {
-        Ok(count) => count,
-        Err(err) => {
-            tracing::error!("final player save failed: {err}");
-            0
-        }
-    };
+    let player_count = persistence.flush_players()?;
     persistence.stage_meta(world_meta(info, clock, sim.tick()));
-    if let Err(err) = persistence.flush_meta() {
-        tracing::error!("final meta save failed: {err}");
-    }
+    persistence.flush_meta()?;
     tracing::info!(
         "world saved: {} regions, {} players in {:.1?}",
         region_count,
         player_count,
         started.elapsed(),
     );
+    Ok(())
+}
+
+fn snapshot_players(players: &Players) -> Result<Vec<(PlayerUuid, PlayerRecord)>, StoreError> {
+    players
+        .iter()
+        .map(|(_, player)| Ok((player.uuid, snapshot_player(player)?)))
+        .collect()
 }
 
 fn world_meta(info: &WorldInfo, clock: &Calendar, tick: u64) -> WorldMeta {
@@ -678,11 +728,17 @@ fn parse_meta(bytes: &[u8]) -> Result<WorldMeta, StoreError> {
     Ok(postcard::from_bytes(bytes)?)
 }
 
-pub fn encode_region(region: &Region, bodies: &[BodyRecord]) -> Vec<u8> {
+pub fn encode_region(region: &Region, bodies: &[BodyRecord]) -> Result<Vec<u8>, StoreError> {
     let mut raw = Vec::with_capacity(REGION_RAW_BYTES);
     for chunk in region.chunks() {
         for &cell in chunk.cells() {
             let cell = if cell.is_body() { Cell::AIR } else { cell };
+            if cell.material.0 as usize >= content::MATERIAL_COUNT {
+                return Err(StoreError::CorruptRegion(format!(
+                    "runtime cell has invalid material id {}",
+                    cell.material.0
+                )));
+            }
             raw.extend_from_slice(&cell.material.0.to_le_bytes());
             raw.extend_from_slice(&cell.vx.to_le_bytes());
             raw.extend_from_slice(&cell.vy.to_le_bytes());
@@ -691,29 +747,99 @@ pub fn encode_region(region: &Region, bodies: &[BodyRecord]) -> Vec<u8> {
         }
     }
     for chunk in region.chunks() {
-        let rect = chunk.sim_rect();
+        let rect = validate_rect(chunk.sim_rect())?;
         raw.extend_from_slice(&[rect.min_x, rect.min_y, rect.max_x, rect.max_y]);
     }
-    raw.extend_from_slice(&postcard::to_allocvec(bodies).expect("record serialization"));
+    for (index, body) in bodies.iter().enumerate() {
+        validate_body_record(index, body)?;
+    }
+    raw.extend_from_slice(&postcard::to_allocvec(bodies)?);
     let cell_blob = lz4_flex::compress_prepend_size(&raw);
     let mut blob = Vec::with_capacity(cell_blob.len() + 1);
     blob.push(REGION_FORMAT_VERSION);
     blob.extend_from_slice(&cell_blob);
-    blob
+    Ok(blob)
 }
 
-fn decode_rect(bytes: &[u8]) -> DirtyRect {
-    let rect = DirtyRect::new(bytes[0], bytes[1], bytes[2], bytes[3]);
-    if rect.is_empty() {
-        return DirtyRect::EMPTY;
+fn decode_rect(bytes: &[u8]) -> Result<DirtyRect, StoreError> {
+    validate_rect(DirtyRect::new(bytes[0], bytes[1], bytes[2], bytes[3]))
+}
+
+fn validate_rect(rect: DirtyRect) -> Result<DirtyRect, StoreError> {
+    if rect == DirtyRect::EMPTY {
+        return Ok(rect);
     }
     let max = (CHUNK_SIZE - 1) as u8;
-    DirtyRect::new(
-        rect.min_x.min(max),
-        rect.min_y.min(max),
-        rect.max_x.min(max),
-        rect.max_y.min(max),
-    )
+    if rect.is_empty()
+        || rect.min_x > max
+        || rect.min_y > max
+        || rect.max_x > max
+        || rect.max_y > max
+    {
+        return Err(StoreError::CorruptRegion(format!(
+            "invalid simulation rectangle {rect:?}"
+        )));
+    }
+    Ok(rect)
+}
+
+fn validate_body_record(index: usize, body: &BodyRecord) -> Result<(), StoreError> {
+    let invalid = |detail: String| StoreError::CorruptRegion(format!("body {index} has {detail}"));
+    if body.width == 0 || body.height == 0 {
+        return Err(invalid(format!(
+            "invalid dimensions {}x{}",
+            body.width, body.height
+        )));
+    }
+    if body.width > MAX_BODY_EXTENT || body.height > MAX_BODY_EXTENT {
+        return Err(invalid(format!(
+            "dimensions {}x{} beyond the {MAX_BODY_EXTENT}-cell limit",
+            body.width, body.height
+        )));
+    }
+    let expected = body.width as usize * body.height as usize;
+    if body.cells.len() != expected {
+        return Err(invalid(format!(
+            "{} cells for {}x{} dimensions",
+            body.cells.len(),
+            body.width,
+            body.height
+        )));
+    }
+    if !body
+        .cells
+        .iter()
+        .any(|(material, _)| *material != MaterialId::AIR.0)
+    {
+        return Err(invalid("no matter".into()));
+    }
+    if let Some((material, _)) = body
+        .cells
+        .iter()
+        .find(|(material, _)| *material as usize >= content::MATERIAL_COUNT)
+    {
+        return Err(invalid(format!("invalid material id {material}")));
+    }
+    if let Some((material, _)) = body.cells.iter().find(|(material, _)| {
+        *material != MaterialId::AIR.0 && content::phase(MaterialId(*material)) != Phase::Solid
+    }) {
+        return Err(invalid(format!("non-solid material id {material}")));
+    }
+    if !subcell_position_fits(body.x) || !subcell_position_fits(body.y) {
+        return Err(invalid(
+            "a position outside the cell coordinate range".into(),
+        ));
+    }
+    if !body.angle.is_finite() {
+        return Err(invalid(format!("invalid angle {}", body.angle)));
+    }
+    if !body.spin.is_finite() {
+        return Err(invalid(format!("invalid spin {}", body.spin)));
+    }
+    if !body.rest_secs.is_finite() || body.rest_secs < 0.0 {
+        return Err(invalid(format!("invalid rest duration {}", body.rest_secs)));
+    }
+    Ok(())
 }
 
 pub fn decode_region(blob: &[u8]) -> Result<(Region, Vec<BodyRecord>), StoreError> {
@@ -733,15 +859,7 @@ pub fn decode_region(blob: &[u8]) -> Result<(Region, Vec<BodyRecord>), StoreErro
     }
     let bodies: Vec<BodyRecord> = postcard::from_bytes(&raw[REGION_RAW_BYTES..])?;
     for (body_index, body) in bodies.iter().enumerate() {
-        if let Some((material, _)) = body
-            .cells
-            .iter()
-            .find(|(material, _)| *material as usize >= content::MATERIAL_COUNT)
-        {
-            return Err(StoreError::CorruptRegion(format!(
-                "body {body_index} has invalid material id {material}"
-            )));
-        }
+        validate_body_record(body_index, body)?;
     }
     let mut region = Region::new();
     let mut cursor = raw[..REGION_CELL_BYTES].chunks_exact(CELL_BYTES);
@@ -765,7 +883,7 @@ pub fn decode_region(blob: &[u8]) -> Result<(Region, Vec<BodyRecord>), StoreErro
     }
     let rects = raw[REGION_CELL_BYTES..REGION_RAW_BYTES].chunks_exact(RECT_BYTES);
     for (chunk, bytes) in region.chunks_mut().iter_mut().zip(rects) {
-        chunk.sim = decode_rect(bytes);
+        chunk.sim = decode_rect(bytes)?;
     }
     Ok((region, bodies))
 }

@@ -34,7 +34,7 @@ Entering and revive share one deterministic ring search advancing over ticks, ex
 
 ## Persistence
 
-One store owns the disk tables (regions, players, meta) and the in-memory pending records between the live world and storage; a server without a save path uses the pending maps as its memory backing, so unload still preserves the world for the process lifetime. Bodies persist inside their region blob — buffer, pose, velocity, rest time — with their raster encoded as air; load revives them in motion, dissolving into loose cells only when the landing spot was overrun. Storage records are DTOs converted at the persistence boundary; gameplay never depends on a database type. An interrupted revive persists as dead and restarts from an explicit request.
+One store owns the disk tables (regions, players, meta) and the in-memory pending records between the live world and storage; a server without a save path uses the pending maps as its memory backing, so unload still preserves the world for the process lifetime. Bodies persist inside their region blob — buffer, pose, velocity, rest time — with their raster encoded as air; load revives them in motion, dissolving into loose cells only when the landing spot was overrun. Storage records are DTOs validated and converted at the persistence boundary; malformed shape, coordinates, values, or identifiers are fatal, while failed writes retain their pending records. Gameplay never depends on a database type. An interrupted revive persists as dead and restarts from an explicit request.
 
 ## Glossary
 

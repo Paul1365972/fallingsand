@@ -4,8 +4,8 @@ mod rotation;
 mod step;
 
 pub use island::{
-    BodyParts, apply_damage, body_parts, detect_island, register_body, revive_body, stamp_raster,
-    unstamp_body,
+    BodyParts, MAX_BODY_EXTENT, apply_damage, body_parts, detect_island, register_body,
+    revive_body, stamp_raster, unstamp_body,
 };
 pub use step::{SETTLE_SECS, settle_body, step_bodies};
 

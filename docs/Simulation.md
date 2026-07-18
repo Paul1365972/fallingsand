@@ -20,7 +20,7 @@ The world is one cellular automaton: every pixel is matter. Physics is phase-bas
 | Chunk | 64×64 cells | dirty tracking, sleeping, replication, rendering |
 | Region | 8×8 chunks | generation, storage, load/unload |
 
-A cell is eight heap-free bytes: material, velocity, shade, a body flag, and an updated-this-tick byte. Every cell is a particle — velocity drives all grid movement. Burning is a material, not a flag: a lit fuel transmutes into its synthesized burning twin and probabilistic burnout *is* the burn duration; there is no per-cell HP. Heavier per-cell state (temperature, say) would be a separate per-chunk plane most chunks skip.
+A cell is a compact heap-free value containing material, velocity, shade, body ownership, and an updated-this-tick stamp. Every cell is a particle — velocity drives all grid movement. Burning is a material, not a flag: a lit fuel transmutes into its synthesized burning twin and probabilistic burnout *is* the burn duration; there is no per-cell HP. Heavier per-cell state (temperature, say) would be a separate per-chunk plane most chunks skip.
 
 ## Scheduling
 

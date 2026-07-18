@@ -341,12 +341,9 @@ impl Player {
             Some(ResumeSnapshot::Dead { view_anchor }) => {
                 PlayerLife::Dead(DeadPlayer { view_anchor })
             }
-            Some(ResumeSnapshot::Alive(template)) => {
-                let template = template.sanitized();
-                PlayerLife::Entering(EnteringPlayer {
-                    materialization: Materialization::new(template),
-                })
-            }
+            Some(ResumeSnapshot::Alive(template)) => PlayerLife::Entering(EnteringPlayer {
+                materialization: Materialization::new(template),
+            }),
             None => PlayerLife::Entering(EnteringPlayer {
                 materialization: Materialization::fresh(spawn),
             }),
@@ -418,29 +415,6 @@ impl Player {
 }
 
 impl AvatarSnapshot {
-    pub fn sanitized(&self) -> Self {
-        let mut record = self.clone();
-        record.hp = if record.hp.is_finite() {
-            record.hp
-        } else {
-            MAX_HEALTH
-        }
-        .clamp(0.0, MAX_HEALTH);
-        record.air = if record.air.is_finite() {
-            record.air
-        } else {
-            MAX_AIR_SECONDS
-        }
-        .clamp(0.0, MAX_AIR_SECONDS);
-        record.burning = if record.burning.is_finite() {
-            record.burning
-        } else {
-            0.0
-        }
-        .max(0.0);
-        record
-    }
-
     pub fn fresh(spawn: CellPos) -> Self {
         Self {
             x: Subcell::from_cell(spawn.x),
