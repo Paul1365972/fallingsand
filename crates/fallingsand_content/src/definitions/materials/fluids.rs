@@ -10,20 +10,14 @@ pub const ACID: MaterialKey = MaterialKey::new("ACID");
 pub fn define(catalog: &mut Catalog) {
     catalog.add(
         WATER,
-        material(
-            liquid()
-                .air_drag(0.15)
-                .ground_friction(0.1)
-                .deflect(0.98)
-                .cohesion(3.0),
-        )
-        .density(1000.0)
-        .restitution(0.35)
-        .colors([[44, 96, 200, 190], [40, 90, 192, 190], [48, 102, 208, 190]]),
+        material(liquid().air_drag(0.15).ground_friction(0.1).deflect(0.98))
+            .density(1000.0)
+            .restitution(0.35)
+            .colors([[44, 96, 200, 190], [40, 90, 192, 190], [48, 102, 208, 190]]),
     );
     catalog.add(
         STEAM,
-        material(gas().air_drag(6.0).cohesion(0.4).turbulence(39.0))
+        material(gas().air_drag(6.0).turbulence(39.0))
             .density(0.6)
             .colors([
                 [200, 200, 210, 90],
@@ -38,7 +32,7 @@ pub fn define(catalog: &mut Catalog) {
                 .air_drag(1.2)
                 .ground_friction(2.0)
                 .deflect(0.9)
-                .cohesion(5.0),
+                .flow_rate(30.0),
         )
         .density(850.0)
         .colors([[74, 62, 36, 215], [66, 54, 30, 215], [84, 72, 44, 215]])
@@ -65,7 +59,6 @@ pub fn define(catalog: &mut Catalog) {
                 .air_drag(6.0)
                 .ground_friction(42.0)
                 .deflect(0.5)
-                .cohesion(1.5)
                 .flow_rate(8.0),
         )
         .density(2800.0)
@@ -86,7 +79,7 @@ pub fn define(catalog: &mut Catalog) {
                 .air_drag(0.8)
                 .ground_friction(1.0)
                 .deflect(0.95)
-                .cohesion(6.0),
+                .flow_rate(60.0),
         )
         .density(1200.0)
         .colors([

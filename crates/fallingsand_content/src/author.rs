@@ -124,7 +124,6 @@ pub struct LiquidDef {
     pub(crate) air_drag: f32,
     pub(crate) ground_friction: f32,
     pub(crate) deflect: f32,
-    pub(crate) cohesion: f32,
     pub(crate) flow_rate: Option<f32>,
 }
 
@@ -134,7 +133,6 @@ impl Default for LiquidDef {
             air_drag: 0.0,
             ground_friction: 0.0,
             deflect: 1.0,
-            cohesion: 0.0,
             flow_rate: None,
         }
     }
@@ -156,11 +154,6 @@ impl LiquidDef {
         self
     }
 
-    pub fn cohesion(mut self, value: f32) -> Self {
-        self.cohesion = value;
-        self
-    }
-
     pub fn flow_rate(mut self, value: f32) -> Self {
         self.flow_rate = Some(value);
         self
@@ -170,18 +163,16 @@ impl LiquidDef {
 #[derive(Debug, Clone, Copy)]
 pub struct GasDef {
     pub(crate) air_drag: f32,
-    pub(crate) cohesion: f32,
     pub(crate) turbulence: f32,
-    pub(crate) deflect: f32,
+    pub(crate) flow_rate: Option<f32>,
 }
 
 impl Default for GasDef {
     fn default() -> Self {
         Self {
             air_drag: 0.0,
-            cohesion: 0.0,
             turbulence: 0.0,
-            deflect: 1.0,
+            flow_rate: None,
         }
     }
 }
@@ -192,18 +183,13 @@ impl GasDef {
         self
     }
 
-    pub fn cohesion(mut self, value: f32) -> Self {
-        self.cohesion = value;
-        self
-    }
-
     pub fn turbulence(mut self, value: f32) -> Self {
         self.turbulence = value;
         self
     }
 
-    pub fn deflect(mut self, value: f32) -> Self {
-        self.deflect = value;
+    pub fn flow_rate(mut self, value: f32) -> Self {
+        self.flow_rate = Some(value);
         self
     }
 }

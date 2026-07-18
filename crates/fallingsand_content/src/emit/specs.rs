@@ -136,7 +136,6 @@ fn dynamics_tokens(dynamics: &fallingsand_material::Dynamics) -> TokenStream {
             let drag_keep = velocity_factor_tokens(d.air_drag_keep);
             let drag_keep_submerged = velocity_factor_tokens(d.submerged_drag_keep);
             let friction_keep = velocity_factor_tokens(d.ground_friction_keep);
-            let restitution = velocity_factor_tokens(d.restitution);
             let redirect_keep = velocity_factor_tokens(d.deflect_keep);
             let slide_start = Literal::u64_suffixed(d.topple_start_threshold);
             let slide_keep = Literal::u64_suffixed(d.topple_keep_threshold);
@@ -145,7 +144,6 @@ fn dynamics_tokens(dynamics: &fallingsand_material::Dynamics) -> TokenStream {
                     air_drag_keep: #drag_keep,
                     submerged_drag_keep: #drag_keep_submerged,
                     ground_friction_keep: #friction_keep,
-                    restitution: #restitution,
                     deflect_keep: #redirect_keep,
                     topple_start_threshold: #slide_start,
                     topple_keep_threshold: #slide_keep,
@@ -156,34 +154,22 @@ fn dynamics_tokens(dynamics: &fallingsand_material::Dynamics) -> TokenStream {
             let drag_keep = velocity_factor_tokens(d.air_drag_keep);
             let drag_keep_submerged = velocity_factor_tokens(d.submerged_drag_keep);
             let friction_keep = velocity_factor_tokens(d.ground_friction_keep);
-            let cohesion = velocity_factor_tokens(d.cohesion);
-            let restitution = velocity_factor_tokens(d.restitution);
             let redirect_keep = velocity_factor_tokens(d.deflect_keep);
-            let flow = Literal::u64_suffixed(d.flow_threshold);
             quote! {
                 crate::material::Dynamics::Liquid(crate::material::LiquidDynamics {
                     air_drag_keep: #drag_keep,
                     submerged_drag_keep: #drag_keep_submerged,
                     ground_friction_keep: #friction_keep,
-                    cohesion: #cohesion,
-                    restitution: #restitution,
                     deflect_keep: #redirect_keep,
-                    flow_threshold: #flow,
                 })
             }
         }
         Dynamics::Gas(d) => {
             let drag_keep = velocity_factor_tokens(d.air_drag_keep);
-            let cohesion = velocity_factor_tokens(d.cohesion);
-            let restitution = velocity_factor_tokens(d.restitution);
-            let redirect_keep = velocity_factor_tokens(d.deflect_keep);
             let turbulence_q16 = Literal::u32_suffixed(d.turbulence_q16);
             quote! {
                 crate::material::Dynamics::Gas(crate::material::GasDynamics {
                     air_drag_keep: #drag_keep,
-                    cohesion: #cohesion,
-                    restitution: #restitution,
-                    deflect_keep: #redirect_keep,
                     turbulence_q16: #turbulence_q16,
                 })
             }

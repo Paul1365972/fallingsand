@@ -7,7 +7,7 @@ pub const ASH: MaterialKey = MaterialKey::new("ASH");
 pub fn define(catalog: &mut Catalog) {
     catalog.add(
         FIRE,
-        material(gas().air_drag(5.5).turbulence(65.0).deflect(0.4))
+        material(gas().air_drag(5.5).turbulence(65.0))
             .density(0.3)
             .colors([
                 [255, 160, 32, 255],
@@ -22,7 +22,7 @@ pub fn define(catalog: &mut Catalog) {
     );
     catalog.add(
         SMOKE,
-        material(gas().air_drag(7.0).cohesion(0.3).turbulence(90.0))
+        material(gas().air_drag(7.0).turbulence(90.0))
             .density(0.4)
             .colors([[60, 58, 56, 140], [52, 50, 48, 120], [70, 68, 66, 150]]),
     );

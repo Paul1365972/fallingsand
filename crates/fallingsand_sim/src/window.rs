@@ -1,4 +1,4 @@
-use fallingsand_core::{CHUNK_SIZE, Cell, CellPos, Chunk, ChunkPos};
+use fallingsand_core::{CHUNK_SIZE, Cell, CellPos, Chunk, ChunkPos, Phase, content};
 
 pub const WINDOW_CHUNKS: i32 = 4;
 pub const WINDOW_SLOTS: usize = (WINDOW_CHUNKS * WINDOW_CHUNKS) as usize;
@@ -129,6 +129,12 @@ impl<'a> SimWindow<'a> {
         };
         moving.flags |= Cell::MOVED;
         displaced.flags |= Cell::MOVED;
+        if content::phase(moving.material) == Phase::Liquid {
+            moving.aux = 0;
+        }
+        if content::phase(displaced.material) == Phase::Liquid {
+            displaced.aux = 0;
+        }
         self.set(mover, displaced);
         self.set(target, moving);
     }

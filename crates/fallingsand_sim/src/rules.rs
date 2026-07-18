@@ -17,9 +17,15 @@ const SETTLE: i32 = (7.5 * TICK_DT * SUBCELL_UNITS_PER_CELL as f32) as i32;
 const GRAVITY_DV: i32 =
     (GRID_GRAVITY * TICK_DT * TICK_DT * SUBCELL_UNITS_PER_CELL as f32 + 0.5) as i32;
 const AGITATED: i32 = 2 * GRAVITY_DV;
-const FLOW_IMPULSE: i32 = 600;
 const IMPACT: i32 = SUBCELL_UNITS_PER_CELL;
-const SLOPE_DV: i32 = GRAVITY_DV / 2;
+
+const DEPTH_MAX: i32 = 7;
+const EXCESS_MAX: i32 = 3;
+const ARTESIAN_MIN: i32 = 2;
+const BREACH_MIN: i32 = 3;
+const JET_HEAD_MAX: i32 = 8;
+const HOP_THRESHOLD: u64 = u64::MAX / 4;
+const JET_THRESHOLD: u64 = u64::MAX / 8;
 
 macro_rules! material_dispatch {
     ($(($idx:literal, $name:ident, $spec:ident)),* $(,)?) => {
@@ -54,7 +60,7 @@ fn effect_spec<M: MatSpec>(window: &mut SimWindow, pos: CellPos, cell: Cell, tic
     match const { M::DYNAMICS } {
         Dynamics::None => {}
         Dynamics::Powder(d) => powder_effects::<M>(window, pos, cell, d, &mut rng),
-        Dynamics::Liquid(d) => liquid_effects::<M>(window, pos, cell, d, &mut rng),
+        Dynamics::Liquid(d) => liquid_effects::<M>(window, pos, cell, d, tick, &mut rng),
         Dynamics::Gas(d) => gas_effects(window, pos, cell, d, &mut rng),
     }
 }
@@ -131,14 +137,17 @@ fn liquid_effects<M: MatSpec>(
     pos: CellPos,
     cell: Cell,
     d: LiquidDynamics,
+    tick: u64,
     rng: &mut Rng,
 ) {
-    let (cell, converged) = aux_relax(window, pos, cell);
+    let (cell, converged) = relax_head(window, pos, cell, tick);
     let (mut vx, mut vy) = cell.vel();
     let grounded = supported(window, cell, pos);
+    let mut rising = 0;
     if grounded {
         vx = d.ground_friction_keep.apply(vx);
-        vy += buoyant_rise::<M>(window, pos);
+        rising = buoyant_rise::<M>(window, pos);
+        vy += rising;
     } else {
         vy -= buoyant_gravity::<M>(ambient_density_milli(window, pos));
     }
@@ -150,14 +159,8 @@ fn liquid_effects<M: MatSpec>(
     vx = keep.apply(vx);
     vy = keep.apply(vy);
     note_body_below(window, pos);
-    cohesion(window, pos, &mut vx, &mut vy, d.cohesion, Phase::Liquid);
-    slope_accelerate(window, pos, cell, &mut vx);
-    current_accelerate(window, pos, cell, &mut vx);
-    if converged && grounded {
-        pressure_accelerate(window, pos, cell, &mut vx, &mut vy);
-    }
-    if grounded {
-        ledge_impulse(window, pos, d, &mut vx, vy, rng);
+    if grounded && converged && neighborhood_still(window, pos, cell) {
+        pressure_jets(window, pos, cell, &mut vx, &mut vy, rng);
     }
     if vy <= -IMPACT
         && window
@@ -166,71 +169,111 @@ fn liquid_effects<M: MatSpec>(
     {
         vx += prefer_side(vx, rng) * d.deflect_keep.apply(vy.abs() / 2);
     }
-    finish_effects(window, pos, cell, vx, vy, grounded);
+    finish_effects(window, pos, cell, vx, vy, grounded && rising == 0);
 }
 
-fn ledge_impulse(
-    window: &mut SimWindow,
-    pos: CellPos,
-    d: LiquidDynamics,
-    vx: &mut i32,
-    vy: i32,
-    rng: &mut Rng,
-) {
-    if !window
-        .get(pos.translated(0, 1))
-        .is_some_and(|above| above.is_air())
-    {
-        return;
-    }
-    let prefer = prefer_side(*vx, rng);
-    let mut pending = false;
-    for side in [prefer, -prefer] {
-        let drop = window
-            .get(pos.translated(side, 0))
-            .is_some_and(|beside| beside.is_air())
-            && window
-                .get(pos.translated(side, -1))
-                .is_some_and(|diag| diag.is_air());
-        if !drop {
-            continue;
-        }
-        if rng.draw().below(d.flow_threshold) {
-            *vx += side * d.deflect_keep.apply(vy.abs().max(FLOW_IMPULSE));
-            return;
-        }
-        pending = true;
-    }
-    if pending {
-        window.mark(pos);
+const fn depth_of(aux: u8) -> i32 {
+    (aux & 0x07) as i32
+}
+
+const fn rightward_of(aux: u8) -> i32 {
+    ((aux >> 3) & 0x03) as i32
+}
+
+const fn leftward_of(aux: u8) -> i32 {
+    ((aux >> 5) & 0x03) as i32
+}
+
+const fn excess_of(aux: u8) -> i32 {
+    let (rightward, leftward) = (rightward_of(aux), leftward_of(aux));
+    if rightward > leftward {
+        rightward
+    } else {
+        leftward
     }
 }
 
-fn pressure_accelerate(window: &SimWindow, pos: CellPos, cell: Cell, vx: &mut i32, vy: &mut i32) {
-    let calm = |cell: Cell| (cell.vx as i32).abs() < SETTLE && (cell.vy as i32).abs() < SETTLE;
-    let still = calm(cell)
+const fn head_of(aux: u8) -> i32 {
+    depth_of(aux) + excess_of(aux)
+}
+
+fn relax_head(window: &mut SimWindow, pos: CellPos, cell: Cell, tick: u64) -> (Cell, bool) {
+    let same = |dx: i32, dy: i32| {
+        window
+            .get(pos.translated(dx, dy))
+            .filter(|neighbor| neighbor.material == cell.material)
+    };
+    let (above, below) = (same(0, 1), same(0, -1));
+    let (left, right) = (same(-1, 0), same(1, 0));
+    let depth = if let Some(top) = above {
+        (depth_of(top.aux) + 1).min(DEPTH_MAX)
+    } else if opens(window, pos.translated(0, 1)) {
+        0
+    } else {
+        let covered = |n: Option<Cell>| n.map_or(0, |n| depth_of(n.aux) - 1);
+        covered(left).max(covered(right)).max(0)
+    };
+    let carried = |n: Option<Cell>, flow: fn(u8) -> i32, dv: i32| {
+        n.map_or(0, |n| depth_of(n.aux) + flow(n.aux) - dv)
+    };
+    let rightward_head =
+        depth
+            .max(carried(left, rightward_of, 0))
+            .max(carried(below, rightward_of, 1));
+    let leftward_head =
+        depth
+            .max(carried(right, leftward_of, 0))
+            .max(carried(below, leftward_of, 1));
+    let rightward_new = (rightward_head - depth).clamp(0, EXCESS_MAX);
+    let leftward_new = (leftward_head - depth).clamp(0, EXCESS_MAX);
+    let (rightward, leftward) = if crate::kernel::row_reverse(tick, pos.y) {
+        (rightward_of(cell.aux), leftward_new)
+    } else {
+        (rightward_new, leftward_of(cell.aux))
+    };
+    let pending = rightward != rightward_new || leftward != leftward_new;
+    let target = depth as u8 | (rightward as u8) << 3 | (leftward as u8) << 5;
+    if target == cell.aux {
+        if pending {
+            window.mark(pos);
+        }
+        return (cell, !pending);
+    }
+    let mut relaxed = cell;
+    relaxed.aux = target;
+    window.set(pos, relaxed);
+    (relaxed, false)
+}
+
+fn still(cell: Cell) -> bool {
+    (cell.vx as i32).abs() < SETTLE && (cell.vy as i32).abs() < SETTLE
+}
+
+fn neighborhood_still(window: &SimWindow, pos: CellPos, cell: Cell) -> bool {
+    still(cell)
         && NEIGHBORS
             .iter()
-            .all(|&(dx, dy)| window.get(pos.translated(dx, dy)).is_none_or(calm));
-    if !still {
-        return;
-    }
-    let up = up_head(cell.aux) as i32;
-    if up >= 2
-        && window
-            .get(pos.translated(0, 1))
-            .is_some_and(|above| above.is_air())
-    {
-        *vy += SLOPE_DV * up.min(3);
-    }
-    let down = down_head(cell.aux) as i32;
-    if down >= 3 {
+            .all(|&(dx, dy)| window.get(pos.translated(dx, dy)).is_none_or(still))
+}
+
+fn pressure_jets(
+    window: &SimWindow,
+    pos: CellPos,
+    cell: Cell,
+    vx: &mut i32,
+    vy: &mut i32,
+    rng: &mut Rng,
+) {
+    let excess = excess_of(cell.aux);
+    let head = head_of(cell.aux);
+    if opens(window, pos.translated(0, 1)) {
+        if excess >= ARTESIAN_MIN && rng.draw().below(JET_THRESHOLD) {
+            *vy += GRAVITY_DV * excess;
+        }
+    } else if head >= BREACH_MIN {
         for side in [-1, 1] {
-            if window
-                .get(pos.translated(side, 0))
-                .is_some_and(|beside| beside.is_air())
-            {
-                *vx += side * SLOPE_DV * down.min(4);
+            if opens(window, pos.translated(side, 0)) {
+                *vx += side * GRAVITY_DV * head.min(JET_HEAD_MAX);
             }
         }
     }
@@ -249,18 +292,6 @@ fn gas_effects(window: &mut SimWindow, pos: CellPos, cell: Cell, d: GasDynamics,
         vx += scaled_round(d.turbulence_q16 as i64 * r, 31);
     }
     note_body_below(window, pos);
-    cohesion(window, pos, &mut vx, &mut vy, d.cohesion, Phase::Gas);
-    if capped {
-        let prefer = prefer_side(vx, rng);
-        for side in [prefer, -prefer] {
-            let open = can_enter(window, cell.material, (side, 0), pos.translated(side, 0))
-                && can_enter(window, cell.material, (side, 1), pos.translated(side, 1));
-            if open {
-                vx += side * d.deflect_keep.apply(vy.abs()).max(AGITATED);
-                break;
-            }
-        }
-    }
     finish_effects(window, pos, cell, vx, vy, capped);
 }
 
@@ -299,15 +330,21 @@ pub(crate) fn move_cell(window: &mut SimWindow, pos: CellPos, tick: u64) {
         window.mark(pos);
         return;
     }
-    if matches!(content::phase(cell.material), Phase::Empty | Phase::Solid) {
+    let phase = content::phase(cell.material);
+    if matches!(phase, Phase::Empty | Phase::Solid) {
         return;
     }
     let (mut vx, mut vy) = cell.vel();
-    if vx == 0 && vy == 0 {
-        return;
-    }
     let material = cell.material;
     let mut rng = Hash::seed(tick).salt(MOVEMENT_SALT).pos(pos.x, pos.y).rng();
+    if vx == 0 && vy == 0 {
+        match phase {
+            Phase::Liquid => flow_liquid(window, pos, cell, &mut rng),
+            Phase::Gas => flow_gas(window, pos, material, &mut rng),
+            _ => {}
+        }
+        return;
+    }
 
     let tx = step_cells(vx, &mut rng);
     let ty = step_cells(vy, &mut rng);
@@ -360,7 +397,6 @@ pub(crate) fn move_cell(window: &mut SimWindow, pos: CellPos, tick: u64) {
     }
 
     let restitution = VelocityFactor::from_raw(content::restitution_q16(material));
-    let phase = content::phase(material);
     for (dx, dy) in NEIGHBORS {
         let into = if dx != 0 { vx * dx > 0 } else { vy * dy > 0 };
         let target = cur.translated(dx, dy);
@@ -383,11 +419,7 @@ pub(crate) fn move_cell(window: &mut SimWindow, pos: CellPos, tick: u64) {
             }
         }
     }
-    let gdir = if content::phase(material) == Phase::Gas {
-        1
-    } else {
-        -1
-    };
+    let gdir = if phase == Phase::Gas { 1 } else { -1 };
     let settled = !can_enter(window, material, (0, gdir), cur.translated(0, gdir));
     if settled {
         if vx.abs() < SETTLE {
@@ -408,6 +440,120 @@ pub(crate) fn move_cell(window: &mut SimWindow, pos: CellPos, tick: u64) {
         window.set(cur, written);
     } else if vx != 0 || vy != 0 {
         window.mark(cur);
+    }
+}
+
+fn flow_liquid(window: &mut SimWindow, pos: CellPos, cell: Cell, rng: &mut Rng) {
+    let material = cell.material;
+    match entry(window, material, (0, -1), pos.translated(0, -1)) {
+        Entry::Open => {
+            window.swap(pos, pos.translated(0, -1));
+            return;
+        }
+        Entry::Busy => {
+            window.mark(pos);
+            return;
+        }
+        Entry::Blocked => {}
+    }
+    let prefer = prefer_side(0, rng);
+    let mut target = None;
+    let mut gate = u64::MAX;
+    for side in [prefer, -prefer] {
+        let over = pos.translated(side, 0);
+        match entry(window, material, (side, 0), over) {
+            Entry::Open => {}
+            Entry::Busy => {
+                window.mark(pos);
+                continue;
+            }
+            Entry::Blocked => continue,
+        }
+        let diag = pos.translated(side, -1);
+        match entry(window, material, (side, -1), diag) {
+            Entry::Open => {
+                target = Some(diag);
+                gate = u64::MAX;
+                break;
+            }
+            Entry::Busy => window.mark(pos),
+            Entry::Blocked => {
+                if target.is_none()
+                    && let Some(support) = window.get(diag)
+                {
+                    if support.material == material {
+                        if excess_of(support.aux) >= ARTESIAN_MIN
+                            && excess_of(support.aux) > excess_of(cell.aux)
+                            && support.flags & Cell::MOVED == 0
+                            && still(support)
+                        {
+                            target = Some(over);
+                            gate = HOP_THRESHOLD;
+                        }
+                    } else if has_liquid_neighbor(window, pos, material) {
+                        target = Some(over);
+                    }
+                }
+            }
+        }
+    }
+    let Some(target) = target else {
+        return;
+    };
+    if rng
+        .draw()
+        .below(content::flow_threshold(material).min(gate))
+    {
+        window.swap(pos, target);
+    } else {
+        window.mark(pos);
+    }
+}
+
+fn has_liquid_neighbor(window: &SimWindow, pos: CellPos, material: MaterialId) -> bool {
+    NEIGHBORS.iter().any(|&(dx, dy)| {
+        window
+            .get(pos.translated(dx, dy))
+            .is_some_and(|neighbor| neighbor.material == material)
+    })
+}
+
+fn flow_gas(window: &mut SimWindow, pos: CellPos, material: MaterialId, rng: &mut Rng) {
+    match entry(window, material, (0, 1), pos.translated(0, 1)) {
+        Entry::Open => {
+            window.swap(pos, pos.translated(0, 1));
+            return;
+        }
+        Entry::Busy => {
+            window.mark(pos);
+            return;
+        }
+        Entry::Blocked => {}
+    }
+    let prefer = prefer_side(0, rng);
+    for side in [prefer, -prefer] {
+        match entry(window, material, (side, 0), pos.translated(side, 0)) {
+            Entry::Open => {}
+            Entry::Busy => {
+                window.mark(pos);
+                continue;
+            }
+            Entry::Blocked => continue,
+        }
+        let target = match entry(window, material, (side, 1), pos.translated(side, 1)) {
+            Entry::Open => pos.translated(side, 1),
+            Entry::Busy => {
+                window.mark(pos);
+                continue;
+            }
+            Entry::Blocked => pos.translated(side, 0),
+        };
+        if rng.draw().below(content::flow_threshold(material)) {
+            window.swap(pos, target);
+        } else {
+            window.mark(pos);
+        }
+        return;
     }
 }
 
@@ -575,6 +721,12 @@ fn oxygen_exposed(window: &SimWindow, pos: CellPos) -> bool {
     })
 }
 
+fn opens(window: &SimWindow, pos: CellPos) -> bool {
+    window
+        .get(pos)
+        .is_some_and(|cell| matches!(content::phase(cell.material), Phase::Empty | Phase::Gas))
+}
+
 fn set_product(window: &mut SimWindow, pos: CellPos, material: MaterialId, rng: &mut Rng) {
     window.set(pos, Cell::new(material, rng.draw().bits(4) as u8));
 }
@@ -624,131 +776,6 @@ fn buoyant_rise<M: MatSpec>(window: &SimWindow, pos: CellPos) -> i32 {
         return 0;
     }
     (GRAVITY_DV as i64 * (ambient - density) / density).min(4 * GRAVITY_DV as i64) as i32
-}
-
-fn neighbor_mean_vel(window: &SimWindow, pos: CellPos, phase: Phase) -> Option<(i32, i32)> {
-    let mut sum_x = 0;
-    let mut sum_y = 0;
-    let mut count = 0;
-    for (dx, dy) in NEIGHBORS {
-        if let Some(cell) = window.get(pos.translated(dx, dy))
-            && content::phase(cell.material) == phase
-        {
-            sum_x += cell.vx as i32;
-            sum_y += cell.vy as i32;
-            count += 1;
-        }
-    }
-    (count > 0).then(|| (sum_x / count, sum_y / count))
-}
-
-fn cohesion(
-    window: &SimWindow,
-    pos: CellPos,
-    vx: &mut i32,
-    vy: &mut i32,
-    factor: VelocityFactor,
-    phase: Phase,
-) {
-    if !factor.is_zero()
-        && let Some((mean_x, mean_y)) = neighbor_mean_vel(window, pos, phase)
-    {
-        *vx += factor.apply(mean_x - *vx);
-        *vy += factor.apply(mean_y - *vy);
-    }
-}
-
-fn slope_accelerate(window: &SimWindow, pos: CellPos, cell: Cell, vx: &mut i32) {
-    if !window
-        .get(pos.translated(0, 1))
-        .is_some_and(|top| top.is_air())
-    {
-        return;
-    }
-    let same = |dx: i32, dy: i32| {
-        window
-            .get(pos.translated(dx, dy))
-            .is_some_and(|neighbor| neighbor.material == cell.material)
-    };
-    for side in [-1, 1] {
-        let higher_uphill = same(-side, 0) && same(-side, 1);
-        let open_downhill = window
-            .get(pos.translated(side, 0))
-            .is_some_and(|beside| beside.is_air());
-        if higher_uphill && open_downhill {
-            *vx += side * SLOPE_DV;
-        }
-    }
-}
-
-fn current_accelerate(window: &SimWindow, pos: CellPos, cell: Cell, vx: &mut i32) {
-    let head = |dx: i32| {
-        window
-            .get(pos.translated(dx, 0))
-            .filter(|neighbor| neighbor.material == cell.material)
-            .map(|neighbor| down_head(neighbor.aux) as i32)
-    };
-    let (Some(left), Some(right)) = (head(-1), head(1)) else {
-        return;
-    };
-    let tilt = left - right;
-    if tilt.abs() >= 3 {
-        *vx += tilt.signum() * SLOPE_DV;
-    }
-}
-
-const fn down_head(aux: u8) -> u8 {
-    aux & 0x0F
-}
-
-const fn up_head(aux: u8) -> u8 {
-    aux >> 4
-}
-
-fn aux_relax(window: &mut SimWindow, pos: CellPos, cell: Cell) -> (Cell, bool) {
-    let same = |dx: i32, dy: i32| {
-        window
-            .get(pos.translated(dx, dy))
-            .filter(|neighbor| neighbor.material == cell.material)
-    };
-    let (above, below) = (same(0, 1), same(0, -1));
-    let (left, right) = (same(-1, 0), same(1, 0));
-    let down = if let Some(top) = above {
-        (down_head(top.aux) + 1).min(0x0F)
-    } else if window
-        .get(pos.translated(0, 1))
-        .is_some_and(|top| top.is_air())
-    {
-        0
-    } else {
-        left.map_or(0, |n| down_head(n.aux).saturating_sub(1))
-            .max(right.map_or(0, |n| down_head(n.aux).saturating_sub(1)))
-    };
-    let up = below
-        .map_or(0, |n| {
-            down_head(n.aux)
-                .saturating_sub(down + 1)
-                .max(up_head(n.aux))
-        })
-        .max(left.map_or(0, |n| {
-            down_head(n.aux)
-                .saturating_sub(down + 1)
-                .max(up_head(n.aux).saturating_sub(1))
-        }))
-        .max(right.map_or(0, |n| {
-            down_head(n.aux)
-                .saturating_sub(down + 1)
-                .max(up_head(n.aux).saturating_sub(1))
-        }))
-        .min(0x0F);
-    let target = down | (up << 4);
-    if target == cell.aux {
-        return (cell, true);
-    }
-    let mut relaxed = cell;
-    relaxed.aux = target;
-    window.set(pos, relaxed);
-    (relaxed, false)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

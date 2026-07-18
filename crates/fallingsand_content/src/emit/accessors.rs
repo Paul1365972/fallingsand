@@ -61,6 +61,15 @@ pub fn emit(content: &Content) -> TokenStream {
         }),
         true,
     );
+    let flow_threshold = accessor_fn(
+        "flow_threshold",
+        quote!(u64),
+        content.materials.iter().map(|mat| {
+            let value = Literal::u64_suffixed(mat.flow_threshold);
+            quote!(#value)
+        }),
+        true,
+    );
     let ignition = accessor_fn(
         "ignition",
         quote!(Option<crate::material::Ignition>),
@@ -147,6 +156,7 @@ pub fn emit(content: &Content) -> TokenStream {
         #is_rigid_capable
         #bond_group
         #restitution_q16
+        #flow_threshold
         #ignition
         #material
 

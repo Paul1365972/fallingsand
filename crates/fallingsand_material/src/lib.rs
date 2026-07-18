@@ -124,7 +124,6 @@ pub struct PowderDynamics {
     pub air_drag_keep: VelocityFactor,
     pub submerged_drag_keep: VelocityFactor,
     pub ground_friction_keep: VelocityFactor,
-    pub restitution: VelocityFactor,
     pub deflect_keep: VelocityFactor,
     pub topple_start_threshold: u64,
     pub topple_keep_threshold: u64,
@@ -135,18 +134,12 @@ pub struct LiquidDynamics {
     pub air_drag_keep: VelocityFactor,
     pub submerged_drag_keep: VelocityFactor,
     pub ground_friction_keep: VelocityFactor,
-    pub cohesion: VelocityFactor,
-    pub restitution: VelocityFactor,
     pub deflect_keep: VelocityFactor,
-    pub flow_threshold: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GasDynamics {
     pub air_drag_keep: VelocityFactor,
-    pub cohesion: VelocityFactor,
-    pub restitution: VelocityFactor,
-    pub deflect_keep: VelocityFactor,
     pub turbulence_q16: u32,
 }
 

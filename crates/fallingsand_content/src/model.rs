@@ -139,6 +139,7 @@ pub struct Mat {
     pub decay: Option<(u64, MaterialId)>,
     pub reactive: bool,
     pub dynamics: Dynamics,
+    pub flow_threshold: u64,
 }
 
 pub struct ItemOut {
@@ -344,6 +345,7 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
             decay,
             reactive,
             dynamics: quantize_dynamics(raw),
+            flow_threshold: flow_threshold(raw),
         });
     }
 
@@ -622,7 +624,6 @@ fn validate_material(raw: &RawMaterial) -> Result<(), Error> {
             air_drag,
             ground_friction,
             deflect,
-            cohesion,
             flow_rate,
         }) => {
             validate_numbers(
@@ -631,30 +632,21 @@ fn validate_material(raw: &RawMaterial) -> Result<(), Error> {
                     ("air_drag", air_drag),
                     ("ground_friction", ground_friction),
                     ("deflect", deflect),
-                    ("cohesion", cohesion),
                 ],
             )?;
-            if let Some(rate) = flow_rate {
-                validate_number(&format!("{context}: flow_rate"), rate)?;
-                if rate <= 0.0 {
-                    return Err(fail(format!("{context}: flow_rate must be > 0")));
-                }
-            }
+            validate_flow_rate(&context, flow_rate)?;
         }
         PhaseDef::Gas(GasDef {
             air_drag,
-            cohesion,
             turbulence,
-            deflect,
-        }) => validate_numbers(
-            &context,
-            &[
-                ("air_drag", air_drag),
-                ("cohesion", cohesion),
-                ("turbulence", turbulence),
-                ("deflect", deflect),
-            ],
-        )?,
+            flow_rate,
+        }) => {
+            validate_numbers(
+                &context,
+                &[("air_drag", air_drag), ("turbulence", turbulence)],
+            )?;
+            validate_flow_rate(&context, flow_rate)?;
+        }
     }
     if let Some(flammable) = &raw.flammable {
         if flammable.ignite <= 0.0 {
@@ -704,6 +696,16 @@ fn validate_material(raw: &RawMaterial) -> Result<(), Error> {
     Ok(())
 }
 
+fn validate_flow_rate(context: &str, flow_rate: Option<f32>) -> Result<(), Error> {
+    if let Some(rate) = flow_rate {
+        validate_number(&format!("{context}: flow_rate"), rate)?;
+        if rate <= 0.0 {
+            return Err(fail(format!("{context}: flow_rate must be > 0")));
+        }
+    }
+    Ok(())
+}
+
 fn validate_numbers(context: &str, values: &[(&str, f32)]) -> Result<(), Error> {
     for &(field, value) in values {
         validate_number(&format!("{context}: {field}"), value)?;
@@ -729,7 +731,6 @@ fn drag_keeps(air_drag: f32) -> (VelocityFactor, VelocityFactor) {
 }
 
 fn quantize_dynamics(raw: &RawMaterial) -> Dynamics {
-    let restitution = velocity_factor(raw.restitution.clamp(0.0, 1.0));
     match raw.phase {
         PhaseDef::Empty | PhaseDef::Solid(_) => Dynamics::None,
         PhaseDef::Powder(PowderDef {
@@ -744,7 +745,6 @@ fn quantize_dynamics(raw: &RawMaterial) -> Dynamics {
                 air_drag_keep,
                 submerged_drag_keep,
                 ground_friction_keep: velocity_factor(per_tick_keep(ground_friction)),
-                restitution,
                 deflect_keep: velocity_factor(deflect.clamp(0.0, 1.0)),
                 topple_start_threshold: chance_threshold(per_tick_chance(topple_start)),
                 topple_keep_threshold: chance_threshold(per_tick_chance(topple_keep)),
@@ -754,36 +754,37 @@ fn quantize_dynamics(raw: &RawMaterial) -> Dynamics {
             air_drag,
             ground_friction,
             deflect,
-            cohesion,
-            flow_rate,
+            flow_rate: _,
         }) => {
             let (air_drag_keep, submerged_drag_keep) = drag_keeps(air_drag);
             Dynamics::Liquid(LiquidDynamics {
                 air_drag_keep,
                 submerged_drag_keep,
                 ground_friction_keep: velocity_factor(per_tick_keep(ground_friction)),
-                cohesion: velocity_factor(per_tick_chance(cohesion)),
-                restitution,
                 deflect_keep: velocity_factor(deflect.clamp(0.0, 1.0)),
-                flow_threshold: flow_rate
-                    .map_or(u64::MAX, |rate| chance_threshold(per_tick_chance(rate))),
             })
         }
         PhaseDef::Gas(GasDef {
             air_drag,
-            cohesion,
             turbulence,
-            deflect,
+            flow_rate: _,
         }) => Dynamics::Gas(GasDynamics {
             air_drag_keep: drag_keeps(air_drag).0,
-            cohesion: velocity_factor(per_tick_chance(cohesion)),
-            restitution,
-            deflect_keep: velocity_factor(deflect.clamp(0.0, 1.0)),
             turbulence_q16: quantize_q16(
                 turbulence * TICK_DT.sqrt() * TICK_DT * SUBCELL_UNITS_PER_CELL as f32,
             ),
         }),
     }
+}
+
+fn flow_threshold(raw: &RawMaterial) -> u64 {
+    let flow_rate = match raw.phase {
+        PhaseDef::Liquid(LiquidDef { flow_rate, .. }) | PhaseDef::Gas(GasDef { flow_rate, .. }) => {
+            flow_rate
+        }
+        _ => return 0,
+    };
+    flow_rate.map_or(u64::MAX, |rate| chance_threshold(per_tick_chance(rate)))
 }
 
 enum Operand {

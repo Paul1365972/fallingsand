@@ -14,6 +14,10 @@ const RANDOM_TICK_SAMPLE_SALT: Hash = Hash::label("simulation.random_tick_sample
 const PHASE_ORDER_SALT: Hash = Hash::label("simulation.phase_order");
 const ROW_DIRECTION_SALT: Hash = Hash::label("simulation.row_direction");
 
+pub(crate) fn row_reverse(tick: u64, y: i32) -> bool {
+    Hash::seed(tick).salt(ROW_DIRECTION_SALT).pos(0, y).bit()
+}
+
 const PHASE_ORDERS: [[u32; 4]; 24] = [
     [0, 1, 2, 3],
     [0, 1, 3, 2],
@@ -68,9 +72,8 @@ pub fn step_scoped(
         })
         .map(|(pos, _)| pos)
         .collect();
-    world
-        .chunk_map_mut()
-        .par_iter_mut()
+    let map = world.chunk_map_mut();
+    map.par_iter_mut()
         .for_each(|(pos, chunk)| chunk.begin_tick(ready.contains(pos)));
 
     let awake = |pos: ChunkPos, chunk: &Chunk| simulate(pos) && !chunk.sim_rect().is_empty();
@@ -196,10 +199,7 @@ fn simulate_block(
     for gy in 0..2 * size {
         let oy = (gy / size) as usize;
         let ly = (gy % size) as u8;
-        let reverse = Hash::seed(tick)
-            .salt(ROW_DIRECTION_SALT)
-            .pos(0, origin_cell.y + gy)
-            .bit();
+        let reverse = row_reverse(tick, origin_cell.y + gy);
         for ox_index in 0..2usize {
             let ox = if reverse { 1 - ox_index } else { ox_index };
             let rect = rects[oy][ox];
