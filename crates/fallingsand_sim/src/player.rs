@@ -146,7 +146,7 @@ pub fn stamp_player(
     stamp: &mut PlayerStamp,
     fp: Footprint,
     facing_left: bool,
-) -> Option<Vec<CellPos>> {
+) -> Option<()> {
     let rows = (fp.y1 - fp.y0 + 1) as u8;
     let unchanged = stamp.rows == rows
         && stamp.facing_left == facing_left
@@ -166,18 +166,18 @@ pub fn stamp_player(
                 world.set_cell_raw(pos, flesh_cell(local, rows, facing_left));
             }
         }
-        return Some(Vec::new());
+        return Some(());
     }
 
     let new = player_raster(fp);
     let cell_for = |local: u16| flesh_cell(local, rows, facing_left);
     let empty = Raster::default();
     let old = stamp.raster.as_ref().unwrap_or(&empty);
-    let vacated = commit_stamp(world, &[], old, &new, &cell_for)?;
+    commit_stamp(world, &[], old, &new, &cell_for)?;
     stamp.raster = Some(new);
     stamp.rows = rows;
     stamp.facing_left = facing_left;
-    Some(vacated)
+    Some(())
 }
 
 pub fn unstamp_player(world: &mut CellWorld, stamp: &mut PlayerStamp) {

@@ -10,6 +10,8 @@ use fallingsand_math::{Hash, Rng, SUBCELL_BITS, SUBCELL_UNITS_PER_CELL};
 const GRID_GRAVITY: f32 = 600.0;
 const EFFECT_SALT: Hash = Hash::label("simulation.effect");
 const MOVEMENT_SALT: Hash = Hash::label("simulation.movement");
+const TOPPLE_RESISTANCE_SALT: Hash = Hash::label("simulation.topple_resistance");
+const TURBULENCE_SALT: Hash = Hash::label("simulation.turbulence");
 const MAX_STEP: i32 = 31;
 const _: () = assert!(MAX_STEP < SPEED_OF_LIGHT);
 const MAX_VELOCITY_RAW: i32 = MAX_STEP * SUBCELL_UNITS_PER_CELL;
@@ -45,7 +47,7 @@ fallingsand_core::for_each_material!(material_dispatch);
 fn effect_spec<M: MatSpec>(window: &mut SimWindow, pos: CellPos, cell: Cell, tick: u64) {
     let mut rng = Hash::seed(tick).salt(EFFECT_SALT).pos(pos.x, pos.y).rng();
     if let Some(burning) = const { M::BURNING }
-        && burning_step::<M>(window, pos, burning, &mut rng)
+        && burning_step(window, pos, burning, &mut rng)
     {
         return;
     }
@@ -54,14 +56,14 @@ fn effect_spec<M: MatSpec>(window: &mut SimWindow, pos: CellPos, cell: Cell, tic
     {
         return;
     }
-    if const { M::IS_REACTIVE } && react::<M>(window, pos, cell, &mut rng) {
+    if const { M::IS_REACTIVE } && react::<M>(window, pos, &mut rng) {
         return;
     }
     match const { M::DYNAMICS } {
         Dynamics::None => {}
         Dynamics::Powder(d) => powder_effects::<M>(window, pos, cell, d, &mut rng),
         Dynamics::Liquid(d) => liquid_effects::<M>(window, pos, cell, d, tick, &mut rng),
-        Dynamics::Gas(d) => gas_effects(window, pos, cell, d, &mut rng),
+        Dynamics::Gas(d) => gas_effects(window, pos, cell, d),
     }
 }
 
@@ -86,7 +88,6 @@ fn powder_effects<M: MatSpec>(
     };
     vx = keep.apply(vx);
     vy = keep.apply(vy);
-    note_body_below(window, pos);
     if grounded {
         topple(window, pos, cell, d, &mut vx, vy, rng);
     }
@@ -106,29 +107,33 @@ fn topple(
     let loaded = window
         .get(pos.translated(0, 1))
         .is_some_and(|above| content::phase(above.material) == Phase::Powder);
-    let threshold = if kinetic {
-        d.topple_keep_threshold
-    } else if loaded || neighbor_agitated(window, pos) {
-        d.topple_start_threshold
+    let mut resistance_rng = Hash::seed(u64::from(cell.material.0) << 8 | u64::from(cell.shade))
+        .salt(TOPPLE_RESISTANCE_SALT)
+        .pos(pos.x, pos.y)
+        .rng();
+    let event_rng = if kinetic {
+        rng
+    } else if loaded {
+        &mut resistance_rng
     } else {
         return;
     };
-    let prefer = prefer_side(*vx, rng);
-    let mut pending = false;
+    let threshold = if kinetic {
+        d.topple_keep_threshold
+    } else {
+        d.topple_start_threshold
+    };
+    let prefer = prefer_side(*vx, event_rng);
     for side in [prefer, -prefer] {
         let open = can_enter(window, cell.material, (side, 0), pos.translated(side, 0))
             && can_enter(window, cell.material, (side, -1), pos.translated(side, -1));
         if !open {
             continue;
         }
-        if rng.draw().below(threshold) {
+        if event_rng.draw().below(threshold) {
             *vx += side * d.deflect_keep.apply(vy.abs()).max(AGITATED);
             return;
         }
-        pending |= loaded;
-    }
-    if pending {
-        window.mark(pos);
     }
 }
 
@@ -158,7 +163,6 @@ fn liquid_effects<M: MatSpec>(
     };
     vx = keep.apply(vx);
     vy = keep.apply(vy);
-    note_body_below(window, pos);
     if grounded && converged && neighborhood_still(window, pos, cell) {
         pressure_jets(window, pos, cell, &mut vx, &mut vy, rng);
     }
@@ -257,7 +261,7 @@ fn neighborhood_still(window: &SimWindow, pos: CellPos, cell: Cell) -> bool {
 }
 
 fn pressure_jets(
-    window: &SimWindow,
+    window: &mut SimWindow,
     pos: CellPos,
     cell: Cell,
     vx: &mut i32,
@@ -267,8 +271,12 @@ fn pressure_jets(
     let excess = excess_of(cell.aux);
     let head = head_of(cell.aux);
     if opens(window, pos.translated(0, 1)) {
-        if excess >= ARTESIAN_MIN && rng.draw().below(JET_THRESHOLD) {
-            *vy += GRAVITY_DV * excess;
+        if excess >= ARTESIAN_MIN {
+            if rng.draw().below(JET_THRESHOLD) {
+                *vy += GRAVITY_DV * excess;
+            } else {
+                window.mark(pos);
+            }
         }
     } else if head >= BREACH_MIN {
         for side in [-1, 1] {
@@ -279,7 +287,7 @@ fn pressure_jets(
     }
 }
 
-fn gas_effects(window: &mut SimWindow, pos: CellPos, cell: Cell, d: GasDynamics, rng: &mut Rng) {
+fn gas_effects(window: &mut SimWindow, pos: CellPos, cell: Cell, d: GasDynamics) {
     let (mut vx, mut vy) = cell.vel();
     let capped = !can_enter(window, cell.material, (0, 1), pos.translated(0, 1));
     if !capped {
@@ -288,10 +296,13 @@ fn gas_effects(window: &mut SimWindow, pos: CellPos, cell: Cell, d: GasDynamics,
     vx = d.air_drag_keep.apply(vx);
     vy = d.air_drag_keep.apply(vy);
     if d.turbulence_q16 != 0 {
-        let r = rng.draw().bits(16) as i64 - 32768;
+        let r = Hash::seed(u64::from(cell.material.0) << 8 | u64::from(cell.shade))
+            .salt(TURBULENCE_SALT)
+            .pos(pos.x, pos.y)
+            .bits(16) as i64
+            - 32768;
         vx += scaled_round(d.turbulence_q16 as i64 * r, 31);
     }
-    note_body_below(window, pos);
     finish_effects(window, pos, cell, vx, vy, capped);
 }
 
@@ -351,7 +362,6 @@ pub(crate) fn move_cell(window: &mut SimWindow, pos: CellPos, tick: u64) {
     let (ix, iy) = (tx.abs(), ty.abs());
     let (sx, sy) = (tx.signum(), ty.signum());
     let mut cur = pos;
-    let mut moved = false;
     let mut done_x = 0;
     let mut done_y = 0;
     while done_x < ix || done_y < iy {
@@ -368,7 +378,6 @@ pub(crate) fn move_cell(window: &mut SimWindow, pos: CellPos, tick: u64) {
             Entry::Open => {
                 window.swap(cur, next);
                 cur = next;
-                moved = true;
                 if step_x {
                     done_x += 1;
                 } else {
@@ -392,26 +401,29 @@ pub(crate) fn move_cell(window: &mut SimWindow, pos: CellPos, tick: u64) {
             }
         }
     }
-    if moved {
-        note_undermined(window, pos);
-    }
-
     let restitution = VelocityFactor::from_raw(content::restitution_q16(material));
     for (dx, dy) in NEIGHBORS {
         let into = if dx != 0 { vx * dx > 0 } else { vy * dy > 0 };
         let target = cur.translated(dx, dy);
         if into && !can_enter(window, material, (dx, dy), target) {
-            let crowds = window
-                .get(target)
-                .is_some_and(|blocker| content::phase(blocker.material) == phase);
+            let Some(blocker) = window.get(target) else {
+                continue;
+            };
+            let blocker_phase = content::phase(blocker.material);
+            let dynamic = !blocker.is_body()
+                && matches!(blocker_phase, Phase::Powder | Phase::Liquid | Phase::Gas);
             if dx != 0 {
-                vx = if crowds {
+                vx = if dynamic {
+                    transfer_momentum(window, material, target, true, dx, vx, restitution)
+                } else if blocker_phase == phase {
                     vx / 2
                 } else {
                     reflect(vx, restitution)
                 };
             } else {
-                vy = if crowds {
+                vy = if dynamic {
+                    transfer_momentum(window, material, target, false, dy, vy, restitution)
+                } else if blocker_phase == phase {
                     vy / 2
                 } else {
                     reflect(vy, restitution)
@@ -559,7 +571,7 @@ fn flow_gas(window: &mut SimWindow, pos: CellPos, material: MaterialId, rng: &mu
 
 pub(crate) fn random_tick(_window: &mut SimWindow, _pos: CellPos, _tick: u64) {}
 
-fn react<M: MatSpec>(window: &mut SimWindow, pos: CellPos, cell: Cell, rng: &mut Rng) -> bool {
+fn react<M: MatSpec>(window: &mut SimWindow, pos: CellPos, rng: &mut Rng) -> bool {
     let mut keep = false;
     for (dx, dy) in NEIGHBORS {
         let neighbor_pos = pos.translated(dx, dy);
@@ -570,8 +582,6 @@ fn react<M: MatSpec>(window: &mut SimWindow, pos: CellPos, cell: Cell, rng: &mut
         if reaction.threshold != 0 {
             keep = true;
             if rng.draw().below(reaction.threshold) {
-                note_structural(window, pos, cell.material);
-                note_structural(window, neighbor_pos, neighbor.material);
                 set_product(window, pos, reaction.becomes, rng);
                 set_product(window, neighbor_pos, reaction.other_becomes, rng);
                 return true;
@@ -589,15 +599,6 @@ fn react<M: MatSpec>(window: &mut SimWindow, pos: CellPos, cell: Cell, rng: &mut
         window.mark(pos);
     }
     false
-}
-
-fn note_structural(window: &mut SimWindow, pos: CellPos, material: MaterialId) {
-    if content::phase(material) != Phase::Solid {
-        return;
-    }
-    for (dx, dy) in NEIGHBORS {
-        window.note_structural(pos.translated(dx, dy));
-    }
 }
 
 fn ignite_step(window: &mut SimWindow, pos: CellPos, ignition: Ignition, rng: &mut Rng) -> bool {
@@ -630,6 +631,7 @@ fn ignite_step(window: &mut SimWindow, pos: CellPos, ignition: Ignition, rng: &m
                 return true;
             };
             lit.material = ignition.into;
+            lit.aux = 0;
             lit.set_body(false);
             window.set(pos, lit);
             return true;
@@ -638,17 +640,12 @@ fn ignite_step(window: &mut SimWindow, pos: CellPos, ignition: Ignition, rng: &m
     false
 }
 
-fn burning_step<M: MatSpec>(
-    window: &mut SimWindow,
-    pos: CellPos,
-    burning: Burning,
-    rng: &mut Rng,
-) -> bool {
+fn burning_step(window: &mut SimWindow, pos: CellPos, burning: Burning, rng: &mut Rng) -> bool {
     if let Some(water) = adjacent_water(window, pos) {
         if burning.kind == BurningKind::Flame {
             set_product(window, pos, material::STEAM, rng);
         } else {
-            burn_out::<M>(window, pos, burning, rng);
+            burn_out(window, pos, burning, rng);
             set_product(window, water, material::STEAM, rng);
         }
         return true;
@@ -665,6 +662,7 @@ fn burning_step<M: MatSpec>(
                     return true;
                 };
                 cell.material = next;
+                cell.aux = 0;
                 window.set(pos, cell);
                 return true;
             }
@@ -672,19 +670,14 @@ fn burning_step<M: MatSpec>(
         }
     };
     if rng.draw().below(burn) {
-        burn_out::<M>(window, pos, burning, rng);
+        burn_out(window, pos, burning, rng);
         return true;
     }
     window.mark(pos);
     false
 }
 
-fn burn_out<M: MatSpec>(window: &mut SimWindow, pos: CellPos, burning: Burning, rng: &mut Rng) {
-    if const { matches!(M::PHASE, Phase::Solid) } {
-        for (dx, dy) in NEIGHBORS {
-            window.note_structural(pos.translated(dx, dy));
-        }
-    }
+fn burn_out(window: &mut SimWindow, pos: CellPos, burning: Burning, rng: &mut Rng) {
     let out = match burning.residue {
         Some((threshold, id)) if rng.draw().below(threshold) => id,
         _ => burning.burnout,
@@ -729,23 +722,6 @@ fn opens(window: &SimWindow, pos: CellPos) -> bool {
 
 fn set_product(window: &mut SimWindow, pos: CellPos, material: MaterialId, rng: &mut Rng) {
     window.set(pos, Cell::new(material, rng.draw().bits(4) as u8));
-}
-
-fn note_undermined(window: &mut SimWindow, vacated: CellPos) {
-    let above = vacated.translated(0, 1);
-    let rigid = window.get(above).is_some_and(|cell| {
-        content::phase(cell.material) == Phase::Solid && content::is_rigid_capable(cell.material)
-    });
-    if rigid {
-        window.note_structural(above);
-    }
-}
-
-fn note_body_below(window: &mut SimWindow, pos: CellPos) {
-    let below = pos.translated(0, -1);
-    if window.get(below).is_some_and(|cell| cell.is_body()) {
-        window.note_structural(below);
-    }
 }
 
 fn ambient_density_milli(window: &SimWindow, pos: CellPos) -> i32 {
@@ -826,15 +802,6 @@ fn submerged(window: &SimWindow, pos: CellPos) -> bool {
         .is_some_and(|above| content::phase(above.material) == Phase::Liquid)
 }
 
-fn neighbor_agitated(window: &SimWindow, pos: CellPos) -> bool {
-    NEIGHBORS.iter().any(|&(dx, dy)| {
-        window.get(pos.translated(dx, dy)).is_some_and(|cell| {
-            matches!(content::phase(cell.material), Phase::Powder | Phase::Liquid)
-                && ((cell.vx as i32).abs() >= AGITATED || (cell.vy as i32).abs() >= AGITATED)
-        })
-    })
-}
-
 fn prefer_side(vx: i32, rng: &mut Rng) -> i32 {
     match vx.cmp(&0) {
         std::cmp::Ordering::Greater => 1,
@@ -864,4 +831,61 @@ fn scaled_round(product: i64, shift: u32) -> i32 {
 
 fn reflect(v: i32, restitution: VelocityFactor) -> i32 {
     -restitution.apply(v)
+}
+
+fn transfer_momentum(
+    window: &mut SimWindow,
+    mover: MaterialId,
+    target: CellPos,
+    horizontal: bool,
+    direction: i32,
+    velocity: i32,
+    restitution: VelocityFactor,
+) -> i32 {
+    let Some(mut blocker) = window.get(target) else {
+        return velocity;
+    };
+    let blocker_velocity = if horizontal {
+        blocker.vx as i32
+    } else {
+        blocker.vy as i32
+    };
+    let moving = velocity * direction;
+    let blocking = blocker_velocity * direction;
+    let closing = moving - blocking;
+    if closing <= 0 {
+        return velocity;
+    }
+
+    let mover_mass = i64::from(content::density_milli(mover).max(1));
+    let blocker_mass = i64::from(content::density_milli(blocker.material).max(1));
+    let restitution = if content::phase(mover) == content::phase(blocker.material) {
+        0
+    } else {
+        restitution
+            .raw()
+            .min(content::restitution_q16(blocker.material))
+    };
+    let impulse_scale = i64::from(1u32 << 16) + i64::from(restitution);
+    let denominator = (mover_mass + blocker_mass) * i64::from(1u32 << 16);
+    let mover_delta = divide_round(
+        i64::from(closing) * blocker_mass * impulse_scale,
+        denominator,
+    ) as i32;
+    let blocker_delta =
+        divide_round(i64::from(closing) * mover_mass * impulse_scale, denominator) as i32;
+
+    let received = blocker_velocity + direction * blocker_delta;
+    if horizontal {
+        blocker.set_vel(received, blocker.vy as i32);
+    } else {
+        blocker.set_vel(blocker.vx as i32, received);
+    }
+    blocker.flags |= Cell::MOVED;
+    window.set(target, blocker);
+    velocity - direction * mover_delta
+}
+
+fn divide_round(numerator: i64, denominator: i64) -> i64 {
+    (numerator + denominator / 2) / denominator
 }

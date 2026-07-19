@@ -24,6 +24,7 @@ impl Other {
 }
 
 pub(super) struct Contact {
+    pub(super) obstruction: CellPos,
     pub(super) rx: f32,
     pub(super) ry: f32,
     pub(super) nx: f32,
@@ -124,6 +125,7 @@ pub(super) fn find_contacts(
                 continue;
             };
             contacts.push(Contact {
+                obstruction,
                 rx,
                 ry,
                 nx: -dx as f32,

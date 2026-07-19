@@ -1,14 +1,11 @@
-use super::{
-    OwnerMap, PixelBody, Raster, angle_steps_for, cell_mass, commit_stamp, rasterize_at,
-    relocation_spot,
-};
+use super::{OwnerMap, PixelBody, Raster, angle_steps_for, cell_mass, rasterize_at};
 use crate::world::CellWorld;
 use fallingsand_core::content;
 use fallingsand_core::{Cell, CellPos, Phase, Subcell};
 use rustc_hash::FxHashSet;
 use std::collections::VecDeque;
 
-pub const MAX_BODY_EXTENT: u8 = 48;
+const MAX_BODY_EXTENT: u8 = 48;
 const MAX_ISLAND_CELLS: usize = 2048;
 
 fn pivot_of(width: u8, height: u8) -> (i32, i32) {
@@ -100,6 +97,9 @@ pub fn detect_island(world: &CellWorld, seed: CellPos) -> Option<Vec<CellPos>> {
     let (mut min_x, mut max_x, mut min_y, mut max_y) = (seed.x, seed.x, seed.y, seed.y);
 
     while let Some((pos, material)) = queue.pop_front() {
+        if externally_supported(world, pos, material) {
+            return None;
+        }
         for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
             let next = pos.translated(dx, dy);
             if visited.contains(&next) {
@@ -126,6 +126,23 @@ pub fn detect_island(world: &CellWorld, seed: CellPos) -> Option<Vec<CellPos>> {
         }
     }
     Some(visited.into_iter().collect())
+}
+
+fn externally_supported(
+    world: &CellWorld,
+    pos: CellPos,
+    material: fallingsand_core::MaterialId,
+) -> bool {
+    let below = pos.translated(0, -1);
+    if is_rigid(world, below).is_some_and(|cell| content::bonds(material, cell.material)) {
+        return false;
+    }
+    world.get_cell(below).is_some_and(|support| {
+        !matches!(
+            content::phase(support.material),
+            Phase::Empty | Phase::Liquid | Phase::Gas
+        ) || content::density_milli(support.material) >= content::density_milli(material)
+    })
 }
 
 pub fn register_body(world: &mut CellWorld, id: u32, island: &[CellPos]) -> PixelBody {
@@ -229,105 +246,6 @@ pub fn apply_damage(
         let parts = split_body(world, body, &mut next_id);
         bodies.extend(parts);
     }
-}
-
-pub struct BodyParts {
-    pub width: u8,
-    pub height: u8,
-    pub cells: Vec<Cell>,
-    pub x: Subcell,
-    pub y: Subcell,
-    pub vx: Subcell,
-    pub vy: Subcell,
-    pub angle: f32,
-    pub spin: f32,
-    pub rest_secs: f32,
-}
-
-pub fn body_parts(body: &PixelBody) -> BodyParts {
-    BodyParts {
-        width: body.width,
-        height: body.height,
-        cells: body.cells.clone(),
-        x: body.x,
-        y: body.y,
-        vx: body.vx,
-        vy: body.vy,
-        angle: body.angle,
-        spin: body.spin,
-        rest_secs: body.rest_secs,
-    }
-}
-
-pub fn unstamp_body(world: &mut CellWorld, body: &PixelBody) {
-    for &(pos, _) in &body.raster.cells {
-        world.set_cell_raw(pos, Cell::AIR);
-    }
-}
-
-pub fn stamp_raster(world: &mut CellWorld, body: &PixelBody) {
-    for &(pos, local) in &body.raster.cells {
-        let mut cell = body.cells[local as usize];
-        cell.set_body(true);
-        world.set_cell_raw(pos, cell);
-    }
-}
-
-pub fn revive_body(world: &mut CellWorld, id: u32, parts: BodyParts) -> Option<PixelBody> {
-    let shape = derive_shape(&parts.cells, parts.width, parts.height)?;
-    let mut body = PixelBody {
-        id,
-        width: parts.width,
-        height: parts.height,
-        cells: parts.cells,
-        perimeter: shape.perimeter,
-        com_local: shape.com,
-        pivot: pivot_of(parts.width, parts.height),
-        angle_steps: angle_steps_for(parts.width, parts.height),
-        x: parts.x,
-        y: parts.y,
-        vx: parts.vx,
-        vy: parts.vy,
-        angle: parts.angle,
-        spin: parts.spin,
-        inv_mass: 1.0 / shape.mass,
-        inv_inertia: 1.0 / shape.inertia,
-        restitution: shape.restitution,
-        rest_secs: parts.rest_secs,
-        raster: Raster::default(),
-        frozen: false,
-    };
-    let raster = rasterize_at(&body, body.x, body.y, body.angle);
-    let cells = &body.cells;
-    let cell_for = |local: u16| {
-        let mut cell = cells[local as usize];
-        cell.set_body(true);
-        cell
-    };
-    if commit_stamp(world, &[], &Raster::default(), &raster, &cell_for).is_some() {
-        body.raster = raster;
-        return Some(body);
-    }
-
-    let mut claimed: FxHashSet<CellPos> = FxHashSet::default();
-    let exclude: FxHashSet<CellPos> = FxHashSet::default();
-    for &(pos, local) in &raster.cells {
-        let mut cell = cells[local as usize];
-        cell.set_body(false);
-        let target = match world.get_cell(pos) {
-            Some(existing)
-                if content::phase(existing.material) == Phase::Empty && !claimed.contains(&pos) =>
-            {
-                Some(pos)
-            }
-            _ => relocation_spot(world, &[], &claimed, &exclude, pos),
-        };
-        if let Some(target) = target {
-            claimed.insert(target);
-            world.set_cell_raw(target, cell);
-        }
-    }
-    None
 }
 
 fn split_body(

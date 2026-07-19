@@ -5,7 +5,6 @@ use crate::player::{
 use fallingsand_core::{CellPos, Subcell};
 use fallingsand_protocol::GameMode;
 use fallingsand_sim::CellWorld;
-use fallingsand_sim::bodies::vacated_wake_targets;
 use fallingsand_sim::physics::{
     Footprint, PlayerParams, StepInput, footprint_at, grounded, step_player,
 };
@@ -62,7 +61,7 @@ pub fn step_physics(sim: &mut CellWorld, bodies: &mut PixelBodies, players: &mut
             x if x > 0 => false,
             _ => avatar.stamp.facing_left(),
         };
-        commit_pose(sim, bodies, avatar, snapshot, facing_left);
+        commit_pose(sim, avatar, snapshot, facing_left);
 
         let (mut restore_x, mut restore_y) = (0.0f32, 0.0f32);
         for blocked in &result.blocked {
@@ -121,7 +120,6 @@ pub fn step_physics(sim: &mut CellWorld, bodies: &mut PixelBodies, players: &mut
 
 fn commit_pose(
     sim: &mut CellWorld,
-    bodies: &mut PixelBodies,
     avatar: &mut Avatar,
     snapshot: fallingsand_sim::physics::Actor,
     facing_left: bool,
@@ -133,7 +131,7 @@ fn commit_pose(
     ];
     for (attempt, &(x, y, half_h)) in candidates.iter().enumerate() {
         let fp = footprint_at(x, y, avatar.actor.half_w, half_h);
-        let Some(vacated) = stamp_player(sim, &mut avatar.stamp, fp, facing_left) else {
+        let Some(()) = stamp_player(sim, &mut avatar.stamp, fp, facing_left) else {
             continue;
         };
         match attempt {
@@ -151,7 +149,6 @@ fn commit_pose(
         if attempt != 0 {
             avatar.actor.on_ground = grounded(sim, &avatar.actor, avatar.stamp.own_cells());
         }
-        wake_neighbours(sim, bodies, &avatar.stamp, &vacated);
         return;
     }
     avatar.actor = snapshot;
@@ -160,30 +157,8 @@ fn commit_pose(
     avatar.actor.on_ground = grounded(sim, &avatar.actor, avatar.stamp.own_cells());
 }
 
-fn wake_neighbours(
-    sim: &CellWorld,
-    bodies: &mut PixelBodies,
-    stamp: &fallingsand_sim::PlayerStamp,
-    vacated: &[CellPos],
-) {
-    for pos in vacated_wake_targets(sim, &|pos| stamp.covers(pos), vacated) {
-        bodies.wake_at(pos);
-    }
-}
-
-pub fn unstamp_and_wake(
-    sim: &mut CellWorld,
-    bodies: &mut PixelBodies,
-    stamp: &mut fallingsand_sim::PlayerStamp,
-) {
-    let vacated: Vec<CellPos> = stamp
-        .own_cells()
-        .map(|set| set.iter().copied().collect())
-        .unwrap_or_default();
+pub fn unstamp(sim: &mut CellWorld, stamp: &mut fallingsand_sim::PlayerStamp) {
     unstamp_player(sim, stamp);
-    for pos in vacated_wake_targets(sim, &|_| false, &vacated) {
-        bodies.wake_at(pos);
-    }
 }
 
 pub fn footprint_loaded(sim: &CellWorld, fp: Footprint) -> bool {
@@ -199,7 +174,6 @@ pub fn footprint_loaded(sim: &CellWorld, fp: Footprint) -> bool {
 
 pub fn try_materialize(
     sim: &mut CellWorld,
-    bodies: &mut PixelBodies,
     template: &AvatarSnapshot,
     candidate: CellPos,
 ) -> Option<Avatar> {
@@ -228,12 +202,11 @@ pub fn try_materialize(
             x1: base.x1,
             y1: base.y0 + rows - 1,
         };
-        let Some(vacated) = stamp_player(sim, &mut stamp, fp, false) else {
+        let Some(()) = stamp_player(sim, &mut stamp, fp, false) else {
             continue;
         };
         actor.y += Subcell::from_cells((rows / 2 - STAND_ROWS as i32 / 2) as f32);
         actor.half_h = Subcell::from_cells(rows as f32).scaled_by(0.5);
-        wake_neighbours(sim, bodies, &stamp, &vacated);
         return Some(Avatar {
             actor,
             stamp,

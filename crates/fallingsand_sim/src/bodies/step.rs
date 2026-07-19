@@ -226,7 +226,7 @@ struct SolverContact {
 }
 
 fn step_substep(
-    world: &CellWorld,
+    world: &mut CellWorld,
     bodies: &mut [PixelBody],
     owners: &OwnerMap,
     entities: &[ActorDynamics],
@@ -245,6 +245,11 @@ fn step_substep(
     };
 
     let contacts = find_contacts(world, entities, bodies, owners, index);
+    for contact in &contacts {
+        if matches!(contact.other, Other::Terrain) {
+            world.note_interaction(contact.obstruction);
+        }
+    }
     let touching = !contacts.is_empty();
     let restable = contacts
         .iter()
@@ -544,9 +549,21 @@ fn plan_and_commit(
 }
 
 pub fn settle_body(world: &mut CellWorld, body: &PixelBody) {
+    settle_body_with(world, body, false);
+}
+
+pub fn settle_body_quiet(world: &mut CellWorld, body: &PixelBody) {
+    settle_body_with(world, body, true);
+}
+
+fn settle_body_with(world: &mut CellWorld, body: &PixelBody, quiet: bool) {
     for &(pos, local) in &body.raster.cells {
         let mut cell = body.cells[local as usize];
         cell.set_body(false);
-        world.set_cell_raw(pos, cell);
+        if quiet {
+            world.set_cell_raw_quiet(pos, cell);
+        } else {
+            world.set_cell_raw(pos, cell);
+        }
     }
 }

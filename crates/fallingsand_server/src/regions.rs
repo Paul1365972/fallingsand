@@ -1,12 +1,9 @@
 use crate::bodies::PixelBodies;
-use crate::persistence::{
-    BodyRecord, Persistence, RegionLoad, StoreError, body_home_region, body_record, encode_region,
-    record_to_parts,
-};
+use crate::persistence::{Persistence, RegionLoad, StoreError, encode_region};
 use crate::player::{Players, SearchWindow};
 use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y};
 use fallingsand_core::{CellPos, Chunk, ChunkPos, REGION_SIZE_CELLS, Region, RegionPos};
-use fallingsand_sim::bodies::{revive_body, stamp_raster, unstamp_body};
+use fallingsand_sim::bodies::settle_body_quiet;
 use fallingsand_sim::{CellWorld, PixelBody};
 use fallingsand_worldgen::WorldGenerator;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -103,20 +100,6 @@ pub fn wanted_regions(tickets: &ChunkTickets) -> FxHashSet<RegionPos> {
         .collect()
 }
 
-fn strip_body_remnants(region: &mut Region) {
-    for chunk in region.chunks_mut().iter_mut() {
-        for cell in chunk.cells_mut().iter_mut() {
-            if fallingsand_core::content::tags(cell.material)
-                .contains(fallingsand_core::Tag::Player)
-            {
-                *cell = fallingsand_core::Cell::AIR;
-            } else if cell.is_body() {
-                cell.set_body(false);
-            }
-        }
-    }
-}
-
 fn insert_region(sim: &mut CellWorld, pos: RegionPos, region: Region) {
     for ((_, chunk_pos), chunk) in pos.chunk_positions().zip(*region.into_chunks()) {
         sim.insert_chunk(chunk_pos, chunk);
@@ -141,23 +124,16 @@ fn snapshot_region(sim: &CellWorld, pos: RegionPos) -> Region {
     gather_region(pos, |chunk_pos| sim.chunk(chunk_pos).cloned())
 }
 
-pub(crate) fn collect_dirty_saves(
+pub(crate) fn collect_region_saves(
     sim: &CellWorld,
     regions: &RegionMap,
-    bodies: &PixelBodies,
 ) -> Result<Vec<(RegionPos, Vec<u8>)>, StoreError> {
     let mut out = Vec::new();
     for (pos, state) in &regions.states {
         if !state.dirty {
             continue;
         }
-        let records: Vec<BodyRecord> = bodies
-            .bodies
-            .iter()
-            .filter(|body| body_home_region(body) == *pos)
-            .map(body_record)
-            .collect();
-        out.push((*pos, encode_region(&snapshot_region(sim, *pos), &records)?));
+        out.push((*pos, encode_region(&snapshot_region(sim, *pos))?));
     }
     Ok(out)
 }
@@ -170,7 +146,7 @@ pub(crate) fn mark_saved(regions: &mut RegionMap, positions: impl IntoIterator<I
     }
 }
 
-pub(crate) fn body_region_radius(body: &PixelBody) -> i32 {
+fn body_region_radius(body: &PixelBody) -> i32 {
     ((body.width() as f32).hypot(body.height() as f32) + 1.0).ceil() as i32
 }
 
@@ -214,14 +190,10 @@ pub fn manage_regions(
                 pos,
                 source: Box::new(source),
             })?;
-        let mut load = match loaded {
-            Some(mut load) => {
-                strip_body_remnants(&mut load.region);
-                load
-            }
+        let load = match loaded {
+            Some(load) => load,
             None => RegionLoad {
                 region: generator.generate_region(pos),
-                bodies: Vec::new(),
                 dirty: false,
             },
         };
@@ -233,30 +205,10 @@ pub fn manage_regions(
                 last_wanted: tick,
             },
         );
-        for index in 0..bodies.bodies.len() {
-            if body_overlaps_region(&bodies.bodies[index], pos) {
-                stamp_raster(sim, &bodies.bodies[index]);
-            }
-        }
-        for record in load.bodies.drain(..) {
-            let id = bodies.next_id;
-            bodies.next_id += 1;
-            match revive_body(sim, id, record_to_parts(&record)) {
-                Some(body) => {
-                    bodies.bodies.push(body);
-                    bodies.mark_owners_stale();
-                }
-                None => tracing::warn!(
-                    "body near ({}, {}) dissolved into loose cells on reload",
-                    record.x.floor_cell(),
-                    record.y.floor_cell()
-                ),
-            }
-        }
         loads += 1;
     }
 
-    let expired: Vec<RegionPos> = regions
+    let mut expired: Vec<RegionPos> = regions
         .states
         .iter()
         .filter(|(pos, state)| {
@@ -264,23 +216,21 @@ pub fn manage_regions(
         })
         .map(|(&pos, _)| pos)
         .collect();
+    expired.sort_unstable_by_key(|pos| (pos.y, pos.x));
 
-    let mut unloading: FxHashMap<RegionPos, Vec<BodyRecord>> = FxHashMap::default();
     if !expired.is_empty() {
         let mut index = 0;
         while index < bodies.bodies.len() {
-            let home = expired
+            let overlaps_expired = expired
                 .iter()
                 .copied()
-                .find(|&pos| body_overlaps_region(&bodies.bodies[index], pos));
-            match home {
-                Some(pos) => {
-                    let body = bodies.bodies.swap_remove(index);
-                    bodies.mark_owners_stale();
-                    unstamp_body(sim, &body);
-                    unloading.entry(pos).or_default().push(body_record(&body));
-                }
-                None => index += 1,
+                .any(|pos| body_overlaps_region(&bodies.bodies[index], pos));
+            if overlaps_expired {
+                let body = bodies.bodies.swap_remove(index);
+                bodies.mark_owners_stale();
+                settle_body_quiet(sim, &body);
+            } else {
+                index += 1;
             }
         }
     }
@@ -290,8 +240,7 @@ pub fn manage_regions(
     for pos in expired {
         regions.states.remove(&pos).expect("state exists");
         let region = extract_region(sim, pos);
-        let records = unloading.remove(&pos).unwrap_or_default();
-        persistence.stage_region(pos, encode_region(&region, &records)?);
+        persistence.stage_region(pos, encode_region(&region)?);
     }
     if let Err(err) = persistence.flush_regions() {
         tracing::error!("failed to save unloaded regions: {err}");

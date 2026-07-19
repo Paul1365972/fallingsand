@@ -38,10 +38,6 @@ impl<'a> SimWindow<'a> {
         self.slots[(sy * WINDOW_CHUNKS + sx) as usize] = Some(chunk);
     }
 
-    pub fn note_structural(&mut self, pos: CellPos) {
-        self.structural.push(pos);
-    }
-
     pub(crate) const fn origin(&self) -> ChunkPos {
         self.origin
     }
@@ -88,6 +84,21 @@ impl<'a> SimWindow<'a> {
             self.damage.push(pos);
         }
         self.mark_sim_border(pos);
+        self.note_observers(pos);
+    }
+
+    fn note_observers(&mut self, changed: CellPos) {
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                let pos = changed.translated(dx, dy);
+                if self
+                    .get(pos)
+                    .is_some_and(|cell| cell.is_body() || content::is_rigid_capable(cell.material))
+                {
+                    self.structural.push(pos);
+                }
+            }
+        }
     }
 
     fn mark_sim_border(&mut self, pos: CellPos) {

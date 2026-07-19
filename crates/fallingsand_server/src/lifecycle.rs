@@ -1,5 +1,4 @@
-use crate::bodies::PixelBodies;
-use crate::physics::{try_materialize, unstamp_and_wake};
+use crate::physics::{try_materialize, unstamp};
 use crate::player::{AvatarSnapshot, PlayerLife, Players, SearchWindow, SpawnSearch};
 use fallingsand_core::{CHUNK_SIZE, CellPos};
 use fallingsand_protocol::PlayerId;
@@ -16,12 +15,7 @@ pub fn begin_revives(players: &mut Players, spawn: CellPos, tick: u64) {
     }
 }
 
-pub fn resolve_lethal(
-    sim: &mut CellWorld,
-    bodies: &mut PixelBodies,
-    players: &mut Players,
-    tick: u64,
-) {
+pub fn resolve_lethal(sim: &mut CellWorld, players: &mut Players, tick: u64) {
     let dying: Vec<PlayerId> = players
         .iter()
         .filter_map(|(&id, player)| {
@@ -40,14 +34,13 @@ pub fn resolve_lethal(
         let PlayerLife::Alive(avatar) = &mut player.life else {
             continue;
         };
-        unstamp_and_wake(sim, bodies, &mut avatar.stamp);
+        unstamp(sim, &mut avatar.stamp);
         player.die(anchor, tick);
     }
 }
 
 pub fn advance_materializations(
     sim: &mut CellWorld,
-    bodies: &mut PixelBodies,
     players: &mut Players,
     tick: u64,
 ) -> Vec<(PlayerId, String)> {
@@ -56,12 +49,7 @@ pub fn advance_materializations(
         let Some(materialization) = player.life.materialization_mut() else {
             continue;
         };
-        let result = advance_search(
-            sim,
-            bodies,
-            &materialization.template,
-            &mut materialization.search,
-        );
+        let result = advance_search(sim, &materialization.template, &mut materialization.search);
         match result {
             SearchResult::Waiting => {}
             SearchResult::Found(avatar) => {
@@ -85,7 +73,6 @@ enum SearchResult {
 
 fn advance_search(
     sim: &mut CellWorld,
-    bodies: &mut PixelBodies,
     template: &AvatarSnapshot,
     search: &mut SpawnSearch,
 ) -> SearchResult {
@@ -101,7 +88,7 @@ fn advance_search(
             search.center_window(candidate);
             return SearchResult::Waiting;
         }
-        if let Some(avatar) = try_materialize(sim, bodies, template, candidate) {
+        if let Some(avatar) = try_materialize(sim, template, candidate) {
             return SearchResult::Found(Box::new(avatar));
         }
         if !search.advance() {

@@ -1,10 +1,7 @@
-use crate::bodies::PixelBodies;
 use crate::inventory::Inventory;
 use crate::player::{PlayerLife, Players};
 use fallingsand_core::content;
-use fallingsand_core::{
-    CARDINAL_NEIGHBORS, CellPos, ItemId, ItemStack, MaterialId, Phase, TICK_DT, Tag, ray_cells,
-};
+use fallingsand_core::{CellPos, ItemId, ItemStack, MaterialId, Phase, TICK_DT, Tag, ray_cells};
 use fallingsand_protocol::{
     CursorMode, GameMode, InputState, InteractionState, InteractionStatus, UseButton,
 };
@@ -58,7 +55,7 @@ impl InteractionContext {
     }
 }
 
-pub fn apply_player_inputs(sim: &mut World, bodies: &mut PixelBodies, players: &mut Players) {
+pub fn apply_player_inputs(sim: &mut World, players: &mut Players) {
     for (_, player) in players.iter_mut() {
         let input = player.control.input;
         let uses = std::mem::take(&mut player.control.pending_uses);
@@ -85,7 +82,7 @@ pub fn apply_player_inputs(sim: &mut World, bodies: &mut PixelBodies, players: &
             match button {
                 UseButton::Primary if survival => tapped_dig = Some(cell),
                 UseButton::Primary => {
-                    active_dig(sim, bodies, &context.with_aim(cell), body, dig, inventory)
+                    active_dig(sim, &context.with_aim(cell), body, dig, inventory)
                 }
                 UseButton::Secondary => {
                     active_place(sim, &context.with_aim(cell), body, dig, inventory)
@@ -94,9 +91,9 @@ pub fn apply_player_inputs(sim: &mut World, bodies: &mut PixelBodies, players: &
         }
 
         if survival && input.primary {
-            active_dig(sim, bodies, &context, body, dig, inventory);
+            active_dig(sim, &context, body, dig, inventory);
         } else if let Some(cell) = tapped_dig {
-            active_dig(sim, bodies, &context.with_aim(cell), body, dig, inventory);
+            active_dig(sim, &context.with_aim(cell), body, dig, inventory);
         } else {
             dig.clear_progress();
             if !input.primary && !input.secondary {
@@ -108,7 +105,6 @@ pub fn apply_player_inputs(sim: &mut World, bodies: &mut PixelBodies, players: &
 
 fn active_dig(
     world: &mut World,
-    bodies: &mut PixelBodies,
     context: &InteractionContext,
     body: &Actor,
     dig: &mut DigState,
@@ -172,9 +168,6 @@ fn active_dig(
         }
     }
     world.clear_cell(target);
-    for (dx, dy) in CARDINAL_NEIGHBORS {
-        bodies.candidates.push(target.translated(dx, dy));
-    }
     dig.clear_progress();
     dig.interaction = Some(dig_interaction(target, 1.0, plan.material));
 }
@@ -209,7 +202,12 @@ fn active_place(
         return;
     };
 
-    if !world.fill_material(target, material) {
+    let placed = if context.survival {
+        world.fill_material(target, material)
+    } else {
+        world.fill_material_quiet(target, material)
+    };
+    if !placed {
         dig.interaction = Some(interaction(target, InteractionStatus::Occupied, 0.0));
         return;
     }

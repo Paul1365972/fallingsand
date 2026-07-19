@@ -245,7 +245,7 @@ impl ServerState {
             "player_input",
             |t| &mut t.player_input,
             |s| {
-                dig::apply_player_inputs(&mut s.sim, &mut s.bodies, &mut s.players);
+                dig::apply_player_inputs(&mut s.sim, &mut s.players);
                 inventory::apply_slot_actions(&mut s.players);
                 lifecycle::begin_revives(&mut s.players, s.spawn, s.sim.tick());
             },
@@ -304,13 +304,10 @@ impl ServerState {
             "lifecycle",
             |t| &mut t.lifecycle,
             |s| {
-                lifecycle::resolve_lethal(&mut s.sim, &mut s.bodies, &mut s.players, tick);
-                for (player, text) in lifecycle::advance_materializations(
-                    &mut s.sim,
-                    &mut s.bodies,
-                    &mut s.players,
-                    tick,
-                ) {
+                lifecycle::resolve_lethal(&mut s.sim, &mut s.players, tick);
+                for (player, text) in
+                    lifecycle::advance_materializations(&mut s.sim, &mut s.players, tick)
+                {
                     s.sessions.send_to_player(
                         player,
                         &fallingsand_protocol::ServerMessage::System { text },
@@ -347,7 +344,6 @@ impl ServerState {
                 persistence::autosave(
                     &s.sim,
                     &mut s.regions,
-                    &s.bodies,
                     &s.world,
                     &s.clock,
                     &s.players,
@@ -365,7 +361,6 @@ impl ServerState {
         persistence::save_everything(
             &mut self.sim,
             &mut self.regions,
-            &self.bodies,
             &self.players,
             &mut self.persistence,
             &self.world,
@@ -389,7 +384,7 @@ impl ServerState {
                 continue;
             };
             if let Some(avatar) = player.avatar_mut() {
-                physics::unstamp_and_wake(&mut self.sim, &mut self.bodies, &mut avatar.stamp);
+                physics::unstamp(&mut self.sim, &mut avatar.stamp);
             }
             self.persistence.stage_player(uuid, record);
         }

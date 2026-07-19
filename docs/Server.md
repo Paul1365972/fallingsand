@@ -7,7 +7,7 @@ The server is authoritative for every gameplay rule; clients send raw input and 
 - **Server authority** — gameplay rules live here, including single player through the embedded server.
 - **Exclusive lifecycle** — exactly one life state per player (entering, alive, dead, reviving); only alive owns an avatar, and the avatar owns every physical and deferred-physical value. Input or queued work from an old connection never leaks into a new incarnation.
 - **Persistence is faithful** — pending state survives failed writes; a region is generated only after a confirmed missing read; a read or decode error is fatal, never papered over. No migrations: a format-version mismatch is rejected.
-- **Suspend/resume** — unload preserves in-flight activity: bodies persist as bodies, each chunk saves a resume rect restored as a keep-alive on load.
+- **Suspend/resume** — loaded chunks wake fully for one tick; rigid bodies are intentionally reduced to terrain at their current raster.
 
 ## Players
 
@@ -34,7 +34,7 @@ Entering and revive share one deterministic ring search advancing over ticks, ex
 
 ## Persistence
 
-One store owns the disk tables (regions, players, meta) and the in-memory pending records between the live world and storage; a server without a save path uses the pending maps as its memory backing, so unload still preserves the world for the process lifetime. Bodies persist inside their region blob — buffer, pose, velocity, rest time — with their raster encoded as air; load revives them in motion, dissolving into loose cells only when the landing spot was overrun. Storage records are DTOs validated and converted at the persistence boundary; malformed shape, coordinates, values, or identifiers are fatal, while failed writes retain their pending records. Gameplay never depends on a database type. An interrupted revive persists as dead and restarts from an explicit request.
+One store owns the disk tables (regions, players, meta) and the in-memory pending records between the live world and storage; a server without a save path uses the pending maps as its memory backing, so unload still preserves the world for the process lifetime. Region blobs contain only chunks: pixel-body flags are stripped into ordinary terrain cells, while player flesh is omitted. Unloading any crossed region settles the body at its current raster before extracting chunks. Storage records are DTOs validated and converted at the persistence boundary; malformed cells, rectangles, coordinates, values, or identifiers are fatal, while failed writes retain their pending records. Gameplay never depends on a database type. An interrupted player revive persists as dead and restarts from an explicit request.
 
 ## Glossary
 

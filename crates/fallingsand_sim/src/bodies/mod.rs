@@ -3,11 +3,8 @@ mod island;
 mod rotation;
 mod step;
 
-pub use island::{
-    BodyParts, MAX_BODY_EXTENT, apply_damage, body_parts, detect_island, register_body,
-    revive_body, stamp_raster, unstamp_body,
-};
-pub use step::{SETTLE_SECS, settle_body, step_bodies};
+pub use island::{apply_damage, detect_island, register_body};
+pub use step::{SETTLE_SECS, settle_body, settle_body_quiet, step_bodies};
 
 use crate::physics::ActorAabb;
 use crate::world::CellWorld;

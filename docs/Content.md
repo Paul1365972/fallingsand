@@ -19,7 +19,7 @@ The kernel is driven by phase + properties — a new powder is a data edit — b
 
 Rates are authored per second: rate `r` fires with `1−e^(−r·dt)` each tick (keeps `e^(−r·dt)`); accelerations integrate as `a·dt`; durations become tick counts — behavior is ~invariant to tick rate, and an outsized rate fires effectively every tick. Random-tick rates rescale by the sampling density so a seconds-rate means the same real time, clamped at certainty.
 
-Movement tuning per phase: powders author drag, friction, topple (start, keep), and deflect; liquids author drag, friction, splash deflect, and an optional flow rate — the per-tick chance gating flow steps, viscosity in one number, ungated when unset; gases author drag, turbulence, and the same optional flow rate; rigid solids author a bond group. Top-level fields cover density, restitution, entity surface feel, hardness, and contact damage. Fuels author ignite, sealed fraction, burn rate, emit, palette, residue, burnout, and damage; hand flames author the burning side directly.
+Movement tuning per phase: powders author drag, friction, topple (deterministic static-start susceptibility and per-tick kinetic keep), and deflect; liquids author drag, friction, splash deflect, and an optional flow rate — the per-tick chance gating flow steps, viscosity in one number, ungated when unset; gases author drag, turbulence, and the same optional flow rate; rigid solids author a bond group. Top-level fields cover density, restitution, entity surface feel, hardness, and contact damage. Fuels author ignite, sealed fraction, burn rate, emit, palette, residue, burnout, and damage; hand flames author the burning side directly.
 
 ## Glossary
 
