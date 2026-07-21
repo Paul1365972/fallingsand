@@ -160,6 +160,7 @@ pub struct Content {
     pub materials: Vec<Mat>,
     pub ignitions: Vec<Option<Ignition>>,
     pub reactions: Vec<Option<Reaction>>,
+    pub liquid_exchange_thresholds: Vec<u64>,
     pub items: Vec<ItemOut>,
     pub recipes: Vec<RecipeOut>,
     pub item_for_material: Vec<u16>,
@@ -257,6 +258,7 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
         };
 
     let reactions = expand_reactions(catalog, &raws, &by_name)?;
+    let liquid_exchange_thresholds = compile_liquid_exchange_thresholds(&raws);
     let mut decays: Vec<Option<(u64, MaterialId)>> = vec![None; len];
     for def in &catalog.decays {
         let Some(from) = by_name.get(def.from.as_str()) else {
@@ -372,6 +374,7 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
         materials,
         ignitions,
         reactions,
+        liquid_exchange_thresholds,
         items,
         recipes,
         item_for_material,
@@ -771,6 +774,33 @@ fn flow_threshold(raw: &RawMaterial) -> u64 {
         _ => return 0,
     };
     flow_rate.map_or(u64::MAX, |rate| chance_threshold(per_tick_chance(rate)))
+}
+
+fn compile_liquid_exchange_thresholds(raws: &[RawMaterial]) -> Vec<u64> {
+    let mut thresholds = Vec::with_capacity(raws.len() * raws.len());
+    for a in raws {
+        for b in raws {
+            thresholds.push(liquid_exchange_threshold(a, b));
+        }
+    }
+    thresholds
+}
+
+fn liquid_exchange_threshold(a: &RawMaterial, b: &RawMaterial) -> u64 {
+    let (PhaseDef::Liquid(a_liquid), PhaseDef::Liquid(b_liquid)) = (a.phase, b.phase) else {
+        return 0;
+    };
+    let a_density = milli(a.density);
+    let b_density = milli(b.density);
+    if a_density == b_density {
+        return 0;
+    }
+    let rate = match (a_liquid.flow_rate, b_liquid.flow_rate) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (Some(rate), None) | (None, Some(rate)) => Some(rate),
+        (None, None) => None,
+    };
+    rate.map_or(u64::MAX, |rate| chance_threshold(per_tick_chance(rate)))
 }
 
 enum Operand {

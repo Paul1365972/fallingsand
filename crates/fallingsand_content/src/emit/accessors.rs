@@ -83,6 +83,11 @@ pub fn emit(content: &Content) -> TokenStream {
         }),
         true,
     );
+    let liquid_exchange_thresholds = content
+        .liquid_exchange_thresholds
+        .iter()
+        .map(|&threshold| Literal::u64_suffixed(threshold))
+        .collect::<Vec<_>>();
     let ignition = accessor_fn(
         "ignition",
         quote!(Option<crate::material::Ignition>),
@@ -173,6 +178,17 @@ pub fn emit(content: &Content) -> TokenStream {
         #liquid_impact_q16
         #ignition
         #material
+
+        const LIQUID_EXCHANGE_THRESHOLDS: [u64; MATERIAL_COUNT * MATERIAL_COUNT] =
+            [#(#liquid_exchange_thresholds),*];
+
+        #[inline]
+        pub const fn liquid_exchange_threshold(
+            a: crate::material::MaterialId,
+            b: crate::material::MaterialId,
+        ) -> u64 {
+            LIQUID_EXCHANGE_THRESHOLDS[a.0 as usize * MATERIAL_COUNT + b.0 as usize]
+        }
 
         const BOND_MASKS: [u32; #bond_group_count] = [#(#bond_masks),*];
 

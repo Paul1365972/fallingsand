@@ -7,6 +7,7 @@ use fallingsand_math::{Hash, Rng, SUBCELL_BITS, SUBCELL_UNITS_PER_CELL};
 
 const GRID_GRAVITY: f32 = 600.0;
 const MOVEMENT_SALT: Hash = Hash::label("simulation.movement");
+const LIQUID_WAKE_SALT: Hash = Hash::label("simulation.liquid_wake");
 const MAX_COMPONENT_CELLS: i32 = 31;
 const _: () = assert!(MAX_COMPONENT_CELLS < SPEED_OF_LIGHT);
 const MAX_COMPONENT_RAW: i32 = MAX_COMPONENT_CELLS * SUBCELL_UNITS_PER_CELL;
@@ -89,7 +90,7 @@ pub(crate) fn move_cell(window: &mut SimWindow, pos: CellPos, cell: Cell, tick: 
         vy,
         &mut rng,
         |window, dir, target| entry(window, material, dir.1, target),
-        swap_dynamic,
+        |window, from, to| swap_dynamic(window, from, to, tick),
     );
     if let Some(current) = window.get(travel.pos) {
         (vx, vy) = current.vel();
@@ -129,30 +130,73 @@ pub(crate) fn move_cell(window: &mut SimWindow, pos: CellPos, cell: Cell, tick: 
     write_velocity(window, travel.pos, current, vx, vy, settled);
 }
 
-fn swap_dynamic(window: &mut SimWindow, from: CellPos, to: CellPos) {
-    let (Some(mut mover), Some(mut displaced)) = (window.get(from), window.get(to)) else {
+fn swap_dynamic(window: &mut SimWindow, from: CellPos, to: CellPos, tick: u64) {
+    let (Some(mover), Some(displaced)) = (window.get(from), window.get(to)) else {
         return;
     };
     if content::phase(mover.material) == Phase::Powder
         && content::phase(displaced.material) == Phase::Liquid
     {
-        let mover_mass = i64::from(content::density_milli(mover.material).max(1));
-        let displaced_mass = i64::from(content::density_milli(displaced.material).max(1));
-        let mass = mover_mass + displaced_mass;
-        let vx = divide_signed(
-            mover_mass * i64::from(mover.vx) + displaced_mass * i64::from(displaced.vx),
-            mass,
-        ) as i32;
-        let vy = divide_signed(
-            mover_mass * i64::from(mover.vy) + displaced_mass * i64::from(displaced.vy),
-            mass,
-        ) as i32;
-        mover.set_vel(vx, vy);
-        displaced.set_vel(vx, vy);
-        window.set(from, mover);
-        window.set(to, displaced);
+        swap_with_liquid_wake(window, from, to, tick);
+    } else {
+        window.swap(from, to);
     }
+}
+
+pub(crate) fn swap_with_liquid_wake(window: &mut SimWindow, from: CellPos, to: CellPos, tick: u64) {
+    let (Some(mut mover), Some(mut displaced)) = (window.get(from), window.get(to)) else {
+        return;
+    };
+    let mover_mass = i64::from(content::density_milli(mover.material).max(1));
+    let displaced_mass = i64::from(content::density_milli(displaced.material).max(1));
+    let mass = mover_mass + displaced_mass;
+    let center_vx = divide_signed(
+        mover_mass * i64::from(mover.vx) + displaced_mass * i64::from(displaced.vx),
+        mass,
+    ) as i32;
+    let center_vy = divide_signed(
+        mover_mass * i64::from(mover.vy) + displaced_mass * i64::from(displaced.vy),
+        mass,
+    ) as i32;
+    let keep = liquid_wake_keep(mover.material, displaced.material);
+    let side = if Hash::seed(tick)
+        .salt(LIQUID_WAKE_SALT)
+        .pos(to.x, to.y)
+        .bit()
+    {
+        -1
+    } else {
+        1
+    };
+    let relative_vx = i32::from(mover.vx) - i32::from(displaced.vx);
+    let relative_vy = i32::from(mover.vy) - i32::from(displaced.vy);
+    let wake_vx = -side * keep.apply(relative_vy);
+    let wake_vy = side * keep.apply(relative_vx);
+    mover.set_vel(
+        center_vx + divide_signed(displaced_mass * i64::from(wake_vx), mass) as i32,
+        center_vy + divide_signed(displaced_mass * i64::from(wake_vy), mass) as i32,
+    );
+    displaced.set_vel(
+        center_vx - divide_signed(mover_mass * i64::from(wake_vx), mass) as i32,
+        center_vy - divide_signed(mover_mass * i64::from(wake_vy), mass) as i32,
+    );
+    window.set(from, mover);
+    window.set(to, displaced);
     window.swap(from, to);
+}
+
+fn liquid_wake_keep(a: MaterialId, b: MaterialId) -> VelocityFactor {
+    match (
+        content::phase(a) == Phase::Liquid,
+        content::phase(b) == Phase::Liquid,
+    ) {
+        (true, true) => VelocityFactor::from_raw(
+            content::liquid_impact_q16(a).min(content::liquid_impact_q16(b)),
+        ),
+        (true, false) => VelocityFactor::from_raw(content::liquid_impact_q16(a)),
+        (false, true) => VelocityFactor::from_raw(content::liquid_impact_q16(b)),
+        (false, false) => unreachable!("liquid wake without a liquid"),
+    }
 }
 
 pub(crate) fn movement_rng(tick: u64, pos: CellPos) -> Rng {

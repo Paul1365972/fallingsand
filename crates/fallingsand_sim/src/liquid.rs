@@ -1,5 +1,8 @@
 use crate::{
-    motion::{Entry, GRAVITY_DV, prefer_side, traverse, vector_length, write_velocity},
+    motion::{
+        Entry, GRAVITY_DV, prefer_side, swap_with_liquid_wake, traverse, vector_length,
+        write_velocity,
+    },
     window::SimWindow,
 };
 use fallingsand_core::{Cell, CellPos, LiquidDynamics, Phase, VelocityFactor, content};
@@ -16,7 +19,7 @@ pub(crate) fn apply_effects(
     dynamics: LiquidDynamics,
 ) {
     let (mut vx, mut vy) = cell.vel();
-    let falling = can_fall_into(window, cell, pos.translated(0, -1));
+    let falling = can_fall_freely_into(window, cell, pos.translated(0, -1));
     if falling {
         vy -= GRAVITY_DV;
     }
@@ -55,7 +58,7 @@ pub(crate) fn move_cell(window: &mut SimWindow, pos: CellPos, cell: Cell, tick: 
         vy,
         &mut rng,
         |window, _, target| entry(window, target),
-        |window, from, to| window.swap(from, to),
+        |window, from, to| swap_moving(window, from, to, tick),
     );
     let Some(current) = window.get(travel.pos) else {
         return;
@@ -72,7 +75,7 @@ pub(crate) fn move_cell(window: &mut SimWindow, pos: CellPos, cell: Cell, tick: 
             vx = -impact.apply(vx);
         }
     }
-    let settled = !can_fall_into(window, current, travel.pos.translated(0, -1));
+    let settled = !can_fall_freely_into(window, current, travel.pos.translated(0, -1));
     write_velocity(window, travel.pos, current, vx, vy, settled);
 }
 
@@ -82,7 +85,7 @@ fn relax(window: &mut SimWindow, pos: CellPos, cell: Cell, rng: &mut Rng) {
         .into_iter()
         .find_map(|(dx, dy)| {
             let target = pos.translated(dx, dy);
-            can_fall_into(window, cell, target).then_some(target)
+            can_exchange_downhill_into(window, cell, target).then_some(target)
         });
     if target.is_none() && exposed(window, pos, cell) {
         let row_side = if Hash::seed(u64::from(cell.material.0))
@@ -103,12 +106,35 @@ fn relax(window: &mut SimWindow, pos: CellPos, cell: Cell, rng: &mut Rng) {
         return;
     };
     match entry(window, target) {
-        Entry::Open if rng.draw().below(content::flow_threshold(cell.material)) => {
+        Entry::Open if rng.draw().below(passive_threshold(window, cell, target)) => {
             window.swap(pos, target);
         }
         Entry::Open | Entry::Busy => window.mark(pos),
         Entry::Blocked => {}
     }
+}
+
+fn swap_moving(window: &mut SimWindow, from: CellPos, to: CellPos, tick: u64) {
+    let (Some(mover), Some(displaced)) = (window.get(from), window.get(to)) else {
+        return;
+    };
+    if content::phase(displaced.material) == Phase::Liquid && displaced.material != mover.material {
+        swap_with_liquid_wake(window, from, to, tick);
+    } else {
+        window.swap(from, to);
+    }
+}
+
+fn passive_threshold(window: &SimWindow, mover: Cell, target: CellPos) -> u64 {
+    window.get(target).map_or(0, |displaced| {
+        if content::phase(displaced.material) == Phase::Liquid
+            && displaced.material != mover.material
+        {
+            content::liquid_exchange_threshold(mover.material, displaced.material)
+        } else {
+            content::flow_threshold(mover.material)
+        }
+    })
 }
 
 fn redirect_impact(
@@ -148,7 +174,15 @@ fn dynamic(cell: Cell) -> bool {
         )
 }
 
-fn can_fall_into(window: &SimWindow, mover: Cell, target: CellPos) -> bool {
+fn can_fall_freely_into(window: &SimWindow, mover: Cell, target: CellPos) -> bool {
+    window.get(target).is_some_and(|cell| {
+        dynamic(cell)
+            && content::phase(cell.material) != Phase::Liquid
+            && content::density_milli(mover.material) > content::density_milli(cell.material)
+    })
+}
+
+fn can_exchange_downhill_into(window: &SimWindow, mover: Cell, target: CellPos) -> bool {
     window.get(target).is_some_and(|cell| {
         dynamic(cell)
             && content::density_milli(mover.material) > content::density_milli(cell.material)
