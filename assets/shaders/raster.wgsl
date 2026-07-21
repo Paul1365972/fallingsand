@@ -1,4 +1,4 @@
-#import fallingsand::game_common::{PixelViewport, vnoise}
+#import fallingsand::common::{PixelViewport, vnoise}
 
 const CHUNK_SIZE: f32 = 64.0;
 
@@ -20,19 +20,12 @@ struct QuadInstance {
     color: vec4<f32>,
 }
 
-struct LineInstance {
-    a: vec2<f32>,
-    b: vec2<f32>,
-    color: vec4<f32>,
-}
-
 @group(0) @binding(0) var<uniform> frame: RasterFrame;
 @group(0) @binding(1) var<storage, read> chunks: array<ChunkInstance>;
 @group(0) @binding(2) var<storage, read> quads: array<QuadInstance>;
-@group(0) @binding(3) var<storage, read> lines: array<LineInstance>;
-@group(0) @binding(4) var atlas: texture_2d<u32>;
-@group(0) @binding(5) var palette: texture_2d<f32>;
-@group(0) @binding(6) var emissive_palette: texture_2d<f32>;
+@group(0) @binding(3) var atlas: texture_2d<u32>;
+@group(0) @binding(4) var palette: texture_2d<f32>;
+@group(0) @binding(5) var emissive_palette: texture_2d<f32>;
 
 struct RasterOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -125,26 +118,5 @@ fn quad_vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) inst
 
 @fragment
 fn quad_fragment(in: ColorOutput) -> @location(0) vec4<f32> {
-    return in.color;
-}
-
-@vertex
-fn line_vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32) -> ColorOutput {
-    let item = lines[instance];
-    let direction = item.b - item.a;
-    let normal = normalize(vec2<f32>(-direction.y, direction.x) + vec2<f32>(1e-5, 0.0)) * 0.5;
-    let corners = array<vec2<f32>, 6>(
-        item.a - normal, item.b - normal, item.b + normal,
-        item.a - normal, item.b + normal, item.a + normal
-    );
-    let p = corners[vertex];
-    var out: ColorOutput;
-    out.clip_position = vec4<f32>(p.x * 2.0 / frame.viewport.window_size.x, p.y * 2.0 / frame.viewport.window_size.y, 0.0, 1.0);
-    out.color = item.color;
-    return out;
-}
-
-@fragment
-fn line_fragment(in: ColorOutput) -> @location(0) vec4<f32> {
     return in.color;
 }

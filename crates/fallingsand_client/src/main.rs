@@ -11,6 +11,7 @@ fn render_error_policy(
     main_world: &mut World,
     _render_world: &mut World,
 ) -> RenderErrorPolicy {
+    error!("render error: {error:?}");
     match error.ty {
         ErrorType::DeviceLost => RenderErrorPolicy::Recover(default()),
         _ => {
@@ -40,25 +41,17 @@ fn main() {
             .set(ImagePlugin::default_nearest()),
     )
     .add_plugins((
-        view::render::GameRendererPlugin,
+        view::render::GameplayRendererPlugin,
         view::ui::debug::DiagnosticsPlugin,
     ))
     .insert_resource(ClearColor(Color::srgb(0.08, 0.09, 0.13)))
     .insert_resource(RenderErrorHandler(render_error_policy))
     .insert_resource(Game(client))
     .init_resource::<view::io::UiInbox>()
-    .init_resource::<view::chunks::ChunkRenderState>()
-    .init_resource::<view::particles::ParticleVisuals>()
     .init_resource::<view::players::NametagVisuals>()
-    .init_resource::<view::sky::Sky>()
-    .init_resource::<view::sky::SkyRenderState>()
-    .init_resource::<view::sky::ActiveLights>()
-    .init_resource::<view::parallax::ParallaxState>()
-    .init_resource::<view::ui::debug::DebugPrimitives>()
     .add_systems(
         Startup,
         (
-            view::camera::setup_camera,
             view::ui::debug::setup_overlay,
             view::ui::icons::load_item_icons,
         ),
@@ -69,22 +62,11 @@ fn main() {
     )
     .add_systems(
         Update,
-        (
-            view::camera::sync_camera,
-            view::sky::sync_sky,
-            view::sky::apply_lighting,
-            view::parallax::sync_parallax,
-            view::players::sync_nametags,
-            view::ui::debug::draw_debug_borders,
-        )
-            .chain()
-            .after(view::io::drive_game),
+        view::players::sync_nametags.after(view::render::GameplayRenderSet::Camera),
     )
     .add_systems(
         Update,
         (
-            view::chunks::sync_chunks,
-            view::particles::update_particles,
             view::ui::menu::sync_menu,
             view::ui::game_menu::sync_game_menu,
             view::ui::settings::sync_settings,
@@ -103,10 +85,13 @@ fn main() {
             view::ui::inventory::update_tooltip,
             view::ui::chat::sync_chat,
             view::ui::chat::fade_chat,
-            view::ui::debug::update_overlay,
             view::ui::button_hover,
         )
             .after(view::io::drive_game),
+    );
+    app.add_systems(
+        Update,
+        view::ui::debug::update_overlay.after(view::render::GameplayRenderSet::Prepared),
     );
     #[cfg(not(target_family = "wasm"))]
     app.add_systems(Update, view::icon::set_window_icons);

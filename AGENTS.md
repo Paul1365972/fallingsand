@@ -18,4 +18,7 @@ Docs express intent, not exact specification: when relevant code and docs disagr
 
 Run `cargo fmt --all` and `cargo clippy --workspace --all-targets --locked -- -D warnings`.
 
+Manual gameplay verification belongs to the user.
+Do not build or launch the game unless explicitly requested.
+
 Commit once at the end of a task (separate packets only when clearly separable): conventional subject, no body, no co-author; don't push; leave the user's parallel WIP untouched.

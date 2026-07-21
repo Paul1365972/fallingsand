@@ -3,13 +3,13 @@
 const TAP_RADIUS: i32 = 13;
 const TAP_VEC4S: u32 = 7u;
 
-struct LightBlurParams {
+struct LightBlurFrame {
     glow_weights: array<vec4<f32>, TAP_VEC4S>,
     air_weights: array<vec4<f32>, TAP_VEC4S>,
 }
 
 @group(0) @binding(0) var source_tex: texture_2d<f32>;
-@group(0) @binding(1) var<uniform> blur: LightBlurParams;
+@group(0) @binding(1) var<uniform> frame: LightBlurFrame;
 
 @fragment
 fn downsample_fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
@@ -37,15 +37,15 @@ fn blur_value(uv: vec2<f32>, dir: vec2<i32>) -> vec4<f32> {
     var glow = vec3<f32>(0.0);
     var air = 0.0;
     for (var v = 0u; v < TAP_VEC4S; v += 1u) {
-        let gw = blur.glow_weights[v];
-        let aw = blur.air_weights[v];
+        let glow_weights = frame.glow_weights[v];
+        let air_weights = frame.air_weights[v];
         let base = i32(v * 4u) - TAP_RADIUS;
         let s0 = blur_tap(center, dir, base);
         let s1 = blur_tap(center, dir, base + 1);
         let s2 = blur_tap(center, dir, base + 2);
         let s3 = blur_tap(center, dir, base + 3);
-        glow += s0.rgb * gw.x + s1.rgb * gw.y + s2.rgb * gw.z + s3.rgb * gw.w;
-        air += dot(vec4<f32>(s0.a, s1.a, s2.a, s3.a), aw);
+        glow += s0.rgb * glow_weights.x + s1.rgb * glow_weights.y + s2.rgb * glow_weights.z + s3.rgb * glow_weights.w;
+        air += dot(vec4<f32>(s0.a, s1.a, s2.a, s3.a), air_weights);
     }
     return vec4<f32>(glow, air);
 }

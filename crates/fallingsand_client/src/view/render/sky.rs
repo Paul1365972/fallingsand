@@ -1,28 +1,31 @@
-mod lighting;
-pub mod materials;
-
-pub use lighting::{ActiveLights, apply_lighting};
-pub use materials::{AtmosphereParams, LightingParams, MoonParams, StarfieldParams, SunParams};
-
-use super::Game;
-use super::camera::{CameraState, STAR_WORLD_TILE};
+use super::super::Game;
 use crate::game::RenderMode;
+use crate::view::camera::CameraState;
 use bevy::prelude::*;
 use fallingsand_core::celestial::{MOON_DISC_RADIUS, SHADE_DISC_RADIUS, SUN_DISC_RADIUS};
-use fallingsand_core::{CelestialState, smoothstep};
+use fallingsand_core::{Calendar, CelestialState, smoothstep};
 
 const MAX_DARKNESS: f32 = 0.82;
 const HORIZON_FRAC: f32 = 0.22;
 const ORBIT_RADIUS: f32 = 133.0;
 const SUN_SIZE: f32 = 48.0;
 const MOON_SIZE: f32 = 28.0;
+const STAR_WORLD_TILE: f32 = 512.0;
 const DEFAULT_CLEAR: Color = Color::srgb(0.08, 0.09, 0.13);
 
-#[derive(Resource, Default, Clone, Copy)]
+pub(crate) fn star_scroll(calendar: Calendar) -> Vec2 {
+    Vec2::new(
+        (-calendar.sidereal() * STAR_WORLD_TILE).rem_euclid(STAR_WORLD_TILE),
+        0.0,
+    )
+}
+
+#[derive(Resource, Default, Clone)]
 pub struct Sky {
     pub state: CelestialState,
     pub synced: bool,
     pub color_linear: Vec3,
+    pub(super) visuals: SkyVisuals,
 }
 
 impl Sky {
@@ -31,51 +34,91 @@ impl Sky {
     }
 }
 
+#[derive(Clone, Default)]
+pub(super) struct SkyVisuals {
+    pub sun: SunVisual,
+    pub moon: MoonVisual,
+    pub stars: StarfieldVisual,
+    pub atmosphere: AtmosphereVisual,
+    pub sun_quad: CelestialQuad,
+    pub moon_quad: CelestialQuad,
+    pub star_scroll: Vec2,
+}
+
 #[derive(Clone, Copy, Default)]
-pub struct CelestialQuad {
+pub(super) struct CelestialQuad {
     pub center_px: Vec2,
     pub size_px: Vec2,
 }
 
-#[derive(Resource, Clone, Default)]
-pub struct SkyRenderState {
-    pub sun: SunParams,
-    pub moon: MoonParams,
-    pub stars: StarfieldParams,
-    pub atmosphere: AtmosphereParams,
-    pub sun_quad: CelestialQuad,
-    pub moon_quad: CelestialQuad,
+#[derive(Clone, Default)]
+pub(super) struct SunVisual {
+    pub redness: f32,
+    pub occlusion: f32,
+    pub quad_size: f32,
+    pub disc_radius: f32,
 }
 
-pub fn sky_color(light: f32, sun_alt: f32, solar_occ: f32) -> Vec3 {
+#[derive(Clone, Default)]
+pub(super) struct MoonVisual {
+    pub sun_direction: Vec2,
+    pub illumination: f32,
+    pub umbra: Vec2,
+    pub umbra_radius: f32,
+    pub sky_color: Vec4,
+    pub quad_size: f32,
+    pub disc_radius: f32,
+    pub lunar_shadow: f32,
+}
+
+#[derive(Clone, Default)]
+pub(super) struct StarfieldVisual {
+    pub center: Vec2,
+    pub scroll: Vec2,
+    pub world_scale: f32,
+    pub star_visibility: f32,
+    pub horizon: f32,
+    pub sidereal: f32,
+}
+
+#[derive(Clone, Default)]
+pub(super) struct AtmosphereVisual {
+    pub color: Vec4,
+    pub sun_pos: Vec2,
+    pub moon_pos: Vec2,
+    pub sun_glow: Vec4,
+    pub moon_glow: Vec4,
+    pub horizon: f32,
+    pub intensity: f32,
+    pub aspect: f32,
+}
+
+fn sky_color(light: f32, sun_altitude: f32, solar_occlusion: f32) -> Vec3 {
     let night = Vec3::new(0.015, 0.025, 0.055);
     let day = Vec3::new(0.40, 0.60, 0.86);
     let horizon = Vec3::new(0.85, 0.45, 0.28);
     let base = night.lerp(day, light);
-    let band = (1.0 - sun_alt.abs()).powi(3);
-    let warm = band * (1.0 - solar_occ) * 0.6;
+    let band = (1.0 - sun_altitude.abs()).powi(3);
+    let warm = band * (1.0 - solar_occlusion) * 0.6;
     let mut rgb = base.lerp(horizon, warm);
-    if solar_occ > 0.0 {
+    if solar_occlusion > 0.0 {
         let grey = Vec3::splat((rgb.x + rgb.y + rgb.z) / 3.0);
-        rgb = rgb.lerp(grey, solar_occ * 0.4);
+        rgb = rgb.lerp(grey, solar_occlusion * 0.4);
     }
     rgb
 }
 
-pub fn sync_sky(
+pub(super) fn sync_sky(
     game: Res<Game>,
     state: Res<CameraState>,
     mut sky: ResMut<Sky>,
-    mut render: ResMut<SkyRenderState>,
     mut clear: ResMut<ClearColor>,
 ) {
     let clock = game.0.ingame().map(|ingame| ingame.clock);
     let synced = clock.is_some_and(|clock| clock.synced);
     let calendar = clock.map(|clock| clock.calendar).unwrap_or_default();
-    sky.synced = synced;
     if !synced {
         *sky = Sky::default();
-        *render = SkyRenderState::default();
         clear.0 = DEFAULT_CLEAR;
         return;
     }
@@ -96,32 +139,33 @@ pub fn sync_sky(
     let color = sky_color(celestial.light, sun_altitude, solar_occlusion);
     let linear = Color::srgb(color.x, color.y, color.z).to_linear();
     sky.state = celestial;
+    sky.synced = true;
     sky.color_linear = Vec3::new(linear.red, linear.green, linear.blue);
     clear.0 = Color::srgb(color.x, color.y, color.z);
 
     let k = state.k as f32;
-    let place = |p: Vec2| match state.render_mode {
-        RenderMode::PixelPerfect => (p * k).round(),
-        RenderMode::Smooth => p * k,
-        RenderMode::Retro => p.round() * k,
+    let place = |position: Vec2| match state.render_mode {
+        RenderMode::PixelPerfect => (position * k).round(),
+        RenderMode::Smooth => position * k,
+        RenderMode::Retro => position.round() * k,
     };
-    render.sun_quad = CelestialQuad {
+    let sun_quad = CelestialQuad {
         center_px: place(sun_position + center),
         size_px: Vec2::splat(SUN_SIZE * k),
     };
-    render.moon_quad = CelestialQuad {
+    let moon_quad = CelestialQuad {
         center_px: place(moon_position + center),
         size_px: Vec2::splat(moon_size * k),
     };
 
     let redness = 1.0 - smoothstep(0.0, 0.35, sun_altitude);
-    render.sun = SunParams {
+    let sun = SunVisual {
         redness,
         occlusion: solar_occlusion,
         quad_size: SUN_SIZE,
         disc_radius: SUN_DISC_RADIUS * ORBIT_RADIUS / (SUN_SIZE * 0.5),
     };
-    render.moon = MoonParams {
+    let moon = MoonVisual {
         sun_direction: Vec2::from(celestial.sun_direction),
         illumination: celestial.illumination,
         umbra,
@@ -132,9 +176,10 @@ pub fn sync_sky(
             / (moon_size * 0.5),
         lunar_shadow: celestial.lunar_shadow,
     };
-    render.stars = StarfieldParams {
+    let star_scroll = star_scroll(calendar);
+    let stars = StarfieldVisual {
         center,
-        scroll: state.star_scroll.floor(),
+        scroll: star_scroll.floor(),
         world_scale: STAR_WORLD_TILE,
         star_visibility: celestial.star_visibility,
         horizon: horizon_uv,
@@ -147,20 +192,30 @@ pub fn sync_sky(
     let base = night_haze.lerp(day_haze, celestial.light);
     let horizon_band = (1.0 - sun_altitude.abs()).powi(2);
     let atmosphere_color = base.lerp(warm, horizon_band * (1.0 - solar_occlusion) * 0.7);
-    let to_uv = |p: Vec2| Vec2::new(0.5 + p.x / native.x, 0.5 - p.y / native.y);
-    let sun_glow_col = Vec3::new(1.0, 0.6, 0.3).lerp(Vec3::new(1.0, 0.38, 0.16), redness);
-    let sun_glow_i = celestial.daylight * (0.12 + 0.7 * horizon_band) * (1.0 - solar_occlusion);
+    let to_uv =
+        |position: Vec2| Vec2::new(0.5 + position.x / native.x, 0.5 - position.y / native.y);
+    let sun_glow_color = Vec3::new(1.0, 0.6, 0.3).lerp(Vec3::new(1.0, 0.38, 0.16), redness);
+    let sun_glow_intensity =
+        celestial.daylight * (0.12 + 0.7 * horizon_band) * (1.0 - solar_occlusion);
     let moon_up = smoothstep(-0.10, 0.10, celestial.moon_position[1]);
-    let moon_glow_i = celestial.illumination * moon_up * (1.0 - celestial.daylight) * 0.22;
-    render.atmosphere = AtmosphereParams {
+    let moon_glow_intensity = celestial.illumination * moon_up * (1.0 - celestial.daylight) * 0.22;
+    let atmosphere = AtmosphereVisual {
         color: atmosphere_color.extend(1.0),
         sun_pos: to_uv(sun_position + center),
         moon_pos: to_uv(moon_position + center),
-        sun_glow: sun_glow_col.extend(sun_glow_i),
-        moon_glow: Vec3::new(0.5, 0.6, 0.85).extend(moon_glow_i),
+        sun_glow: sun_glow_color.extend(sun_glow_intensity),
+        moon_glow: Vec3::new(0.5, 0.6, 0.85).extend(moon_glow_intensity),
         horizon: horizon_uv,
         intensity: 0.25 + 0.6 * celestial.light,
         aspect: native.x / native.y,
-        _pad: 0.0,
+    };
+    sky.visuals = SkyVisuals {
+        sun,
+        moon,
+        stars,
+        atmosphere,
+        sun_quad,
+        moon_quad,
+        star_scroll,
     };
 }

@@ -1,15 +1,14 @@
 use crate::game::{ClientGame, InGame, Phase};
 use crate::view::Game;
 use crate::view::camera::CameraState;
-use crate::view::chunks::ChunkRenderState;
-use crate::view::particles::ParticleVisuals;
-use crate::view::sky::Sky;
+use crate::view::render::primitives::ParticleVisuals;
+use crate::view::render::raster::ChunkAtlasState;
+use crate::view::render::sky::Sky;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use fallingsand_core::content;
 use fallingsand_core::{
-    CHUNK_AREA, CHUNK_SIZE, Cell, ChunkPos, MAX_HEALTH, Phase as MaterialPhase, REGION_SIZE_CELLS,
-    SEASON_DAYS, TICK_RATE,
+    CHUNK_AREA, Cell, ChunkPos, MAX_HEALTH, Phase as MaterialPhase, SEASON_DAYS, TICK_RATE,
 };
 use fallingsand_protocol::{ServerStats, TickProfile};
 use std::collections::VecDeque;
@@ -209,7 +208,7 @@ pub fn update_overlay(
     diagnostics: Res<DiagnosticsStore>,
     camera: Res<CameraState>,
     sky: Res<Sky>,
-    visuals: Res<ChunkRenderState>,
+    visuals: Res<ChunkAtlasState>,
     particles: Res<ParticleVisuals>,
     mut windows: ResMut<StatWindows>,
     mut left: Single<&mut Text, (With<DebugTextLeft>, Without<DebugTextRight>)>,
@@ -314,7 +313,7 @@ fn playing_lines(
     ingame: &InGame,
     sky: &Sky,
     camera: &CameraState,
-    visuals: &ChunkRenderState,
+    visuals: &ChunkAtlasState,
     particle_count: usize,
     windows: &mut StatWindows,
     now: f32,
@@ -417,7 +416,7 @@ fn playing_lines(
     }
     right_lines.push(format!(
         "client {} chunks  {} players  {:.0} particles",
-        view.chunks.len(),
+        visuals.live_chunks(),
         ingame.players.names.len(),
         windows.particles.avg(now, particle_count as f32),
     ));
@@ -428,8 +427,12 @@ fn playing_lines(
     ));
     right_lines.push(format!(
         "upload {:>4.0}/s ({}/s)  {}px/cell  {}",
-        windows.uploads.rate(now, visuals.uploads as f32),
-        human_bytes(windows.upload_bytes.rate(now, visuals.upload_bytes as f32) as u64),
+        windows.uploads.rate(now, visuals.uploads() as f32),
+        human_bytes(
+            windows
+                .upload_bytes
+                .rate(now, visuals.upload_bytes() as f32) as u64,
+        ),
         camera.k,
         game.settings.render_mode.label(),
     ));
@@ -476,107 +479,6 @@ fn server_lines(server: &ServerStats, windows: &mut StatWindows, now: f32, out: 
         human_bytes(windows.tx_bytes.avg(now, server.replicated_bytes as f32) as u64),
         human_bytes(mem),
     ));
-}
-
-#[derive(Clone, Copy)]
-pub struct DebugLine {
-    pub a: Vec2,
-    pub b: Vec2,
-    pub color: Vec4,
-}
-
-#[derive(Resource, Default)]
-pub struct DebugPrimitives {
-    pub lines: Vec<DebugLine>,
-}
-
-pub fn draw_debug_borders(
-    game: Res<Game>,
-    state: Res<CameraState>,
-    mut primitives: ResMut<DebugPrimitives>,
-) {
-    primitives.lines.clear();
-    if !game.0.view_prefs.debug_borders {
-        return;
-    }
-    let Some(ingame) = game.0.ingame() else {
-        return;
-    };
-    let half = state.view_cells() / 2.0;
-    let min = state.pos - half;
-    let max = state.pos + half;
-    let k = state.k as f32;
-    let to_px = |world: Vec2| (world - state.pos) * k;
-
-    let chunk = CHUNK_SIZE as f32;
-    let region = REGION_SIZE_CELLS as f32;
-    let chunk_color = Color::srgba(1.0, 1.0, 1.0, 0.12);
-    let region_color = Color::srgba(1.0, 0.55, 0.2, 0.6);
-
-    let mut x = (min.x / chunk).floor() * chunk;
-    while x <= max.x {
-        let color = if x.rem_euclid(region) == 0.0 {
-            region_color
-        } else {
-            chunk_color
-        };
-        primitives.lines.push(DebugLine {
-            a: to_px(Vec2::new(x, min.y)),
-            b: to_px(Vec2::new(x, max.y)),
-            color: color.to_linear().to_f32_array().into(),
-        });
-        x += chunk;
-    }
-    let mut y = (min.y / chunk).floor() * chunk;
-    while y <= max.y {
-        let color = if y.rem_euclid(region) == 0.0 {
-            region_color
-        } else {
-            chunk_color
-        };
-        primitives.lines.push(DebugLine {
-            a: to_px(Vec2::new(min.x, y)),
-            b: to_px(Vec2::new(max.x, y)),
-            color: color.to_linear().to_f32_array().into(),
-        });
-        y += chunk;
-    }
-
-    for flash in &ingame.debug.rects {
-        let origin = Vec2::new(flash.pos.x as f32 * chunk, flash.pos.y as f32 * chunk);
-        let corner = origin + Vec2::new(flash.rect.min_x as f32, flash.rect.min_y as f32);
-        let size = Vec2::new(flash.rect.width() as f32, flash.rect.height() as f32);
-        let color = if flash.is_sim {
-            Color::srgba(0.2, 0.9, 1.0, 0.8)
-        } else {
-            Color::srgba(1.0, 0.9, 0.2, 0.8)
-        };
-        let min = to_px(corner);
-        let max = to_px(corner + size);
-        let color: Vec4 = color.to_linear().to_f32_array().into();
-        primitives.lines.extend([
-            DebugLine {
-                a: min,
-                b: Vec2::new(max.x, min.y),
-                color,
-            },
-            DebugLine {
-                a: Vec2::new(max.x, min.y),
-                b: max,
-                color,
-            },
-            DebugLine {
-                a: max,
-                b: Vec2::new(min.x, max.y),
-                color,
-            },
-            DebugLine {
-                a: Vec2::new(min.x, max.y),
-                b: min,
-                color,
-            },
-        ]);
-    }
 }
 
 fn block_phase(chunk: ChunkPos) -> u8 {

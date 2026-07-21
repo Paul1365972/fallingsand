@@ -1,5 +1,7 @@
-use super::Game;
+use super::super::Game;
+use crate::view::camera::CameraState;
 use bevy::prelude::*;
+use fallingsand_core::{CHUNK_SIZE, REGION_SIZE_CELLS};
 use fallingsand_protocol::InteractionStatus;
 
 const SPRAY_TTL: f32 = 0.5;
@@ -20,6 +22,18 @@ pub struct WorldQuad {
     pub color: Vec4,
 }
 
+#[derive(Clone, Copy)]
+pub struct DebugLine {
+    pub a: Vec2,
+    pub b: Vec2,
+    pub color: Vec4,
+}
+
+#[derive(Resource, Default)]
+pub struct DebugPrimitives {
+    pub lines: Vec<DebugLine>,
+}
+
 #[derive(Resource, Default)]
 pub struct ParticleVisuals {
     particles: Vec<ParticleVisual>,
@@ -32,7 +46,7 @@ impl ParticleVisuals {
     }
 }
 
-pub fn update_particles(
+pub(super) fn update_particles(
     mut game: ResMut<Game>,
     time: Res<Time>,
     mut visuals: ResMut<ParticleVisuals>,
@@ -91,6 +105,95 @@ pub fn update_particles(
             size: Vec2::ONE,
             color: color.to_linear().to_f32_array().into(),
         });
+    }
+}
+
+pub(super) fn update_debug_primitives(
+    game: Res<Game>,
+    state: Res<CameraState>,
+    mut primitives: ResMut<DebugPrimitives>,
+) {
+    primitives.lines.clear();
+    if !game.0.view_prefs.debug_borders {
+        return;
+    }
+    let Some(ingame) = game.0.ingame() else {
+        return;
+    };
+    let half = state.view_cells() / 2.0;
+    let min = state.pos - half;
+    let max = state.pos + half;
+    let k = state.k as f32;
+    let to_px = |world: Vec2| (world - state.pos) * k;
+
+    let chunk = CHUNK_SIZE as f32;
+    let region = REGION_SIZE_CELLS as f32;
+    let chunk_color = Color::srgba(1.0, 1.0, 1.0, 0.12);
+    let region_color = Color::srgba(1.0, 0.55, 0.2, 0.6);
+
+    let mut x = (min.x / chunk).floor() * chunk;
+    while x <= max.x {
+        let color = if x.rem_euclid(region) == 0.0 {
+            region_color
+        } else {
+            chunk_color
+        };
+        primitives.lines.push(DebugLine {
+            a: to_px(Vec2::new(x, min.y)),
+            b: to_px(Vec2::new(x, max.y)),
+            color: color.to_linear().to_f32_array().into(),
+        });
+        x += chunk;
+    }
+    let mut y = (min.y / chunk).floor() * chunk;
+    while y <= max.y {
+        let color = if y.rem_euclid(region) == 0.0 {
+            region_color
+        } else {
+            chunk_color
+        };
+        primitives.lines.push(DebugLine {
+            a: to_px(Vec2::new(min.x, y)),
+            b: to_px(Vec2::new(max.x, y)),
+            color: color.to_linear().to_f32_array().into(),
+        });
+        y += chunk;
+    }
+
+    for flash in &ingame.debug.rects {
+        let origin = Vec2::new(flash.pos.x as f32 * chunk, flash.pos.y as f32 * chunk);
+        let corner = origin + Vec2::new(flash.rect.min_x as f32, flash.rect.min_y as f32);
+        let size = Vec2::new(flash.rect.width() as f32, flash.rect.height() as f32);
+        let color = if flash.is_sim {
+            Color::srgba(0.2, 0.9, 1.0, 0.8)
+        } else {
+            Color::srgba(1.0, 0.9, 0.2, 0.8)
+        };
+        let min = to_px(corner);
+        let max = to_px(corner + size);
+        let color: Vec4 = color.to_linear().to_f32_array().into();
+        primitives.lines.extend([
+            DebugLine {
+                a: min,
+                b: Vec2::new(max.x, min.y),
+                color,
+            },
+            DebugLine {
+                a: Vec2::new(max.x, min.y),
+                b: max,
+                color,
+            },
+            DebugLine {
+                a: max,
+                b: Vec2::new(min.x, max.y),
+                color,
+            },
+            DebugLine {
+                a: Vec2::new(min.x, max.y),
+                b: min,
+                color,
+            },
+        ]);
     }
 }
 
