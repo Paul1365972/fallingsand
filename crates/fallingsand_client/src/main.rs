@@ -23,7 +23,7 @@ fn render_error_policy(
 
 fn main() {
     let mut client = ClientGame::new();
-    if let Some(world) = game::net::cli_world_name() {
+    if let Some(world) = game::platform::cli_world_name() {
         client.start_game_local(world);
     }
 

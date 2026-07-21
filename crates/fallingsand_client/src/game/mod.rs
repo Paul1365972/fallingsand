@@ -7,7 +7,7 @@ pub mod input;
 pub mod inventory;
 pub mod menu;
 pub mod net;
-mod platform;
+pub(crate) mod platform;
 pub mod players;
 pub mod settings;
 pub mod world;

@@ -1,5 +1,5 @@
 use super::{BUTTON_BG, spawn_button};
-use crate::game::{ClientGame, Flow, net};
+use crate::game::{ClientGame, Flow, platform};
 use crate::view::Game;
 use crate::view::io::Btn;
 use bevy::prelude::*;
@@ -150,7 +150,7 @@ fn spawn_menu(commands: &mut Commands, game: &ClientGame) {
                         UrlField,
                         "host[:port]",
                         320.0,
-                        &net::default_server(),
+                        &platform::default_server(),
                     );
                     spawn_field(column, CertField, "cert sha256 (optional)", 320.0, "");
                     spawn_button(column, Btn::Connect, "Connect", 120.0, BUTTON_BG);

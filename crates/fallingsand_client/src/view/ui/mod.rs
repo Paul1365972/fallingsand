@@ -7,6 +7,7 @@ pub mod icons;
 pub mod inventory;
 pub mod menu;
 pub mod settings;
+pub(crate) mod slots;
 
 use super::io::Btn;
 use bevy::prelude::*;

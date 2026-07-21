@@ -1,3 +1,15 @@
+#[cfg(not(target_family = "wasm"))]
+mod embedded;
+#[cfg(not(target_family = "wasm"))]
+mod native;
+#[cfg(target_family = "wasm")]
+mod wasm;
+
+#[cfg(not(target_family = "wasm"))]
+use native::{Dialing, poll_dial, start_dial};
+#[cfg(target_family = "wasm")]
+use wasm::{poll_dial, start_dial};
+
 use super::identity::Identity;
 use super::{ClientGame, Flow, GamePanel, InGame, IoFrame, Phase};
 use bevy::log::{error, info, warn};
@@ -12,8 +24,6 @@ const STALL_SECS: f32 = 2.0;
 const RETRY_DELAY: f32 = 2.0;
 const RETRY_MAX: f32 = 10.0;
 const HANDSHAKE_TIMEOUT_SECS: f32 = 10.0;
-#[cfg(not(target_family = "wasm"))]
-const DIAL_TIMEOUT_SECS: f32 = 15.0;
 
 fn retry_delay(attempt: u32) -> f32 {
     (RETRY_DELAY * 2f32.powi(attempt.min(8) as i32)).min(RETRY_MAX)
@@ -124,27 +134,6 @@ pub fn parse_cert_hash(hex: &str) -> Result<Option<Vec<u8>>, super::hex::HexErro
         return Ok(None);
     }
     hex.parse::<super::hex::Hex32>().map(|h| Some(h.0.to_vec()))
-}
-
-pub fn cli_world_name() -> Option<String> {
-    #[cfg(not(target_family = "wasm"))]
-    {
-        super::platform::arg_value("--world")
-    }
-    #[cfg(target_family = "wasm")]
-    {
-        None
-    }
-}
-
-pub fn default_server() -> String {
-    #[cfg(target_family = "wasm")]
-    if let Some(server) = super::platform::query_param("server") {
-        return server;
-    }
-    option_env!("FALLINGSAND_SERVER")
-        .unwrap_or_default()
-        .to_string()
 }
 
 pub struct Net {
@@ -434,162 +423,5 @@ fn sync_debug_stream(ingame: &mut InGame, debug_borders: bool) {
             enabled: debug_borders,
         });
         ingame.debug.subscribed = debug_borders;
-    }
-}
-
-#[cfg(not(target_family = "wasm"))]
-struct Dialing {
-    receiver: std::sync::Mutex<std::sync::mpsc::Receiver<Result<Box<dyn Connection>, String>>>,
-    elapsed: f32,
-}
-
-#[cfg(not(target_family = "wasm"))]
-fn poll_dial(net: &mut Net, dt: f32) -> bool {
-    let Some(dialing) = net.dialing.as_mut() else {
-        return false;
-    };
-    dialing.elapsed += dt;
-    let timed_out = dialing.elapsed > DIAL_TIMEOUT_SECS;
-    let result = dialing.receiver.lock().unwrap().try_recv();
-    match result {
-        Ok(Ok(conn)) => {
-            net.dialing = None;
-            net.session = Some(Session::new(conn));
-        }
-        Ok(Err(err)) => {
-            net.dialing = None;
-            error!("failed to connect: {err}");
-            net.supervisor.last_error = Some(err);
-        }
-        Err(std::sync::mpsc::TryRecvError::Empty) => {
-            if timed_out {
-                net.dialing = None;
-                error!("connect attempt timed out after {DIAL_TIMEOUT_SECS}s");
-                net.supervisor.last_error = Some("connect timed out".into());
-            }
-        }
-        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-            net.dialing = None;
-            net.supervisor.last_error = Some("connect worker died".into());
-        }
-    }
-    net.dialing.is_some()
-}
-
-#[cfg(target_family = "wasm")]
-fn poll_dial(_net: &mut Net, _dt: f32) -> bool {
-    false
-}
-
-#[cfg(not(target_family = "wasm"))]
-fn start_dial(net: &mut Net, target: ConnectTarget) {
-    if net.runtime.is_none() {
-        match tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-        {
-            Ok(runtime) => net.runtime = Some(runtime),
-            Err(err) => {
-                net.supervisor.last_error = Some(err.to_string());
-                return;
-            }
-        }
-    }
-    let handle = net.runtime.as_ref().unwrap().handle().clone();
-    let (sender, receiver) = std::sync::mpsc::channel();
-    std::thread::Builder::new()
-        .name("wt-dial".into())
-        .spawn(move || {
-            let result = fallingsand_net::wt_native::connect(handle, &target.url, target.cert_hash)
-                .map(|conn| Box::new(conn) as Box<dyn Connection>)
-                .map_err(|err| err.to_string());
-            let _ = sender.send(result);
-        })
-        .expect("spawn dial thread");
-    net.dialing = Some(Dialing {
-        receiver: std::sync::Mutex::new(receiver),
-        elapsed: 0.0,
-    });
-}
-
-#[cfg(target_family = "wasm")]
-fn start_dial(net: &mut Net, target: ConnectTarget) {
-    let conn = Box::new(fallingsand_net::wt_wasm::connect(
-        &target.url,
-        target.cert_hash,
-    ));
-    net.session = Some(Session::new(conn));
-}
-
-#[cfg(not(target_family = "wasm"))]
-mod embedded {
-    use super::Session;
-    use fallingsand_protocol::ServerStats;
-    use fallingsand_server::{Server, ServerConfig, ServerControl};
-    use std::sync::{Arc, Mutex};
-
-    pub struct EmbeddedServer {
-        pub control: Arc<ServerControl>,
-        thread: Option<std::thread::JoinHandle<()>>,
-        pub stats: Arc<Mutex<ServerStats>>,
-    }
-
-    impl Drop for EmbeddedServer {
-        fn drop(&mut self) {
-            self.control.request_stop();
-            if let Some(thread) = self.thread.take() {
-                let _ = thread.join();
-            }
-        }
-    }
-
-    pub fn launch(world_name: String) -> (Session, EmbeddedServer) {
-        let (listener, dialer) = fallingsand_net::memory_listener();
-        let control = Arc::new(ServerControl::default());
-        let stats = Arc::new(Mutex::new(ServerStats::default()));
-
-        let thread_control = control.clone();
-        let thread_stats = stats.clone();
-        let thread = std::thread::Builder::new()
-            .name("embedded-server".into())
-            .spawn(move || {
-                let save_path = std::path::Path::new("saves")
-                    .join(&world_name)
-                    .join("world.redb");
-                let mut server = Server::new(ServerConfig {
-                    listener: Box::new(listener),
-                    stats_sink: Some(thread_stats),
-                    world: fallingsand_server::WorldConfig {
-                        seed: derive_seed(&world_name),
-                        name: world_name,
-                        save_path: Some(save_path),
-                    },
-                })
-                .expect("embedded server init");
-                if let Err(err) = server.run_blocking(thread_control) {
-                    bevy::log::error!("embedded server stopped: {err}");
-                }
-            })
-            .expect("spawn embedded server thread");
-
-        let session = Session::new(dialer.connect().expect("connect to embedded server"));
-        let server = EmbeddedServer {
-            control,
-            thread: Some(thread),
-            stats,
-        };
-        (session, server)
-    }
-
-    fn derive_seed(name: &str) -> u64 {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        name.hash(&mut hasher);
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .subsec_nanos()
-            .hash(&mut hasher);
-        hasher.finish()
     }
 }

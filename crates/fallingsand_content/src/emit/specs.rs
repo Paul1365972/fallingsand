@@ -1,5 +1,5 @@
 use super::{material_id, phase_path};
-use crate::model::Content;
+use crate::compiler::Content;
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
 

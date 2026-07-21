@@ -1,8 +1,9 @@
 use super::RenderSourceAssets;
-use super::composite::{LineInstance, PointLight, SceneFrame, point_lights, scene_frame};
+use super::atlas::{ChunkAtlasState, ChunkInstance, ChunkUpload};
 use super::light_field::extended_size;
 use super::primitives::{DebugPrimitives, ParticleVisuals};
-use super::raster::{ChunkAtlasState, ChunkInstance, ChunkUpload, QuadInstance, RasterFrame};
+use super::raster::{QuadInstance, RasterFrame};
+use super::scene::{LineInstance, PointLight, SceneFrame, point_lights, scene_frame};
 use super::sky::Sky;
 use crate::view::Game;
 use crate::view::camera::CameraState;
@@ -32,17 +33,25 @@ impl Default for PixelViewport {
 #[derive(Resource)]
 pub struct ExtractedRenderFrame {
     pub active: bool,
-    pub raster: RasterFrame,
-    pub scene: SceneFrame,
+    pub raster: RasterExtract,
+    pub composite: CompositeExtract,
+    pub native: UVec2,
+}
+
+pub(super) struct RasterExtract {
+    pub frame: RasterFrame,
     pub chunks: Vec<ChunkInstance>,
     pub quads: Vec<QuadInstance>,
-    pub lines: Vec<LineInstance>,
-    pub lights: Vec<PointLight>,
     pub uploads: Vec<ChunkUpload>,
     pub atlas_side: u32,
     pub atlas_generation: u64,
     pub instance_generation: u64,
-    pub native: UVec2,
+}
+
+pub(super) struct CompositeExtract {
+    pub frame: SceneFrame,
+    pub lines: Vec<LineInstance>,
+    pub lights: Vec<PointLight>,
     pub stars: Handle<Image>,
 }
 
@@ -50,18 +59,22 @@ impl Default for ExtractedRenderFrame {
     fn default() -> Self {
         Self {
             active: false,
-            raster: default(),
-            scene: default(),
-            chunks: Vec::new(),
-            quads: Vec::new(),
-            lines: Vec::new(),
-            lights: Vec::new(),
-            uploads: Vec::new(),
-            atlas_side: 16,
-            atlas_generation: 0,
-            instance_generation: u64::MAX,
+            raster: RasterExtract {
+                frame: default(),
+                chunks: Vec::new(),
+                quads: Vec::new(),
+                uploads: Vec::new(),
+                atlas_side: 16,
+                atlas_generation: 0,
+                instance_generation: u64::MAX,
+            },
+            composite: CompositeExtract {
+                frame: default(),
+                lines: Vec::new(),
+                lights: Vec::new(),
+                stars: default(),
+            },
             native: UVec2::ONE,
-            stars: default(),
         }
     }
 }
@@ -112,23 +125,23 @@ pub fn extract_render_frame(
         .map(LineInstance::from)
         .collect();
     let stars = main_world.resource::<RenderSourceAssets>().stars.clone();
-    let previous_generation = out.instance_generation;
+    let previous_generation = out.raster.instance_generation;
     let atlas = main_world
         .resource_mut::<ChunkAtlasState>()
         .extract(previous_generation);
     if previous_generation != atlas.instance_generation {
-        out.chunks = atlas.chunks;
+        out.raster.chunks = atlas.chunks;
     }
     out.active = active;
-    out.raster = raster;
-    out.scene = scene;
-    out.quads = quads;
-    out.lines = lines;
-    out.lights = lights;
-    out.uploads = atlas.uploads;
-    out.atlas_side = atlas.side;
-    out.atlas_generation = atlas.atlas_generation;
-    out.instance_generation = atlas.instance_generation;
+    out.raster.frame = raster;
+    out.raster.quads = quads;
+    out.raster.uploads = atlas.uploads;
+    out.raster.atlas_side = atlas.side;
+    out.raster.atlas_generation = atlas.atlas_generation;
+    out.raster.instance_generation = atlas.instance_generation;
+    out.composite.frame = scene;
+    out.composite.lines = lines;
+    out.composite.lights = lights;
+    out.composite.stars = stars;
     out.native = native;
-    out.stars = stars;
 }

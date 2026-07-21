@@ -1,5 +1,5 @@
 use super::{accessor_fn, colors_tokens, material_id, phase_path, tags_tokens};
-use crate::model::{Content, mining_tier_from_hardness};
+use crate::compiler::{Content, mining_tier_from_hardness};
 use fallingsand_material::{Dynamics, Reaction};
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;

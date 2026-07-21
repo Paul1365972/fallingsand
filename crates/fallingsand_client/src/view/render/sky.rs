@@ -1,4 +1,5 @@
 use super::super::Game;
+use super::scene::{AtmosphereFrame, CelestialFrame, MoonFrame, StarfieldFrame, SunFrame};
 use crate::game::RenderMode;
 use crate::view::camera::CameraState;
 use bevy::prelude::*;
@@ -25,72 +26,14 @@ pub struct Sky {
     pub state: CelestialState,
     pub synced: bool,
     pub color_linear: Vec3,
-    pub(super) visuals: SkyVisuals,
+    pub(super) celestial: CelestialFrame,
+    pub(super) star_scroll: Vec2,
 }
 
 impl Sky {
     pub fn darkness(&self) -> f32 {
         (1.0 - self.state.light) * MAX_DARKNESS
     }
-}
-
-#[derive(Clone, Default)]
-pub(super) struct SkyVisuals {
-    pub sun: SunVisual,
-    pub moon: MoonVisual,
-    pub stars: StarfieldVisual,
-    pub atmosphere: AtmosphereVisual,
-    pub sun_quad: CelestialQuad,
-    pub moon_quad: CelestialQuad,
-    pub star_scroll: Vec2,
-}
-
-#[derive(Clone, Copy, Default)]
-pub(super) struct CelestialQuad {
-    pub center_px: Vec2,
-    pub size_px: Vec2,
-}
-
-#[derive(Clone, Default)]
-pub(super) struct SunVisual {
-    pub redness: f32,
-    pub occlusion: f32,
-    pub quad_size: f32,
-    pub disc_radius: f32,
-}
-
-#[derive(Clone, Default)]
-pub(super) struct MoonVisual {
-    pub sun_direction: Vec2,
-    pub illumination: f32,
-    pub umbra: Vec2,
-    pub umbra_radius: f32,
-    pub sky_color: Vec4,
-    pub quad_size: f32,
-    pub disc_radius: f32,
-    pub lunar_shadow: f32,
-}
-
-#[derive(Clone, Default)]
-pub(super) struct StarfieldVisual {
-    pub center: Vec2,
-    pub scroll: Vec2,
-    pub world_scale: f32,
-    pub star_visibility: f32,
-    pub horizon: f32,
-    pub sidereal: f32,
-}
-
-#[derive(Clone, Default)]
-pub(super) struct AtmosphereVisual {
-    pub color: Vec4,
-    pub sun_pos: Vec2,
-    pub moon_pos: Vec2,
-    pub sun_glow: Vec4,
-    pub moon_glow: Vec4,
-    pub horizon: f32,
-    pub intensity: f32,
-    pub aspect: f32,
 }
 
 fn sky_color(light: f32, sun_altitude: f32, solar_occlusion: f32) -> Vec3 {
@@ -149,23 +92,19 @@ pub(super) fn sync_sky(
         RenderMode::Smooth => position * k,
         RenderMode::Retro => position.round() * k,
     };
-    let sun_quad = CelestialQuad {
-        center_px: place(sun_position + center),
-        size_px: Vec2::splat(SUN_SIZE * k),
-    };
-    let moon_quad = CelestialQuad {
-        center_px: place(moon_position + center),
-        size_px: Vec2::splat(moon_size * k),
-    };
+    let sun_center = place(sun_position + center);
+    let sun_size = Vec2::splat(SUN_SIZE * k);
+    let moon_center = place(moon_position + center);
+    let moon_size_px = Vec2::splat(moon_size * k);
 
     let redness = 1.0 - smoothstep(0.0, 0.35, sun_altitude);
-    let sun = SunVisual {
+    let sun = SunFrame {
         redness,
         occlusion: solar_occlusion,
         quad_size: SUN_SIZE,
         disc_radius: SUN_DISC_RADIUS * ORBIT_RADIUS / (SUN_SIZE * 0.5),
     };
-    let moon = MoonVisual {
+    let moon = MoonFrame {
         sun_direction: Vec2::from(celestial.sun_direction),
         illumination: celestial.illumination,
         umbra,
@@ -177,7 +116,7 @@ pub(super) fn sync_sky(
         lunar_shadow: celestial.lunar_shadow,
     };
     let star_scroll = star_scroll(calendar);
-    let stars = StarfieldVisual {
+    let stars = StarfieldFrame {
         center,
         scroll: star_scroll.floor(),
         world_scale: STAR_WORLD_TILE,
@@ -199,7 +138,7 @@ pub(super) fn sync_sky(
         celestial.daylight * (0.12 + 0.7 * horizon_band) * (1.0 - solar_occlusion);
     let moon_up = smoothstep(-0.10, 0.10, celestial.moon_position[1]);
     let moon_glow_intensity = celestial.illumination * moon_up * (1.0 - celestial.daylight) * 0.22;
-    let atmosphere = AtmosphereVisual {
+    let atmosphere = AtmosphereFrame {
         color: atmosphere_color.extend(1.0),
         sun_pos: to_uv(sun_position + center),
         moon_pos: to_uv(moon_position + center),
@@ -208,14 +147,17 @@ pub(super) fn sync_sky(
         horizon: horizon_uv,
         intensity: 0.25 + 0.6 * celestial.light,
         aspect: native.x / native.y,
+        _pad: 0.0,
     };
-    sky.visuals = SkyVisuals {
+    sky.celestial = CelestialFrame {
         sun,
         moon,
         stars,
         atmosphere,
-        sun_quad,
-        moon_quad,
-        star_scroll,
+        sun_center,
+        sun_size,
+        moon_center,
+        moon_size: moon_size_px,
     };
+    sky.star_scroll = star_scroll;
 }

@@ -1,5 +1,5 @@
 use super::icons::ItemIcons;
-use super::inventory::{SlotCount, SlotIcon, spawn_slot_widgets, sync_slots};
+use super::slots::{SlotCount, SlotIcon, spawn_slot_widgets, sync_slots};
 use crate::game::{ClientGame, InGame};
 use crate::view::Game;
 use bevy::platform::collections::HashSet;

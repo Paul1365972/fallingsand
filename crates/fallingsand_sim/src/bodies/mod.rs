@@ -1,6 +1,7 @@
 mod contact;
 mod island;
 mod rotation;
+mod solver;
 mod step;
 
 pub use island::detect_island;

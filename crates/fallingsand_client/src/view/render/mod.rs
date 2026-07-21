@@ -1,11 +1,14 @@
+pub(crate) mod atlas;
 mod composite;
 mod extract;
 mod light_field;
 pub(crate) mod primitives;
 pub(crate) mod raster;
+mod scene;
 pub(crate) mod sky;
 mod targets;
 
+use atlas::ChunkAtlasState;
 use bevy::core_pipeline::schedule::Core2d;
 use bevy::core_pipeline::{Core2dSystems, FullscreenShader};
 use bevy::ecs::system::SystemParam;
@@ -25,7 +28,7 @@ use bevy::shader::Shader;
 use composite::CompositePass;
 use extract::ExtractedRenderFrame;
 use light_field::LightFieldPass;
-use raster::{ChunkAtlasState, RasterPass};
+use raster::RasterPass;
 use targets::GameplayTargets;
 
 const HDR_FORMAT: TextureFormat = TextureFormat::Rgba16Float;
@@ -87,7 +90,7 @@ impl Plugin for GameplayRendererPlugin {
                 Update,
                 (
                     sky::sync_sky,
-                    raster::sync_chunk_atlas,
+                    atlas::sync_chunk_atlas,
                     primitives::update_particles,
                     primitives::update_debug_primitives,
                 )
@@ -162,36 +165,21 @@ fn prepare_renderer(
     cache: Res<PipelineCache>,
 ) {
     if !frame.active {
-        passes
-            .raster
-            .deactivate(frame.atlas_side, frame.atlas_generation, &device);
+        passes.raster.deactivate(
+            frame.raster.atlas_side,
+            frame.raster.atlas_generation,
+            &device,
+        );
         return;
     }
     let targets = passes.targets.ensure(&device, frame.native);
-    passes.raster.prepare(
-        &frame.raster,
-        &frame.chunks,
-        &frame.quads,
-        &frame.uploads,
-        frame.atlas_side,
-        frame.atlas_generation,
-        frame.instance_generation,
-        &device,
-        &queue,
-        &cache,
-    );
+    passes
+        .raster
+        .prepare(&frame.raster, &device, &queue, &cache);
     passes.light_field.prepare(targets, &device, &cache);
-    passes.composite.prepare(
-        &frame.scene,
-        &frame.lights,
-        &frame.lines,
-        &frame.stars,
-        targets,
-        &device,
-        &queue,
-        &images,
-        &cache,
-    );
+    passes
+        .composite
+        .prepare(&frame.composite, targets, &device, &queue, &images, &cache);
 }
 
 #[derive(SystemParam)]
@@ -218,8 +206,8 @@ fn render_game(
     passes.raster.draw(
         &mut context,
         targets,
-        frame.chunks.len() as u32,
-        frame.quads.len() as u32,
+        frame.raster.chunks.len() as u32,
+        frame.raster.quads.len() as u32,
         &passes.cache,
     );
     passes
@@ -228,7 +216,7 @@ fn render_game(
     passes.composite.draw(
         &mut context,
         view.into_inner(),
-        frame.lines.len() as u32,
+        frame.composite.lines.len() as u32,
         &passes.cache,
     );
 }

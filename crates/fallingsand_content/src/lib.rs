@@ -1,13 +1,13 @@
 mod author;
+mod compiler;
 mod definitions;
 mod emit;
-mod model;
 
 pub use author::*;
 
 pub fn compile() -> Result<String, Error> {
     let catalog = definitions::catalog();
-    let content = model::build(&catalog)?;
+    let content = compiler::build(&catalog)?;
     let tokens = emit::emit(&content);
     let file = syn::parse2::<syn::File>(tokens)
         .map_err(|err| Error::new(format!("generated content is not valid Rust: {err}")))?;

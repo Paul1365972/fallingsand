@@ -1,5 +1,5 @@
 use super::material_id;
-use crate::model::{Content, ItemOut, RecipeOut};
+use crate::compiler::{Content, ItemOut, RecipeOut};
 use proc_macro2::{Literal, TokenStream};
 use quote::quote;
 

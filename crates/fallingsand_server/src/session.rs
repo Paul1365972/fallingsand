@@ -1,12 +1,13 @@
+mod auth;
+
 use crate::persistence::{Persistence, StoreError};
 use crate::player::{Player, PlayerLife, Players};
 use crate::replication::SessionReplication;
-use ed25519_dalek::{Signature, VerifyingKey};
 use fallingsand_core::HOTBAR_SLOTS;
 use fallingsand_net::{Connection, ConnectionStatus, Listener};
 use fallingsand_protocol::{
-    ClientMessage, GameMode, InputAction, InputState, MAX_INPUT_ACTIONS_PER_FRAME,
-    PROTOCOL_VERSION, PlayerId, PlayerUuid, ServerMessage, decode_message, encode_message,
+    ClientMessage, GameMode, InputAction, InputState, MAX_INPUT_ACTIONS_PER_FRAME, PlayerId,
+    ServerMessage, decode_message, encode_message,
 };
 use rustc_hash::FxHashMap;
 use std::collections::BTreeMap;
@@ -159,21 +160,22 @@ pub fn drain_network(
                     signature,
                     name,
                 } => {
-                    let name = clamp_name(name);
-                    if !handle_hello(
+                    let handshake = auth::Handshake {
                         sessions,
                         players,
                         persistence,
-                        id,
+                        spawn,
+                        tick,
+                        roster_upserts: &mut roster_upserts,
+                    };
+                    let hello = auth::Hello {
                         protocol_version,
                         uuid,
                         public_key,
-                        &signature,
+                        signature,
                         name,
-                        spawn,
-                        tick,
-                        &mut roster_upserts,
-                    )? {
+                    };
+                    if !handshake.handle(id, hello)? {
                         break;
                     }
                 }
@@ -316,112 +318,6 @@ fn poll_messages(sessions: &mut Sessions, id: SessionId) -> Vec<ClientMessage> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn handle_hello(
-    sessions: &mut Sessions,
-    players: &mut Players,
-    persistence: &mut Persistence,
-    session_id: SessionId,
-    protocol_version: u16,
-    uuid: PlayerUuid,
-    public_key: [u8; 32],
-    signature: &[u8; 64],
-    name: String,
-    spawn: fallingsand_core::CellPos,
-    tick: u64,
-    roster_upserts: &mut Vec<(PlayerId, String)>,
-) -> Result<bool, StoreError> {
-    let Some(session) = sessions.entries.get(&session_id) else {
-        return Ok(false);
-    };
-    let SessionPhase::Challenged { nonce, .. } = session.phase else {
-        return Ok(true);
-    };
-    if protocol_version != PROTOCOL_VERSION {
-        reject(
-            sessions,
-            session_id,
-            format!(
-                "protocol version mismatch: server {PROTOCOL_VERSION}, client {protocol_version}"
-            ),
-        );
-        return Ok(false);
-    }
-    if !authenticate_identity(nonce, uuid, public_key, signature) {
-        tracing::warn!("rejected unauthenticated identity for {name}");
-        reject(
-            sessions,
-            session_id,
-            "identity authentication failed".into(),
-        );
-        return Ok(false);
-    }
-
-    let (player_id, joined, renamed) = match players.id_for_uuid(uuid) {
-        Some(player_id) => {
-            let player = players.get_mut(player_id).expect("uuid index is valid");
-            let renamed = player.name != name;
-            player.name = name.clone();
-            player.control.reset_transient(tick);
-            (player_id, false, renamed)
-        }
-        None => {
-            let Some(player_id) = players.allocate_id() else {
-                reject(
-                    sessions,
-                    session_id,
-                    "server player id space exhausted".into(),
-                );
-                return Ok(false);
-            };
-            let restored = persistence.load_player(uuid)?;
-            players.insert(Player::new(
-                player_id,
-                uuid,
-                name.clone(),
-                tick,
-                restored,
-                spawn,
-            ));
-            (player_id, true, false)
-        }
-    };
-
-    if let Some(old) = sessions.bind(session_id, player_id)
-        && let Some(old) = sessions.entries.get_mut(&old)
-    {
-        old.send(&ServerMessage::Reject {
-            reason: "superseded by a new session".into(),
-        });
-        old.conn.close("superseded by a new session");
-    }
-
-    let player = players.get(player_id).expect("player inserted");
-    let ack = ServerMessage::HelloAck {
-        protocol_version: PROTOCOL_VERSION,
-        player: player_id,
-        selected: player.profile.selected_slot,
-    };
-    let history = ServerMessage::History {
-        entries: player.profile.history.clone(),
-    };
-    let roster: Vec<_> = players
-        .iter()
-        .map(|(&id, player)| (id, player.name.clone()))
-        .collect();
-    if let Some(session) = sessions.entries.get_mut(&session_id) {
-        session.send(&ack);
-        session.send(&history);
-        for (id, name) in roster {
-            session.send(&ServerMessage::RosterUpsert { player: id, name });
-        }
-    }
-    if joined || renamed {
-        roster_upserts.push((player_id, name.clone()));
-    }
-    tracing::info!("{name} ({uuid}) joined as player {}", player_id.0);
-    Ok(true)
-}
-
 fn apply_input_action(player: &mut Player, action: InputAction) {
     if !player.is_alive() {
         if matches!(player.life, PlayerLife::Dead(_)) && matches!(action, InputAction::Revive) {
@@ -478,25 +374,4 @@ fn reject(sessions: &mut Sessions, id: SessionId, reason: String) {
         });
         session.conn.close(&reason);
     }
-}
-
-fn authenticate_identity(
-    nonce: [u8; 32],
-    uuid: PlayerUuid,
-    public_key: [u8; 32],
-    signature: &[u8; 64],
-) -> bool {
-    if uuid != PlayerUuid::from_public_key(&public_key) {
-        return false;
-    }
-    let Ok(key) = VerifyingKey::from_bytes(&public_key) else {
-        return false;
-    };
-    let signature = Signature::from_bytes(signature);
-    key.verify_strict(&fallingsand_protocol::identity_message(nonce), &signature)
-        .is_ok()
-}
-
-fn clamp_name(name: String) -> String {
-    name.trim().chars().take(NAME_MAX_CHARS).collect()
 }

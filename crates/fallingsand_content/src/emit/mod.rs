@@ -2,7 +2,7 @@ mod accessors;
 mod items;
 mod specs;
 
-use crate::model::Content;
+use crate::compiler::Content;
 use fallingsand_material::{MaterialId, Phase, Tags};
 use proc_macro2::{Literal, TokenStream};
 use quote::quote;

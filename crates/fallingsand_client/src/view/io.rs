@@ -1,8 +1,8 @@
 use super::Game;
 use super::camera::{CameraState, cursor_to_world};
 use super::ui::chat::ChatInput;
-use super::ui::inventory::UiSlot;
 use super::ui::menu::{CertField, NameField, PlayerNameField, UrlField};
+use super::ui::slots::UiSlot;
 use crate::game::input::{Button as InputButton, RawInput};
 use crate::game::{Effect, IoFrame, UiEvent};
 use bevy::input::mouse::MouseWheel;
