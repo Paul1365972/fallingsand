@@ -7,7 +7,7 @@ use fallingsand_core::{CHUNK_SIZE, Calendar, CellOffset, ChunkPos, ItemStack};
 use fallingsand_protocol::{
     ChunkDebugRects, ChunkOp, InteractionState, InteractionStatus, ParticleSpawn,
     PlayerAvatarState, PlayerId, PlayerState, SelfAvatarState, SelfLife, SelfState, ServerMessage,
-    ServerStats, TickFrame, cells_to_wire,
+    TickFrame, cells_to_wire,
 };
 use fallingsand_sim::CellWorld;
 use fallingsand_worldgen::WorldGenerator;
@@ -45,6 +45,16 @@ pub struct ReplicationState {
     last_players: BTreeMap<PlayerId, PlayerState>,
 }
 
+pub struct ReplicationMetrics {
+    pub players: usize,
+    pub awake_chunks: usize,
+    pub awake_cells: u64,
+    pub loaded_chunks: usize,
+    pub loaded_regions: u32,
+    pub dirty_regions: u32,
+    pub replicated_bytes: u64,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn replicate(
     sessions: &mut Sessions,
@@ -55,8 +65,7 @@ pub fn replicate(
     generator: &WorldGenerator,
     particles: &[ParticleSpawn],
     replication: &mut ReplicationState,
-    stats: &mut ServerStats,
-) {
+) -> ReplicationMetrics {
     let tick = sim.tick();
     let all_players: Vec<PlayerState> = players
         .iter()
@@ -139,17 +148,24 @@ pub fn replicate(
         })));
     }
 
-    stats.players = players.len();
-    (stats.awake_chunks, stats.awake_cells) = sim.awake_counts();
-    stats.loaded_chunks = sim.chunk_count();
-    (stats.loaded_regions, stats.dirty_regions) = regions.counts();
-    stats.replicated_bytes = sessions
+    let (awake_chunks, awake_cells) = sim.awake_counts();
+    let (loaded_regions, dirty_regions) = regions.counts();
+    let replicated_bytes = sessions
         .entries
         .values()
         .map(|session| session.replication.sent_bytes)
         .sum();
     for session in sessions.entries.values_mut() {
         session.replication.sent_bytes = 0;
+    }
+    ReplicationMetrics {
+        players: players.len(),
+        awake_chunks,
+        awake_cells,
+        loaded_chunks: sim.chunk_count(),
+        loaded_regions,
+        dirty_regions,
+        replicated_bytes,
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::bodies::PixelBodies;
+use crate::bodies::BodyWorld;
 use crate::player::{
     Avatar, AvatarSnapshot, Health, PLAYER_HALF_H, PLAYER_HALF_W, PLAYER_MASS, PlayerLife, Players,
 };
@@ -10,8 +10,7 @@ use fallingsand_sim::physics::{
 };
 use fallingsand_sim::player::{DUCK_ROWS, STAND_ROWS, stamp_player, unstamp_player};
 
-pub fn step_physics(sim: &mut CellWorld, bodies: &mut PixelBodies, players: &mut Players) {
-    bodies.ensure_owners();
+pub fn step_physics(sim: &mut CellWorld, bodies: &mut BodyWorld, players: &mut Players) {
     let params = PlayerParams::default();
     let prior: Vec<_> = players
         .iter()
@@ -71,17 +70,12 @@ pub fn step_physics(sim: &mut CellWorld, bodies: &mut PixelBodies, players: &mut
             if !cell.is_body() {
                 continue;
             }
-            match bodies.body_at_mut(blocked.pos) {
-                Some(pixel_body) => {
-                    if pixel_body.frozen {
-                        continue;
-                    }
+            match bodies.receive_player_contact(blocked.pos, blocked.dvx != 0.0) {
+                Some(true) => {
                     restore_x += blocked.dvx;
                     restore_y += blocked.dvy;
-                    if blocked.dvx != 0.0 {
-                        pixel_body.rest_secs = 0.0;
-                    }
                 }
+                Some(false) => continue,
                 None => {
                     let jx = PLAYER_MASS * blocked.dvx;
                     let jy = PLAYER_MASS * blocked.dvy;

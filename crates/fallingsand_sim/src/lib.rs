@@ -12,7 +12,7 @@ mod window;
 mod world;
 
 pub use bodies::PixelBody;
-pub use kernel::{SimTimings, step_scoped};
+pub use kernel::{SimTimings, Simulator};
 pub use physics::ActorAabb;
 pub use player::PlayerStamp;
 pub use world::CellWorld;

@@ -3,8 +3,8 @@ mod island;
 mod rotation;
 mod step;
 
-pub use island::{apply_damage, detect_island, register_body};
-pub use step::{SETTLE_SECS, settle_body, settle_body_quiet, step_bodies};
+pub use island::detect_island;
+use step::{SETTLE_SECS, settle_body, settle_body_quiet};
 
 use crate::physics::ActorAabb;
 use crate::world::CellWorld;
@@ -41,15 +41,20 @@ impl Raster {
     pub(crate) fn covers(&self, pos: CellPos) -> bool {
         self.set.contains(&pos)
     }
+
+    fn clear(&mut self) {
+        self.cells.clear();
+        self.set.clear();
+    }
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct OwnerMap {
+struct OwnerMap {
     owner: FxHashMap<CellPos, usize>,
 }
 
 impl OwnerMap {
-    pub fn rebuild(&mut self, bodies: &[PixelBody]) {
+    fn rebuild(&mut self, bodies: &[PixelBody]) {
         self.owner.clear();
         for (index, body) in bodies.iter().enumerate() {
             for &pos in &body.raster.set {
@@ -58,8 +63,14 @@ impl OwnerMap {
         }
     }
 
-    pub fn get(&self, pos: CellPos) -> Option<usize> {
+    fn get(&self, pos: CellPos) -> Option<usize> {
         self.owner.get(&pos).copied()
+    }
+
+    fn insert(&mut self, index: usize, body: &PixelBody) {
+        for &pos in &body.raster.set {
+            self.owner.insert(pos, index);
+        }
     }
 
     fn reseat(&mut self, index: usize, old: &Raster, new: &Raster) {
@@ -74,42 +85,171 @@ impl OwnerMap {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct PixelBody {
-    pub id: u32,
-    pub(crate) width: u8,
-    pub(crate) height: u8,
-    pub(crate) cells: Vec<Cell>,
-    pub(crate) perimeter: Vec<(u8, u8)>,
-    pub(crate) com_local: (f32, f32),
-    pub(crate) pivot: (i32, i32),
-    pub(crate) angle_steps: u32,
-    pub x: Subcell,
-    pub y: Subcell,
-    pub vx: Subcell,
-    pub vy: Subcell,
-    pub angle: f32,
-    pub spin: f32,
-    pub(crate) inv_mass: f32,
-    pub(crate) inv_inertia: f32,
-    pub restitution: f32,
-    pub rest_secs: f32,
-    pub(crate) raster: Raster,
-    pub frozen: bool,
+#[derive(Default)]
+pub struct BodySet {
+    bodies: Vec<PixelBody>,
+    owners: OwnerMap,
+    next_id: u32,
+    stepper: step::BodyStepper,
 }
 
-pub fn wake_covering(bodies: &mut [PixelBody], owners: &OwnerMap, pos: CellPos) {
+impl BodySet {
+    pub fn len(&self) -> usize {
+        self.bodies.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.bodies.is_empty()
+    }
+
+    fn body_at_mut(&mut self, pos: CellPos) -> Option<&mut PixelBody> {
+        self.owners
+            .get(pos)
+            .and_then(|index| self.bodies.get_mut(index))
+    }
+
+    pub fn receive_player_contact(&mut self, pos: CellPos, wake: bool) -> Option<bool> {
+        let body = self.body_at_mut(pos)?;
+        if body.frozen {
+            return Some(false);
+        }
+        if wake {
+            body.rest_secs = 0.0;
+        }
+        Some(true)
+    }
+
+    pub fn wake_at(&mut self, pos: CellPos) {
+        wake_covering(&mut self.bodies, &self.owners, pos);
+    }
+
+    pub fn register_island(&mut self, world: &mut CellWorld, island: &[CellPos]) {
+        let id = self.allocate_id();
+        self.bodies.push(island::register_body(world, id, island));
+        let index = self.bodies.len() - 1;
+        self.owners.insert(index, &self.bodies[index]);
+    }
+
+    pub fn apply_damage(&mut self, world: &mut CellWorld, notes: &mut Vec<CellPos>) {
+        if notes.is_empty() {
+            return;
+        }
+        let next_id = &mut self.next_id;
+        island::apply_damage(world, &mut self.bodies, &self.owners, notes, || {
+            let id = *next_id;
+            *next_id = next_id.checked_add(1).expect("body id space exhausted");
+            id
+        });
+        self.owners.rebuild(&self.bodies);
+    }
+
+    pub fn step<S>(
+        &mut self,
+        world: &mut CellWorld,
+        entities: &[ActorDynamics],
+        gravity: Subcell,
+        simulated: &S,
+    ) -> &[(f32, f32)]
+    where
+        S: Fn(fallingsand_core::ChunkPos) -> bool,
+    {
+        self.stepper.step(
+            world,
+            &mut self.bodies,
+            &mut self.owners,
+            entities,
+            gravity,
+            simulated,
+        )
+    }
+
+    pub fn settle_resting(&mut self, world: &mut CellWorld) {
+        self.settle_where(world, false, |body| {
+            !body.frozen && body.rest_secs >= SETTLE_SECS
+        });
+    }
+
+    pub fn settle_quiet_where(
+        &mut self,
+        world: &mut CellWorld,
+        predicate: impl FnMut(&PixelBody) -> bool,
+    ) {
+        self.settle_where(world, true, predicate);
+    }
+
+    fn settle_where(
+        &mut self,
+        world: &mut CellWorld,
+        quiet: bool,
+        mut predicate: impl FnMut(&PixelBody) -> bool,
+    ) {
+        let mut index = 0;
+        let mut changed = false;
+        while index < self.bodies.len() {
+            if predicate(&self.bodies[index]) {
+                let body = self.bodies.swap_remove(index);
+                if quiet {
+                    settle_body_quiet(world, &body);
+                } else {
+                    settle_body(world, &body);
+                }
+                changed = true;
+            } else {
+                index += 1;
+            }
+        }
+        if changed {
+            self.owners.rebuild(&self.bodies);
+        }
+    }
+
+    fn allocate_id(&mut self) -> u32 {
+        let id = self.next_id;
+        self.next_id = self
+            .next_id
+            .checked_add(1)
+            .expect("body id space exhausted");
+        id
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PixelBody {
+    id: u32,
+    width: u8,
+    height: u8,
+    cells: Vec<Cell>,
+    perimeter: Vec<(u8, u8)>,
+    com_local: (f32, f32),
+    pivot: (i32, i32),
+    angle_steps: u32,
+    x: Subcell,
+    y: Subcell,
+    vx: Subcell,
+    vy: Subcell,
+    angle: f32,
+    spin: f32,
+    inv_mass: f32,
+    inv_inertia: f32,
+    restitution: f32,
+    rest_secs: f32,
+    raster: Raster,
+    frozen: bool,
+}
+
+fn wake_covering(bodies: &mut [PixelBody], owners: &OwnerMap, pos: CellPos) {
     if let Some(body) = owners.get(pos).and_then(|index| bodies.get_mut(index)) {
         body.rest_secs = 0.0;
     }
 }
 
-pub fn vacated_wake_targets(
+fn append_vacated_wake_targets(
+    targets: &mut Vec<CellPos>,
     world: &CellWorld,
     covers: &dyn Fn(CellPos) -> bool,
     vacated: &[CellPos],
-) -> Vec<CellPos> {
-    let mut targets = Vec::new();
+) {
+    targets.clear();
     for &pos in vacated {
         for (dx, dy) in NEIGHBORS {
             let neighbor = pos.translated(dx, dy);
@@ -121,7 +261,6 @@ pub fn vacated_wake_targets(
             }
         }
     }
-    targets
 }
 
 impl PixelBody {
@@ -133,16 +272,8 @@ impl PixelBody {
         self.height
     }
 
-    pub fn inv_mass(&self) -> f32 {
-        self.inv_mass
-    }
-
-    pub fn inv_inertia(&self) -> f32 {
-        self.inv_inertia
-    }
-
-    pub fn covers(&self, pos: CellPos) -> bool {
-        self.raster.covers(pos)
+    pub fn center_cell(&self) -> CellPos {
+        CellPos::new(self.x.floor_cell(), self.y.floor_cell())
     }
 
     fn offset_with(&self, sin: f32, cos: f32, lx: f32, ly: f32) -> (f32, f32) {
@@ -187,9 +318,15 @@ fn angle_steps_for(width: u8, height: u8) -> u32 {
 }
 
 fn rasterize_at(body: &PixelBody, x: Subcell, y: Subcell, angle: f32) -> Raster {
+    let mut raster = Raster::default();
+    rasterize_into(&mut raster, body, x, y, angle);
+    raster
+}
+
+fn rasterize_into(raster: &mut Raster, body: &PixelBody, x: Subcell, y: Subcell, angle: f32) {
+    raster.clear();
     let step = quantize_step(angle, body.angle_steps);
     let pivot_cell = body.pivot_cell(x, y);
-    let mut raster = Raster::default();
     for ly in 0..body.height {
         for lx in 0..body.width {
             let index = ly as usize * body.width as usize + lx as usize;
@@ -201,7 +338,6 @@ fn rasterize_at(body: &PixelBody, x: Subcell, y: Subcell, angle: f32) -> Raster 
             raster.cells.push((pos, index as u16));
         }
     }
-    raster
 }
 
 pub(crate) fn commit_stamp(

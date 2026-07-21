@@ -21,6 +21,8 @@ The stamp commits the sweep's pose: liquids in newly claimed cells pair into vac
 
 ## Pixel bodies
 
+One body set owns every live body, body id, raster owner entry, and solver buffer. Registration, splitting, removal, and settling update that aggregate transactionally; callers cannot mutate the body list separately from its owner index.
+
 A rigid body is a motion record — cell buffer, pose, velocity, spin, mass, inertia — over real world cells carrying the body flag; resolving which body owns a flagged cell is constant-time.
 
 - **Bonds decide connectivity** — rigid materials author a bond group (mineral, wood, foliage, ice); a compiled symmetric matrix says which groups hold together. Island detection and damage splitting walk the same cardinal boolean predicate — stone never fuses to a tree trunk by touching it, wood carries its leaves. No per-edge bond state: moving bodies never merge on collision, and a settled body is terrain again and bonds like it.

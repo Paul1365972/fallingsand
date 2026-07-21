@@ -145,7 +145,7 @@ fn externally_supported(
     })
 }
 
-pub fn register_body(world: &mut CellWorld, id: u32, island: &[CellPos]) -> PixelBody {
+pub(super) fn register_body(world: &mut CellWorld, id: u32, island: &[CellPos]) -> PixelBody {
     let min_x = island.iter().map(|p| p.x).min().unwrap();
     let max_x = island.iter().map(|p| p.x).max().unwrap();
     let min_y = island.iter().map(|p| p.y).min().unwrap();
@@ -194,19 +194,18 @@ pub fn register_body(world: &mut CellWorld, id: u32, island: &[CellPos]) -> Pixe
     body
 }
 
-pub fn apply_damage(
+pub(super) fn apply_damage(
     world: &mut CellWorld,
     bodies: &mut Vec<PixelBody>,
-    mut notes: Vec<CellPos>,
+    owners: &OwnerMap,
+    notes: &mut Vec<CellPos>,
     mut next_id: impl FnMut() -> u32,
 ) {
     notes.sort_unstable_by_key(|pos| (pos.y, pos.x));
     notes.dedup();
-    let mut owners = OwnerMap::default();
-    owners.rebuild(bodies);
     let mut removed: FxHashSet<CellPos> = FxHashSet::default();
     let mut touched: FxHashSet<usize> = FxHashSet::default();
-    for pos in notes {
+    for pos in notes.drain(..) {
         let Some(index) = owners.get(pos) else {
             continue;
         };

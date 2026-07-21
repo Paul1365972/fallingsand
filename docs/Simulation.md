@@ -24,6 +24,8 @@ A cell is a compact heap-free value: material, velocity, shade, a runtime flags 
 
 ## Scheduling
 
+One simulator owns scheduling and window-event scratch across ticks. Capacity grows with the high-water mark of active windows and is reused thereafter; phase eligibility is still recalculated after every pass because writes can wake later work.
+
 - Chunks group into 2×2 blocks run in four phases by block parity; a worker owns its block plus a one-chunk halo, and same-phase windows share no chunks — race-free without locks. A chunk simulates only when its whole 3×3 neighbourhood is loaded; frontier chunks defer, keeping their rects.
 - Each tick runs two full passes over awake cells: **effects** then **movement**. Effects never swap cells: forces write velocity, while combustion and reactions transmute cells at their existing coordinates. Movement owns every swap: velocity integrates kinematically; a resting liquid may take one local energy descent or exposed interface step, and a capped gas may take one flow step.
 - Every moved stamp is clear when the first pass begins: each chunk starts the tick by clearing them inside its sim rect, then ready chunks roll their rects. Movement swaps stamp both cells and a collision impulse stamps its receiver; every stamp is a write, so stamped cells always lie inside that rect and no stale tick-local state survives awake, frontier, or freshly loaded.

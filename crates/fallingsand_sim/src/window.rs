@@ -8,29 +8,40 @@ const _: () = assert!(SPEED_OF_LIGHT as usize <= ((WINDOW_CHUNKS as usize - 2) /
 pub struct SimWindow<'a> {
     origin: ChunkPos,
     slots: [Option<&'a mut Chunk>; WINDOW_SLOTS],
+    events: &'a mut WindowEvents,
+}
+
+#[derive(Default)]
+pub(crate) struct WindowEvents {
     structural: Vec<CellPos>,
     damage: Vec<CellPos>,
 }
 
-pub(crate) struct WindowParts {
-    pub structural: Vec<CellPos>,
-    pub damage: Vec<CellPos>,
+impl WindowEvents {
+    pub(crate) fn clear(&mut self) {
+        self.structural.clear();
+        self.damage.clear();
+    }
+
+    pub(crate) fn drain_structural(&mut self) -> impl Iterator<Item = CellPos> + '_ {
+        self.structural.drain(..)
+    }
+
+    pub(crate) fn drain_damage(&mut self) -> impl Iterator<Item = CellPos> + '_ {
+        self.damage.drain(..)
+    }
 }
 
 impl<'a> SimWindow<'a> {
-    pub(crate) fn new(origin: ChunkPos, slots: [Option<&'a mut Chunk>; WINDOW_SLOTS]) -> Self {
+    pub(crate) fn new(
+        origin: ChunkPos,
+        slots: [Option<&'a mut Chunk>; WINDOW_SLOTS],
+        events: &'a mut WindowEvents,
+    ) -> Self {
         Self {
             origin,
             slots,
-            structural: Vec::new(),
-            damage: Vec::new(),
-        }
-    }
-
-    pub(crate) fn into_parts(self) -> WindowParts {
-        WindowParts {
-            structural: self.structural,
-            damage: self.damage,
+            events,
         }
     }
 
@@ -81,7 +92,7 @@ impl<'a> SimWindow<'a> {
         let old = chunk.get(pos.offset());
         chunk.set(pos.offset(), cell);
         if old.is_body() && !cell.is_body() {
-            self.damage.push(pos);
+            self.events.damage.push(pos);
         }
         self.mark_sim_border(pos);
         self.note_observers(pos);
@@ -95,7 +106,7 @@ impl<'a> SimWindow<'a> {
                     .get(pos)
                     .is_some_and(|cell| cell.is_body() || content::is_rigid_capable(cell.material))
                 {
-                    self.structural.push(pos);
+                    self.events.structural.push(pos);
                 }
             }
         }

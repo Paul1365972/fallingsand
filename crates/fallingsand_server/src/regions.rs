@@ -1,10 +1,9 @@
-use crate::bodies::PixelBodies;
+use crate::bodies::BodyWorld;
 use crate::persistence::{Persistence, RegionReady, StoreError};
 use crate::player::{Players, SearchWindow};
 use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y};
-use fallingsand_core::{CellPos, Chunk, ChunkPos, REGION_SIZE_CELLS, Region, RegionPos};
-use fallingsand_sim::bodies::settle_body_quiet;
-use fallingsand_sim::{CellWorld, PixelBody};
+use fallingsand_core::{CellPos, Chunk, ChunkOffset, ChunkPos, Region, RegionPos};
+use fallingsand_sim::CellWorld;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 
@@ -14,15 +13,37 @@ pub const UNLOAD_GRACE_TICKS: u64 = fallingsand_core::ticks_from_secs(UNLOAD_GRA
 pub const MAX_LOADS_PER_TICK: usize = 1;
 const MAX_PENDING_REGION_LOADS: usize = 64;
 
-pub struct RegionState {
+struct RegionState {
+    revision: u64,
+    persisted_revision: u64,
+    last_wanted: u64,
+    dirty_chunks: u64,
+}
+
+#[derive(Clone)]
+pub(crate) struct RegionSave {
+    pub pos: RegionPos,
     pub revision: u64,
     pub persisted_revision: u64,
-    pub last_wanted: u64,
+    pub base: Option<Arc<Region>>,
+    pub chunks: Vec<(ChunkOffset, Arc<Chunk>)>,
+}
+
+impl RegionSave {
+    fn full(pos: RegionPos, revision: u64, persisted_revision: u64, region: Region) -> Self {
+        Self {
+            pos,
+            revision,
+            persisted_revision,
+            base: Some(Arc::new(region)),
+            chunks: Vec::new(),
+        }
+    }
 }
 
 #[derive(Default)]
 pub struct RegionMap {
-    pub states: FxHashMap<RegionPos, RegionState>,
+    states: FxHashMap<RegionPos, RegionState>,
     requested: FxHashMap<RegionPos, u64>,
     ready: Vec<RegionReady>,
 }
@@ -36,6 +57,13 @@ impl RegionMap {
             .filter(|state| state.revision > state.persisted_revision)
             .count() as u32;
         (loaded, dirty)
+    }
+
+    pub(crate) fn mark_all_saved(&mut self) {
+        for state in self.states.values_mut() {
+            state.persisted_revision = state.revision;
+            state.dirty_chunks = 0;
+        }
     }
 }
 
@@ -128,25 +156,31 @@ fn extract_region(sim: &mut CellWorld, pos: RegionPos) -> Region {
     gather_region(pos, |chunk_pos| sim.remove_chunk(chunk_pos))
 }
 
-fn snapshot_region(sim: &CellWorld, pos: RegionPos) -> Region {
-    gather_region(pos, |chunk_pos| sim.chunk(chunk_pos).cloned())
-}
-
-pub(crate) fn collect_region_saves(
-    sim: &CellWorld,
-    regions: &RegionMap,
-) -> Vec<(RegionPos, u64, u64, Arc<Region>)> {
+pub(crate) fn collect_region_saves(sim: &CellWorld, regions: &mut RegionMap) -> Vec<RegionSave> {
     let mut out = Vec::new();
-    for (pos, state) in &regions.states {
-        if state.revision <= state.persisted_revision {
+    for (pos, state) in &mut regions.states {
+        if state.revision <= state.persisted_revision || state.dirty_chunks == 0 {
             continue;
         }
-        out.push((
-            *pos,
-            state.revision,
-            state.persisted_revision,
-            Arc::new(snapshot_region(sim, *pos)),
-        ));
+        let mut chunks = Vec::with_capacity(state.dirty_chunks.count_ones() as usize);
+        for (offset, chunk_pos) in pos.chunk_positions() {
+            let bit = 1u64 << offset.index();
+            if state.dirty_chunks & bit == 0 {
+                continue;
+            }
+            let chunk = sim
+                .chunk(chunk_pos)
+                .expect("loaded region owns all of its chunks");
+            chunks.push((offset, Arc::new(chunk.clone())));
+        }
+        out.push(RegionSave {
+            pos: *pos,
+            revision: state.revision,
+            persisted_revision: state.persisted_revision,
+            base: None,
+            chunks,
+        });
+        state.dirty_chunks = 0;
     }
     out
 }
@@ -158,22 +192,11 @@ pub(crate) fn mark_saved(
     for (pos, revision) in positions {
         if let Some(state) = regions.states.get_mut(&pos) {
             state.persisted_revision = state.persisted_revision.max(revision.min(state.revision));
+            if state.persisted_revision == state.revision {
+                state.dirty_chunks = 0;
+            }
         }
     }
-}
-
-fn body_region_radius(body: &PixelBody) -> i32 {
-    ((body.width() as f32).hypot(body.height() as f32) + 1.0).ceil() as i32
-}
-
-fn body_overlaps_region(body: &PixelBody, pos: RegionPos) -> bool {
-    let radius = body_region_radius(body);
-    let base = pos.base_chunk().base_cell();
-    let (cx, cy) = (body.x.floor_cell(), body.y.floor_cell());
-    cx + radius > base.x
-        && cx - radius < base.x + REGION_SIZE_CELLS as i32
-        && cy + radius > base.y
-        && cy - radius < base.y + REGION_SIZE_CELLS as i32
 }
 
 pub fn manage_regions(
@@ -181,7 +204,7 @@ pub fn manage_regions(
     regions: &mut RegionMap,
     persistence: &mut Persistence,
     tickets: &ChunkTickets,
-    bodies: &mut PixelBodies,
+    bodies: &mut BodyWorld,
 ) -> Result<(), StoreError> {
     let tick = sim.tick();
     let wanted = wanted_regions(tickets);
@@ -230,6 +253,7 @@ pub fn manage_regions(
                 revision: load.revision,
                 persisted_revision: load.persisted_revision,
                 last_wanted: tick,
+                dirty_chunks: 0,
             },
         );
         integrated += 1;
@@ -271,34 +295,19 @@ pub fn manage_regions(
         .collect();
     expired.sort_unstable_by_key(|pos| (pos.y, pos.x));
 
-    if !expired.is_empty() {
-        let mut index = 0;
-        while index < bodies.bodies.len() {
-            let overlaps_expired = expired
-                .iter()
-                .copied()
-                .any(|pos| body_overlaps_region(&bodies.bodies[index], pos));
-            if overlaps_expired {
-                let body = bodies.bodies.swap_remove(index);
-                bodies.mark_owners_stale();
-                settle_body_quiet(sim, &body);
-            } else {
-                index += 1;
-            }
-        }
-    }
+    bodies.settle_overlapping_regions(sim, &expired);
 
     mark_changed_regions(sim, regions);
 
     for pos in expired {
         let state = regions.states.remove(&pos).expect("state exists");
         let region = extract_region(sim, pos);
-        persistence.stage_region(
+        persistence.stage_region(RegionSave::full(
             pos,
             state.revision,
             state.persisted_revision,
-            Arc::new(region),
-        );
+            region,
+        ));
     }
     persistence.pump()?;
     Ok(())
@@ -306,13 +315,13 @@ pub fn manage_regions(
 
 pub(crate) fn mark_changed_regions(sim: &CellWorld, regions: &mut RegionMap) {
     for (pos, state) in &mut regions.states {
-        for (_, chunk_pos) in pos.chunk_positions() {
+        for (offset, chunk_pos) in pos.chunk_positions() {
             if sim
                 .chunk(chunk_pos)
                 .is_some_and(|chunk| !chunk.change_rect().is_empty())
             {
                 state.revision = state.revision.max(sim.tick().max(1));
-                break;
+                state.dirty_chunks |= 1u64 << offset.index();
             }
         }
     }

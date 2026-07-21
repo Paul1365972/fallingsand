@@ -100,16 +100,17 @@ fn classify(
 }
 
 pub(super) fn find_contacts(
+    contacts: &mut Vec<Contact>,
     world: &CellWorld,
     entities: &[ActorDynamics],
     bodies: &[PixelBody],
     owners: &OwnerMap,
     index: usize,
-) -> Vec<Contact> {
+) {
+    contacts.clear();
     let body = &bodies[index];
     let step = quantize_step(body.angle, body.angle_steps);
     let pivot_cell = body.pivot_cell(body.x, body.y);
-    let mut contacts: Vec<Contact> = Vec::new();
     for &(lx, ly) in &body.perimeter {
         let pos = body.body_cell(pivot_cell, step, lx, ly);
         let rx = (Subcell::cell_center(pos.x) - body.x).to_cells();
@@ -136,5 +137,4 @@ pub(super) fn find_contacts(
             });
         }
     }
-    contacts
 }

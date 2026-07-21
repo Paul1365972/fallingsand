@@ -1,23 +1,25 @@
+mod player_record;
+mod region_codec;
+mod store;
+mod worker;
+
+pub use player_record::{PlayerRecord, restore_player, snapshot_player};
+
 use crate::WorldInfo;
-use crate::inventory::Inventory;
-use crate::player::{AvatarSnapshot, Player, PlayerLife, Players, RestoredPlayer, ResumeSnapshot};
-use crate::regions::{RegionMap, collect_region_saves, mark_changed_regions, mark_saved};
-use fallingsand_core::{
-    CHUNK_AREA, Calendar, Cell, DirtyRect, HOTBAR_SLOTS, Inventory as CoreInventory, ItemId,
-    ItemStack, MAX_AIR_SECONDS, MAX_HEALTH, MaterialId, PLAYER_SLOTS, REGION_AREA_CHUNKS, Region,
-    RegionPos, Subcell, Tag, content,
-};
-use fallingsand_math::SUBCELL_UNITS_PER_CELL;
-use fallingsand_protocol::{GameMode, PlayerUuid};
+use crate::player::Players;
+use crate::regions::{RegionMap, RegionSave, collect_region_saves, mark_changed_regions};
+use fallingsand_core::{Calendar, Chunk, Region, RegionPos};
+use fallingsand_protocol::PlayerUuid;
 use fallingsand_sim::CellWorld;
 use fallingsand_worldgen::WorldGenerator;
-use redb::{Database, ReadableDatabase, TableDefinition};
+use redb::TableDefinition;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
-use std::thread::{self, JoinHandle};
+use std::sync::mpsc::TryRecvError;
+use store::WorldStore;
+use worker::{PersistenceWorker, WorkerCommand, WorkerCompletion};
 
 pub const REGION_FORMAT_VERSION: u8 = 21;
 pub const WORLD_FORMAT_VERSION: u16 = 24;
@@ -51,246 +53,6 @@ pub struct RegionReady {
 pub struct PersistenceCompletions {
     pub regions: Vec<RegionReady>,
     pub saved_regions: Vec<(RegionPos, u64)>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct StackRecord {
-    pub item: String,
-    pub count: u32,
-}
-
-pub type SlotRecord = Option<StackRecord>;
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PlayerRecord {
-    pub mode: GameMode,
-    pub selected: u8,
-    pub inventory: Vec<SlotRecord>,
-    pub cursor: SlotRecord,
-    pub trash: SlotRecord,
-    pub history: Vec<String>,
-    pub resume: ResumeState,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum ResumeState {
-    Alive(AvatarRecord),
-    Dead {
-        view_anchor: fallingsand_core::CellPos,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct AvatarRecord {
-    pub x: Subcell,
-    pub y: Subcell,
-    pub vx: Subcell,
-    pub vy: Subcell,
-    pub hp: f32,
-    pub regen_delay_ticks: u64,
-    pub air: f32,
-    pub burning: f32,
-    pub flying: bool,
-}
-
-fn subcell_position_fits(value: Subcell) -> bool {
-    let cell = value.raw().div_euclid(i64::from(SUBCELL_UNITS_PER_CELL));
-    i32::try_from(cell).is_ok()
-}
-
-fn validate_avatar_record(record: &AvatarRecord) -> Result<(), StoreError> {
-    if !subcell_position_fits(record.x) || !subcell_position_fits(record.y) {
-        return Err(StoreError::CorruptPlayer(
-            "avatar position is outside the cell coordinate range".into(),
-        ));
-    }
-    if !record.hp.is_finite() || !(0.0..=MAX_HEALTH).contains(&record.hp) {
-        return Err(StoreError::CorruptPlayer(format!(
-            "invalid avatar health {}",
-            record.hp
-        )));
-    }
-    if !record.air.is_finite() || !(0.0..=MAX_AIR_SECONDS).contains(&record.air) {
-        return Err(StoreError::CorruptPlayer(format!(
-            "invalid avatar air {}",
-            record.air
-        )));
-    }
-    if !record.burning.is_finite() || record.burning < 0.0 {
-        return Err(StoreError::CorruptPlayer(format!(
-            "invalid avatar burning duration {}",
-            record.burning
-        )));
-    }
-    Ok(())
-}
-
-impl From<AvatarRecord> for AvatarSnapshot {
-    fn from(record: AvatarRecord) -> Self {
-        Self {
-            x: record.x,
-            y: record.y,
-            vx: record.vx,
-            vy: record.vy,
-            hp: record.hp,
-            regen_delay_ticks: record.regen_delay_ticks,
-            air: record.air,
-            burning: record.burning,
-            flying: record.flying,
-        }
-    }
-}
-
-impl From<&AvatarSnapshot> for AvatarRecord {
-    fn from(snapshot: &AvatarSnapshot) -> Self {
-        Self {
-            x: snapshot.x,
-            y: snapshot.y,
-            vx: snapshot.vx,
-            vy: snapshot.vy,
-            hp: snapshot.hp,
-            regen_delay_ticks: snapshot.regen_delay_ticks,
-            air: snapshot.air,
-            burning: snapshot.burning,
-            flying: snapshot.flying,
-        }
-    }
-}
-
-pub fn stack_to_record(stack: Option<ItemStack>) -> Result<SlotRecord, StoreError> {
-    let Some(stack) = stack else {
-        return Ok(None);
-    };
-    if stack.count == 0 {
-        return Err(StoreError::CorruptPlayer(format!(
-            "item {} has an empty stack",
-            stack.item.0
-        )));
-    }
-    let item = content::try_item(stack.item).filter(|_| stack.item != ItemId::NONE);
-    let item =
-        item.ok_or_else(|| StoreError::CorruptPlayer(format!("invalid item id {}", stack.item.0)))?;
-    if stack.count > item.stack_max {
-        return Err(StoreError::CorruptPlayer(format!(
-            "{} of item {:?} exceeds stack limit {}",
-            stack.count, item.name, item.stack_max
-        )));
-    }
-    Ok(Some(StackRecord {
-        item: item.name.to_owned(),
-        count: stack.count,
-    }))
-}
-
-pub fn stack_from_record(record: &SlotRecord) -> Result<Option<ItemStack>, StoreError> {
-    let Some(StackRecord { item: name, count }) = record.as_ref() else {
-        return Ok(None);
-    };
-    if *count == 0 {
-        return Err(StoreError::CorruptPlayer(format!(
-            "item {name:?} has an empty stack"
-        )));
-    }
-    match content::item_id_of(name) {
-        Some(id) if id != ItemId::NONE => {
-            let item = content::item(id);
-            if *count > item.stack_max {
-                return Err(StoreError::CorruptPlayer(format!(
-                    "{count} of item {name:?} exceeds stack limit {}",
-                    item.stack_max
-                )));
-            }
-            Ok(Some(ItemStack::new(id, *count)))
-        }
-        _ => Err(StoreError::CorruptPlayer(format!(
-            "unknown item {name:?} with count {count}"
-        ))),
-    }
-}
-
-pub fn slots_to_record(inv: &CoreInventory) -> Result<Vec<SlotRecord>, StoreError> {
-    inv.slots
-        .iter()
-        .map(|slot| stack_to_record(*slot))
-        .collect()
-}
-
-pub fn player_slots_from_record(list: &[SlotRecord]) -> Result<CoreInventory, StoreError> {
-    if list.len() != PLAYER_SLOTS {
-        return Err(StoreError::CorruptPlayer(format!(
-            "expected {PLAYER_SLOTS} inventory slots, got {}",
-            list.len()
-        )));
-    }
-    let mut inv = CoreInventory::with_capacity(PLAYER_SLOTS);
-    for (slot, record) in inv.slots.iter_mut().zip(list) {
-        *slot = stack_from_record(record)?;
-    }
-    Ok(inv)
-}
-
-pub fn restore_player(record: PlayerRecord) -> Result<RestoredPlayer, StoreError> {
-    if record.selected as usize >= HOTBAR_SLOTS {
-        return Err(StoreError::CorruptPlayer(format!(
-            "invalid selected slot {}",
-            record.selected
-        )));
-    }
-    let resume = match record.resume {
-        ResumeState::Alive(record) => {
-            validate_avatar_record(&record)?;
-            ResumeSnapshot::Alive(record.into())
-        }
-        ResumeState::Dead { view_anchor } => ResumeSnapshot::Dead { view_anchor },
-    };
-    Ok(RestoredPlayer {
-        mode: record.mode,
-        selected_slot: record.selected,
-        inventory: Inventory::with(
-            player_slots_from_record(&record.inventory)?,
-            stack_from_record(&record.cursor)?,
-            stack_from_record(&record.trash)?,
-        ),
-        history: record.history,
-        resume,
-    })
-}
-
-pub fn snapshot_player(player: &Player) -> Result<PlayerRecord, StoreError> {
-    let resume = match &player.life {
-        PlayerLife::Entering(entering) => {
-            ResumeState::Alive(AvatarRecord::from(&entering.materialization.template))
-        }
-        PlayerLife::Alive(avatar) => {
-            let snapshot = AvatarSnapshot::from_avatar(avatar);
-            ResumeState::Alive(AvatarRecord::from(&snapshot))
-        }
-        PlayerLife::Dead(dead) => ResumeState::Dead {
-            view_anchor: dead.view_anchor,
-        },
-        PlayerLife::Reviving(reviving) => ResumeState::Dead {
-            view_anchor: reviving.death.view_anchor,
-        },
-    };
-    let record = PlayerRecord {
-        mode: player.profile.mode,
-        selected: player.profile.selected_slot,
-        inventory: slots_to_record(&player.profile.inventory.inner)?,
-        cursor: stack_to_record(player.profile.inventory.cursor)?,
-        trash: stack_to_record(player.profile.inventory.trash)?,
-        history: player.profile.history.clone(),
-        resume,
-    };
-    if record.selected as usize >= HOTBAR_SLOTS {
-        return Err(StoreError::CorruptPlayer(format!(
-            "invalid selected slot {}",
-            record.selected
-        )));
-    }
-    if let ResumeState::Alive(avatar) = &record.resume {
-        validate_avatar_record(avatar)?;
-    }
-    Ok(record)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -355,15 +117,57 @@ impl From<redb::CommitError> for StoreError {
     }
 }
 
-struct WorldStore {
-    db: Database,
-}
-
 #[derive(Clone)]
 struct RegionSnapshot {
     revision: u64,
     persisted_revision: u64,
-    region: Arc<Region>,
+    base: Option<Arc<Region>>,
+    chunks: Vec<(fallingsand_core::ChunkOffset, Arc<Chunk>)>,
+}
+
+impl RegionSnapshot {
+    fn merge(&mut self, newer: Self) {
+        self.revision = self.revision.max(newer.revision);
+        self.persisted_revision = self.persisted_revision.max(newer.persisted_revision);
+        if newer.base.is_some() {
+            self.base = newer.base;
+            self.chunks = newer.chunks;
+            return;
+        }
+        for (offset, chunk) in newer.chunks {
+            if let Some((_, current)) = self
+                .chunks
+                .iter_mut()
+                .find(|(current, _)| *current == offset)
+            {
+                *current = chunk;
+            } else {
+                self.chunks.push((offset, chunk));
+            }
+        }
+        self.chunks
+            .sort_unstable_by_key(|(offset, _)| offset.index());
+    }
+
+    fn materialize(
+        &self,
+        store: Option<&WorldStore>,
+        generator: &WorldGenerator,
+        pos: RegionPos,
+    ) -> Result<Region, StoreError> {
+        let mut region = match &self.base {
+            Some(region) => (**region).clone(),
+            None => store
+                .map(|store| store.load_region(pos))
+                .transpose()?
+                .flatten()
+                .unwrap_or_else(|| generator.generate_region(pos)),
+        };
+        for &(offset, ref chunk) in &self.chunks {
+            *region.chunk_mut(offset) = (**chunk).clone();
+        }
+        Ok(region)
+    }
 }
 
 #[derive(Clone)]
@@ -373,24 +177,6 @@ struct SaveBatch {
     meta: Option<WorldMeta>,
 }
 
-enum WorkerCommand {
-    LoadRegion { request: u64, pos: RegionPos },
-    SaveBatch(SaveBatch),
-    Shutdown,
-}
-
-enum WorkerCompletion {
-    RegionReady(RegionReady),
-    SaveComplete,
-    SaveFailed(StoreError),
-}
-
-struct PersistenceWorker {
-    commands: Sender<WorkerCommand>,
-    completions: Receiver<WorkerCompletion>,
-    thread: JoinHandle<()>,
-}
-
 pub struct Persistence {
     store: Option<Arc<WorldStore>>,
     worker: Option<PersistenceWorker>,
@@ -398,7 +184,7 @@ pub struct Persistence {
     pending_players: BTreeMap<PlayerUuid, PlayerRecord>,
     pending_meta: Option<WorldMeta>,
     next_request: u64,
-    in_flight: Option<SaveBatch>,
+    in_flight: Option<Arc<SaveBatch>>,
 }
 
 impl Persistence {
@@ -415,18 +201,7 @@ impl Persistence {
     }
 
     pub fn start_worker(&mut self, seed: u64) -> Result<(), StoreError> {
-        let (command_tx, command_rx) = channel();
-        let (completion_tx, completion_rx) = channel();
-        let store = self.store.clone();
-        let thread = thread::Builder::new()
-            .name("region-storage".into())
-            .spawn(move || worker_main(store, WorldGenerator::new(seed), command_rx, completion_tx))
-            .map_err(|error| StoreError::WorkerStart(error.to_string()))?;
-        self.worker = Some(PersistenceWorker {
-            commands: command_tx,
-            completions: completion_rx,
-            thread,
-        });
+        self.worker = Some(PersistenceWorker::start(self.store.clone(), seed)?);
         Ok(())
     }
 
@@ -473,7 +248,17 @@ impl Persistence {
             return Ok((
                 request,
                 Some(RegionLoad {
-                    region: (*pending.region).clone(),
+                    region: pending
+                        .base
+                        .as_deref()
+                        .map(|region| {
+                            let mut region = region.clone();
+                            for &(offset, ref chunk) in &pending.chunks {
+                                *region.chunk_mut(offset) = (**chunk).clone();
+                            }
+                            region
+                        })
+                        .expect("unloaded pending region has a full snapshot"),
                     revision: pending.revision,
                     persisted_revision: pending.persisted_revision,
                 }),
@@ -487,29 +272,26 @@ impl Persistence {
         Ok((request, None))
     }
 
-    pub fn stage_region(
-        &mut self,
-        pos: RegionPos,
-        revision: u64,
-        persisted_revision: u64,
-        region: Arc<Region>,
-    ) {
-        self.pending_regions.insert(
-            pos,
-            RegionSnapshot {
-                revision,
-                persisted_revision,
-                region,
-            },
-        );
+    pub fn stage_region(&mut self, save: RegionSave) {
+        let snapshot = RegionSnapshot {
+            revision: save.revision,
+            persisted_revision: save.persisted_revision,
+            base: save.base,
+            chunks: save.chunks,
+        };
+        match self.pending_regions.entry(save.pos) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(snapshot);
+            }
+            std::collections::btree_map::Entry::Occupied(mut entry) => {
+                entry.get_mut().merge(snapshot);
+            }
+        }
     }
 
-    pub fn stage_regions(
-        &mut self,
-        regions: impl IntoIterator<Item = (RegionPos, u64, u64, Arc<Region>)>,
-    ) {
-        for (pos, revision, persisted_revision, region) in regions {
-            self.stage_region(pos, revision, persisted_revision, region);
+    pub fn stage_regions(&mut self, regions: impl IntoIterator<Item = RegionSave>) {
+        for region in regions {
+            self.stage_region(region);
         }
     }
 
@@ -538,11 +320,11 @@ impl Persistence {
         if self.store.is_none() || self.in_flight.is_some() || !self.has_pending() {
             return Ok(());
         }
-        let batch = self.take_batch();
+        let batch = Arc::new(self.take_batch());
         let worker = self.worker.as_ref().ok_or(StoreError::WorkerDisconnected)?;
         if worker
             .commands
-            .send(WorkerCommand::SaveBatch(batch.clone()))
+            .send(WorkerCommand::SaveBatch(Arc::clone(&batch)))
             .is_err()
         {
             self.restore_batch(batch);
@@ -622,9 +404,13 @@ impl Persistence {
         }
     }
 
-    fn restore_batch(&mut self, batch: SaveBatch) {
-        for (pos, snapshot) in batch.regions {
-            self.pending_regions.entry(pos).or_insert(snapshot);
+    fn restore_batch(&mut self, batch: Arc<SaveBatch>) {
+        let batch = Arc::try_unwrap(batch).unwrap_or_else(|batch| (*batch).clone());
+        for (pos, mut snapshot) in batch.regions {
+            if let Some(newer) = self.pending_regions.remove(&pos) {
+                snapshot.merge(newer);
+            }
+            self.pending_regions.insert(pos, snapshot);
         }
         for (uuid, record) in batch.players {
             self.pending_players.entry(uuid).or_insert(record);
@@ -643,11 +429,12 @@ impl Persistence {
         match message {
             WorkerCompletion::RegionReady(ready) => completed.regions.push(ready),
             WorkerCompletion::SaveComplete => {
+                let batch = self.take_in_flight()?;
                 let SaveBatch {
                     regions,
                     players,
                     meta,
-                } = self.take_in_flight()?;
+                } = Arc::try_unwrap(batch).unwrap_or_else(|batch| (*batch).clone());
                 for (pos, saved) in regions {
                     let remove_pending =
                         self.pending_regions.get_mut(&pos).is_some_and(|pending| {
@@ -678,11 +465,17 @@ impl Persistence {
                 }
                 tracing::error!("persistence batch failed: {error}");
             }
+            WorkerCompletion::Fatal(error) => {
+                let batch = self.take_in_flight()?;
+                self.restore_batch(batch);
+                self.shutdown_worker()?;
+                return Err(error);
+            }
         }
         Ok(())
     }
 
-    fn take_in_flight(&mut self) -> Result<SaveBatch, StoreError> {
+    fn take_in_flight(&mut self) -> Result<Arc<SaveBatch>, StoreError> {
         self.in_flight.take().ok_or(StoreError::WorkerDisconnected)
     }
 
@@ -694,150 +487,6 @@ impl Persistence {
         let _ = worker.commands.send(WorkerCommand::Shutdown);
         drop(worker.commands);
         worker.thread.join().map_err(|_| StoreError::WorkerPanicked)
-    }
-}
-
-impl WorldStore {
-    pub fn open(path: &Path) -> Result<Self, StoreError> {
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let db = Database::create(path)?;
-        {
-            let read = db.begin_read()?;
-            match read.open_table(META) {
-                Ok(table) => {
-                    if let Some(guard) = table.get("world")? {
-                        parse_meta(guard.value())?;
-                    }
-                }
-                Err(redb::TableError::TableDoesNotExist(_)) => {}
-                Err(err) => return Err(err.into()),
-            }
-        }
-        let write = db.begin_write()?;
-        {
-            write.open_table(REGIONS)?;
-            write.open_table(PLAYERS)?;
-            write.open_table(META)?;
-        }
-        write.commit()?;
-        Ok(Self { db })
-    }
-
-    pub fn load_meta(&self) -> Result<Option<WorldMeta>, StoreError> {
-        let read = self.db.begin_read()?;
-        let table = read.open_table(META)?;
-        let Some(guard) = table.get("world")? else {
-            return Ok(None);
-        };
-        parse_meta(guard.value()).map(Some)
-    }
-
-    pub fn save_meta(&self, meta: &WorldMeta) -> Result<(), StoreError> {
-        let bytes = postcard::to_allocvec(meta)?;
-        let write = self.db.begin_write()?;
-        {
-            let mut table = write.open_table(META)?;
-            table.insert("world", bytes.as_slice())?;
-        }
-        write.commit()?;
-        Ok(())
-    }
-
-    pub fn load_region(&self, pos: RegionPos) -> Result<Option<Region>, StoreError> {
-        let read = self.db.begin_read()?;
-        let table = read.open_table(REGIONS)?;
-        let Some(guard) = table.get(pos.zorder_key())? else {
-            return Ok(None);
-        };
-        decode_region(guard.value()).map(Some)
-    }
-
-    pub fn load_player(&self, uuid: PlayerUuid) -> Result<Option<PlayerRecord>, StoreError> {
-        let read = self.db.begin_read()?;
-        let table = read.open_table(PLAYERS)?;
-        let Some(guard) = table.get(uuid.0)? else {
-            return Ok(None);
-        };
-        Ok(Some(postcard::from_bytes(guard.value())?))
-    }
-
-    fn save_batch(&self, batch: &SaveBatch) -> Result<(), StoreError> {
-        let regions = batch
-            .regions
-            .iter()
-            .map(|(pos, snapshot)| Ok((*pos, encode_region(&snapshot.region)?)))
-            .collect::<Result<Vec<_>, StoreError>>()?;
-        let players = batch
-            .players
-            .iter()
-            .map(|(uuid, record)| Ok((*uuid, postcard::to_allocvec(record)?)))
-            .collect::<Result<Vec<_>, StoreError>>()?;
-        let meta = batch.meta.as_ref().map(postcard::to_allocvec).transpose()?;
-        let write = self.db.begin_write()?;
-        {
-            let mut table = write.open_table(REGIONS)?;
-            for (pos, blob) in &regions {
-                table.insert(pos.zorder_key(), blob.as_slice())?;
-            }
-        }
-        {
-            let mut table = write.open_table(PLAYERS)?;
-            for (uuid, bytes) in &players {
-                table.insert(uuid.0, bytes.as_slice())?;
-            }
-        }
-        if let Some(bytes) = &meta {
-            let mut table = write.open_table(META)?;
-            table.insert("world", bytes.as_slice())?;
-        }
-        write.commit()?;
-        Ok(())
-    }
-}
-
-fn worker_main(
-    store: Option<Arc<WorldStore>>,
-    generator: WorldGenerator,
-    commands: Receiver<WorkerCommand>,
-    completions: Sender<WorkerCompletion>,
-) {
-    while let Ok(command) = commands.recv() {
-        let completion = match command {
-            WorkerCommand::LoadRegion { request, pos } => {
-                let result = store
-                    .as_ref()
-                    .map_or(Ok(None), |store| store.load_region(pos))
-                    .map(|loaded| RegionLoad {
-                        region: loaded.unwrap_or_else(|| generator.generate_region(pos)),
-                        revision: 0,
-                        persisted_revision: 0,
-                    })
-                    .map_err(|source| StoreError::RegionLoad {
-                        pos,
-                        source: Box::new(source),
-                    });
-                WorkerCompletion::RegionReady(RegionReady {
-                    request,
-                    pos,
-                    result,
-                })
-            }
-            WorkerCommand::SaveBatch(batch) => {
-                match store
-                    .as_ref()
-                    .map_or(Ok(()), |store| store.save_batch(&batch))
-                {
-                    Ok(()) => WorkerCompletion::SaveComplete,
-                    Err(error) => WorkerCompletion::SaveFailed(error),
-                }
-            }
-            WorkerCommand::Shutdown => break,
-        };
-        if completions.send(completion).is_err() {
-            break;
-        }
     }
 }
 
@@ -884,14 +533,7 @@ pub fn save_everything(
     }
     persistence.stage_meta(world_meta(info, clock, sim.tick()));
     let (region_count, player_count) = persistence.flush_durable()?;
-    mark_saved(
-        regions,
-        regions
-            .states
-            .iter()
-            .map(|(&pos, state)| (pos, state.revision))
-            .collect::<Vec<_>>(),
-    );
+    regions.mark_all_saved();
     tracing::info!(
         "world saved: {} regions, {} players in {:.1?}",
         region_count,
@@ -924,116 +566,4 @@ fn parse_meta(bytes: &[u8]) -> Result<WorldMeta, StoreError> {
         return Err(StoreError::UnsupportedWorld(version));
     }
     Ok(postcard::from_bytes(bytes)?)
-}
-
-#[derive(Serialize, Deserialize)]
-struct CellRecord {
-    material: u16,
-    vx: i16,
-    vy: i16,
-    shade: u8,
-    aux: u8,
-}
-
-impl From<Cell> for CellRecord {
-    fn from(cell: Cell) -> Self {
-        let cell = if cell.is_body() && content::tags(cell.material).contains(Tag::Player) {
-            Cell::AIR
-        } else {
-            cell
-        };
-        Self {
-            material: cell.material.0,
-            vx: cell.vx,
-            vy: cell.vy,
-            shade: cell.shade,
-            aux: cell.aux,
-        }
-    }
-}
-
-impl CellRecord {
-    fn restore(&self) -> Result<Cell, StoreError> {
-        if self.material as usize >= content::MATERIAL_COUNT {
-            return Err(StoreError::CorruptRegion(format!(
-                "invalid material id {}",
-                self.material
-            )));
-        }
-        Ok(Cell {
-            material: MaterialId(self.material),
-            vx: self.vx,
-            vy: self.vy,
-            shade: self.shade,
-            flags: 0,
-            aux: self.aux,
-        })
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-struct ChunkRecord {
-    cells: Vec<CellRecord>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct RegionRecord {
-    chunks: Vec<ChunkRecord>,
-}
-
-pub fn encode_region(region: &Region) -> Result<Vec<u8>, StoreError> {
-    let chunks = region
-        .chunks()
-        .iter()
-        .map(|chunk| {
-            let cells: Vec<CellRecord> = chunk.cells().iter().map(|&cell| cell.into()).collect();
-            for record in &cells {
-                if record.material as usize >= content::MATERIAL_COUNT {
-                    return Err(StoreError::CorruptRegion(format!(
-                        "runtime cell has invalid material id {}",
-                        record.material
-                    )));
-                }
-            }
-            Ok(ChunkRecord { cells })
-        })
-        .collect::<Result<Vec<_>, StoreError>>()?;
-    let record = RegionRecord { chunks };
-    let compressed = lz4_flex::compress_prepend_size(&postcard::to_allocvec(&record)?);
-    let mut blob = Vec::with_capacity(compressed.len() + 1);
-    blob.push(REGION_FORMAT_VERSION);
-    blob.extend_from_slice(&compressed);
-    Ok(blob)
-}
-
-pub fn decode_region(blob: &[u8]) -> Result<Region, StoreError> {
-    let (&version, compressed) = blob
-        .split_first()
-        .ok_or_else(|| StoreError::CorruptRegion("empty blob".into()))?;
-    if version != REGION_FORMAT_VERSION {
-        return Err(StoreError::UnsupportedRegion(version));
-    }
-    let raw = lz4_flex::decompress_size_prepended(compressed)
-        .map_err(|err| StoreError::CorruptRegion(err.to_string()))?;
-    let record: RegionRecord = postcard::from_bytes(&raw)?;
-    if record.chunks.len() != REGION_AREA_CHUNKS {
-        return Err(StoreError::CorruptRegion(format!(
-            "expected {REGION_AREA_CHUNKS} chunks, got {}",
-            record.chunks.len()
-        )));
-    }
-    let mut region = Region::new();
-    for (chunk, stored) in region.chunks_mut().iter_mut().zip(&record.chunks) {
-        if stored.cells.len() != CHUNK_AREA {
-            return Err(StoreError::CorruptRegion(format!(
-                "expected {CHUNK_AREA} cells per chunk, got {}",
-                stored.cells.len()
-            )));
-        }
-        for (cell, stored_cell) in chunk.cells_mut().iter_mut().zip(&stored.cells) {
-            *cell = stored_cell.restore()?;
-        }
-        chunk.sim = DirtyRect::FULL;
-    }
-    Ok(region)
 }

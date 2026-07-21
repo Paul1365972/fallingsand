@@ -1,139 +1,115 @@
 use crate::player::{PLAYER_MASS, Players};
 use crate::regions::ChunkTickets;
-use fallingsand_core::{CellPos, Subcell};
-use fallingsand_protocol::ServerStats;
-use fallingsand_sim::bodies::{
-    ActorDynamics, OwnerMap, PixelBody, SETTLE_SECS, apply_damage, detect_island, register_body,
-    settle_body, step_bodies as simulate_bodies, wake_covering,
-};
+use fallingsand_core::{CellPos, REGION_SIZE_CELLS, RegionPos, Subcell};
+use fallingsand_protocol::PlayerId;
+use fallingsand_sim::bodies::{ActorDynamics, BodySet, PixelBody, detect_island};
 use fallingsand_sim::{ActorAabb, CellWorld};
 
 pub const BODY_GRAVITY: Subcell = Subcell::from_cells_per_second_squared(-400.0);
 
 #[derive(Default)]
-pub struct PixelBodies {
-    pub bodies: Vec<PixelBody>,
-    owners: OwnerMap,
-    pub next_id: u32,
-    pub candidates: Vec<CellPos>,
-    owners_stale: bool,
+pub struct BodyWorld {
+    set: BodySet,
+    candidates: Vec<CellPos>,
+    candidate_work: Vec<CellPos>,
+    damage: Vec<CellPos>,
+    actor_players: Vec<PlayerId>,
+    actors: Vec<ActorDynamics>,
 }
 
-impl PixelBodies {
-    pub fn mark_owners_stale(&mut self) {
-        self.owners_stale = true;
-    }
-
-    pub fn ensure_owners(&mut self) -> &OwnerMap {
-        if self.owners_stale {
-            self.owners.rebuild(&self.bodies);
-            self.owners_stale = false;
-        }
-        &self.owners
-    }
-
-    pub fn body_at_mut(&mut self, pos: CellPos) -> Option<&mut PixelBody> {
-        self.ensure_owners();
-        self.owners
-            .get(pos)
-            .and_then(|index| self.bodies.get_mut(index))
-    }
-
-    pub fn wake_at(&mut self, pos: CellPos) {
-        self.ensure_owners();
-        wake_covering(&mut self.bodies, &self.owners, pos);
-    }
+pub struct BodyStepMetrics {
+    pub bodies: usize,
 }
 
-pub fn step_bodies(
-    sim: &mut CellWorld,
-    tickets: &ChunkTickets,
-    bodies: &mut PixelBodies,
-    players: &mut Players,
-    stats: &mut ServerStats,
-) {
-    let damage = sim.take_damage();
-    if !damage.is_empty() {
-        let next_id = &mut bodies.next_id;
-        apply_damage(sim, &mut bodies.bodies, damage, || {
-            let id = *next_id;
-            *next_id += 1;
-            id
-        });
-        bodies.mark_owners_stale();
+impl BodyWorld {
+    pub fn receive_player_contact(&mut self, pos: CellPos, wake: bool) -> Option<bool> {
+        self.set.receive_player_contact(pos, wake)
     }
 
-    bodies.candidates.extend(sim.take_structural());
-    let mut candidates = std::mem::take(&mut bodies.candidates);
-    candidates.sort_unstable_by_key(|pos| (pos.y, pos.x));
-    candidates.dedup();
-    for seed in candidates {
-        if sim.get_cell(seed).is_some_and(|cell| cell.is_body()) {
-            bodies.wake_at(seed);
-            continue;
-        }
-        let Some(island) = detect_island(sim, seed) else {
-            continue;
-        };
-        if !island_simulated(sim, tickets, &island) {
-            bodies.candidates.push(seed);
-            continue;
-        }
-        let id = bodies.next_id;
-        bodies.next_id += 1;
-        let body = register_body(sim, id, &island);
-        bodies.bodies.push(body);
-        bodies.mark_owners_stale();
-    }
-    bodies.ensure_owners();
-
-    let mut actor_players = Vec::new();
-    let mut entities: Vec<ActorDynamics> = Vec::new();
-    for (&id, player) in players.iter() {
-        let Some(avatar) = player.avatar() else {
-            continue;
-        };
-        actor_players.push(id);
-        entities.push(ActorDynamics {
-            bbox: ActorAabb::from_footprint(avatar.actor.footprint()),
-            vx: avatar.actor.vx.to_cells_per_second(),
-            vy: avatar.actor.vy.to_cells_per_second(),
-            inv_mass: 1.0 / PLAYER_MASS,
+    pub fn settle_overlapping_regions(&mut self, sim: &mut CellWorld, regions: &[RegionPos]) {
+        self.set.settle_quiet_where(sim, |body| {
+            regions
+                .iter()
+                .copied()
+                .any(|region| body_overlaps_region(body, region))
         });
     }
 
-    let entity_impulses = simulate_bodies(
-        sim,
-        &mut bodies.bodies,
-        &mut bodies.owners,
-        &entities,
-        BODY_GRAVITY,
-        &|pos| tickets.simulates(pos),
-    );
-    for (player, (jx, jy)) in actor_players.into_iter().zip(entity_impulses) {
-        if (jx != 0.0 || jy != 0.0)
-            && let Some(avatar) = players
-                .get_mut(player)
-                .and_then(|player| player.avatar_mut())
+    pub fn step(
+        &mut self,
+        sim: &mut CellWorld,
+        tickets: &ChunkTickets,
+        players: &mut Players,
+    ) -> BodyStepMetrics {
+        self.damage.extend(sim.drain_damage());
+        self.set.apply_damage(sim, &mut self.damage);
+
+        self.candidates.extend(sim.drain_structural());
+        std::mem::swap(&mut self.candidates, &mut self.candidate_work);
+        self.candidate_work
+            .sort_unstable_by_key(|pos| (pos.y, pos.x));
+        self.candidate_work.dedup();
+        for seed in self.candidate_work.drain(..) {
+            if sim.get_cell(seed).is_some_and(|cell| cell.is_body()) {
+                self.set.wake_at(seed);
+                continue;
+            }
+            let Some(island) = detect_island(sim, seed) else {
+                continue;
+            };
+            if !island_simulated(sim, tickets, &island) {
+                self.candidates.push(seed);
+                continue;
+            }
+            self.set.register_island(sim, &island);
+        }
+
+        self.actor_players.clear();
+        self.actors.clear();
+        for (&id, player) in players.iter() {
+            let Some(avatar) = player.avatar() else {
+                continue;
+            };
+            self.actor_players.push(id);
+            self.actors.push(ActorDynamics {
+                bbox: ActorAabb::from_footprint(avatar.actor.footprint()),
+                vx: avatar.actor.vx.to_cells_per_second(),
+                vy: avatar.actor.vy.to_cells_per_second(),
+                inv_mass: 1.0 / PLAYER_MASS,
+            });
+        }
+
         {
-            avatar.pending_impulse.0 += jx;
-            avatar.pending_impulse.1 += jy;
+            let impulses = self.set.step(sim, &self.actors, BODY_GRAVITY, &|pos| {
+                tickets.simulates(pos)
+            });
+            for (&player, &(jx, jy)) in self.actor_players.iter().zip(impulses) {
+                if (jx != 0.0 || jy != 0.0)
+                    && let Some(avatar) = players
+                        .get_mut(player)
+                        .and_then(|player| player.avatar_mut())
+                {
+                    avatar.pending_impulse.0 += jx;
+                    avatar.pending_impulse.1 += jy;
+                }
+            }
+        }
+
+        self.set.settle_resting(sim);
+        BodyStepMetrics {
+            bodies: self.set.len(),
         }
     }
+}
 
-    let mut index = 0;
-    while index < bodies.bodies.len() {
-        let body = &bodies.bodies[index];
-        if !body.frozen && body.rest_secs >= SETTLE_SECS {
-            let body = bodies.bodies.swap_remove(index);
-            settle_body(sim, &body);
-            bodies.mark_owners_stale();
-        } else {
-            index += 1;
-        }
-    }
-
-    stats.pixel_bodies = bodies.bodies.len();
+fn body_overlaps_region(body: &PixelBody, pos: RegionPos) -> bool {
+    let radius = ((body.width() as f32).hypot(body.height() as f32) + 1.0).ceil() as i32;
+    let base = pos.base_chunk().base_cell();
+    let CellPos { x: cx, y: cy } = body.center_cell();
+    cx + radius > base.x
+        && cx - radius < base.x + REGION_SIZE_CELLS as i32
+        && cy + radius > base.y
+        && cy - radius < base.y + REGION_SIZE_CELLS as i32
 }
 
 fn island_simulated(world: &CellWorld, tickets: &ChunkTickets, island: &[CellPos]) -> bool {

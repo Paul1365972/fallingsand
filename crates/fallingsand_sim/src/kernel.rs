@@ -1,11 +1,10 @@
 use crate::rules;
-use crate::window::{SimWindow, WINDOW_CHUNKS};
+use crate::window::{SimWindow, WINDOW_CHUNKS, WindowEvents};
 use crate::world::CellWorld;
 use fallingsand_core::{CHUNK_SIZE, CellPos, Chunk, ChunkPos, DirtyRect};
 use fallingsand_math::Hash;
 use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::collections::BTreeSet;
 use std::time::Instant;
 
 const _: () = assert!(WINDOW_CHUNKS == 4);
@@ -45,125 +44,162 @@ const PHASE_ORDERS: [[u32; 4]; 24] = [
     [3, 2, 1, 0],
 ];
 
-type Simulate<'a> = dyn Fn(ChunkPos) -> bool + Sync + 'a;
-type Schedule<'a> = dyn Fn(ChunkPos, &Chunk) -> bool + 'a;
-type Kernel<'a> = dyn Fn(&mut SimWindow) + Sync + 'a;
-
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SimTimings {
     pub simulate_micros: u32,
     pub random_tick_micros: u32,
 }
 
-pub fn step_scoped(
-    world: &mut CellWorld,
-    simulate: &Simulate,
-    random_tick: &Simulate,
-) -> SimTimings {
-    world.advance_tick();
-    let tick = world.tick();
+#[derive(Default)]
+pub struct Simulator {
+    ready: FxHashSet<ChunkPos>,
+    origins: Vec<ChunkPos>,
+    members: FxHashMap<ChunkPos, (usize, i32, i32)>,
+    events: Vec<WindowEvents>,
+}
 
-    let ready: FxHashSet<ChunkPos> = world
-        .chunks()
-        .filter(|&(pos, _)| {
-            simulate(pos)
+impl Simulator {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn step_scoped<S, R>(
+        &mut self,
+        world: &mut CellWorld,
+        simulate: &S,
+        random_tick: &R,
+    ) -> SimTimings
+    where
+        S: Fn(ChunkPos) -> bool + Sync,
+        R: Fn(ChunkPos) -> bool + Sync,
+    {
+        world.advance_tick();
+        let tick = world.tick();
+
+        self.ready.clear();
+        self.ready.extend(world.chunks().filter_map(|(pos, _)| {
+            (simulate(pos)
                 && (-1..=1)
-                    .all(|dy| (-1..=1).all(|dx| world.chunk(pos.translated(dx, dy)).is_some()))
-        })
-        .map(|(pos, _)| pos)
-        .collect();
-    let map = world.chunk_map_mut();
-    map.par_iter_mut()
-        .for_each(|(pos, chunk)| chunk.begin_tick(ready.contains(pos)));
+                    .all(|dy| (-1..=1).all(|dx| world.chunk(pos.translated(dx, dy)).is_some())))
+            .then_some(pos)
+        }));
+        let ready = &self.ready;
+        world
+            .chunk_map_mut()
+            .par_iter_mut()
+            .for_each(|(pos, chunk)| chunk.begin_tick(ready.contains(pos)));
 
-    let awake = |pos: ChunkPos, chunk: &Chunk| simulate(pos) && !chunk.sim_rect().is_empty();
-    let effect_micros = run_sim("effects", world, tick, &awake, &|window| {
-        simulate_block(window, tick, simulate, rules::effect_cell)
-    });
-    let movement_micros = run_sim("movement", world, tick, &awake, &|window| {
-        simulate_block(window, tick, simulate, rules::move_cell)
-    });
+        let awake = |pos: ChunkPos, chunk: &Chunk| simulate(pos) && !chunk.sim_rect().is_empty();
+        let effect_micros = self.run_sim("effects", world, tick, &awake, &|window| {
+            simulate_block(window, tick, simulate, rules::effect_cell)
+        });
+        let movement_micros = self.run_sim("movement", world, tick, &awake, &|window| {
+            simulate_block(window, tick, simulate, rules::move_cell)
+        });
 
-    let random_tick_micros = run_sim(
-        "random_tick",
-        world,
-        tick,
-        &|pos, _| random_tick(pos),
-        &|window| random_tick_block(window, tick, random_tick),
-    );
+        let random_tick_micros = self.run_sim(
+            "random_tick",
+            world,
+            tick,
+            &|pos, _| random_tick(pos),
+            &|window| random_tick_block(window, tick, random_tick),
+        );
 
-    SimTimings {
-        simulate_micros: effect_micros + movement_micros,
-        random_tick_micros,
+        SimTimings {
+            simulate_micros: effect_micros + movement_micros,
+            random_tick_micros,
+        }
     }
-}
 
-fn run_sim(
-    name: &'static str,
-    world: &mut CellWorld,
-    tick: u64,
-    schedule: &Schedule,
-    kernel: &Kernel,
-) -> u32 {
-    let _span = tracing::info_span!("sim", name).entered();
-    let start = Instant::now();
-    let order = Hash::seed(tick)
-        .salt(PHASE_ORDER_SALT)
-        .choose(&PHASE_ORDERS);
-    for phase in order {
-        run_phase(world, phase, schedule, kernel);
+    fn run_sim<S, K>(
+        &mut self,
+        name: &'static str,
+        world: &mut CellWorld,
+        tick: u64,
+        schedule: &S,
+        kernel: &K,
+    ) -> u32
+    where
+        S: Fn(ChunkPos, &Chunk) -> bool,
+        K: Fn(&mut SimWindow) + Sync,
+    {
+        let _span = tracing::info_span!("sim", name).entered();
+        let start = Instant::now();
+        let order = Hash::seed(tick)
+            .salt(PHASE_ORDER_SALT)
+            .choose(&PHASE_ORDERS);
+        for phase in order {
+            self.run_phase(world, phase, schedule, kernel);
+        }
+        start.elapsed().as_micros() as u32
     }
-    start.elapsed().as_micros() as u32
-}
 
-fn run_phase(world: &mut CellWorld, phase: u32, schedule: &Schedule, kernel: &Kernel) {
-    let _span = tracing::info_span!("sim_phase", phase).entered();
-    let px = (phase & 1) as i32;
-    let py = ((phase >> 1) & 1) as i32;
+    fn run_phase<S, K>(&mut self, world: &mut CellWorld, phase: u32, schedule: &S, kernel: &K)
+    where
+        S: Fn(ChunkPos, &Chunk) -> bool,
+        K: Fn(&mut SimWindow) + Sync,
+    {
+        let _span = tracing::info_span!("sim_phase", phase).entered();
+        let px = (phase & 1) as i32;
+        let py = ((phase >> 1) & 1) as i32;
 
-    let map = world.chunk_map_mut();
-    let origins: BTreeSet<ChunkPos> = map
-        .iter()
-        .filter(|(pos, chunk)| {
+        let map = world.chunk_map_mut();
+        self.origins.clear();
+        self.origins.extend(map.iter().filter_map(|(pos, chunk)| {
             let block = (pos.x >> 1, pos.y >> 1);
-            (block.0 & 1) == px && (block.1 & 1) == py && schedule(**pos, chunk)
-        })
-        .map(|(pos, _)| ChunkPos::new(((pos.x >> 1) << 1) - 1, ((pos.y >> 1) << 1) - 1))
-        .collect();
+            ((block.0 & 1) == px && (block.1 & 1) == py && schedule(*pos, chunk))
+                .then(|| ChunkPos::new(((pos.x >> 1) << 1) - 1, ((pos.y >> 1) << 1) - 1))
+        }));
+        self.origins.sort_unstable();
+        self.origins.dedup();
 
-    let mut members: FxHashMap<ChunkPos, (usize, i32, i32)> = FxHashMap::default();
-    for (index, &origin) in origins.iter().enumerate() {
-        for sy in 0..WINDOW_CHUNKS {
-            for sx in 0..WINDOW_CHUNKS {
-                members.insert(origin.translated(sx, sy), (index, sx, sy));
+        self.members.clear();
+        self.members.reserve(
+            self.origins
+                .len()
+                .saturating_mul(WINDOW_CHUNKS as usize)
+                .saturating_mul(WINDOW_CHUNKS as usize),
+        );
+        for (index, &origin) in self.origins.iter().enumerate() {
+            for sy in 0..WINDOW_CHUNKS {
+                for sx in 0..WINDOW_CHUNKS {
+                    self.members
+                        .insert(origin.translated(sx, sy), (index, sx, sy));
+                }
             }
         }
-    }
 
-    let mut windows: Vec<SimWindow> = origins
-        .iter()
-        .map(|&origin| SimWindow::new(origin, std::array::from_fn(|_| None)))
-        .collect();
-    for (&pos, chunk) in map.iter_mut() {
-        if let Some(&(index, sx, sy)) = members.get(&pos) {
-            windows[index].set_slot(sx, sy, chunk);
+        self.events
+            .resize_with(self.origins.len(), WindowEvents::default);
+        for events in &mut self.events[..self.origins.len()] {
+            events.clear();
+        }
+        let mut windows: Vec<SimWindow> = self
+            .origins
+            .iter()
+            .copied()
+            .zip(self.events.iter_mut())
+            .map(|(origin, events)| SimWindow::new(origin, std::array::from_fn(|_| None), events))
+            .collect();
+        for (&pos, chunk) in map.iter_mut() {
+            if let Some(&(index, sx, sy)) = self.members.get(&pos) {
+                windows[index].set_slot(sx, sy, chunk);
+            }
+        }
+
+        windows.par_iter_mut().for_each(kernel);
+        drop(windows);
+        for events in &mut self.events[..self.origins.len()] {
+            world.push_structural(events.drain_structural());
+            world.push_damage(events.drain_damage());
         }
     }
-
-    windows.par_iter_mut().for_each(kernel);
-
-    let mut structural: Vec<CellPos> = Vec::new();
-    let mut damage: Vec<CellPos> = Vec::new();
-    for window in windows {
-        let parts = window.into_parts();
-        structural.extend(parts.structural);
-        damage.extend(parts.damage);
-    }
-    world.push_structural(structural);
-    world.push_damage(damage);
 }
 
-fn owned_chunks(window: &SimWindow, simulate: &Simulate) -> [[bool; 2]; 2] {
+fn owned_chunks<S>(window: &SimWindow, simulate: &S) -> [[bool; 2]; 2]
+where
+    S: Fn(ChunkPos) -> bool + Sync,
+{
     let mut owned = [[false; 2]; 2];
     for (oy, row) in owned.iter_mut().enumerate() {
         for (ox, slot) in row.iter_mut().enumerate() {
@@ -176,12 +212,14 @@ fn owned_chunks(window: &SimWindow, simulate: &Simulate) -> [[bool; 2]; 2] {
     owned
 }
 
-fn simulate_block(
+fn simulate_block<S>(
     window: &mut SimWindow,
     tick: u64,
-    simulate: &Simulate,
+    simulate: &S,
     rule: fn(&mut SimWindow, CellPos, u64),
-) {
+) where
+    S: Fn(ChunkPos) -> bool + Sync,
+{
     let owned = owned_chunks(window, simulate);
     let mut rects = [[DirtyRect::EMPTY; 2]; 2];
     for (oy, row) in owned.iter().enumerate() {
@@ -216,7 +254,10 @@ fn simulate_block(
     }
 }
 
-fn random_tick_block(window: &mut SimWindow, tick: u64, simulate: &Simulate) {
+fn random_tick_block<S>(window: &mut SimWindow, tick: u64, simulate: &S)
+where
+    S: Fn(ChunkPos) -> bool + Sync,
+{
     let owned = owned_chunks(window, simulate);
     let size = CHUNK_SIZE as i32;
     for (oy, row) in owned.iter().enumerate() {

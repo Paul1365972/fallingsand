@@ -168,20 +168,20 @@ impl CellWorld {
         true
     }
 
-    pub(crate) fn push_structural(&mut self, positions: Vec<CellPos>) {
+    pub(crate) fn push_structural(&mut self, positions: impl IntoIterator<Item = CellPos>) {
         self.structural.extend(positions);
     }
 
-    pub fn take_structural(&mut self) -> Vec<CellPos> {
-        std::mem::take(&mut self.structural)
+    pub fn drain_structural(&mut self) -> impl Iterator<Item = CellPos> + '_ {
+        self.structural.drain(..)
     }
 
-    pub(crate) fn push_damage(&mut self, positions: Vec<CellPos>) {
+    pub(crate) fn push_damage(&mut self, positions: impl IntoIterator<Item = CellPos>) {
         self.damage.extend(positions);
     }
 
-    pub fn take_damage(&mut self) -> Vec<CellPos> {
-        std::mem::take(&mut self.damage)
+    pub fn drain_damage(&mut self) -> impl Iterator<Item = CellPos> + '_ {
+        self.damage.drain(..)
     }
 
     pub fn awake_counts(&self) -> (usize, u64) {

@@ -16,7 +16,7 @@ pub(crate) mod sim;
 use fallingsand_core::{Calendar, CellPos, DAY_UNITS};
 use fallingsand_net::Listener;
 use fallingsand_protocol::{ServerStats, TickProfile};
-use fallingsand_sim::CellWorld;
+use fallingsand_sim::{CellWorld, Simulator};
 use fallingsand_worldgen::WorldGenerator;
 use persistence::{Persistence, WorldMeta};
 use player::Players;
@@ -54,9 +54,10 @@ pub struct ServerConfig {
 struct ServerState {
     listener: Box<dyn Listener>,
     sim: CellWorld,
+    simulator: Simulator,
     players: Players,
     sessions: Sessions,
-    bodies: bodies::PixelBodies,
+    bodies: bodies::BodyWorld,
     generator: WorldGenerator,
     regions: RegionMap,
     tickets: ChunkTickets,
@@ -140,9 +141,10 @@ impl Server {
             state: ServerState {
                 listener: config.listener,
                 sim,
+                simulator: Simulator::new(),
                 players: Players::default(),
                 sessions: Sessions::default(),
-                bodies: bodies::PixelBodies::default(),
+                bodies: bodies::BodyWorld::default(),
                 generator,
                 regions: RegionMap::default(),
                 tickets: ChunkTickets::default(),
@@ -267,7 +269,12 @@ impl ServerState {
             },
         )?;
 
-        sim::step_simulation(&mut self.sim, &self.tickets, &mut self.stats);
+        let sim_metrics = sim::step_simulation(&mut self.simulator, &mut self.sim, &self.tickets);
+        self.stats.tick = sim_metrics.tick;
+        self.stats.timing.sim_simulate = sim_metrics.timings.simulate_micros;
+        self.stats.timing.sim_random_tick = sim_metrics.timings.random_tick_micros;
+        self.stats.active_chunks = sim_metrics.active_chunks;
+        self.stats.border_chunks = sim_metrics.border_chunks;
 
         self.timed(
             "physics",
@@ -281,13 +288,8 @@ impl ServerState {
             "bodies",
             |t| &mut t.bodies,
             |s| {
-                bodies::step_bodies(
-                    &mut s.sim,
-                    &s.tickets,
-                    &mut s.bodies,
-                    &mut s.players,
-                    &mut s.stats,
-                );
+                let metrics = s.bodies.step(&mut s.sim, &s.tickets, &mut s.players);
+                s.stats.pixel_bodies = metrics.bodies;
             },
         );
 
@@ -323,7 +325,7 @@ impl ServerState {
             "replicate",
             |t| &mut t.replicate,
             |s| {
-                replication::replicate(
+                let metrics = replication::replicate(
                     &mut s.sessions,
                     &s.players,
                     &s.sim,
@@ -332,8 +334,14 @@ impl ServerState {
                     &s.generator,
                     &s.emitter.spawns,
                     &mut s.replication,
-                    &mut s.stats,
                 );
+                s.stats.players = metrics.players;
+                s.stats.awake_chunks = metrics.awake_chunks;
+                s.stats.awake_cells = metrics.awake_cells;
+                s.stats.loaded_chunks = metrics.loaded_chunks;
+                s.stats.loaded_regions = metrics.loaded_regions;
+                s.stats.dirty_regions = metrics.dirty_regions;
+                s.stats.replicated_bytes = metrics.replicated_bytes;
             },
         );
 
