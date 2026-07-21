@@ -1,32 +1,40 @@
 use crate::bodies::PixelBodies;
-use crate::persistence::{Persistence, RegionLoad, StoreError, encode_region};
+use crate::persistence::{Persistence, RegionReady, StoreError};
 use crate::player::{Players, SearchWindow};
 use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y};
 use fallingsand_core::{CellPos, Chunk, ChunkPos, REGION_SIZE_CELLS, Region, RegionPos};
 use fallingsand_sim::bodies::settle_body_quiet;
 use fallingsand_sim::{CellWorld, PixelBody};
-use fallingsand_worldgen::WorldGenerator;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::sync::Arc;
 
 pub const BORDER_MARGIN: i32 = 3;
 pub const UNLOAD_GRACE_SECS: f32 = 5.0;
 pub const UNLOAD_GRACE_TICKS: u64 = fallingsand_core::ticks_from_secs(UNLOAD_GRACE_SECS);
 pub const MAX_LOADS_PER_TICK: usize = 1;
+const MAX_PENDING_REGION_LOADS: usize = 64;
 
 pub struct RegionState {
-    pub dirty: bool,
+    pub revision: u64,
+    pub persisted_revision: u64,
     pub last_wanted: u64,
 }
 
 #[derive(Default)]
 pub struct RegionMap {
     pub states: FxHashMap<RegionPos, RegionState>,
+    requested: FxHashMap<RegionPos, u64>,
+    ready: Vec<RegionReady>,
 }
 
 impl RegionMap {
     pub fn counts(&self) -> (u32, u32) {
         let loaded = self.states.len() as u32;
-        let dirty = self.states.values().filter(|state| state.dirty).count() as u32;
+        let dirty = self
+            .states
+            .values()
+            .filter(|state| state.revision > state.persisted_revision)
+            .count() as u32;
         (loaded, dirty)
     }
 }
@@ -127,21 +135,29 @@ fn snapshot_region(sim: &CellWorld, pos: RegionPos) -> Region {
 pub(crate) fn collect_region_saves(
     sim: &CellWorld,
     regions: &RegionMap,
-) -> Result<Vec<(RegionPos, Vec<u8>)>, StoreError> {
+) -> Vec<(RegionPos, u64, u64, Arc<Region>)> {
     let mut out = Vec::new();
     for (pos, state) in &regions.states {
-        if !state.dirty {
+        if state.revision <= state.persisted_revision {
             continue;
         }
-        out.push((*pos, encode_region(&snapshot_region(sim, *pos))?));
+        out.push((
+            *pos,
+            state.revision,
+            state.persisted_revision,
+            Arc::new(snapshot_region(sim, *pos)),
+        ));
     }
-    Ok(out)
+    out
 }
 
-pub(crate) fn mark_saved(regions: &mut RegionMap, positions: impl IntoIterator<Item = RegionPos>) {
-    for pos in positions {
+pub(crate) fn mark_saved(
+    regions: &mut RegionMap,
+    positions: impl IntoIterator<Item = (RegionPos, u64)>,
+) {
+    for (pos, revision) in positions {
         if let Some(state) = regions.states.get_mut(&pos) {
-            state.dirty = false;
+            state.persisted_revision = state.persisted_revision.max(revision.min(state.revision));
         }
     }
 }
@@ -163,13 +179,61 @@ fn body_overlaps_region(body: &PixelBody, pos: RegionPos) -> bool {
 pub fn manage_regions(
     sim: &mut CellWorld,
     regions: &mut RegionMap,
-    generator: &WorldGenerator,
     persistence: &mut Persistence,
     tickets: &ChunkTickets,
     bodies: &mut PixelBodies,
 ) -> Result<(), StoreError> {
     let tick = sim.tick();
     let wanted = wanted_regions(tickets);
+
+    let mut completions = persistence.drain_completions()?;
+    for &(pos, revision) in &completions.saved_regions {
+        for ready in regions.ready.iter_mut().chain(&mut completions.regions) {
+            if ready.pos == pos
+                && let Ok(load) = &mut ready.result
+            {
+                load.persisted_revision = load.persisted_revision.max(revision.min(load.revision));
+            }
+        }
+    }
+    mark_saved(regions, completions.saved_regions);
+    regions.ready.extend(completions.regions);
+    regions
+        .ready
+        .sort_unstable_by_key(|ready| (ready.pos.y, ready.pos.x));
+
+    let mut integrated = 0;
+    let mut index = 0;
+    while index < regions.ready.len() {
+        let ready = &regions.ready[index];
+        let requested = regions.requested.get(&ready.pos).copied();
+        if requested != Some(ready.request) {
+            regions.ready.remove(index).result?;
+            continue;
+        }
+        if !wanted.contains(&ready.pos) {
+            regions.requested.remove(&ready.pos);
+            regions.ready.remove(index).result?;
+            continue;
+        }
+        if integrated >= MAX_LOADS_PER_TICK {
+            index += 1;
+            continue;
+        }
+        let ready = regions.ready.remove(index);
+        let load = ready.result?;
+        regions.requested.remove(&ready.pos);
+        insert_region(sim, ready.pos, load.region);
+        regions.states.insert(
+            ready.pos,
+            RegionState {
+                revision: load.revision,
+                persisted_revision: load.persisted_revision,
+                last_wanted: tick,
+            },
+        );
+        integrated += 1;
+    }
 
     for pos in &wanted {
         if let Some(state) = regions.states.get_mut(pos) {
@@ -179,33 +243,22 @@ pub fn manage_regions(
 
     let mut candidates: Vec<_> = wanted.iter().copied().collect();
     candidates.sort_unstable_by_key(|pos| (pos.y, pos.x));
-    let mut loads = 0usize;
     for pos in candidates {
-        if regions.states.contains_key(&pos) || loads >= MAX_LOADS_PER_TICK {
+        if regions.requested.len() >= MAX_PENDING_REGION_LOADS {
+            break;
+        }
+        if regions.states.contains_key(&pos) || regions.requested.contains_key(&pos) {
             continue;
         }
-        let loaded = persistence
-            .load_region(pos)
-            .map_err(|source| StoreError::RegionLoad {
+        let (request, ready) = persistence.request_region(pos)?;
+        regions.requested.insert(pos, request);
+        if let Some(load) = ready {
+            regions.ready.push(RegionReady {
+                request,
                 pos,
-                source: Box::new(source),
-            })?;
-        let load = match loaded {
-            Some(load) => load,
-            None => RegionLoad {
-                region: generator.generate_region(pos),
-                dirty: false,
-            },
-        };
-        insert_region(sim, pos, load.region);
-        regions.states.insert(
-            pos,
-            RegionState {
-                dirty: load.dirty,
-                last_wanted: tick,
-            },
-        );
-        loads += 1;
+                result: Ok(load),
+            });
+        }
     }
 
     let mut expired: Vec<RegionPos> = regions
@@ -238,27 +291,27 @@ pub fn manage_regions(
     mark_changed_regions(sim, regions);
 
     for pos in expired {
-        regions.states.remove(&pos).expect("state exists");
+        let state = regions.states.remove(&pos).expect("state exists");
         let region = extract_region(sim, pos);
-        persistence.stage_region(pos, encode_region(&region)?);
+        persistence.stage_region(
+            pos,
+            state.revision,
+            state.persisted_revision,
+            Arc::new(region),
+        );
     }
-    if let Err(err) = persistence.flush_regions() {
-        tracing::error!("failed to save unloaded regions: {err}");
-    }
+    persistence.pump()?;
     Ok(())
 }
 
 pub(crate) fn mark_changed_regions(sim: &CellWorld, regions: &mut RegionMap) {
     for (pos, state) in &mut regions.states {
-        if state.dirty {
-            continue;
-        }
         for (_, chunk_pos) in pos.chunk_positions() {
             if sim
                 .chunk(chunk_pos)
                 .is_some_and(|chunk| !chunk.change_rect().is_empty())
             {
-                state.dirty = true;
+                state.revision = state.revision.max(sim.tick().max(1));
                 break;
             }
         }

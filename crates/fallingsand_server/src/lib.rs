@@ -124,12 +124,13 @@ impl Server {
                     tick: 0,
                 };
                 persistence.stage_meta(meta.clone());
-                persistence.flush_meta()?;
+                persistence.flush_startup_meta()?;
                 tracing::info!("created world \"{}\" (seed {:#x})", meta.name, meta.seed);
                 meta
             }
         };
         let seed = meta.seed;
+        persistence.start_worker(seed)?;
         let generator = WorldGenerator::new(seed);
         let spawn_x = 0;
         let spawn = CellPos::new(spawn_x, generator.surface_height(spawn_x) + 12);
@@ -259,7 +260,6 @@ impl ServerState {
                 regions::manage_regions(
                     &mut s.sim,
                     &mut s.regions,
-                    &s.generator,
                     &mut s.persistence,
                     &s.tickets,
                     &mut s.bodies,
@@ -388,9 +388,7 @@ impl ServerState {
             }
             self.persistence.stage_player(uuid, record);
         }
-        if let Err(err) = self.persistence.flush_players() {
-            tracing::error!("failed to save disconnected players: {err}");
-        }
+        self.persistence.pump()?;
         Ok(())
     }
 }

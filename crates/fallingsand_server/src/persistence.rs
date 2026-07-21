@@ -10,10 +10,14 @@ use fallingsand_core::{
 use fallingsand_math::SUBCELL_UNITS_PER_CELL;
 use fallingsand_protocol::{GameMode, PlayerUuid};
 use fallingsand_sim::CellWorld;
+use fallingsand_worldgen::WorldGenerator;
 use redb::{Database, ReadableDatabase, TableDefinition};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
+use std::thread::{self, JoinHandle};
 
 pub const REGION_FORMAT_VERSION: u8 = 21;
 pub const WORLD_FORMAT_VERSION: u16 = 24;
@@ -23,7 +27,7 @@ const REGIONS: TableDefinition<u64, &[u8]> = TableDefinition::new("regions");
 const PLAYERS: TableDefinition<u128, &[u8]> = TableDefinition::new("players");
 const META: TableDefinition<&str, &[u8]> = TableDefinition::new("meta");
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorldMeta {
     pub format_version: u16,
     pub seed: u64,
@@ -34,7 +38,19 @@ pub struct WorldMeta {
 
 pub struct RegionLoad {
     pub region: Region,
-    pub dirty: bool,
+    pub revision: u64,
+    pub persisted_revision: u64,
+}
+
+pub struct RegionReady {
+    pub request: u64,
+    pub pos: RegionPos,
+    pub result: Result<RegionLoad, StoreError>,
+}
+
+pub struct PersistenceCompletions {
+    pub regions: Vec<RegionReady>,
+    pub saved_regions: Vec<(RegionPos, u64)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -305,6 +321,12 @@ pub enum StoreError {
         #[source]
         source: Box<StoreError>,
     },
+    #[error("persistence worker disconnected")]
+    WorkerDisconnected,
+    #[error("persistence worker panicked")]
+    WorkerPanicked,
+    #[error("failed to start persistence worker: {0}")]
+    WorkerStart(String),
 }
 
 impl From<redb::DatabaseError> for StoreError {
@@ -337,27 +359,84 @@ struct WorldStore {
     db: Database,
 }
 
+#[derive(Clone)]
+struct RegionSnapshot {
+    revision: u64,
+    persisted_revision: u64,
+    region: Arc<Region>,
+}
+
+#[derive(Clone)]
+struct SaveBatch {
+    regions: Vec<(RegionPos, RegionSnapshot)>,
+    players: Vec<(PlayerUuid, PlayerRecord)>,
+    meta: Option<WorldMeta>,
+}
+
+enum WorkerCommand {
+    LoadRegion { request: u64, pos: RegionPos },
+    SaveBatch(SaveBatch),
+    Shutdown,
+}
+
+enum WorkerCompletion {
+    RegionReady(RegionReady),
+    SaveComplete,
+    SaveFailed(StoreError),
+}
+
+struct PersistenceWorker {
+    commands: Sender<WorkerCommand>,
+    completions: Receiver<WorkerCompletion>,
+    thread: JoinHandle<()>,
+}
+
 pub struct Persistence {
-    store: Option<WorldStore>,
-    pending_regions: BTreeMap<RegionPos, Vec<u8>>,
+    store: Option<Arc<WorldStore>>,
+    worker: Option<PersistenceWorker>,
+    pending_regions: BTreeMap<RegionPos, RegionSnapshot>,
     pending_players: BTreeMap<PlayerUuid, PlayerRecord>,
     pending_meta: Option<WorldMeta>,
+    next_request: u64,
+    in_flight: Option<SaveBatch>,
 }
 
 impl Persistence {
     pub fn open(path: Option<&Path>) -> Result<Self, StoreError> {
         Ok(Self {
-            store: path.map(WorldStore::open).transpose()?,
+            store: path.map(WorldStore::open).transpose()?.map(Arc::new),
+            worker: None,
             pending_regions: BTreeMap::new(),
             pending_players: BTreeMap::new(),
             pending_meta: None,
+            next_request: 1,
+            in_flight: None,
         })
+    }
+
+    pub fn start_worker(&mut self, seed: u64) -> Result<(), StoreError> {
+        let (command_tx, command_rx) = channel();
+        let (completion_tx, completion_rx) = channel();
+        let store = self.store.clone();
+        let thread = thread::Builder::new()
+            .name("region-storage".into())
+            .spawn(move || worker_main(store, WorldGenerator::new(seed), command_rx, completion_tx))
+            .map_err(|error| StoreError::WorkerStart(error.to_string()))?;
+        self.worker = Some(PersistenceWorker {
+            commands: command_tx,
+            completions: completion_rx,
+            thread,
+        });
+        Ok(())
     }
 
     pub fn load_meta(&self) -> Result<Option<WorldMeta>, StoreError> {
         match &self.pending_meta {
             Some(meta) => Ok(Some(meta.clone())),
-            None => self.store.as_ref().map_or(Ok(None), WorldStore::load_meta),
+            None => self
+                .store
+                .as_ref()
+                .map_or(Ok(None), |store| store.load_meta()),
         }
     }
 
@@ -365,7 +444,7 @@ impl Persistence {
         self.pending_meta = Some(meta);
     }
 
-    pub fn flush_meta(&mut self) -> Result<(), StoreError> {
+    pub fn flush_startup_meta(&mut self) -> Result<(), StoreError> {
         let Some(store) = &self.store else {
             return Ok(());
         };
@@ -377,52 +456,74 @@ impl Persistence {
         Ok(())
     }
 
-    pub fn load_region(&mut self, pos: RegionPos) -> Result<Option<RegionLoad>, StoreError> {
-        if let Some(blob) = self.pending_regions.get(&pos) {
-            let region = decode_region(blob)?;
-            self.pending_regions.remove(&pos);
-            return Ok(Some(RegionLoad {
-                region,
-                dirty: true,
-            }));
+    pub fn request_region(
+        &mut self,
+        pos: RegionPos,
+    ) -> Result<(u64, Option<RegionLoad>), StoreError> {
+        let request = self.next_request;
+        self.next_request = self.next_request.wrapping_add(1).max(1);
+        let retained = self.pending_regions.get(&pos).cloned().or_else(|| {
+            self.in_flight
+                .as_ref()?
+                .regions
+                .iter()
+                .find_map(|(saved_pos, snapshot)| (*saved_pos == pos).then(|| snapshot.clone()))
+        });
+        if let Some(pending) = retained {
+            return Ok((
+                request,
+                Some(RegionLoad {
+                    region: (*pending.region).clone(),
+                    revision: pending.revision,
+                    persisted_revision: pending.persisted_revision,
+                }),
+            ));
         }
-        self.store.as_ref().map_or(Ok(None), |store| {
-            Ok(store.load_region(pos)?.map(|region| RegionLoad {
+        let worker = self.worker.as_ref().ok_or(StoreError::WorkerDisconnected)?;
+        worker
+            .commands
+            .send(WorkerCommand::LoadRegion { request, pos })
+            .map_err(|_| StoreError::WorkerDisconnected)?;
+        Ok((request, None))
+    }
+
+    pub fn stage_region(
+        &mut self,
+        pos: RegionPos,
+        revision: u64,
+        persisted_revision: u64,
+        region: Arc<Region>,
+    ) {
+        self.pending_regions.insert(
+            pos,
+            RegionSnapshot {
+                revision,
+                persisted_revision,
                 region,
-                dirty: false,
-            }))
-        })
+            },
+        );
     }
 
-    pub fn stage_region(&mut self, pos: RegionPos, blob: Vec<u8>) {
-        self.pending_regions.insert(pos, blob);
-    }
-
-    pub fn stage_regions(&mut self, regions: impl IntoIterator<Item = (RegionPos, Vec<u8>)>) {
-        self.pending_regions.extend(regions);
-    }
-
-    pub fn flush_regions(&mut self) -> Result<usize, StoreError> {
-        if self.pending_regions.is_empty() {
-            return Ok(0);
+    pub fn stage_regions(
+        &mut self,
+        regions: impl IntoIterator<Item = (RegionPos, u64, u64, Arc<Region>)>,
+    ) {
+        for (pos, revision, persisted_revision, region) in regions {
+            self.stage_region(pos, revision, persisted_revision, region);
         }
-        let count = self.pending_regions.len();
-        let Some(store) = &self.store else {
-            return Ok(count);
-        };
-        let regions: Vec<_> = self
-            .pending_regions
-            .iter()
-            .map(|(&pos, blob)| (pos, blob.clone()))
-            .collect();
-        store.save_regions(&regions)?;
-        self.pending_regions.clear();
-        Ok(count)
     }
 
     pub fn load_player(&mut self, uuid: PlayerUuid) -> Result<Option<PlayerRecord>, StoreError> {
-        if let Some(record) = self.pending_players.remove(&uuid) {
-            return Ok(Some(record));
+        if let Some(record) = self.pending_players.get(&uuid) {
+            return Ok(Some(record.clone()));
+        }
+        if let Some(record) = self.in_flight.as_ref().and_then(|batch| {
+            batch
+                .players
+                .iter()
+                .find_map(|(id, record)| (*id == uuid).then_some(record))
+        }) {
+            return Ok(Some(record.clone()));
         }
         self.store
             .as_ref()
@@ -433,22 +534,166 @@ impl Persistence {
         self.pending_players.insert(uuid, record);
     }
 
-    pub fn flush_players(&mut self) -> Result<usize, StoreError> {
-        if self.pending_players.is_empty() {
-            return Ok(0);
+    pub fn pump(&mut self) -> Result<(), StoreError> {
+        if self.store.is_none() || self.in_flight.is_some() || !self.has_pending() {
+            return Ok(());
         }
-        let count = self.pending_players.len();
-        let Some(store) = &self.store else {
-            return Ok(count);
+        let batch = self.take_batch();
+        let worker = self.worker.as_ref().ok_or(StoreError::WorkerDisconnected)?;
+        if worker
+            .commands
+            .send(WorkerCommand::SaveBatch(batch.clone()))
+            .is_err()
+        {
+            self.restore_batch(batch);
+            return Err(StoreError::WorkerDisconnected);
+        }
+        self.in_flight = Some(batch);
+        Ok(())
+    }
+
+    pub fn drain_completions(&mut self) -> Result<PersistenceCompletions, StoreError> {
+        let mut completed = PersistenceCompletions {
+            regions: Vec::new(),
+            saved_regions: Vec::new(),
         };
-        let players: Vec<_> = self
-            .pending_players
-            .iter()
-            .map(|(&uuid, record)| (uuid, record.clone()))
-            .collect();
-        store.save_players(&players)?;
-        self.pending_players.clear();
-        Ok(count)
+        let mut messages = Vec::new();
+        let worker = self.worker.as_ref().ok_or(StoreError::WorkerDisconnected)?;
+        loop {
+            match worker.completions.try_recv() {
+                Ok(message) => messages.push(message),
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => return Err(StoreError::WorkerDisconnected),
+            }
+        }
+        for message in messages {
+            self.apply_completion(message, &mut completed, false)?;
+        }
+        Ok(completed)
+    }
+
+    pub fn flush_durable(&mut self) -> Result<(usize, usize), StoreError> {
+        let region_count = self.pending_regions.len();
+        let player_count = self.pending_players.len();
+        if self.store.is_none() {
+            self.shutdown_worker()?;
+            return Ok((region_count, player_count));
+        }
+        loop {
+            self.pump()?;
+            if !self.has_pending() && self.in_flight.is_none() {
+                break;
+            }
+            let message = self
+                .worker
+                .as_ref()
+                .ok_or(StoreError::WorkerDisconnected)?
+                .completions
+                .recv()
+                .map_err(|_| StoreError::WorkerDisconnected)?;
+            let mut completed = PersistenceCompletions {
+                regions: Vec::new(),
+                saved_regions: Vec::new(),
+            };
+            if let Err(error) = self.apply_completion(message, &mut completed, true) {
+                self.shutdown_worker()?;
+                return Err(error);
+            }
+        }
+        self.shutdown_worker()?;
+        Ok((region_count, player_count))
+    }
+
+    fn has_pending(&self) -> bool {
+        !self.pending_regions.is_empty()
+            || !self.pending_players.is_empty()
+            || self.pending_meta.is_some()
+    }
+
+    fn take_batch(&mut self) -> SaveBatch {
+        SaveBatch {
+            regions: std::mem::take(&mut self.pending_regions)
+                .into_iter()
+                .collect(),
+            players: std::mem::take(&mut self.pending_players)
+                .into_iter()
+                .collect(),
+            meta: self.pending_meta.take(),
+        }
+    }
+
+    fn restore_batch(&mut self, batch: SaveBatch) {
+        for (pos, snapshot) in batch.regions {
+            self.pending_regions.entry(pos).or_insert(snapshot);
+        }
+        for (uuid, record) in batch.players {
+            self.pending_players.entry(uuid).or_insert(record);
+        }
+        if self.pending_meta.is_none() {
+            self.pending_meta = batch.meta;
+        }
+    }
+
+    fn apply_completion(
+        &mut self,
+        message: WorkerCompletion,
+        completed: &mut PersistenceCompletions,
+        durable: bool,
+    ) -> Result<(), StoreError> {
+        match message {
+            WorkerCompletion::RegionReady(ready) => completed.regions.push(ready),
+            WorkerCompletion::SaveComplete => {
+                let SaveBatch {
+                    regions,
+                    players,
+                    meta,
+                } = self.take_in_flight()?;
+                for (pos, saved) in regions {
+                    let remove_pending =
+                        self.pending_regions.get_mut(&pos).is_some_and(|pending| {
+                            pending.persisted_revision = pending
+                                .persisted_revision
+                                .max(saved.revision.min(pending.revision));
+                            pending.revision <= pending.persisted_revision
+                        });
+                    if remove_pending {
+                        self.pending_regions.remove(&pos);
+                    }
+                    completed.saved_regions.push((pos, saved.revision));
+                }
+                for (uuid, saved) in players {
+                    if self.pending_players.get(&uuid) == Some(&saved) {
+                        self.pending_players.remove(&uuid);
+                    }
+                }
+                if self.pending_meta == meta {
+                    self.pending_meta = None;
+                }
+            }
+            WorkerCompletion::SaveFailed(error) => {
+                let batch = self.take_in_flight()?;
+                self.restore_batch(batch);
+                if durable {
+                    return Err(error);
+                }
+                tracing::error!("persistence batch failed: {error}");
+            }
+        }
+        Ok(())
+    }
+
+    fn take_in_flight(&mut self) -> Result<SaveBatch, StoreError> {
+        self.in_flight.take().ok_or(StoreError::WorkerDisconnected)
+    }
+
+    fn shutdown_worker(&mut self) -> Result<(), StoreError> {
+        let Some(worker) = self.worker.take() else {
+            return Ok(());
+        };
+        drop(worker.completions);
+        let _ = worker.commands.send(WorkerCommand::Shutdown);
+        drop(worker.commands);
+        worker.thread.join().map_err(|_| StoreError::WorkerPanicked)
     }
 }
 
@@ -509,21 +754,6 @@ impl WorldStore {
         decode_region(guard.value()).map(Some)
     }
 
-    pub fn save_regions(&self, regions: &[(RegionPos, Vec<u8>)]) -> Result<(), StoreError> {
-        if regions.is_empty() {
-            return Ok(());
-        }
-        let write = self.db.begin_write()?;
-        {
-            let mut table = write.open_table(REGIONS)?;
-            for (pos, blob) in regions {
-                table.insert(pos.zorder_key(), blob.as_slice())?;
-            }
-        }
-        write.commit()?;
-        Ok(())
-    }
-
     pub fn load_player(&self, uuid: PlayerUuid) -> Result<Option<PlayerRecord>, StoreError> {
         let read = self.db.begin_read()?;
         let table = read.open_table(PLAYERS)?;
@@ -533,20 +763,81 @@ impl WorldStore {
         Ok(Some(postcard::from_bytes(guard.value())?))
     }
 
-    pub fn save_players(&self, players: &[(PlayerUuid, PlayerRecord)]) -> Result<(), StoreError> {
-        if players.is_empty() {
-            return Ok(());
-        }
+    fn save_batch(&self, batch: &SaveBatch) -> Result<(), StoreError> {
+        let regions = batch
+            .regions
+            .iter()
+            .map(|(pos, snapshot)| Ok((*pos, encode_region(&snapshot.region)?)))
+            .collect::<Result<Vec<_>, StoreError>>()?;
+        let players = batch
+            .players
+            .iter()
+            .map(|(uuid, record)| Ok((*uuid, postcard::to_allocvec(record)?)))
+            .collect::<Result<Vec<_>, StoreError>>()?;
+        let meta = batch.meta.as_ref().map(postcard::to_allocvec).transpose()?;
         let write = self.db.begin_write()?;
         {
+            let mut table = write.open_table(REGIONS)?;
+            for (pos, blob) in &regions {
+                table.insert(pos.zorder_key(), blob.as_slice())?;
+            }
+        }
+        {
             let mut table = write.open_table(PLAYERS)?;
-            for (uuid, record) in players {
-                let bytes = postcard::to_allocvec(record)?;
+            for (uuid, bytes) in &players {
                 table.insert(uuid.0, bytes.as_slice())?;
             }
         }
+        if let Some(bytes) = &meta {
+            let mut table = write.open_table(META)?;
+            table.insert("world", bytes.as_slice())?;
+        }
         write.commit()?;
         Ok(())
+    }
+}
+
+fn worker_main(
+    store: Option<Arc<WorldStore>>,
+    generator: WorldGenerator,
+    commands: Receiver<WorkerCommand>,
+    completions: Sender<WorkerCompletion>,
+) {
+    while let Ok(command) = commands.recv() {
+        let completion = match command {
+            WorkerCommand::LoadRegion { request, pos } => {
+                let result = store
+                    .as_ref()
+                    .map_or(Ok(None), |store| store.load_region(pos))
+                    .map(|loaded| RegionLoad {
+                        region: loaded.unwrap_or_else(|| generator.generate_region(pos)),
+                        revision: 0,
+                        persisted_revision: 0,
+                    })
+                    .map_err(|source| StoreError::RegionLoad {
+                        pos,
+                        source: Box::new(source),
+                    });
+                WorkerCompletion::RegionReady(RegionReady {
+                    request,
+                    pos,
+                    result,
+                })
+            }
+            WorkerCommand::SaveBatch(batch) => {
+                match store
+                    .as_ref()
+                    .map_or(Ok(()), |store| store.save_batch(&batch))
+                {
+                    Ok(()) => WorkerCompletion::SaveComplete,
+                    Err(error) => WorkerCompletion::SaveFailed(error),
+                }
+            }
+            WorkerCommand::Shutdown => break,
+        };
+        if completions.send(completion).is_err() {
+            break;
+        }
     }
 }
 
@@ -560,35 +851,18 @@ pub fn autosave(
 ) -> Result<(), StoreError> {
     let tick = sim.tick();
     if tick == 0 || !tick.is_multiple_of(AUTOSAVE_INTERVAL_TICKS) {
+        persistence.pump()?;
         return Ok(());
     }
 
+    mark_changed_regions(sim, regions);
     let player_records = snapshot_players(players)?;
-
-    let to_save = collect_region_saves(sim, regions)?;
-    let saved_regions: Vec<_> = to_save.iter().map(|(pos, _)| *pos).collect();
-    persistence.stage_regions(to_save);
-    match persistence.flush_regions() {
-        Ok(count) => {
-            mark_saved(regions, saved_regions);
-            if count > 0 {
-                tracing::debug!("autosaved {count} regions");
-            }
-        }
-        Err(err) => tracing::error!("autosave failed: {err}"),
-    }
-
+    persistence.stage_regions(collect_region_saves(sim, regions));
     for (uuid, record) in player_records {
         persistence.stage_player(uuid, record);
     }
-    if let Err(err) = persistence.flush_players() {
-        tracing::error!("player autosave failed: {err}");
-    }
     persistence.stage_meta(world_meta(info, clock, tick));
-    if let Err(err) = persistence.flush_meta() {
-        tracing::error!("meta autosave failed: {err}");
-    }
-    Ok(())
+    persistence.pump()
 }
 
 pub fn save_everything(
@@ -603,18 +877,21 @@ pub fn save_everything(
     let player_records = snapshot_players(players)?;
 
     mark_changed_regions(sim, regions);
-    let to_save = collect_region_saves(sim, regions)?;
-    let saved_regions: Vec<_> = to_save.iter().map(|(pos, _)| *pos).collect();
-    persistence.stage_regions(to_save);
-    let region_count = persistence.flush_regions()?;
-    mark_saved(regions, saved_regions);
+    persistence.stage_regions(collect_region_saves(sim, regions));
 
     for (uuid, record) in player_records {
         persistence.stage_player(uuid, record);
     }
-    let player_count = persistence.flush_players()?;
     persistence.stage_meta(world_meta(info, clock, sim.tick()));
-    persistence.flush_meta()?;
+    let (region_count, player_count) = persistence.flush_durable()?;
+    mark_saved(
+        regions,
+        regions
+            .states
+            .iter()
+            .map(|(&pos, state)| (pos, state.revision))
+            .collect::<Vec<_>>(),
+    );
     tracing::info!(
         "world saved: {} regions, {} players in {:.1?}",
         region_count,
