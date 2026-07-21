@@ -1,209 +1,82 @@
 use super::Game;
-use super::camera::{EMISSIVE_LAYER, WORLD_LAYER};
 use crate::game::world::ChunkChange;
-use bevy::asset::RenderAssetUsages;
-use bevy::camera::visibility::RenderLayers;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
-use bevy::render::render_asset::RenderAssets;
-use bevy::render::render_resource::{
-    AsBindGroup, Extent3d, Origin3d, TexelCopyBufferLayout, TexelCopyTextureInfo, TextureAspect,
-    TextureDimension, TextureFormat,
-};
-use bevy::render::renderer::RenderQueue;
-use bevy::render::texture::GpuImage;
-use bevy::render::{ExtractSchedule, MainWorld, Render, RenderApp, RenderSystems};
-use bevy::shader::ShaderRef;
-use bevy::sprite_render::{AlphaMode2d, Material2d};
-use fallingsand_core::content;
-use fallingsand_core::{CHUNK_AREA, CHUNK_SIZE, Cell, CellOffset, ChunkPos, DirtyRect};
+use fallingsand_core::{CHUNK_AREA, Cell, CellOffset, ChunkPos, DirtyRect};
 
-const SHADES: u32 = 16;
-const UPLOAD_RETRY_FRAMES: u8 = 3;
+const INITIAL_ATLAS_SIDE: u32 = 16;
 
-#[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
-pub struct ChunkMaterial {
-    #[texture(0, sample_type = "u_int")]
-    pub cells: Handle<Image>,
-    #[texture(1, filterable = false)]
-    pub palette: Handle<Image>,
-}
-
-impl Material2d for ChunkMaterial {
-    fn fragment_shader() -> ShaderRef {
-        "shaders/chunk.wgsl".into()
-    }
-
-    fn alpha_mode(&self) -> AlphaMode2d {
-        AlphaMode2d::Blend
-    }
-}
-
-#[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
-pub struct EmissiveChunkMaterial {
-    #[texture(0, sample_type = "u_int")]
-    pub cells: Handle<Image>,
-    #[texture(1, filterable = false)]
-    pub emissive_palette: Handle<Image>,
-    #[texture(2, filterable = false)]
-    pub palette: Handle<Image>,
-}
-
-impl Material2d for EmissiveChunkMaterial {
-    fn fragment_shader() -> ShaderRef {
-        "shaders/emissive_chunk.wgsl".into()
-    }
-
-    fn alpha_mode(&self) -> AlphaMode2d {
-        AlphaMode2d::Opaque
-    }
-}
-
-#[derive(Resource)]
-pub struct RenderShared {
-    pub palette: Handle<Image>,
-    pub emissive_palette: Handle<Image>,
-    pub quad: Handle<Mesh>,
-}
-
-#[derive(Resource, Default)]
-pub struct ChunkVisuals {
-    pub chunk_entities: HashMap<ChunkPos, ChunkVisual>,
-    pub uploads: usize,
-    pub upload_bytes: usize,
-}
-
-pub struct ChunkVisual {
-    pub color: Entity,
-    pub emissive: Entity,
-    pub image: Handle<Image>,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AtlasSlot {
+    pub x: u32,
+    pub y: u32,
 }
 
 pub struct ChunkUpload {
-    image: AssetId<Image>,
-    rect: DirtyRect,
-    data: Vec<u8>,
-    retries: u8,
+    pub slot: AtlasSlot,
+    pub rect: DirtyRect,
+    pub data: Vec<u8>,
 }
 
-#[derive(Resource, Default)]
-pub struct ChunkUploadQueue(Vec<ChunkUpload>);
+#[derive(Resource)]
+pub struct ChunkRenderState {
+    pub chunk_entities: HashMap<ChunkPos, AtlasSlot>,
+    pub uploads: usize,
+    pub upload_bytes: usize,
+    pub atlas_side: u32,
+    pub atlas_generation: u64,
+    pub instance_generation: u64,
+    free: Vec<AtlasSlot>,
+    pub(crate) pending: Vec<ChunkUpload>,
+}
 
-#[derive(Resource, Default)]
-struct RenderChunkUploads(Vec<ChunkUpload>);
-
-pub fn setup_render_app(app: &mut App) {
-    if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-        render_app
-            .init_resource::<RenderChunkUploads>()
-            .add_systems(ExtractSchedule, extract_chunk_uploads)
-            .add_systems(
-                Render,
-                upload_chunk_rects.in_set(RenderSystems::PrepareResources),
-            );
+impl Default for ChunkRenderState {
+    fn default() -> Self {
+        let mut state = Self {
+            chunk_entities: HashMap::default(),
+            uploads: 0,
+            upload_bytes: 0,
+            atlas_side: INITIAL_ATLAS_SIDE,
+            atlas_generation: 0,
+            instance_generation: 0,
+            free: Vec::new(),
+            pending: Vec::new(),
+        };
+        state.add_slots(0, INITIAL_ATLAS_SIDE);
+        state
     }
 }
 
-fn extract_chunk_uploads(
-    mut main_world: ResMut<MainWorld>,
-    mut uploads: ResMut<RenderChunkUploads>,
-) {
-    let mut queue = main_world.resource_mut::<ChunkUploadQueue>();
-    uploads.0.append(&mut queue.0);
-}
-
-fn upload_chunk_rects(
-    mut uploads: ResMut<RenderChunkUploads>,
-    images: Res<RenderAssets<GpuImage>>,
-    queue: Res<RenderQueue>,
-) {
-    uploads.0.retain_mut(|upload| {
-        let Some(gpu) = images.get(upload.image) else {
-            upload.retries += 1;
-            if upload.retries >= UPLOAD_RETRY_FRAMES {
-                warn!("dropping chunk upload: GPU image never appeared");
-                return false;
-            }
-            return true;
-        };
-        queue.write_texture(
-            TexelCopyTextureInfo {
-                texture: &gpu.texture,
-                mip_level: 0,
-                origin: Origin3d {
-                    x: upload.rect.min_x as u32,
-                    y: upload.rect.min_y as u32,
-                    z: 0,
-                },
-                aspect: TextureAspect::All,
-            },
-            &upload.data,
-            TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(upload.rect.width() * 4),
-                rows_per_image: Some(upload.rect.height()),
-            },
-            Extent3d {
-                width: upload.rect.width(),
-                height: upload.rect.height(),
-                depth_or_array_layers: 1,
-            },
-        );
-        false
-    });
-}
-
-pub fn setup_shared(
-    mut commands: Commands,
-    mut images: ResMut<Assets<Image>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-) {
-    let width = content::MATERIAL_COUNT as u32;
-    let mut data = vec![0u8; (width * SHADES * 4) as usize];
-    // Emissive palette is HDR: RGB = linear emission radiance (color * intensity), A = flicker.
-    let mut emissive_data = vec![0u8; (width * SHADES * 16) as usize];
-    for (id, material) in content::materials() {
-        let [er, eg, eb] = material.emission;
-        let entry = [er, eg, eb, material.flicker];
-        for shade in 0..SHADES {
-            let color = material.colors[shade as usize % material.colors.len()];
-            let index = ((shade * width + id.0 as u32) * 4) as usize;
-            data[index..index + 4].copy_from_slice(&color);
-            let e_index = ((shade * width + id.0 as u32) * 16) as usize;
-            for (channel, value) in entry.iter().enumerate() {
-                let offset = e_index + channel * 4;
-                emissive_data[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+impl ChunkRenderState {
+    fn add_slots(&mut self, old_side: u32, new_side: u32) {
+        for y in 0..new_side {
+            for x in 0..new_side {
+                if x >= old_side || y >= old_side {
+                    self.free.push(AtlasSlot { x, y });
+                }
             }
         }
     }
-    let palette = images.add(Image::new(
-        Extent3d {
-            width,
-            height: SHADES,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        data,
-        TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::RENDER_WORLD,
-    ));
-    let emissive_palette = images.add(Image::new(
-        Extent3d {
-            width,
-            height: SHADES,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        emissive_data,
-        TextureFormat::Rgba32Float,
-        RenderAssetUsages::RENDER_WORLD,
-    ));
-    let quad = meshes.add(Rectangle::default());
-    commands.insert_resource(RenderShared {
-        palette,
-        emissive_palette,
-        quad,
-    });
+
+    fn allocate(&mut self) -> AtlasSlot {
+        if let Some(slot) = self.free.pop() {
+            return slot;
+        }
+        let old_side = self.atlas_side;
+        self.atlas_side *= 2;
+        self.atlas_generation = self.atlas_generation.wrapping_add(1);
+        self.add_slots(old_side, self.atlas_side);
+        self.free.pop().expect("grown atlas has slots")
+    }
+
+    fn clear(&mut self) {
+        self.chunk_entities.clear();
+        self.pending.clear();
+        self.free.clear();
+        self.add_slots(0, self.atlas_side);
+        self.atlas_generation = self.atlas_generation.wrapping_add(1);
+        self.instance_generation = self.instance_generation.wrapping_add(1);
+    }
 }
 
 fn pack_rect(cells: &[Cell; CHUNK_AREA], rect: DirtyRect) -> Vec<u8> {
@@ -224,25 +97,13 @@ enum Plan {
     Rects(Vec<DirtyRect>),
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn sync_chunks(
-    mut commands: Commands,
-    mut game: ResMut<Game>,
-    mut visuals: ResMut<ChunkVisuals>,
-    mut images: ResMut<Assets<Image>>,
-    mut materials: ResMut<Assets<ChunkMaterial>>,
-    mut emissive_materials: ResMut<Assets<EmissiveChunkMaterial>>,
-    mut queue: ResMut<ChunkUploadQueue>,
-    shared: Res<RenderShared>,
-) {
-    visuals.uploads = 0;
-    visuals.upload_bytes = 0;
+pub fn sync_chunks(mut game: ResMut<Game>, mut state: ResMut<ChunkRenderState>) {
+    state.uploads = 0;
+    state.upload_bytes = 0;
 
     let Some(ingame) = game.0.ingame_mut() else {
-        for (_, visual) in visuals.chunk_entities.drain() {
-            commands.entity(visual.color).despawn();
-            commands.entity(visual.emissive).despawn();
-            images.remove(&visual.image);
+        if !state.chunk_entities.is_empty() {
+            state.clear();
         }
         return;
     };
@@ -255,11 +116,7 @@ pub fn sync_chunks(
     for change in changes {
         match change {
             ChunkChange::Cleared => {
-                for (_, visual) in visuals.chunk_entities.drain() {
-                    commands.entity(visual.color).despawn();
-                    commands.entity(visual.emissive).despawn();
-                    images.remove(&visual.image);
-                }
+                state.clear();
                 plans.clear();
             }
             ChunkChange::Loaded(pos) => {
@@ -267,10 +124,9 @@ pub fn sync_chunks(
             }
             ChunkChange::Unloaded(pos) => {
                 plans.remove(&pos);
-                if let Some(visual) = visuals.chunk_entities.remove(&pos) {
-                    commands.entity(visual.color).despawn();
-                    commands.entity(visual.emissive).despawn();
-                    images.remove(&visual.image);
+                if let Some(slot) = state.chunk_entities.remove(&pos) {
+                    state.free.push(slot);
+                    state.instance_generation = state.instance_generation.wrapping_add(1);
                 }
             }
             ChunkChange::Delta(pos, rect) => match plans.get_mut(&pos) {
@@ -283,115 +139,53 @@ pub fn sync_chunks(
         }
     }
 
+    let old_generation = state.atlas_generation;
+    for (&pos, plan) in &plans {
+        if matches!(plan, Plan::Full) && !state.chunk_entities.contains_key(&pos) {
+            let slot = state.allocate();
+            state.chunk_entities.insert(pos, slot);
+            state.instance_generation = state.instance_generation.wrapping_add(1);
+        }
+    }
+
+    if state.atlas_generation != old_generation {
+        state.pending.clear();
+        let live: Vec<_> = state
+            .chunk_entities
+            .iter()
+            .map(|(&pos, &slot)| (pos, slot))
+            .collect();
+        for (pos, slot) in live {
+            if let Some(chunk) = ingame.world.chunks.get(&pos) {
+                let data = pack_rect(&chunk.cells, DirtyRect::FULL);
+                state.uploads += 1;
+                state.upload_bytes += data.len();
+                state.pending.push(ChunkUpload {
+                    slot,
+                    rect: DirtyRect::FULL,
+                    data,
+                });
+            }
+        }
+        return;
+    }
+
     for (pos, plan) in plans {
         let Some(chunk) = ingame.world.chunks.get(&pos) else {
             continue;
         };
-        let rects = match plan {
-            Plan::Rects(rects) if visuals.chunk_entities.contains_key(&pos) => rects,
-            _ => {
-                full_upload(
-                    &mut commands,
-                    &mut visuals,
-                    &mut images,
-                    &mut materials,
-                    &mut emissive_materials,
-                    &mut queue,
-                    &shared,
-                    pos,
-                    &chunk.cells,
-                );
-                continue;
-            }
+        let Some(&slot) = state.chunk_entities.get(&pos) else {
+            continue;
         };
-        let image = visuals.chunk_entities[&pos].image.id();
+        let rects = match plan {
+            Plan::Full => vec![DirtyRect::FULL],
+            Plan::Rects(rects) => rects,
+        };
         for rect in rects {
             let data = pack_rect(&chunk.cells, rect);
-            visuals.uploads += 1;
-            visuals.upload_bytes += data.len();
-            queue.0.push(ChunkUpload {
-                image,
-                rect,
-                data,
-                retries: 0,
-            });
+            state.uploads += 1;
+            state.upload_bytes += data.len();
+            state.pending.push(ChunkUpload { slot, rect, data });
         }
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn full_upload(
-    commands: &mut Commands,
-    visuals: &mut ChunkVisuals,
-    images: &mut Assets<Image>,
-    materials: &mut Assets<ChunkMaterial>,
-    emissive_materials: &mut Assets<EmissiveChunkMaterial>,
-    queue: &mut ChunkUploadQueue,
-    shared: &RenderShared,
-    pos: ChunkPos,
-    cells: &[Cell; CHUNK_AREA],
-) {
-    visuals.uploads += 1;
-    visuals.upload_bytes += CHUNK_AREA * 4;
-
-    if let Some(visual) = visuals.chunk_entities.get(&pos) {
-        queue.0.push(ChunkUpload {
-            image: visual.image.id(),
-            rect: DirtyRect::FULL,
-            data: pack_rect(cells, DirtyRect::FULL),
-            retries: 0,
-        });
-        return;
-    }
-
-    let size = CHUNK_SIZE as f32;
-    let image = images.add(Image::new(
-        Extent3d {
-            width: CHUNK_SIZE as u32,
-            height: CHUNK_SIZE as u32,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        pack_rect(cells, DirtyRect::FULL),
-        TextureFormat::Rgba8Uint,
-        RenderAssetUsages::RENDER_WORLD,
-    ));
-    let translation = Vec3::new(
-        pos.x as f32 * size + size / 2.0,
-        pos.y as f32 * size + size / 2.0,
-        0.0,
-    );
-    let material = materials.add(ChunkMaterial {
-        cells: image.clone(),
-        palette: shared.palette.clone(),
-    });
-    let color = commands
-        .spawn((
-            Mesh2d(shared.quad.clone()),
-            MeshMaterial2d(material),
-            Transform::from_translation(translation).with_scale(Vec3::new(size, size, 1.0)),
-            RenderLayers::layer(WORLD_LAYER),
-        ))
-        .id();
-    let emissive_material = emissive_materials.add(EmissiveChunkMaterial {
-        cells: image.clone(),
-        emissive_palette: shared.emissive_palette.clone(),
-        palette: shared.palette.clone(),
-    });
-    let emissive = commands
-        .spawn((
-            Mesh2d(shared.quad.clone()),
-            MeshMaterial2d(emissive_material),
-            Transform::from_translation(translation).with_scale(Vec3::new(size, size, 1.0)),
-            RenderLayers::layer(EMISSIVE_LAYER),
-        ))
-        .id();
-    visuals.chunk_entities.insert(
-        pos,
-        ChunkVisual {
-            color,
-            emissive,
-            image,
-        },
-    );
 }

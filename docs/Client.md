@@ -15,12 +15,15 @@ One plain game struct owns everything; a flow enum separates menu from in-game, 
 
 ## Rendering
 
-- **Chunks** — one GPU texture per chunk with dirty sub-rect uploads; material + shade resolve to color through a palette texture. Players have no sprite: their flesh cells render as world cells; nametags and camera derive from the replicated pose, cell-snapped, with exponential camera smoothing keeping whole-cell steps readable.
-- **Layers** — world, sky, and parallax each render at native cell resolution into a small HDR target, then upscale onto a physical-pixel composite. Per-cell ambient multiplies at native texel centers; bloom and tonemapping live on the composite.
+- **Renderer** — one window camera owns UI presentation; one renderer-owned command sequence draws all gameplay before UI. Gameplay never creates offscreen cameras or per-object materials.
+- **Chunks** — one growable GPU atlas stores all cell data with dirty sub-rect uploads; material + shade resolve through shared palette textures. Two instanced draws render every live chunk into the world and emission targets. Players have no sprite: their flesh cells render as world cells; nametags and camera derive from the replicated pose, cell-snapped, with exponential camera smoothing keeping whole-cell steps readable.
+- **Layers** — world and emission render at native cell resolution. Procedural sky and parallax evaluate directly on their native logical grids while building the physical HDR scene. Bloom and tonemapping are centralized in the renderer.
 - **Lighting** — ambient is per-cell and shaped by air: a normalized-blurred air-coverage mask scaled by the sky's day/night level lights surfaces facing open space while sealed cells stay dark at any hour — buried ore is invisible until air reaches it. Emissive materials feed a glow field (every emissive cell contributes, tinted by its own color, fire self-flickering) plus player and burning point lights. The emissive pass renders over the viewport expanded by the blur margin, collapses through a downsample chain into one quarter-resolution light field, and blurs once separably — energy-preserving for glow, normalized for air — so light and darkness from just-off-screen cells resolve instead of clamping at the frame edge. Every offscreen pass goes inactive outside gameplay.
-- **Particles** — dig spray is server-authoritative spawn events; the client integrates velocity, gravity, and fade locally and clears them on leaving.
+- **Particles** — dig spray is server-authoritative spawn events; the client integrates velocity, gravity, and fade in one dense visual buffer and clears it on leaving.
 - **Parallax & sky** — client-only procedural silhouettes made visible purely by airlight, so aerial perspective tracks day, dusk, and moon; and one deterministic celestial model shared with the core calendar — shader-evaluated sun and moon discs on their logical pixel grids, seasonal orbit, on-screen overlap equals eclipse math by construction. Explore with [skysim.html](skysim.html).
 - **Camera** — screen pixels per cell derive from window size (~424×242 cells visible); zoom steps by whole pixels within half to four times base. Interest budgets are sized for default zoom, so zooming out never grows server obligations.
+
+Per-cell visual changes remain dirty sub-rectangle uploads. New repeated visuals use instance or storage buffers, and transient pixel particles never become entities. Fullscreen effects belong to the centralized renderer and reuse or deliberately extend its target set. UI and diagnostics stay separate from gameplay rendering and update truthfully every enabled frame.
 
 ## UI & input
 

@@ -1,12 +1,6 @@
 use super::lighting::MAX_PLAYER_LIGHTS;
-use crate::view::camera::premultiplied_composite;
-use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::prelude::*;
-use bevy::render::render_resource::{
-    AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
-};
-use bevy::shader::ShaderRef;
-use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
+use bevy::render::render_resource::ShaderType;
 
 #[derive(ShaderType, Debug, Clone, PartialEq)]
 pub struct LightingParams {
@@ -14,7 +8,6 @@ pub struct LightingParams {
     pub darkness: f32,
     pub light_count: u32,
     pub snapped_cam: Vec2,
-    pub native_size: Vec2,
     pub margin: Vec2,
 }
 
@@ -25,45 +18,12 @@ impl Default for LightingParams {
             darkness: 0.0,
             light_count: 0,
             snapped_cam: Vec2::ZERO,
-            native_size: Vec2::ONE,
             margin: Vec2::ZERO,
         }
     }
 }
 
-#[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
-pub struct LightingMaterial {
-    #[uniform(0)]
-    pub params: LightingParams,
-    #[texture(1)]
-    pub world: Handle<Image>,
-    #[texture(2)]
-    #[sampler(3)]
-    pub light: Handle<Image>,
-    #[texture(4)]
-    pub emission: Handle<Image>,
-}
-
-impl Material2d for LightingMaterial {
-    fn fragment_shader() -> ShaderRef {
-        "shaders/lighting.wgsl".into()
-    }
-
-    fn alpha_mode(&self) -> AlphaMode2d {
-        AlphaMode2d::Blend
-    }
-
-    fn specialize(
-        descriptor: &mut RenderPipelineDescriptor,
-        _layout: &MeshVertexBufferLayoutRef,
-        _key: Material2dKey<Self>,
-    ) -> Result<(), SpecializedMeshPipelineError> {
-        premultiplied_composite(descriptor);
-        Ok(())
-    }
-}
-
-#[derive(ShaderType, Debug, Clone, Default)]
+#[derive(ShaderType, Debug, Clone, Default, PartialEq)]
 pub struct SunParams {
     pub redness: f32,
     pub occlusion: f32,
@@ -71,23 +31,7 @@ pub struct SunParams {
     pub disc_radius: f32,
 }
 
-#[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
-pub struct SunMaterial {
-    #[uniform(0)]
-    pub params: SunParams,
-}
-
-impl Material2d for SunMaterial {
-    fn fragment_shader() -> ShaderRef {
-        "shaders/sun.wgsl".into()
-    }
-
-    fn alpha_mode(&self) -> AlphaMode2d {
-        AlphaMode2d::Blend
-    }
-}
-
-#[derive(ShaderType, Debug, Clone, Default)]
+#[derive(ShaderType, Debug, Clone, Default, PartialEq)]
 pub struct MoonParams {
     pub sun_direction: Vec2,
     pub illumination: f32,
@@ -99,26 +43,9 @@ pub struct MoonParams {
     pub lunar_shadow: f32,
 }
 
-#[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
-pub struct MoonMaterial {
-    #[uniform(0)]
-    pub params: MoonParams,
-}
-
-impl Material2d for MoonMaterial {
-    fn fragment_shader() -> ShaderRef {
-        "shaders/moon.wgsl".into()
-    }
-
-    fn alpha_mode(&self) -> AlphaMode2d {
-        AlphaMode2d::Blend
-    }
-}
-
-#[derive(ShaderType, Debug, Clone, Default)]
+#[derive(ShaderType, Debug, Clone, Default, PartialEq)]
 pub struct StarfieldParams {
     pub center: Vec2,
-    pub native_size: Vec2,
     pub scroll: Vec2,
     pub world_scale: f32,
     pub star_visibility: f32,
@@ -126,26 +53,7 @@ pub struct StarfieldParams {
     pub sidereal: f32,
 }
 
-#[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
-pub struct StarfieldMaterial {
-    #[uniform(0)]
-    pub params: StarfieldParams,
-    #[texture(1)]
-    #[sampler(2)]
-    pub texture: Handle<Image>,
-}
-
-impl Material2d for StarfieldMaterial {
-    fn fragment_shader() -> ShaderRef {
-        "shaders/starfield.wgsl".into()
-    }
-
-    fn alpha_mode(&self) -> AlphaMode2d {
-        AlphaMode2d::Blend
-    }
-}
-
-#[derive(ShaderType, Debug, Clone, Default)]
+#[derive(ShaderType, Debug, Clone, Default, PartialEq)]
 pub struct AtmosphereParams {
     pub color: Vec4,
     pub sun_pos: Vec2,
@@ -156,20 +64,4 @@ pub struct AtmosphereParams {
     pub intensity: f32,
     pub aspect: f32,
     pub _pad: f32,
-}
-
-#[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
-pub struct AtmosphereMaterial {
-    #[uniform(0)]
-    pub params: AtmosphereParams,
-}
-
-impl Material2d for AtmosphereMaterial {
-    fn fragment_shader() -> ShaderRef {
-        "shaders/atmosphere.wgsl".into()
-    }
-
-    fn alpha_mode(&self) -> AlphaMode2d {
-        AlphaMode2d::Blend
-    }
 }

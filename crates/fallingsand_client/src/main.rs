@@ -3,7 +3,6 @@ mod view;
 
 use bevy::prelude::*;
 use bevy::render::error_handler::{ErrorType, RenderError, RenderErrorHandler, RenderErrorPolicy};
-use bevy::sprite_render::Material2dPlugin;
 use game::ClientGame;
 use view::Game;
 
@@ -41,41 +40,28 @@ fn main() {
             .set(ImagePlugin::default_nearest()),
     )
     .add_plugins((
-        Material2dPlugin::<view::chunks::ChunkMaterial>::default(),
-        Material2dPlugin::<view::chunks::EmissiveChunkMaterial>::default(),
-        Material2dPlugin::<view::sky::LightingMaterial>::default(),
-        Material2dPlugin::<view::camera::UpscaleMaterial>::default(),
-        Material2dPlugin::<view::camera::DownsampleMaterial>::default(),
-        Material2dPlugin::<view::camera::LightBlurMaterial>::default(),
-        Material2dPlugin::<view::sky::SunMaterial>::default(),
-        Material2dPlugin::<view::sky::MoonMaterial>::default(),
-        Material2dPlugin::<view::sky::StarfieldMaterial>::default(),
-        Material2dPlugin::<view::sky::AtmosphereMaterial>::default(),
-        Material2dPlugin::<view::parallax::CaveWallMaterial>::default(),
-        Material2dPlugin::<view::parallax::SilhouetteMaterial>::default(),
+        view::render::GameRendererPlugin,
         view::ui::debug::DiagnosticsPlugin,
     ))
     .insert_resource(ClearColor(Color::srgb(0.08, 0.09, 0.13)))
     .insert_resource(RenderErrorHandler(render_error_policy))
     .insert_resource(Game(client))
     .init_resource::<view::io::UiInbox>()
-    .init_resource::<view::chunks::ChunkVisuals>()
-    .init_resource::<view::chunks::ChunkUploadQueue>()
+    .init_resource::<view::chunks::ChunkRenderState>()
+    .init_resource::<view::particles::ParticleVisuals>()
     .init_resource::<view::players::NametagVisuals>()
     .init_resource::<view::sky::Sky>()
+    .init_resource::<view::sky::SkyRenderState>()
     .init_resource::<view::sky::ActiveLights>()
+    .init_resource::<view::parallax::ParallaxState>()
+    .init_resource::<view::ui::debug::DebugPrimitives>()
     .add_systems(
         Startup,
         (
-            (view::chunks::setup_shared, view::camera::setup_camera).chain(),
-            view::sky::load_shared_shaders,
+            view::camera::setup_camera,
             view::ui::debug::setup_overlay,
             view::ui::icons::load_item_icons,
         ),
-    )
-    .add_systems(
-        PostStartup,
-        (view::sky::setup_sky, view::parallax::setup_parallax),
     )
     .add_systems(
         Update,
@@ -85,9 +71,6 @@ fn main() {
         Update,
         (
             view::camera::sync_camera,
-            view::camera::resize_targets,
-            view::camera::rebind_targets,
-            view::camera::sync_pass_activity,
             view::sky::sync_sky,
             view::sky::apply_lighting,
             view::parallax::sync_parallax,
@@ -101,8 +84,6 @@ fn main() {
         Update,
         (
             view::chunks::sync_chunks,
-            view::particles::drain_particles,
-            view::particles::sync_target,
             view::particles::update_particles,
             view::ui::menu::sync_menu,
             view::ui::game_menu::sync_game_menu,
@@ -129,6 +110,5 @@ fn main() {
     );
     #[cfg(not(target_family = "wasm"))]
     app.add_systems(Update, view::icon::set_window_icons);
-    view::chunks::setup_render_app(&mut app);
     app.run();
 }

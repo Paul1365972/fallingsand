@@ -1,8 +1,8 @@
 use crate::game::{ClientGame, InGame, Phase};
 use crate::view::Game;
 use crate::view::camera::CameraState;
-use crate::view::chunks::ChunkVisuals;
-use crate::view::particles::Particle;
+use crate::view::chunks::ChunkRenderState;
+use crate::view::particles::ParticleVisuals;
 use crate::view::sky::Sky;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
@@ -209,8 +209,8 @@ pub fn update_overlay(
     diagnostics: Res<DiagnosticsStore>,
     camera: Res<CameraState>,
     sky: Res<Sky>,
-    visuals: Res<ChunkVisuals>,
-    particles: Query<(), With<Particle>>,
+    visuals: Res<ChunkRenderState>,
+    particles: Res<ParticleVisuals>,
     mut windows: ResMut<StatWindows>,
     mut left: Single<&mut Text, (With<DebugTextLeft>, Without<DebugTextRight>)>,
     mut right: Single<&mut Text, (With<DebugTextRight>, Without<DebugTextLeft>)>,
@@ -260,7 +260,7 @@ pub fn update_overlay(
                 &sky,
                 &camera,
                 &visuals,
-                particles.iter().count(),
+                particles.len(),
                 &mut windows,
                 now,
                 &mut left_lines,
@@ -314,7 +314,7 @@ fn playing_lines(
     ingame: &InGame,
     sky: &Sky,
     camera: &CameraState,
-    visuals: &ChunkVisuals,
+    visuals: &ChunkRenderState,
     particle_count: usize,
     windows: &mut StatWindows,
     now: f32,
@@ -478,7 +478,24 @@ fn server_lines(server: &ServerStats, windows: &mut StatWindows, now: f32, out: 
     ));
 }
 
-pub fn draw_debug_borders(game: Res<Game>, state: Res<CameraState>, mut gizmos: Gizmos) {
+#[derive(Clone, Copy)]
+pub struct DebugLine {
+    pub a: Vec2,
+    pub b: Vec2,
+    pub color: Vec4,
+}
+
+#[derive(Resource, Default)]
+pub struct DebugPrimitives {
+    pub lines: Vec<DebugLine>,
+}
+
+pub fn draw_debug_borders(
+    game: Res<Game>,
+    state: Res<CameraState>,
+    mut primitives: ResMut<DebugPrimitives>,
+) {
+    primitives.lines.clear();
     if !game.0.view_prefs.debug_borders {
         return;
     }
@@ -503,11 +520,11 @@ pub fn draw_debug_borders(game: Res<Game>, state: Res<CameraState>, mut gizmos: 
         } else {
             chunk_color
         };
-        gizmos.line_2d(
-            to_px(Vec2::new(x, min.y)),
-            to_px(Vec2::new(x, max.y)),
-            color,
-        );
+        primitives.lines.push(DebugLine {
+            a: to_px(Vec2::new(x, min.y)),
+            b: to_px(Vec2::new(x, max.y)),
+            color: color.to_linear().to_f32_array().into(),
+        });
         x += chunk;
     }
     let mut y = (min.y / chunk).floor() * chunk;
@@ -517,11 +534,11 @@ pub fn draw_debug_borders(game: Res<Game>, state: Res<CameraState>, mut gizmos: 
         } else {
             chunk_color
         };
-        gizmos.line_2d(
-            to_px(Vec2::new(min.x, y)),
-            to_px(Vec2::new(max.x, y)),
-            color,
-        );
+        primitives.lines.push(DebugLine {
+            a: to_px(Vec2::new(min.x, y)),
+            b: to_px(Vec2::new(max.x, y)),
+            color: color.to_linear().to_f32_array().into(),
+        });
         y += chunk;
     }
 
@@ -534,11 +551,31 @@ pub fn draw_debug_borders(game: Res<Game>, state: Res<CameraState>, mut gizmos: 
         } else {
             Color::srgba(1.0, 0.9, 0.2, 0.8)
         };
-        gizmos.rect_2d(
-            Isometry2d::from_translation(to_px(corner + size / 2.0)),
-            size * k,
-            color,
-        );
+        let min = to_px(corner);
+        let max = to_px(corner + size);
+        let color: Vec4 = color.to_linear().to_f32_array().into();
+        primitives.lines.extend([
+            DebugLine {
+                a: min,
+                b: Vec2::new(max.x, min.y),
+                color,
+            },
+            DebugLine {
+                a: Vec2::new(max.x, min.y),
+                b: max,
+                color,
+            },
+            DebugLine {
+                a: max,
+                b: Vec2::new(min.x, max.y),
+                color,
+            },
+            DebugLine {
+                a: Vec2::new(min.x, max.y),
+                b: min,
+                color,
+            },
+        ]);
     }
 }
 

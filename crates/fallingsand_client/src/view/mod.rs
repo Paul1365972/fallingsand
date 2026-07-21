@@ -6,6 +6,7 @@ pub mod io;
 pub mod parallax;
 pub mod particles;
 pub mod players;
+pub mod render;
 pub mod sky;
 pub mod ui;
 
