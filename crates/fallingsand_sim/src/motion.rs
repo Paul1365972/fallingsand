@@ -23,6 +23,11 @@ pub(crate) enum Entry {
     Blocked,
 }
 
+pub(crate) enum TraverseControl {
+    Continue,
+    Revector(i32, i32),
+}
+
 pub(crate) struct Travel {
     pub pos: CellPos,
     pub blocked: [i32; 2],
@@ -35,16 +40,17 @@ pub(crate) fn traverse(
     vy: i32,
     rng: &mut Rng,
     mut entry: impl FnMut(&SimWindow, (i32, i32), CellPos) -> Entry,
-    mut swap: impl FnMut(&mut SimWindow, CellPos, CellPos),
+    mut swap: impl FnMut(&mut SimWindow, CellPos, CellPos) -> TraverseControl,
 ) -> Travel {
-    let steps = [step_cells(vx, rng), step_cells(vy, rng)];
-    let distance = [steps[0].abs(), steps[1].abs()];
+    let mut steps = [step_cells(vx, rng), step_cells(vy, rng)];
+    let mut distance = [steps[0].abs(), steps[1].abs()];
     let mut done = [0, 0];
+    let mut remaining = distance[0] + distance[1];
     let mut travel = Travel {
         pos,
         blocked: [0, 0],
     };
-    while done != distance {
+    while done != distance && remaining > 0 {
         let axis = if done[0] == distance[0] {
             1
         } else if done[1] == distance[1] || done[0] * distance[1] <= done[1] * distance[0] {
@@ -57,9 +63,16 @@ pub(crate) fn traverse(
         let next = travel.pos.translated(dir.0, dir.1);
         let stop = match entry(window, dir, next) {
             Entry::Open => {
-                swap(window, travel.pos, next);
+                let control = swap(window, travel.pos, next);
                 travel.pos = next;
                 done[axis] += 1;
+                remaining -= 1;
+                if let TraverseControl::Revector(vx, vy) = control {
+                    steps = [step_cells(vx, rng), step_cells(vy, rng)];
+                    distance = [steps[0].abs(), steps[1].abs()];
+                    done = [0, 0];
+                    travel.blocked = [0, 0];
+                }
                 false
             }
             Entry::Busy => {
@@ -130,22 +143,30 @@ pub(crate) fn move_cell(window: &mut SimWindow, pos: CellPos, cell: Cell, tick: 
     write_velocity(window, travel.pos, current, vx, vy, settled);
 }
 
-fn swap_dynamic(window: &mut SimWindow, from: CellPos, to: CellPos, tick: u64) {
+fn swap_dynamic(window: &mut SimWindow, from: CellPos, to: CellPos, tick: u64) -> TraverseControl {
     let (Some(mover), Some(displaced)) = (window.get(from), window.get(to)) else {
-        return;
+        return TraverseControl::Continue;
     };
     if content::phase(mover.material) == Phase::Powder
         && content::phase(displaced.material) == Phase::Liquid
     {
-        swap_with_liquid_wake(window, from, to, tick);
+        swap_through_liquid(window, from, to, tick).map_or(TraverseControl::Continue, |(vx, vy)| {
+            TraverseControl::Revector(vx, vy)
+        })
     } else {
         window.swap(from, to);
+        TraverseControl::Continue
     }
 }
 
-pub(crate) fn swap_with_liquid_wake(window: &mut SimWindow, from: CellPos, to: CellPos, tick: u64) {
+pub(crate) fn swap_through_liquid(
+    window: &mut SimWindow,
+    from: CellPos,
+    to: CellPos,
+    tick: u64,
+) -> Option<(i32, i32)> {
     let (Some(mut mover), Some(mut displaced)) = (window.get(from), window.get(to)) else {
-        return;
+        return None;
     };
     let mover_mass = i64::from(content::density_milli(mover.material).max(1));
     let displaced_mass = i64::from(content::density_milli(displaced.material).max(1));
@@ -158,7 +179,8 @@ pub(crate) fn swap_with_liquid_wake(window: &mut SimWindow, from: CellPos, to: C
         mover_mass * i64::from(mover.vy) + displaced_mass * i64::from(displaced.vy),
         mass,
     ) as i32;
-    let keep = liquid_wake_keep(mover.material, displaced.material);
+    let retention = liquid_wake_keep(mover.material, displaced.material);
+    let (forward, transverse) = density_scatter(retention, mover_mass, displaced_mass);
     let side = if Hash::seed(tick)
         .salt(LIQUID_WAKE_SALT)
         .pos(to.x, to.y)
@@ -170,33 +192,86 @@ pub(crate) fn swap_with_liquid_wake(window: &mut SimWindow, from: CellPos, to: C
     };
     let relative_vx = i32::from(mover.vx) - i32::from(displaced.vx);
     let relative_vy = i32::from(mover.vy) - i32::from(displaced.vy);
-    let wake_vx = -side * keep.apply(relative_vy);
-    let wake_vy = side * keep.apply(relative_vx);
-    mover.set_vel(
-        center_vx + divide_signed(displaced_mass * i64::from(wake_vx), mass) as i32,
-        center_vy + divide_signed(displaced_mass * i64::from(wake_vy), mass) as i32,
-    );
+    let wake_vx = forward.apply(relative_vx) - side * transverse.apply(relative_vy);
+    let wake_vy = forward.apply(relative_vy) + side * transverse.apply(relative_vx);
+    let density_vx = side
+        * density_exchange_speed(
+            mover.material,
+            displaced.material,
+            mover_mass,
+            displaced_mass,
+            from,
+            to,
+        );
+    let mover_vx =
+        center_vx + divide_signed(displaced_mass * i64::from(wake_vx), mass) as i32 + density_vx;
+    let mover_vy = center_vy + divide_signed(displaced_mass * i64::from(wake_vy), mass) as i32;
+    mover.set_vel(mover_vx, mover_vy);
     displaced.set_vel(
-        center_vx - divide_signed(mover_mass * i64::from(wake_vx), mass) as i32,
+        center_vx
+            - divide_signed(mover_mass * i64::from(wake_vx), mass) as i32
+            - divide_signed(mover_mass * i64::from(density_vx), displaced_mass) as i32,
         center_vy - divide_signed(mover_mass * i64::from(wake_vy), mass) as i32,
     );
     window.set(from, mover);
     window.set(to, displaced);
     window.swap(from, to);
+    Some((mover_vx, mover_vy))
 }
 
-fn liquid_wake_keep(a: MaterialId, b: MaterialId) -> VelocityFactor {
-    match (
-        content::phase(a) == Phase::Liquid,
-        content::phase(b) == Phase::Liquid,
-    ) {
-        (true, true) => VelocityFactor::from_raw(
-            content::liquid_impact_q16(a).min(content::liquid_impact_q16(b)),
-        ),
-        (true, false) => VelocityFactor::from_raw(content::liquid_impact_q16(a)),
-        (false, true) => VelocityFactor::from_raw(content::liquid_impact_q16(b)),
-        (false, false) => unreachable!("liquid wake without a liquid"),
+fn density_exchange_speed(
+    mover: MaterialId,
+    displaced: MaterialId,
+    mover_mass: i64,
+    displaced_mass: i64,
+    from: CellPos,
+    to: CellPos,
+) -> i32 {
+    if content::phase(mover) != Phase::Liquid
+        || content::phase(displaced) != Phase::Liquid
+        || to.y >= from.y
+        || mover_mass <= displaced_mass
+    {
+        return 0;
     }
+    let potential = 2
+        * i128::from(GRAVITY_DV)
+        * i128::from(SUBCELL_UNITS_PER_CELL)
+        * i128::from(mover_mass - displaced_mass)
+        * i128::from(displaced_mass);
+    let inertia = i128::from(mover_mass) * i128::from(mover_mass + displaced_mass);
+    (potential / inertia).isqrt() as i32
+}
+
+fn liquid_wake_keep(mover: MaterialId, displaced: MaterialId) -> VelocityFactor {
+    let displaced_retention = content::liquid_impact_q16(displaced);
+    let retained = if content::phase(mover) == Phase::Liquid {
+        displaced_retention.min(content::liquid_impact_q16(mover))
+    } else {
+        displaced_retention
+    };
+    VelocityFactor::from_raw(retained)
+}
+
+fn density_scatter(
+    retention: VelocityFactor,
+    mover_mass: i64,
+    displaced_mass: i64,
+) -> (VelocityFactor, VelocityFactor) {
+    let density_delta = mover_mass.abs_diff(displaced_mass);
+    let density_max = mover_mass.max(displaced_mass) as u64;
+    let contrast_q32 = (u128::from(density_delta) << 32) / u128::from(density_max);
+    let forward_q16 = contrast_q32.isqrt() as u32;
+    let transverse_q16 = ((1u128 << 32) - contrast_q32).isqrt() as u32;
+    (
+        combine_factors(retention, forward_q16),
+        combine_factors(retention, transverse_q16),
+    )
+}
+
+fn combine_factors(a: VelocityFactor, b_q16: u32) -> VelocityFactor {
+    let product = u64::from(a.raw()) * u64::from(b_q16);
+    VelocityFactor::from_raw(((product + (1 << 15)) >> 16) as u32)
 }
 
 pub(crate) fn movement_rng(tick: u64, pos: CellPos) -> Rng {
@@ -211,13 +286,9 @@ pub(crate) fn write_velocity(
     mut vy: i32,
     settled: bool,
 ) {
-    if settled {
-        if vx.abs() < SETTLE {
-            vx = 0;
-        }
-        if vy.abs() < SETTLE {
-            vy = 0;
-        }
+    if settled && vector_length(vx, vy) < SETTLE {
+        vx = 0;
+        vy = 0;
     }
     vx = vx.clamp(-MAX_COMPONENT_RAW, MAX_COMPONENT_RAW);
     vy = vy.clamp(-MAX_COMPONENT_RAW, MAX_COMPONENT_RAW);

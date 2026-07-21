@@ -800,7 +800,12 @@ fn liquid_exchange_threshold(a: &RawMaterial, b: &RawMaterial) -> u64 {
         (Some(rate), None) | (None, Some(rate)) => Some(rate),
         (None, None) => None,
     };
-    rate.map_or(u64::MAX, |rate| chance_threshold(per_tick_chance(rate)))
+    rate.map_or(u64::MAX, |rate| {
+        let density_delta = (a_density - b_density).abs() as f32;
+        let density_max = a_density.max(b_density) as f32;
+        let drive = (density_delta / density_max).sqrt();
+        chance_threshold(per_tick_chance(rate * drive))
+    })
 }
 
 enum Operand {

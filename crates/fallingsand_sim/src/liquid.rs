@@ -1,7 +1,7 @@
 use crate::{
     motion::{
-        Entry, GRAVITY_DV, prefer_side, swap_with_liquid_wake, traverse, vector_length,
-        write_velocity,
+        Entry, GRAVITY_DV, TraverseControl, prefer_side, swap_through_liquid, traverse,
+        vector_length, write_velocity,
     },
     window::SimWindow,
 };
@@ -47,7 +47,7 @@ pub(crate) fn move_cell(window: &mut SimWindow, pos: CellPos, cell: Cell, tick: 
     let mut rng = Hash::seed(tick).salt(MOVEMENT_SALT).pos(pos.x, pos.y).rng();
     let (mut vx, mut vy) = cell.vel();
     if vx == 0 && vy == 0 {
-        relax(window, pos, cell, &mut rng);
+        relax(window, pos, cell, tick, &mut rng);
         return;
     }
 
@@ -79,7 +79,7 @@ pub(crate) fn move_cell(window: &mut SimWindow, pos: CellPos, cell: Cell, tick: 
     write_velocity(window, travel.pos, current, vx, vy, settled);
 }
 
-fn relax(window: &mut SimWindow, pos: CellPos, cell: Cell, rng: &mut Rng) {
+fn relax(window: &mut SimWindow, pos: CellPos, cell: Cell, tick: u64, rng: &mut Rng) {
     let side = prefer_side(0, rng);
     let mut target = [(0, -1), (side, -1), (-side, -1)]
         .into_iter()
@@ -107,21 +107,31 @@ fn relax(window: &mut SimWindow, pos: CellPos, cell: Cell, rng: &mut Rng) {
     };
     match entry(window, target) {
         Entry::Open if rng.draw().below(passive_threshold(window, cell, target)) => {
-            window.swap(pos, target);
+            if window.get(target).is_some_and(|displaced| {
+                content::phase(displaced.material) == Phase::Liquid
+                    && displaced.material != cell.material
+            }) {
+                swap_through_liquid(window, pos, target, tick);
+            } else {
+                window.swap(pos, target);
+            }
         }
         Entry::Open | Entry::Busy => window.mark(pos),
         Entry::Blocked => {}
     }
 }
 
-fn swap_moving(window: &mut SimWindow, from: CellPos, to: CellPos, tick: u64) {
+fn swap_moving(window: &mut SimWindow, from: CellPos, to: CellPos, tick: u64) -> TraverseControl {
     let (Some(mover), Some(displaced)) = (window.get(from), window.get(to)) else {
-        return;
+        return TraverseControl::Continue;
     };
     if content::phase(displaced.material) == Phase::Liquid && displaced.material != mover.material {
-        swap_with_liquid_wake(window, from, to, tick);
+        swap_through_liquid(window, from, to, tick).map_or(TraverseControl::Continue, |(vx, vy)| {
+            TraverseControl::Revector(vx, vy)
+        })
     } else {
         window.swap(from, to);
+        TraverseControl::Continue
     }
 }
 

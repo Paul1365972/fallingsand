@@ -27,7 +27,7 @@ pub fn define(catalog: &mut Catalog) {
     );
     catalog.add(
         OIL,
-        material(liquid().drag(2.45).impact(0.72).flow_rate(30.0))
+        material(liquid().drag(2.45).impact(0.55).flow_rate(30.0))
             .density(850.0)
             .colors([[74, 62, 36, 215], [66, 54, 30, 215], [84, 72, 44, 215]])
             .flammable(
