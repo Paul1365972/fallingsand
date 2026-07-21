@@ -26,7 +26,10 @@ use bevy::render::render_resource::*;
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery};
 use bevy::render::texture::{FallbackImageZero, GpuImage};
 use bevy::render::view::ViewTarget;
-use bevy::render::{ExtractSchedule, MainWorld, Render, RenderApp, RenderStartup, RenderSystems};
+use bevy::render::{
+    ExtractSchedule, MainWorld, Render, RenderApp, RenderStartup, RenderSystems, init_gpu_resource,
+};
+use bevy::shader::Shader;
 use fallingsand_core::content;
 use fallingsand_core::{CHUNK_SIZE, ChunkPos};
 
@@ -36,6 +39,7 @@ const HDR_FORMAT: TextureFormat = TextureFormat::Rgba16Float;
 #[derive(Resource, Clone)]
 struct RenderSourceAssets {
     stars: Handle<Image>,
+    _shader_libraries: [Handle<Shader>; 5],
 }
 
 impl FromWorld for RenderSourceAssets {
@@ -54,6 +58,13 @@ impl FromWorld for RenderSourceAssets {
                     });
                 })
                 .load("sky/stars.png"),
+            _shader_libraries: [
+                asset_server.load("shaders/game_common.wgsl"),
+                asset_server.load("shaders/game_scene_bindings.wgsl"),
+                asset_server.load("shaders/game_celestial.wgsl"),
+                asset_server.load("shaders/game_world.wgsl"),
+                asset_server.load("shaders/game_backdrop.wgsl"),
+            ],
         }
     }
 }
@@ -79,62 +90,98 @@ struct LineInstance {
 }
 
 #[derive(Clone, ShaderType)]
-struct FrameUniform {
-    lighting: LightingParams,
+struct PixelViewport {
+    native_size: Vec2,
+    window_size: Vec2,
+    physical_size: Vec2,
+    window_center: Vec2,
+}
+
+impl Default for PixelViewport {
+    fn default() -> Self {
+        Self {
+            native_size: Vec2::ONE,
+            window_size: Vec2::ONE,
+            physical_size: Vec2::ONE,
+            window_center: Vec2::splat(0.5),
+        }
+    }
+}
+
+#[derive(Clone, ShaderType)]
+struct RasterFrame {
+    viewport: PixelViewport,
+    world_snapped: Vec2,
+    emission_size: Vec2,
+    time: f32,
+}
+
+impl Default for RasterFrame {
+    fn default() -> Self {
+        Self {
+            viewport: default(),
+            world_snapped: Vec2::ZERO,
+            emission_size: Vec2::ONE,
+            time: 0.0,
+        }
+    }
+}
+
+#[derive(Clone, ShaderType, Default)]
+struct CelestialFrame {
     sun: SunParams,
     moon: MoonParams,
     stars: StarfieldParams,
     atmosphere: AtmosphereParams,
-    wall: WallParams,
-    far: SilhouetteParams,
-    near: SilhouetteParams,
-    world_snapped: Vec2,
-    wall_snapped: Vec2,
-    native_size: Vec2,
-    window_size: Vec2,
     sun_center: Vec2,
     sun_size: Vec2,
     moon_center: Vec2,
     moon_size: Vec2,
-    world_offset: Vec2,
+}
+
+#[derive(Clone, ShaderType)]
+struct WorldFrame {
+    lighting: LightingParams,
+    wall: WallParams,
+    far: SilhouetteParams,
+    near: SilhouetteParams,
+    wall_snapped: Vec2,
+}
+
+#[derive(Clone, ShaderType, Default)]
+struct BackdropFrame {
+    celestial: CelestialFrame,
     star_offset: Vec2,
     far_offset: Vec2,
     near_offset: Vec2,
     wall_offset: Vec2,
-    clear_color: Vec4,
-    scale: f32,
-    time: f32,
-    sky_synced: u32,
 }
 
-impl Default for FrameUniform {
+#[derive(Clone, ShaderType)]
+struct SceneFrame {
+    viewport: PixelViewport,
+    world: WorldFrame,
+    backdrop: BackdropFrame,
+    world_offset: Vec2,
+    clear_color: Vec4,
+    backdrop_ready: u32,
+}
+
+impl Default for SceneFrame {
     fn default() -> Self {
         Self {
-            lighting: default(),
-            sun: default(),
-            moon: default(),
-            stars: default(),
-            atmosphere: default(),
-            wall: default(),
-            far: default(),
-            near: default(),
-            world_snapped: Vec2::ZERO,
-            wall_snapped: Vec2::ZERO,
-            native_size: Vec2::ONE,
-            window_size: Vec2::ONE,
-            sun_center: Vec2::ZERO,
-            sun_size: Vec2::ZERO,
-            moon_center: Vec2::ZERO,
-            moon_size: Vec2::ZERO,
+            viewport: default(),
+            world: WorldFrame {
+                lighting: default(),
+                wall: default(),
+                far: default(),
+                near: default(),
+                wall_snapped: Vec2::ZERO,
+            },
+            backdrop: default(),
             world_offset: Vec2::ZERO,
-            star_offset: Vec2::ZERO,
-            far_offset: Vec2::ZERO,
-            near_offset: Vec2::ZERO,
-            wall_offset: Vec2::ZERO,
             clear_color: Vec4::ZERO,
-            scale: 1.0,
-            time: 0.0,
-            sky_synced: 0,
+            backdrop_ready: 0,
         }
     }
 }
@@ -142,7 +189,8 @@ impl Default for FrameUniform {
 #[derive(Resource, Default)]
 pub struct GameRenderFrame {
     active: bool,
-    uniform: FrameUniform,
+    raster: RasterFrame,
+    scene: SceneFrame,
     chunks: Vec<ChunkInstance>,
     quads: Vec<QuadInstance>,
     lines: Vec<LineInstance>,
@@ -243,7 +291,8 @@ impl Atlas {
 
 #[derive(Resource)]
 struct GameGpuData {
-    frame: UniformBuffer<FrameUniform>,
+    raster_frame: UniformBuffer<RasterFrame>,
+    scene_frame: UniformBuffer<SceneFrame>,
     blur: UniformBuffer<super::camera::LightBlurParams>,
     chunks: StorageBuffer<Vec<ChunkInstance>>,
     quads: StorageBuffer<Vec<QuadInstance>>,
@@ -268,7 +317,10 @@ struct GameGpuData {
 
 #[derive(Resource)]
 struct GamePipelines {
-    layout: BindGroupLayoutDescriptor,
+    raster_layout: BindGroupLayoutDescriptor,
+    downsample_layout: BindGroupLayoutDescriptor,
+    blur_layout: BindGroupLayoutDescriptor,
+    scene_layout: BindGroupLayoutDescriptor,
     chunk: CachedRenderPipelineId,
     emissive: CachedRenderPipelineId,
     quad: CachedRenderPipelineId,
@@ -289,7 +341,10 @@ impl Plugin for GameRendererPlugin {
         };
         render_app
             .init_resource::<GameRenderFrame>()
-            .add_systems(RenderStartup, init_renderer)
+            .add_systems(
+                RenderStartup,
+                init_renderer.after(init_gpu_resource::<FallbackImageZero>),
+            )
             .add_systems(ExtractSchedule, extract_game_render_frame)
             .add_systems(
                 Render,
@@ -332,32 +387,46 @@ fn extract_game_render_frame(mut main_world: ResMut<MainWorld>, mut out: ResMut<
     let sources = main_world.resource::<RenderSourceAssets>().clone();
     let world_offset = layer_offset(state, Vec2::ZERO, Vec2::ZERO);
     let star_drift = (state.star_scroll - state.star_scroll.floor()) * state.k as f32;
-    let uniform = FrameUniform {
-        lighting: lights.params,
-        sun: sky_render.sun,
-        moon: sky_render.moon,
-        stars: sky_render.stars,
-        atmosphere: sky_render.atmosphere,
-        wall: parallax.wall,
-        far: parallax.far,
-        near: parallax.near,
-        world_snapped: state.layer(Vec2::ZERO).0.as_vec2(),
-        wall_snapped: state.layer(WALL_RATIO).0.as_vec2(),
+    let viewport = PixelViewport {
         native_size: state.native.as_vec2(),
         window_size: state.window_px.as_vec2(),
-        sun_center: sky_render.sun_quad.center_px,
-        sun_size: sky_render.sun_quad.size_px,
-        moon_center: sky_render.moon_quad.center_px,
-        moon_size: sky_render.moon_quad.size_px,
-        world_offset,
-        star_offset: layer_offset(state, Vec2::ONE, star_drift),
-        far_offset: layer_offset(state, FAR_RATIO, Vec2::ZERO),
-        near_offset: layer_offset(state, NEAR_RATIO, Vec2::ZERO),
-        wall_offset: layer_offset(state, WALL_RATIO, Vec2::ZERO),
-        clear_color: clear.into(),
-        scale: state.k as f32,
+        physical_size: state.native.as_vec2() * state.k as f32,
+        window_center: state.window_px.as_vec2() * 0.5,
+    };
+    let raster = RasterFrame {
+        viewport: viewport.clone(),
+        world_snapped: state.layer(Vec2::ZERO).0.as_vec2(),
+        emission_size: extended_size(state.native).as_vec2(),
         time: elapsed,
-        sky_synced: u32::from(sky.synced),
+    };
+    let scene = SceneFrame {
+        viewport,
+        world: WorldFrame {
+            lighting: lights.params,
+            wall: parallax.wall,
+            far: parallax.far,
+            near: parallax.near,
+            wall_snapped: state.layer(WALL_RATIO).0.as_vec2(),
+        },
+        backdrop: BackdropFrame {
+            celestial: CelestialFrame {
+                sun: sky_render.sun,
+                moon: sky_render.moon,
+                stars: sky_render.stars,
+                atmosphere: sky_render.atmosphere,
+                sun_center: sky_render.sun_quad.center_px,
+                sun_size: sky_render.sun_quad.size_px,
+                moon_center: sky_render.moon_quad.center_px,
+                moon_size: sky_render.moon_quad.size_px,
+            },
+            star_offset: layer_offset(state, Vec2::ONE, star_drift),
+            far_offset: layer_offset(state, FAR_RATIO, Vec2::ZERO),
+            near_offset: layer_offset(state, NEAR_RATIO, Vec2::ZERO),
+            wall_offset: layer_offset(state, WALL_RATIO, Vec2::ZERO),
+        },
+        world_offset,
+        clear_color: clear.into(),
+        backdrop_ready: u32::from(sky.synced),
     };
     let native = state.native;
     let chunk_state = main_world.resource::<ChunkRenderState>();
@@ -374,7 +443,8 @@ fn extract_game_render_frame(mut main_world: ResMut<MainWorld>, mut out: ResMut<
     }
     let uploads = std::mem::take(&mut main_world.resource_mut::<ChunkRenderState>().pending);
     out.active = active;
-    out.uniform = uniform;
+    out.raster = raster;
+    out.scene = scene;
     out.quads = quads.into_iter().map(quad_instance).collect();
     out.lines = lines.into_iter().map(line_instance).collect();
     out.uploads = uploads;
@@ -471,121 +541,160 @@ fn init_renderer(
     fallback: Res<FallbackImageZero>,
     pipeline_cache: Res<PipelineCache>,
 ) {
-    let layout = BindGroupLayoutDescriptor::new(
-        "game_renderer_layout",
+    let raster_layout = BindGroupLayoutDescriptor::new(
+        "game_raster_layout",
         &BindGroupLayoutEntries::sequential(
             ShaderStages::VERTEX_FRAGMENT,
             (
-                uniform_buffer::<FrameUniform>(false),
+                uniform_buffer::<RasterFrame>(false),
                 storage_buffer_read_only::<Vec<ChunkInstance>>(false),
                 storage_buffer_read_only::<Vec<QuadInstance>>(false),
                 storage_buffer_read_only::<Vec<LineInstance>>(false),
                 texture_2d(TextureSampleType::Uint),
                 texture_2d(TextureSampleType::Float { filterable: false }),
                 texture_2d(TextureSampleType::Float { filterable: false }),
+            ),
+        ),
+    );
+    let downsample_layout = BindGroupLayoutDescriptor::new(
+        "game_downsample_layout",
+        &BindGroupLayoutEntries::sequential(
+            ShaderStages::FRAGMENT,
+            (texture_2d(TextureSampleType::Float { filterable: false }),),
+        ),
+    );
+    let blur_layout = BindGroupLayoutDescriptor::new(
+        "game_blur_layout",
+        &BindGroupLayoutEntries::sequential(
+            ShaderStages::FRAGMENT,
+            (
                 texture_2d(TextureSampleType::Float { filterable: false }),
-                texture_2d(TextureSampleType::Float { filterable: false }),
-                texture_2d(TextureSampleType::Float { filterable: false }),
-                texture_2d(TextureSampleType::Float { filterable: false }),
-                texture_2d(TextureSampleType::Float { filterable: true }),
-                sampler(SamplerBindingType::Filtering),
-                texture_2d(TextureSampleType::Float { filterable: true }),
-                sampler(SamplerBindingType::Filtering),
                 uniform_buffer::<super::camera::LightBlurParams>(false),
             ),
         ),
     );
-    let shader = asset_server.load("shaders/game_render.wgsl");
-    let pipeline =
-        |label: &'static str, vertex: VertexState, entry: &'static str, blend, format| {
-            pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
-                label: Some(label.into()),
-                layout: vec![layout.clone()],
-                vertex,
-                fragment: Some(FragmentState {
-                    shader: shader.clone(),
-                    entry_point: Some(entry.into()),
-                    targets: vec![Some(ColorTargetState {
-                        format,
-                        blend,
-                        write_mask: ColorWrites::ALL,
-                    })],
-                    ..default()
-                }),
-                primitive: PrimitiveState {
-                    topology: PrimitiveTopology::TriangleList,
-                    ..default()
-                },
+    let scene_layout = BindGroupLayoutDescriptor::new(
+        "game_scene_layout",
+        &BindGroupLayoutEntries::sequential(
+            ShaderStages::FRAGMENT,
+            (
+                uniform_buffer::<SceneFrame>(false),
+                texture_2d(TextureSampleType::Float { filterable: false }),
+                texture_2d(TextureSampleType::Float { filterable: false }),
+                texture_2d(TextureSampleType::Float { filterable: true }),
+                sampler(SamplerBindingType::Filtering),
+                texture_2d(TextureSampleType::Float { filterable: true }),
+                sampler(SamplerBindingType::Filtering),
+            ),
+        ),
+    );
+    let raster_shader = asset_server.load("shaders/game_raster.wgsl");
+    let light_shader = asset_server.load("shaders/game_light.wgsl");
+    let scene_shader = asset_server.load("shaders/game_scene.wgsl");
+    let pipeline = |label: &'static str,
+                    layout: &BindGroupLayoutDescriptor,
+                    vertex: VertexState,
+                    shader: &Handle<Shader>,
+                    entry: &'static str,
+                    blend| {
+        pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
+            label: Some(label.into()),
+            layout: vec![layout.clone()],
+            vertex,
+            fragment: Some(FragmentState {
+                shader: shader.clone(),
+                entry_point: Some(entry.into()),
+                targets: vec![Some(ColorTargetState {
+                    format: HDR_FORMAT,
+                    blend,
+                    write_mask: ColorWrites::ALL,
+                })],
                 ..default()
-            })
-        };
-    let custom_vertex = |entry: &'static str| VertexState {
-        shader: shader.clone(),
+            }),
+            primitive: PrimitiveState {
+                topology: PrimitiveTopology::TriangleList,
+                ..default()
+            },
+            ..default()
+        })
+    };
+    let raster_vertex = |entry: &'static str| VertexState {
+        shader: raster_shader.clone(),
         entry_point: Some(entry.into()),
         ..default()
     };
     let fullscreen_vertex = fullscreen.to_vertex_state();
     let chunk = pipeline(
         "game_chunk_pipeline",
-        custom_vertex("chunk_vertex"),
+        &raster_layout,
+        raster_vertex("chunk_vertex"),
+        &raster_shader,
         "chunk_fragment",
         Some(BlendState::ALPHA_BLENDING),
-        HDR_FORMAT,
     );
     let emissive = pipeline(
         "game_emissive_pipeline",
-        custom_vertex("emissive_vertex"),
+        &raster_layout,
+        raster_vertex("emissive_vertex"),
+        &raster_shader,
         "emissive_fragment",
         None,
-        HDR_FORMAT,
     );
     let quad = pipeline(
         "game_quad_pipeline",
-        custom_vertex("quad_vertex"),
+        &raster_layout,
+        raster_vertex("quad_vertex"),
+        &raster_shader,
         "quad_fragment",
         Some(BlendState::ALPHA_BLENDING),
-        HDR_FORMAT,
     );
     let downsample = pipeline(
         "game_light_downsample_pipeline",
+        &downsample_layout,
         fullscreen_vertex.clone(),
+        &light_shader,
         "downsample_fragment",
         None,
-        HDR_FORMAT,
     );
     let blur_h = pipeline(
         "game_light_blur_horizontal_pipeline",
+        &blur_layout,
         fullscreen_vertex.clone(),
+        &light_shader,
         "blur_horizontal_fragment",
         None,
-        HDR_FORMAT,
     );
     let blur_v = pipeline(
         "game_light_blur_vertical_pipeline",
+        &blur_layout,
         fullscreen_vertex.clone(),
+        &light_shader,
         "blur_vertical_fragment",
         None,
-        HDR_FORMAT,
     );
     let scene = pipeline(
         "game_scene_pipeline",
+        &scene_layout,
         fullscreen_vertex,
+        &scene_shader,
         "scene_fragment",
         None,
-        HDR_FORMAT,
     );
     let line = pipeline(
         "game_debug_line_pipeline",
-        custom_vertex("line_vertex"),
+        &raster_layout,
+        raster_vertex("line_vertex"),
+        &raster_shader,
         "line_fragment",
         Some(BlendState::ALPHA_BLENDING),
-        HDR_FORMAT,
     );
     let (palette, emissive_palette) = create_palette_textures(&device, &queue);
     let palette_view = palette.create_view(&TextureViewDescriptor::default());
     let emissive_palette_view = emissive_palette.create_view(&TextureViewDescriptor::default());
-    let mut frame = UniformBuffer::from(FrameUniform::default());
-    frame.set_label(Some("game_frame_uniform"));
+    let mut raster_frame = UniformBuffer::from(RasterFrame::default());
+    raster_frame.set_label(Some("game_raster_frame_uniform"));
+    let mut scene_frame = UniformBuffer::from(SceneFrame::default());
+    scene_frame.set_label(Some("game_scene_frame_uniform"));
     let mut blur = UniformBuffer::from(light_blur_params());
     blur.set_label(Some("game_blur_uniform"));
     let mut chunks = StorageBuffer::from(vec![ChunkInstance {
@@ -606,7 +715,8 @@ fn init_renderer(
     }]);
     lines.set_label(Some("game_line_instances"));
     commands.insert_resource(GameGpuData {
-        frame,
+        raster_frame,
+        scene_frame,
         blur,
         chunks,
         quads,
@@ -634,7 +744,10 @@ fn init_renderer(
         }),
     });
     commands.insert_resource(GamePipelines {
-        layout,
+        raster_layout,
+        downsample_layout,
+        blur_layout,
+        scene_layout,
         chunk,
         emissive,
         quad,
@@ -692,8 +805,10 @@ fn prepare_renderer(
     if targets_changed {
         gpu.targets = Some(GameTargets::new(&device, frame.native));
     }
-    gpu.frame.set(frame.uniform.clone());
-    gpu.frame.write_buffer(&device, &queue);
+    gpu.raster_frame.set(frame.raster.clone());
+    gpu.raster_frame.write_buffer(&device, &queue);
+    gpu.scene_frame.set(frame.scene.clone());
+    gpu.scene_frame.write_buffer(&device, &queue);
     if gpu.blur.buffer().is_none() {
         gpu.blur.write_buffer(&device, &queue);
     }
@@ -755,104 +870,91 @@ fn prepare_renderer(
             |stars| (stars.texture_view.clone(), stars.sampler.clone()),
         );
     let star_view = star_texture_view.id();
-    let Some(targets) = gpu.targets.as_ref() else {
-        return;
+    let (world_view, emission_view, quarter_view, blur_temp_view, light_view) = {
+        let Some(targets) = gpu.targets.as_ref() else {
+            return;
+        };
+        (
+            targets.world.view.clone(),
+            targets.emission.view.clone(),
+            targets.quarter.view.clone(),
+            targets.blur_temp.view.clone(),
+            targets.light.view.clone(),
+        )
     };
-    let bindings_missing = gpu.raster_bind_group.is_none()
+    if atlas_changed || buffers_changed || gpu.raster_bind_group.is_none() {
+        let layout = pipeline_cache.get_bind_group_layout(&pipelines.raster_layout);
+        gpu.raster_bind_group = Some(
+            device.create_bind_group(
+                "game_raster_bind_group",
+                &layout,
+                &BindGroupEntries::sequential((
+                    gpu.raster_frame
+                        .binding()
+                        .expect("raster frame buffer written"),
+                    gpu.chunks.binding().expect("chunk buffer written"),
+                    gpu.quads.binding().expect("quad buffer written"),
+                    gpu.lines.binding().expect("line buffer written"),
+                    &gpu.atlas.view,
+                    &gpu.palette_view,
+                    &gpu.emissive_palette_view,
+                )),
+            ),
+        );
+    }
+    if targets_changed
         || gpu.downsample_bind_group.is_none()
         || gpu.blur_h_bind_group.is_none()
         || gpu.blur_v_bind_group.is_none()
-        || gpu.scene_bind_group.is_none();
-    if !atlas_changed
-        && !targets_changed
-        && !buffers_changed
-        && !bindings_missing
-        && gpu.star_view == Some(star_view)
     {
-        return;
+        let downsample_layout = pipeline_cache.get_bind_group_layout(&pipelines.downsample_layout);
+        let downsample = device.create_bind_group(
+            "game_downsample_bind_group",
+            &downsample_layout,
+            &BindGroupEntries::sequential((&emission_view,)),
+        );
+        let blur_layout = pipeline_cache.get_bind_group_layout(&pipelines.blur_layout);
+        let (blur_h, blur_v) = {
+            let make_blur_bind_group = |label, source: &TextureView| {
+                device.create_bind_group(
+                    label,
+                    &blur_layout,
+                    &BindGroupEntries::sequential((
+                        source,
+                        gpu.blur.binding().expect("blur buffer written"),
+                    )),
+                )
+            };
+            (
+                make_blur_bind_group("game_blur_h_bind_group", &quarter_view),
+                make_blur_bind_group("game_blur_v_bind_group", &blur_temp_view),
+            )
+        };
+        gpu.downsample_bind_group = Some(downsample);
+        gpu.blur_h_bind_group = Some(blur_h);
+        gpu.blur_v_bind_group = Some(blur_v);
     }
-    let layout = pipeline_cache.get_bind_group_layout(&pipelines.layout);
-    let make_bind_group = |label, views: [&TextureView; 5]| {
-        device.create_bind_group(
-            label,
-            &layout,
-            &BindGroupEntries::sequential((
-                gpu.frame.binding().expect("frame buffer written"),
-                gpu.chunks.binding().expect("chunk buffer written"),
-                gpu.quads.binding().expect("quad buffer written"),
-                gpu.lines.binding().expect("line buffer written"),
-                &gpu.atlas.view,
-                &gpu.palette_view,
-                &gpu.emissive_palette_view,
-                views[0],
-                views[1],
-                views[2],
-                views[3],
-                views[4],
-                &gpu.linear_sampler,
-                &star_texture_view,
-                &star_sampler,
-                gpu.blur.binding().expect("blur buffer written"),
-            )),
-        )
-    };
-    let placeholder = &gpu.palette_view;
-    let raster_bind_group = make_bind_group(
-        "game_raster_bind_group",
-        [
-            placeholder,
-            placeholder,
-            placeholder,
-            placeholder,
-            placeholder,
-        ],
-    );
-    let downsample_bind_group = make_bind_group(
-        "game_downsample_bind_group",
-        [
-            placeholder,
-            &targets.emission.view,
-            placeholder,
-            placeholder,
-            placeholder,
-        ],
-    );
-    let blur_h_bind_group = make_bind_group(
-        "game_blur_h_bind_group",
-        [
-            placeholder,
-            placeholder,
-            &targets.quarter.view,
-            placeholder,
-            placeholder,
-        ],
-    );
-    let blur_v_bind_group = make_bind_group(
-        "game_blur_v_bind_group",
-        [
-            placeholder,
-            placeholder,
-            placeholder,
-            &targets.blur_temp.view,
-            placeholder,
-        ],
-    );
-    let scene_bind_group = make_bind_group(
-        "game_scene_bind_group",
-        [
-            &targets.world.view,
-            &targets.emission.view,
-            &targets.quarter.view,
-            &targets.blur_temp.view,
-            &targets.light.view,
-        ],
-    );
-    gpu.raster_bind_group = Some(raster_bind_group);
-    gpu.downsample_bind_group = Some(downsample_bind_group);
-    gpu.blur_h_bind_group = Some(blur_h_bind_group);
-    gpu.blur_v_bind_group = Some(blur_v_bind_group);
-    gpu.scene_bind_group = Some(scene_bind_group);
-    gpu.star_view = Some(star_view);
+    if targets_changed || gpu.scene_bind_group.is_none() || gpu.star_view != Some(star_view) {
+        let layout = pipeline_cache.get_bind_group_layout(&pipelines.scene_layout);
+        gpu.scene_bind_group = Some(
+            device.create_bind_group(
+                "game_scene_bind_group",
+                &layout,
+                &BindGroupEntries::sequential((
+                    gpu.scene_frame
+                        .binding()
+                        .expect("scene frame buffer written"),
+                    &world_view,
+                    &emission_view,
+                    &light_view,
+                    &gpu.linear_sampler,
+                    &star_texture_view,
+                    &star_sampler,
+                )),
+            ),
+        );
+        gpu.star_view = Some(star_view);
+    }
 }
 
 fn color_attachment(view: &TextureView, clear: Option<Color>) -> RenderPassColorAttachment<'_> {
