@@ -1,4 +1,4 @@
-use crate::persistence::{Persistence, StoreError, restore_player};
+use crate::persistence::{Persistence, StoreError};
 use crate::player::{Player, PlayerLife, Players};
 use crate::replication::SessionReplication;
 use ed25519_dalek::{Signature, VerifyingKey};
@@ -373,13 +373,7 @@ fn handle_hello(
                 );
                 return Ok(false);
             };
-            let restored = persistence
-                .load_player(uuid)
-                .and_then(|record| record.map(restore_player).transpose())
-                .map_err(|source| StoreError::PlayerLoad {
-                    uuid,
-                    source: Box::new(source),
-                })?;
+            let restored = persistence.load_player(uuid)?;
             players.insert(Player::new(
                 player_id,
                 uuid,

@@ -51,7 +51,6 @@ pub struct ReplicationMetrics {
     pub awake_cells: u64,
     pub loaded_chunks: usize,
     pub loaded_regions: u32,
-    pub dirty_regions: u32,
     pub replicated_bytes: u64,
 }
 
@@ -149,7 +148,6 @@ pub fn replicate(
     }
 
     let (awake_chunks, awake_cells) = sim.awake_counts();
-    let (loaded_regions, dirty_regions) = regions.counts();
     let replicated_bytes = sessions
         .entries
         .values()
@@ -163,8 +161,7 @@ pub fn replicate(
         awake_chunks,
         awake_cells,
         loaded_chunks: sim.chunk_count(),
-        loaded_regions,
-        dirty_regions,
+        loaded_regions: regions.len() as u32,
         replicated_bytes,
     }
 }

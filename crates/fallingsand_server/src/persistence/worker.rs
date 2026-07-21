@@ -3,10 +3,10 @@ use super::{RegionLoad, RegionReady, SaveBatch, StoreError};
 use fallingsand_core::RegionPos;
 use fallingsand_worldgen::WorldGenerator;
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::thread::{self, JoinHandle};
 
-pub(super) enum WorkerCommand {
+enum WorkerCommand {
     LoadRegion { request: u64, pos: RegionPos },
     SaveBatch(Arc<SaveBatch>),
     Shutdown,
@@ -16,13 +16,12 @@ pub(super) enum WorkerCompletion {
     RegionReady(RegionReady),
     SaveComplete,
     SaveFailed(StoreError),
-    Fatal(StoreError),
 }
 
 pub(super) struct PersistenceWorker {
-    pub commands: Sender<WorkerCommand>,
-    pub completions: Receiver<WorkerCompletion>,
-    pub thread: JoinHandle<()>,
+    commands: Sender<WorkerCommand>,
+    completions: Receiver<WorkerCompletion>,
+    thread: JoinHandle<()>,
 }
 
 impl PersistenceWorker {
@@ -38,6 +37,42 @@ impl PersistenceWorker {
             completions: completion_rx,
             thread,
         })
+    }
+
+    pub(super) fn request_region(&self, request: u64, pos: RegionPos) -> Result<(), StoreError> {
+        self.commands
+            .send(WorkerCommand::LoadRegion { request, pos })
+            .map_err(|_| StoreError::WorkerDisconnected)
+    }
+
+    pub(super) fn save(&self, batch: Arc<SaveBatch>) -> Result<(), StoreError> {
+        self.commands
+            .send(WorkerCommand::SaveBatch(batch))
+            .map_err(|_| StoreError::WorkerDisconnected)
+    }
+
+    pub(super) fn drain_completions(&self) -> Result<Vec<WorkerCompletion>, StoreError> {
+        let mut messages = Vec::new();
+        loop {
+            match self.completions.try_recv() {
+                Ok(message) => messages.push(message),
+                Err(TryRecvError::Empty) => return Ok(messages),
+                Err(TryRecvError::Disconnected) => return Err(StoreError::WorkerDisconnected),
+            }
+        }
+    }
+
+    pub(super) fn recv_completion(&self) -> Result<WorkerCompletion, StoreError> {
+        self.completions
+            .recv()
+            .map_err(|_| StoreError::WorkerDisconnected)
+    }
+
+    pub(super) fn shutdown(self) -> Result<(), StoreError> {
+        drop(self.completions);
+        let _ = self.commands.send(WorkerCommand::Shutdown);
+        drop(self.commands);
+        self.thread.join().map_err(|_| StoreError::WorkerPanicked)
     }
 }
 
@@ -55,8 +90,6 @@ fn worker_main(
                     .map_or(Ok(None), |store| store.load_region(pos))
                     .map(|loaded| RegionLoad {
                         region: loaded.unwrap_or_else(|| generator.generate_region(pos)),
-                        revision: 0,
-                        persisted_revision: 0,
                     })
                     .map_err(|source| StoreError::RegionLoad {
                         pos,
@@ -69,25 +102,12 @@ fn worker_main(
                 })
             }
             WorkerCommand::SaveBatch(batch) => {
-                let materialized = batch
-                    .regions
-                    .iter()
-                    .map(|(pos, snapshot)| {
-                        Ok((
-                            *pos,
-                            snapshot.materialize(store.as_deref(), &generator, *pos)?,
-                        ))
-                    })
-                    .collect::<Result<Vec<_>, StoreError>>();
-                match materialized {
-                    Ok(regions) => match store
-                        .as_ref()
-                        .map_or(Ok(()), |store| store.save_batch(&batch, &regions))
-                    {
-                        Ok(()) => WorkerCompletion::SaveComplete,
-                        Err(error) => WorkerCompletion::SaveFailed(error),
-                    },
-                    Err(error) => WorkerCompletion::Fatal(error),
+                match store
+                    .as_ref()
+                    .map_or(Ok(()), |store| store.save_batch(&batch))
+                {
+                    Ok(()) => WorkerCompletion::SaveComplete,
+                    Err(error) => WorkerCompletion::SaveFailed(error),
                 }
             }
             WorkerCommand::Shutdown => break,

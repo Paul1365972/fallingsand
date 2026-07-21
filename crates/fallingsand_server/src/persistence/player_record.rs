@@ -10,26 +10,26 @@ use fallingsand_protocol::GameMode;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct StackRecord {
-    pub item: String,
-    pub count: u32,
+struct StackRecord {
+    item: String,
+    count: u32,
 }
 
-pub type SlotRecord = Option<StackRecord>;
+type SlotRecord = Option<StackRecord>;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PlayerRecord {
-    pub mode: GameMode,
-    pub selected: u8,
-    pub inventory: Vec<SlotRecord>,
-    pub cursor: SlotRecord,
-    pub trash: SlotRecord,
-    pub history: Vec<String>,
-    pub resume: ResumeState,
+pub(super) struct PlayerRecord {
+    mode: GameMode,
+    selected: u8,
+    inventory: Vec<SlotRecord>,
+    cursor: SlotRecord,
+    trash: SlotRecord,
+    history: Vec<String>,
+    resume: ResumeState,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum ResumeState {
+enum ResumeState {
     Alive(AvatarRecord),
     Dead {
         view_anchor: fallingsand_core::CellPos,
@@ -37,16 +37,16 @@ pub enum ResumeState {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct AvatarRecord {
-    pub x: Subcell,
-    pub y: Subcell,
-    pub vx: Subcell,
-    pub vy: Subcell,
-    pub hp: f32,
-    pub regen_delay_ticks: u64,
-    pub air: f32,
-    pub burning: f32,
-    pub flying: bool,
+struct AvatarRecord {
+    x: Subcell,
+    y: Subcell,
+    vx: Subcell,
+    vy: Subcell,
+    hp: f32,
+    regen_delay_ticks: u64,
+    air: f32,
+    burning: f32,
+    flying: bool,
 }
 
 fn subcell_position_fits(value: Subcell) -> bool {
@@ -185,7 +185,7 @@ fn player_slots_from_record(list: &[SlotRecord]) -> Result<CoreInventory, StoreE
     Ok(inv)
 }
 
-pub fn restore_player(record: PlayerRecord) -> Result<RestoredPlayer, StoreError> {
+pub(super) fn restore_player(record: PlayerRecord) -> Result<RestoredPlayer, StoreError> {
     if record.selected as usize >= HOTBAR_SLOTS {
         return Err(StoreError::CorruptPlayer(format!(
             "invalid selected slot {}",
@@ -212,7 +212,7 @@ pub fn restore_player(record: PlayerRecord) -> Result<RestoredPlayer, StoreError
     })
 }
 
-pub fn snapshot_player(player: &Player) -> Result<PlayerRecord, StoreError> {
+pub(super) fn snapshot_player(player: &Player) -> Result<PlayerRecord, StoreError> {
     let resume = match &player.life {
         PlayerLife::Entering(entering) => {
             ResumeState::Alive(AvatarRecord::from(&entering.materialization.template))

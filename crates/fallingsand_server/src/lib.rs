@@ -125,7 +125,6 @@ impl Server {
                     tick: 0,
                 };
                 persistence.stage_meta(meta.clone());
-                persistence.flush_startup_meta()?;
                 tracing::info!("created world \"{}\" (seed {:#x})", meta.name, meta.seed);
                 meta
             }
@@ -199,7 +198,7 @@ impl Server {
             timer.sleep();
         }
         tracing::info!("stopping server");
-        self.state.save_all()?;
+        self.state.shutdown_persistence()?;
         Ok(())
     }
 }
@@ -340,7 +339,6 @@ impl ServerState {
                 s.stats.awake_cells = metrics.awake_cells;
                 s.stats.loaded_chunks = metrics.loaded_chunks;
                 s.stats.loaded_regions = metrics.loaded_regions;
-                s.stats.dirty_regions = metrics.dirty_regions;
                 s.stats.replicated_bytes = metrics.replicated_bytes;
             },
         );
@@ -351,7 +349,7 @@ impl ServerState {
             |s| {
                 persistence::autosave(
                     &s.sim,
-                    &mut s.regions,
+                    &s.regions,
                     &s.world,
                     &s.clock,
                     &s.players,
@@ -365,38 +363,24 @@ impl ServerState {
         Ok(())
     }
 
-    fn save_all(&mut self) -> Result<(), persistence::StoreError> {
-        persistence::save_everything(
-            &mut self.sim,
-            &mut self.regions,
-            &self.players,
-            &mut self.persistence,
-            &self.world,
-            &self.clock,
-        )
+    fn shutdown_persistence(&mut self) -> Result<(), persistence::StoreError> {
+        self.persistence.shutdown()
     }
 
     fn remove_disconnected_players(
         &mut self,
         disconnected: Vec<fallingsand_protocol::PlayerId>,
     ) -> Result<(), persistence::StoreError> {
-        let mut snapshots = Vec::new();
-        for &id in &disconnected {
-            let Some(player) = self.players.get(id) else {
-                continue;
-            };
-            snapshots.push((id, player.uuid, persistence::snapshot_player(player)?));
-        }
-        for (id, uuid, record) in snapshots {
+        self.persistence
+            .stage_players(disconnected.iter().filter_map(|&id| self.players.get(id)))?;
+        for id in disconnected {
             let Some(mut player) = self.players.remove(id) else {
                 continue;
             };
             if let Some(avatar) = player.avatar_mut() {
                 physics::unstamp(&mut self.sim, &mut avatar.stamp);
             }
-            self.persistence.stage_player(uuid, record);
         }
-        self.persistence.pump()?;
         Ok(())
     }
 }

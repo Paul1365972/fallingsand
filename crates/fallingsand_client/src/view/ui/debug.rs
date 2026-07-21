@@ -467,10 +467,9 @@ fn server_lines(server: &ServerStats, windows: &mut StatWindows, now: f32, out: 
         windows.awake_chunks.avg(now, server.awake_chunks as f32),
     ));
     out.push(format!(
-        "cells ~{} active  regions {}/{} dirty",
+        "cells ~{} active  regions {} loaded",
         human_count(windows.awake_cells.avg(now, server.awake_cells as f32) as u64),
         server.loaded_regions,
-        server.dirty_regions,
     ));
     let mem = server.loaded_chunks as u64 * CHUNK_AREA as u64 * std::mem::size_of::<Cell>() as u64;
     out.push(format!(

@@ -74,7 +74,6 @@ pub struct ServerStats {
     pub awake_chunks: usize,
     pub awake_cells: u64,
     pub loaded_regions: u32,
-    pub dirty_regions: u32,
     pub pixel_bodies: usize,
     pub players: usize,
     pub replicated_bytes: u64,

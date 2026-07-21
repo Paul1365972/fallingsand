@@ -1,5 +1,6 @@
 use super::region_codec::{decode_region, encode_region};
-use super::{META, PLAYERS, PlayerRecord, REGIONS, SaveBatch, StoreError, WorldMeta, parse_meta};
+use super::{META, PLAYERS, REGIONS, SaveBatch, StoreError, WorldMeta, parse_meta};
+use crate::persistence::player_record::PlayerRecord;
 use fallingsand_core::{Region, RegionPos};
 use fallingsand_protocol::PlayerUuid;
 use redb::{Database, ReadableDatabase};
@@ -46,17 +47,6 @@ impl WorldStore {
         parse_meta(guard.value()).map(Some)
     }
 
-    pub(super) fn save_meta(&self, meta: &WorldMeta) -> Result<(), StoreError> {
-        let bytes = postcard::to_allocvec(meta)?;
-        let write = self.db.begin_write()?;
-        {
-            let mut table = write.open_table(META)?;
-            table.insert("world", bytes.as_slice())?;
-        }
-        write.commit()?;
-        Ok(())
-    }
-
     pub(super) fn load_region(&self, pos: RegionPos) -> Result<Option<Region>, StoreError> {
         let read = self.db.begin_read()?;
         let table = read.open_table(REGIONS)?;
@@ -75,12 +65,9 @@ impl WorldStore {
         Ok(Some(postcard::from_bytes(guard.value())?))
     }
 
-    pub(super) fn save_batch(
-        &self,
-        batch: &SaveBatch,
-        region_values: &[(RegionPos, Region)],
-    ) -> Result<(), StoreError> {
-        let regions = region_values
+    pub(super) fn save_batch(&self, batch: &SaveBatch) -> Result<(), StoreError> {
+        let regions = batch
+            .regions
             .iter()
             .map(|(pos, region)| Ok((*pos, encode_region(region)?)))
             .collect::<Result<Vec<_>, StoreError>>()?;

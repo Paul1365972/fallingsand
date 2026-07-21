@@ -22,7 +22,7 @@ A session is one transport connection plus handshake state and replication basel
 5. Step avatars in deterministic order, reconcile body damage, step pixel bodies
 6. Apply hazards and crush, resolve lethal transitions, advance materialization searches
 7. Advance the calendar and emit one frame per active session
-8. Snapshot and enqueue dirty regions, players, and world metadata when due
+8. Enqueue the ten-second world snapshot when due
 
 Budget ~16 ms/tick, sim ≤8 ms; sleeping keeps the active-chunk set inside it.
 
@@ -34,11 +34,9 @@ Entering and revive share one deterministic ring search advancing over ticks, ex
 
 ## Persistence
 
-Loaded regions accumulate a 64-bit dirty-chunk mask. Autosave copies only those changed chunks; the worker reconstructs the complete region from the latest full base or stored region before encoding. Unload transfers the complete region by ownership, and pending chunk replacements coalesce by offset without discarding older unsaved replacements.
+Every ten seconds, one transaction saves every loaded or pending region, every present player, and world metadata. Unload and departure only replace pending snapshots; persisted unloaded regions remain valid. Startup and shutdown never initiate saves, and shutdown finishes any in-flight batch. Without a save path, pending snapshots retain unloaded state in memory.
 
-One store owns the disk tables (regions, players, meta) and the in-memory pending records between the live world and storage; a server without a save path uses the pending maps as its memory backing, so unload still preserves the world for the process lifetime. An owned storage worker performs region reads, confirmed-missing generation, region encoding and compression, and all recurring writes outside the tick thread. Ready regions integrate in deterministic order at no more than one per tick. Save batches span all three tables in one transaction, and acknowledgement advances exact region revisions: an older completion cannot clear a newer mutation. Failed writes retain their pending records for retry, read or decode errors are fatal, and generation only follows a successful missing read. Shutdown stops simulation, sends the final snapshots through the worker, waits for durable acknowledgement, and joins it.
-
-Region blobs contain only chunks: pixel-body flags are stripped into ordinary terrain cells, while player flesh is omitted. Unloading any crossed region settles the body at its current raster before extracting chunks. Storage records are DTOs validated and converted at the persistence boundary; malformed cells, rectangles, coordinates, values, or identifiers are fatal. Gameplay never depends on a database type. An interrupted player revive persists as dead and restarts from an explicit request.
+The worker owns reads, confirmed-missing generation, encoding, compression, and writes; ready regions integrate deterministically at one per tick. Success drops the immutable batch, failure restores entries without newer replacements, and read or decode errors are fatal. Region blobs omit player flesh and runtime flags; bodies settle into terrain before unload. Validated DTOs isolate gameplay from storage. Interrupted revives persist as dead.
 
 ## Glossary
 
