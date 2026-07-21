@@ -10,7 +10,7 @@ pub const ACID: MaterialKey = MaterialKey::new("ACID");
 pub fn define(catalog: &mut Catalog) {
     catalog.add(
         WATER,
-        material(liquid().air_drag(0.15).ground_friction(0.1).deflect(0.98))
+        material(liquid().drag(0.48).impact(0.72))
             .density(1000.0)
             .restitution(0.35)
             .colors([[44, 96, 200, 190], [40, 90, 192, 190], [48, 102, 208, 190]]),
@@ -27,66 +27,48 @@ pub fn define(catalog: &mut Catalog) {
     );
     catalog.add(
         OIL,
-        material(
-            liquid()
-                .air_drag(1.2)
-                .ground_friction(2.0)
-                .deflect(0.9)
-                .flow_rate(30.0),
-        )
-        .density(850.0)
-        .colors([[74, 62, 36, 215], [66, 54, 30, 215], [84, 72, 44, 215]])
-        .flammable(
-            flammable()
-                .ignite(30.0)
-                .sealed_burn(0.0)
-                .rate(0.4)
-                .emit(18.0)
-                .colors([
-                    [255, 168, 48, 255],
-                    [255, 128, 28, 255],
-                    [255, 200, 72, 255],
-                    [232, 100, 18, 255],
-                ])
-                .burnout(SMOKE)
-                .damage(8.0),
-        ),
+        material(liquid().drag(2.45).impact(0.72).flow_rate(30.0))
+            .density(850.0)
+            .colors([[74, 62, 36, 215], [66, 54, 30, 215], [84, 72, 44, 215]])
+            .flammable(
+                flammable()
+                    .ignite(30.0)
+                    .sealed_burn(0.0)
+                    .rate(0.4)
+                    .emit(18.0)
+                    .colors([
+                        [255, 168, 48, 255],
+                        [255, 128, 28, 255],
+                        [255, 200, 72, 255],
+                        [232, 100, 18, 255],
+                    ])
+                    .burnout(SMOKE)
+                    .damage(8.0),
+            ),
     );
     catalog.add(
         LAVA,
-        material(
-            liquid()
-                .air_drag(6.0)
-                .ground_friction(42.0)
-                .deflect(0.5)
-                .flow_rate(8.0),
-        )
-        .density(2800.0)
-        .colors([
-            [255, 96, 24, 255],
-            [240, 80, 16, 255],
-            [255, 128, 32, 255],
-            [224, 64, 8, 255],
-        ])
-        .contact_damage(30.0)
-        .tags([Tag::Hot])
-        .emission(emission([255, 96, 24]).intensity(1.0)),
+        material(liquid().drag(6.0).impact(0.5).flow_rate(8.0))
+            .density(2800.0)
+            .colors([
+                [255, 96, 24, 255],
+                [240, 80, 16, 255],
+                [255, 128, 32, 255],
+                [224, 64, 8, 255],
+            ])
+            .contact_damage(30.0)
+            .tags([Tag::Hot])
+            .emission(emission([255, 96, 24]).intensity(1.0)),
     );
     catalog.add(
         ACID,
-        material(
-            liquid()
-                .air_drag(0.8)
-                .ground_friction(1.0)
-                .deflect(0.95)
-                .flow_rate(60.0),
-        )
-        .density(1200.0)
-        .colors([
-            [128, 220, 56, 210],
-            [116, 208, 48, 210],
-            [142, 232, 68, 210],
-        ])
-        .contact_damage(12.0),
+        material(liquid().drag(0.8).impact(0.72).flow_rate(60.0))
+            .density(1200.0)
+            .colors([
+                [128, 220, 56, 210],
+                [116, 208, 48, 210],
+                [142, 232, 68, 210],
+            ])
+            .contact_damage(12.0),
     );
 }

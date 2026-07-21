@@ -131,10 +131,8 @@ pub struct PowderDynamics {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LiquidDynamics {
-    pub air_drag_keep: VelocityFactor,
-    pub submerged_drag_keep: VelocityFactor,
-    pub ground_friction_keep: VelocityFactor,
-    pub deflect_keep: VelocityFactor,
+    pub drag_keep: VelocityFactor,
+    pub impact_keep: VelocityFactor,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

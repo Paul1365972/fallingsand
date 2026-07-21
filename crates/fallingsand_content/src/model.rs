@@ -621,19 +621,11 @@ fn validate_material(raw: &RawMaterial) -> Result<(), Error> {
             ],
         )?,
         PhaseDef::Liquid(LiquidDef {
-            air_drag,
-            ground_friction,
-            deflect,
+            drag,
+            impact,
             flow_rate,
         }) => {
-            validate_numbers(
-                &context,
-                &[
-                    ("air_drag", air_drag),
-                    ("ground_friction", ground_friction),
-                    ("deflect", deflect),
-                ],
-            )?;
+            validate_numbers(&context, &[("drag", drag), ("impact", impact)])?;
             validate_flow_rate(&context, flow_rate)?;
         }
         PhaseDef::Gas(GasDef {
@@ -751,19 +743,13 @@ fn quantize_dynamics(raw: &RawMaterial) -> Dynamics {
             })
         }
         PhaseDef::Liquid(LiquidDef {
-            air_drag,
-            ground_friction,
-            deflect,
+            drag,
+            impact,
             flow_rate: _,
-        }) => {
-            let (air_drag_keep, submerged_drag_keep) = drag_keeps(air_drag);
-            Dynamics::Liquid(LiquidDynamics {
-                air_drag_keep,
-                submerged_drag_keep,
-                ground_friction_keep: velocity_factor(per_tick_keep(ground_friction)),
-                deflect_keep: velocity_factor(deflect.clamp(0.0, 1.0)),
-            })
-        }
+        }) => Dynamics::Liquid(LiquidDynamics {
+            drag_keep: velocity_factor(per_tick_keep(drag)),
+            impact_keep: velocity_factor(impact.clamp(0.0, 1.0)),
+        }),
         PhaseDef::Gas(GasDef {
             air_drag,
             turbulence,

@@ -121,36 +121,29 @@ impl PowderDef {
 
 #[derive(Debug, Clone, Copy)]
 pub struct LiquidDef {
-    pub(crate) air_drag: f32,
-    pub(crate) ground_friction: f32,
-    pub(crate) deflect: f32,
+    pub(crate) drag: f32,
+    pub(crate) impact: f32,
     pub(crate) flow_rate: Option<f32>,
 }
 
 impl Default for LiquidDef {
     fn default() -> Self {
         Self {
-            air_drag: 0.0,
-            ground_friction: 0.0,
-            deflect: 1.0,
+            drag: 0.0,
+            impact: 1.0,
             flow_rate: None,
         }
     }
 }
 
 impl LiquidDef {
-    pub fn air_drag(mut self, value: f32) -> Self {
-        self.air_drag = value;
+    pub fn drag(mut self, value: f32) -> Self {
+        self.drag = value;
         self
     }
 
-    pub fn ground_friction(mut self, value: f32) -> Self {
-        self.ground_friction = value;
-        self
-    }
-
-    pub fn deflect(mut self, value: f32) -> Self {
-        self.deflect = value;
+    pub fn impact(mut self, value: f32) -> Self {
+        self.impact = value;
         self
     }
 

@@ -151,16 +151,12 @@ fn dynamics_tokens(dynamics: &fallingsand_material::Dynamics) -> TokenStream {
             }
         }
         Dynamics::Liquid(d) => {
-            let drag_keep = velocity_factor_tokens(d.air_drag_keep);
-            let drag_keep_submerged = velocity_factor_tokens(d.submerged_drag_keep);
-            let friction_keep = velocity_factor_tokens(d.ground_friction_keep);
-            let redirect_keep = velocity_factor_tokens(d.deflect_keep);
+            let drag_keep = velocity_factor_tokens(d.drag_keep);
+            let impact_keep = velocity_factor_tokens(d.impact_keep);
             quote! {
                 crate::material::Dynamics::Liquid(crate::material::LiquidDynamics {
-                    air_drag_keep: #drag_keep,
-                    submerged_drag_keep: #drag_keep_submerged,
-                    ground_friction_keep: #friction_keep,
-                    deflect_keep: #redirect_keep,
+                    drag_keep: #drag_keep,
+                    impact_keep: #impact_keep,
                 })
             }
         }

@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
 
-pub const REGION_FORMAT_VERSION: u8 = 20;
-pub const WORLD_FORMAT_VERSION: u16 = 23;
+pub const REGION_FORMAT_VERSION: u8 = 21;
+pub const WORLD_FORMAT_VERSION: u16 = 24;
 const AUTOSAVE_INTERVAL_TICKS: u64 = fallingsand_core::ticks_from_secs(10.0);
 
 const REGIONS: TableDefinition<u64, &[u8]> = TableDefinition::new("regions");

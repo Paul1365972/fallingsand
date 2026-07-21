@@ -1,6 +1,6 @@
 use super::{accessor_fn, colors_tokens, material_id, phase_path, tags_tokens};
 use crate::model::{Content, mining_tier_from_hardness};
-use fallingsand_material::Reaction;
+use fallingsand_material::{Dynamics, Reaction};
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
 
@@ -66,6 +66,19 @@ pub fn emit(content: &Content) -> TokenStream {
         quote!(u64),
         content.materials.iter().map(|mat| {
             let value = Literal::u64_suffixed(mat.flow_threshold);
+            quote!(#value)
+        }),
+        true,
+    );
+    let liquid_impact_q16 = accessor_fn(
+        "liquid_impact_q16",
+        quote!(u32),
+        content.materials.iter().map(|mat| {
+            let raw = match mat.dynamics {
+                Dynamics::Liquid(d) => d.impact_keep.raw(),
+                _ => 0,
+            };
+            let value = Literal::u32_suffixed(raw);
             quote!(#value)
         }),
         true,
@@ -157,6 +170,7 @@ pub fn emit(content: &Content) -> TokenStream {
         #bond_group
         #restitution_q16
         #flow_threshold
+        #liquid_impact_q16
         #ignition
         #material
 

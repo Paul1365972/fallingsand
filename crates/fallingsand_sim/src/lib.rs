@@ -1,7 +1,12 @@
 pub mod bodies;
+mod chemistry;
+mod gas;
 mod kernel;
+mod liquid;
+mod motion;
 pub mod physics;
 pub mod player;
+mod powder;
 mod rules;
 mod window;
 mod world;
