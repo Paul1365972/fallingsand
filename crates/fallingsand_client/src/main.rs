@@ -38,7 +38,10 @@ fn main() {
                     }),
                     ..default()
                 })
-                .set(ImagePlugin::default_nearest()),
+                .set(ImagePlugin::default_nearest())
+                .set(bevy::winit::WinitPlugin {
+                    run_on_any_thread: cfg!(windows),
+                }),
         )
         .add_plugins(ViewPlugin)
         .insert_resource(RenderErrorHandler(render_error_policy))
