@@ -1,3 +1,4 @@
+use crate::bodies::BodyWorld;
 use crate::inventory::Inventory;
 use crate::player::{PlayerLife, Players};
 use crate::regions::RegionMap;
@@ -5,7 +6,7 @@ use crate::session::Sessions;
 use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y};
 use fallingsand_core::{CHUNK_SIZE, Calendar, CellOffset, ChunkPos, ItemStack};
 use fallingsand_protocol::{
-    ChunkDebugRects, ChunkOp, InteractionState, InteractionStatus, ParticleSpawn,
+    BodyDebugCell, ChunkDebugRects, ChunkOp, InteractionState, InteractionStatus, ParticleSpawn,
     PlayerAvatarState, PlayerId, PlayerState, SelfAvatarState, SelfLife, SelfState, ServerMessage,
     TickFrame, cells_to_wire,
 };
@@ -63,6 +64,7 @@ pub fn replicate(
     regions: &RegionMap,
     generator: &WorldGenerator,
     particles: &[ParticleSpawn],
+    bodies: &BodyWorld,
     replication: &mut ReplicationState,
 ) -> ReplicationMetrics {
     let tick = sim.tick();
@@ -112,6 +114,7 @@ pub fn replicate(
             session.replication.debug,
             sim,
             &interest,
+            bodies,
             &mut debug,
         );
         let in_interest = particles_in_interest(particles, center);
@@ -260,6 +263,7 @@ fn build_tiles(
     debug: bool,
     sim: &CellWorld,
     interest: &FxHashSet<ChunkPos>,
+    bodies: &BodyWorld,
     debug_rects: &mut Vec<ChunkDebugRects>,
 ) -> Vec<ChunkOp> {
     let mut ops = Vec::new();
@@ -275,8 +279,21 @@ fn build_tiles(
         if debug {
             let change = chunk.change_rect();
             let sim = chunk.sim_rect();
-            if !sim.is_empty() {
-                debug_rects.push(ChunkDebugRects { pos, change, sim });
+            let body_cells: Vec<_> = bodies
+                .debug_cells_in(pos)
+                .into_iter()
+                .map(|(body, cell)| BodyDebugCell {
+                    body,
+                    offset: cell.offset(),
+                })
+                .collect();
+            if !sim.is_empty() || !body_cells.is_empty() {
+                debug_rects.push(ChunkDebugRects {
+                    pos,
+                    change,
+                    sim,
+                    bodies: body_cells,
+                });
             }
         }
         if known.insert(pos) {

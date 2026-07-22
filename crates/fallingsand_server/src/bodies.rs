@@ -22,6 +22,10 @@ pub struct BodyStepMetrics {
 }
 
 impl BodyWorld {
+    pub fn debug_cells_in(&self, chunk: fallingsand_core::ChunkPos) -> Vec<(u32, CellPos)> {
+        self.set.debug_cells_in(chunk)
+    }
+
     pub fn receive_player_contact(&mut self, pos: CellPos, wake: bool) -> Option<bool> {
         self.set.receive_player_contact(pos, wake)
     }

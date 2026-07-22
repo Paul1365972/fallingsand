@@ -1,8 +1,9 @@
 use super::super::Game;
 use crate::view::camera::CameraState;
 use bevy::prelude::*;
-use fallingsand_core::{CHUNK_SIZE, REGION_SIZE_CELLS};
+use fallingsand_core::{CARDINAL_NEIGHBORS, CHUNK_SIZE, REGION_SIZE_CELLS};
 use fallingsand_protocol::InteractionStatus;
+use std::collections::{BTreeMap, BTreeSet};
 
 const SPRAY_TTL: f32 = 0.5;
 const SPRAY_GRAVITY: f32 = 260.0;
@@ -130,6 +131,10 @@ pub(super) fn update_debug_primitives(
     let region = REGION_SIZE_CELLS as f32;
     let chunk_color = Color::srgba(1.0, 1.0, 1.0, 0.12);
     let region_color = Color::srgba(1.0, 0.55, 0.2, 0.6);
+    let body_color: Vec4 = Color::srgba(0.2, 1.0, 0.85, 0.95)
+        .to_linear()
+        .to_f32_array()
+        .into();
 
     let mut x = (min.x / chunk).floor() * chunk;
     while x <= max.x {
@@ -158,6 +163,34 @@ pub(super) fn update_debug_primitives(
             color: color.to_linear().to_f32_array().into(),
         });
         y += chunk;
+    }
+
+    let mut bodies: BTreeMap<u32, BTreeSet<_>> = BTreeMap::new();
+    for &(body, cell) in &ingame.debug.body_cells {
+        bodies.entry(body).or_default().insert(cell);
+    }
+    for body_cells in bodies.values() {
+        for &cell in body_cells {
+            let x = cell.x as f32;
+            let y = cell.y as f32;
+            for (dx, dy) in CARDINAL_NEIGHBORS {
+                if body_cells.contains(&cell.translated(dx, dy)) {
+                    continue;
+                }
+                let (a, b) = match (dx, dy) {
+                    (0, -1) => (Vec2::new(x, y), Vec2::new(x + 1.0, y)),
+                    (-1, 0) => (Vec2::new(x, y), Vec2::new(x, y + 1.0)),
+                    (1, 0) => (Vec2::new(x + 1.0, y), Vec2::new(x + 1.0, y + 1.0)),
+                    (0, 1) => (Vec2::new(x, y + 1.0), Vec2::new(x + 1.0, y + 1.0)),
+                    _ => unreachable!(),
+                };
+                primitives.lines.push(DebugLine {
+                    a: to_px(a),
+                    b: to_px(b),
+                    color: body_color,
+                });
+            }
+        }
     }
 
     for flash in &ingame.debug.rects {

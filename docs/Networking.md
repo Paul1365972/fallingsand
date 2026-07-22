@@ -15,6 +15,8 @@ Roster and physical presence are separate: roster messages maintain connected na
 
 A wire cell is 3 bytes — material and shade, no velocity or timing; the server re-derives them. Chunk payloads are paletted containers, smallest encoding wins.
 
+The opt-in debug stream adds per-chunk sim/change rects and live body ownership offsets for diagnostic outlines; neither participates in gameplay state.
+
 ## Client → server
 
 One input frame per client fixed tick: the held snapshot (coalescing frames replace it wholesale) plus ordered actions. Dig and place ride the action channel as use events paced client-side: one immediate event on press — a press+release inside one flush window still lands exactly one action — then repeat mode re-emits on an interval and emits every cell traversed between aim samples along a four-connected line, so dragged strokes are gapless and diagonal-free by construction. The server validates and executes each event in order; held state drives only survival dig progress and previews.

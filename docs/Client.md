@@ -30,7 +30,7 @@ Per-cell visual changes remain dirty sub-rectangle uploads. New repeated visuals
 - One context stack derives from flow, session readiness, life state, the active panel, and settings — priority-ordered, chords beat plain presses, world input suppressed under overlays; the shell only snapshots raw keys and pointer state. UI depths mirror the same order.
 - The game menu opens above death and connection status; embedded single player pauses on it, remote play keeps running.
 - Settings (fullscreen, vsync, render and cursor modes, UI scale) persist as JSON on native; the wasm build resets each session; invalid files fall back to defaults.
-- Debug overlay: world/player context plus fps, render-pass, and server-tick timings — see [Tech.md](Tech.md). Inventory UI — see [Inventory.md](Inventory.md).
+- Debug overlay: world/player context, live-body ownership outlines, plus fps, render-pass, and server-tick timings — see [Tech.md](Tech.md). Inventory UI — see [Inventory.md](Inventory.md).
 
 ## Glossary
 

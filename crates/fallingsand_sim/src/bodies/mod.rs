@@ -103,6 +103,19 @@ impl BodySet {
         self.bodies.is_empty()
     }
 
+    pub fn debug_cells_in(&self, chunk: fallingsand_core::ChunkPos) -> Vec<(u32, CellPos)> {
+        self.bodies
+            .iter()
+            .flat_map(|body| {
+                body.raster
+                    .cells
+                    .iter()
+                    .filter(move |(pos, _)| pos.chunk() == chunk)
+                    .map(move |&(pos, _)| (body.id, pos))
+            })
+            .collect()
+    }
+
     fn body_at_mut(&mut self, pos: CellPos) -> Option<&mut PixelBody> {
         self.owners
             .get(pos)

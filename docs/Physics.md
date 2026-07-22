@@ -35,7 +35,7 @@ A rigid body is a motion record — cell buffer, pose, velocity, spin, mass, ine
 - **Damage** — any write unflagging a body cell feeds a damage queue reconciled before stepping: solid products re-adopted (a moving log keeps its fire), bodies split by bond connectivity or despawned when empty; every fragment inherits the parent's point velocity at its new center.
 - **Lifecycle: active → resting → settled** — a slow body supported by static ground (or a resting body) rests; a standing player neither blocks rest nor wakes it. Any nearby material write notes body cells, so collision, damage, support, player stamping, and fluid changes share the same wake path. After ~half a second at rest—or immediately when a crossed region unloads—the live raster becomes ordinary terrain in place; snapshots independently encode it as terrain. Later interaction can register it again.
 
-There is no body protocol or renderer: body cells ride ordinary chunk deltas and render as terrain.
+There is no gameplay body protocol or renderer: body cells ride ordinary chunk deltas and render as terrain. The opt-in debug stream exposes body ownership only for outlines.
 
 ## Glossary
 
