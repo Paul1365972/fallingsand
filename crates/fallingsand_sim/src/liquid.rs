@@ -1,11 +1,11 @@
 use crate::{
     motion::{
-        Entry, GRAVITY_DV, TraverseControl, prefer_side, swap_through_liquid, transfer_momentum,
-        traverse, vector_length, write_velocity,
+        Entry, GRAVITY_DV, TraverseControl, prefer_side, swap_through_liquid, traverse,
+        vector_length, write_velocity,
     },
     window::SimWindow,
 };
-use fallingsand_core::{Cell, CellPos, LiquidDynamics, Phase, Tag, VelocityFactor, content};
+use fallingsand_core::{Cell, CellPos, LiquidDynamics, Phase, VelocityFactor, content};
 use fallingsand_math::{Hash, Rng};
 
 const MOVEMENT_SALT: Hash = Hash::label("simulation.movement");
@@ -65,38 +65,6 @@ pub(crate) fn move_cell(window: &mut SimWindow, pos: CellPos, cell: Cell, tick: 
     };
     (vx, vy) = current.vel();
     let impact = VelocityFactor::from_raw(content::liquid_impact_q16(cell.material));
-    if travel.blocked[0] != 0 {
-        let direction = travel.blocked[0];
-        let obstruction = travel.pos.translated(direction, 0);
-        if window.get(obstruction).is_some_and(|cell| {
-            cell.is_body() && !content::tags(cell.material).contains(Tag::Player)
-        }) {
-            vx = transfer_momentum(
-                window,
-                cell.material,
-                obstruction,
-                (direction, 0),
-                vx,
-                impact,
-            );
-        }
-    }
-    if travel.blocked[1] != 0 {
-        let direction = travel.blocked[1];
-        let obstruction = travel.pos.translated(0, direction);
-        if window.get(obstruction).is_some_and(|cell| {
-            cell.is_body() && !content::tags(cell.material).contains(Tag::Player)
-        }) {
-            vy = transfer_momentum(
-                window,
-                cell.material,
-                obstruction,
-                (0, direction),
-                vy,
-                impact,
-            );
-        }
-    }
     if travel.blocked[1] < 0 {
         (vx, vy) = redirect_impact(window, travel.pos, vx, vy, impact, &mut rng);
     } else {

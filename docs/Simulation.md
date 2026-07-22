@@ -10,7 +10,7 @@ The world is one cellular automaton: every pixel is matter. Physics is phase-bas
 - **Locality (speed of light)** — no update reaches farther than 64 cells in one tick; longer-range behavior propagates locally over ticks. A queued between-tick world-event list is the sanctioned escape hatch — none exists today.
 - **Idle cost** — unloaded chunks cost nothing; a settled ticketed chunk does no movement work, paying only a bounded random-tick sample. No unbounded or growing per-tick cost.
 - **Sleeping is sound** — a slept world is a fixed point: force-evaluating every cell of a quiescent world changes nothing. Marks may defer a cascade one tick versus evaluating everything — they never lose work. A rule whose outcome depends on anything outside its marked footprint, or pending stochastic work that goes quiet without a keep-alive, is a bug.
-- **Suspend/resume** — loaded chunks wake fully once, conservatively resuming every grid process without persisting scheduling state. Rigid cells persist as terrain with velocity; a compact pivot pose record restores continuous body orientation and offset.
+- **Suspend/resume** — loaded chunks wake fully once, conservatively resuming every grid process without persisting scheduling state. Live body rasters serialize as terrain; region unload settles crossing bodies first.
 
 ## The grid
 
@@ -20,14 +20,14 @@ The world is one cellular automaton: every pixel is matter. Physics is phase-bas
 | Chunk | 64×64 cells | dirty tracking, sleeping, replication, rendering |
 | Region | 8×8 chunks | generation, storage, load/unload |
 
-A cell is a compact heap-free value: material, velocity, shade, a runtime flags byte — the tick-local moved stamp and body membership marker, never persisted — and a persistent per-material aux byte. Body identity and member positions belong to the body itself, not to a parallel grid plane. Every cell is a particle — velocity drives all energetic movement; liquids use no aux state. Burning is a material, not a flag: a lit fuel transmutes into its synthesized burning twin and probabilistic burnout *is* the burn duration; there is no per-cell HP.
+A cell is a compact heap-free value: material, velocity, shade, a runtime flags byte — the tick-local moved stamp and raster ownership marker, never persisted — and a persistent per-material aux byte. Every cell is a particle — velocity drives all energetic movement; liquids use no aux state. Burning is a material, not a flag: a lit fuel transmutes into its synthesized burning twin and probabilistic burnout *is* the burn duration; there is no per-cell HP.
 
 ## Scheduling
 
 One simulator owns scheduling and window-event scratch across ticks. Capacity grows with the high-water mark of active windows and is reused thereafter; phase eligibility is still recalculated after every pass because writes can wake later work.
 
 - Chunks group into 2×2 blocks run in four phases by block parity; a worker owns its block plus a one-chunk halo, and same-phase windows share no chunks — race-free without locks. A chunk simulates only when its whole 3×3 neighbourhood is loaded; frontier chunks defer, keeping their rects.
-- Each tick runs two full passes over awake cells: **effects** then **movement**. Effects never swap cells: forces write velocity, while combustion and reactions transmute cells at their existing coordinates. Movement owns every swap: velocity integrates kinematically; a resting liquid may take one local energy descent or exposed interface step, and a capped gas may take one flow step.
+- Each tick runs two full passes over awake cells: **effects** then **movement**. Effects never swap cells: forces write velocity, while combustion and reactions transmute cells at their existing coordinates. Movement owns every swap: velocity integrates kinematically; a resting liquid may take one local energy descent or exposed interface step, and a capped gas may take one flow step. Cells owned by a player or live body raster skip both passes.
 - Every moved stamp is clear when the first pass begins: each chunk starts the tick by clearing them inside its sim rect, then ready chunks roll their rects. Movement swaps stamp both cells and a collision impulse stamps its receiver; every stamp is a write, so stamped cells always lie inside that rect and no stale tick-local state survives awake, frontier, or freshly loaded.
 - Rows scan bottom-up so a faller vacates space the cell above enters the same tick; the horizontal direction is tick-hashed per world row and the four phases run in a tick-hashed order to cancel scan bias.
 - Random ticks are a third, sleep-independent pass scoped to a bounded chunk range around each player: each chunk samples a few tick-seeded cells for ambient processes. Reserved infrastructure for plant growth and decay; nothing uses it today.
@@ -51,7 +51,7 @@ A resting liquid first takes a strictly energy-lowering down or diagonal swap. O
 
 ## Sleeping
 
-Each chunk tracks two rects. The **sim rect** is honest: exactly the cells re-simulated next tick — an empty rect skips the chunk. The **change rect** (⊆ sim) holds actual value changes and feeds replication and persistence. A write marks change tight and sim as the 3×3 neighbourhood, dilating across chunk borders; a **keep-alive** mark (burning fuel, a pending stochastic interaction) extends sim by a single cell and costs zero bandwidth. Every CA rule reads only its 3×3 neighbourhood, so marks alone carry every CA wake; liquid imbalance advances through the writes made by local swaps. Structural registration is interaction-driven instead: every ordinary write centrally notes nearby rigid and body cells. Creative placement suppresses only that initial note; it stores an ordinary cell, and the next nearby interaction follows the universal path.
+Each chunk tracks two rects. The **sim rect** is honest: exactly the cells re-simulated next tick — an empty rect skips the chunk. The **change rect** (⊆ sim) holds actual value changes and feeds replication and persistence. A write marks change tight and sim as the 3×3 neighbourhood, dilating across chunk borders; a **keep-alive** mark (burning fuel, a pending stochastic interaction) extends sim by a single cell and costs zero bandwidth. Every CA rule reads only its 3×3 neighbourhood, so marks alone carry every CA wake; liquid imbalance advances through the writes made by local swaps. Detachment discovery is interaction-driven instead: every ordinary write queues nearby rigid cells for support checks. Creative placement suppresses only those initial checks; it stores an ordinary cell, and the next nearby interaction follows the universal path.
 
 ## Combustion
 

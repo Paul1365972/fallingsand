@@ -1,5 +1,5 @@
-use crate::bodies::{Raster, commit_stamp};
 use crate::physics::Footprint;
+use crate::raster::{Raster, commit_stamp};
 use crate::world::CellWorld;
 use fallingsand_core::content::material;
 use fallingsand_core::{Cell, CellPos};
@@ -173,7 +173,7 @@ pub fn stamp_player(
     let cell_for = |local: u16| flesh_cell(local, rows, facing_left);
     let empty = Raster::default();
     let old = stamp.raster.as_ref().unwrap_or(&empty);
-    commit_stamp(world, &[], old, &new, &cell_for)?;
+    commit_stamp(world, old, &new, cell_for)?;
     stamp.raster = Some(new);
     stamp.rows = rows;
     stamp.facing_left = facing_left;

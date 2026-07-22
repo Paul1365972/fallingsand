@@ -1,4 +1,4 @@
-use fallingsand_core::{CellOffset, CellPos, ChunkPos, DirtyRect, ItemId, ItemStack, MaterialId};
+use fallingsand_core::{CellPos, ChunkPos, DirtyRect, ItemId, ItemStack, MaterialId};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -207,18 +207,16 @@ pub struct ParticleSpawn {
     pub color: [u8; 3],
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BodyDebugCell {
-    pub body: u32,
-    pub offset: CellOffset,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChunkDebugRects {
     pub pos: ChunkPos,
     pub change: DirtyRect,
     pub sim: DirtyRect,
-    pub bodies: Vec<BodyDebugCell>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BodyDebugRaster {
+    pub cells: Vec<CellPos>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -257,7 +255,8 @@ pub struct TickFrame {
     pub trash: Option<Option<ItemStack>>,
     pub self_state: Option<SelfState>,
     pub particles: Vec<ParticleSpawn>,
-    pub debug: Vec<ChunkDebugRects>,
+    pub debug_rects: Vec<ChunkDebugRects>,
+    pub debug_bodies: Vec<BodyDebugRaster>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -1,6 +1,7 @@
 use crate::bodies::BodyWorld;
 use crate::player::{
-    Avatar, AvatarSnapshot, Health, PLAYER_HALF_H, PLAYER_HALF_W, PLAYER_MASS, PlayerLife, Players,
+    Avatar, AvatarSnapshot, Health, PLAYER_HALF_H, PLAYER_HALF_W, PLAYER_MASS, PLAYER_MASS_CELLS,
+    PlayerLife, Players,
 };
 use fallingsand_core::{CellPos, Subcell};
 use fallingsand_protocol::GameMode;
@@ -62,7 +63,6 @@ pub fn step_physics(sim: &mut CellWorld, bodies: &mut BodyWorld, players: &mut P
         };
         commit_pose(sim, avatar, snapshot, facing_left);
 
-        let (mut restore_x, mut restore_y) = (0.0f32, 0.0f32);
         for blocked in &result.blocked {
             let Some(cell) = sim.get_cell(blocked.pos) else {
                 continue;
@@ -70,21 +70,17 @@ pub fn step_physics(sim: &mut CellWorld, bodies: &mut BodyWorld, players: &mut P
             if !cell.is_body() {
                 continue;
             }
-            match bodies.receive_player_contact(blocked.pos, blocked.dvx != 0.0) {
-                Some(true) => {
-                    restore_x += blocked.dvx;
-                    restore_y += blocked.dvy;
-                }
-                Some(false) => continue,
-                None => {
-                    let jx = PLAYER_MASS * blocked.dvx;
-                    let jy = PLAYER_MASS * blocked.dvy;
-                    shoves.push((blocked.pos, jx, jy));
-                }
+            if !bodies.push_at(
+                blocked.pos,
+                blocked.velocity_delta_x,
+                blocked.velocity_delta_y,
+                PLAYER_MASS_CELLS,
+            ) {
+                let jx = PLAYER_MASS * blocked.velocity_delta_x.to_cells_per_second();
+                let jy = PLAYER_MASS * blocked.velocity_delta_y.to_cells_per_second();
+                shoves.push((blocked.pos, jx, jy));
             }
         }
-        avatar.actor.vx = avatar.actor.vx.add_cells_per_second(restore_x);
-        avatar.actor.vy = avatar.actor.vy.add_cells_per_second(restore_y);
     }
 
     for (pos, jx, jy) in shoves {

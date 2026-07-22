@@ -12,7 +12,9 @@ pub const PLAYER_HALF_W: Subcell =
     Subcell::from_cells(fallingsand_sim::player::PLAYER_COLS as f32 * 0.5);
 pub const PLAYER_HALF_H: Subcell =
     Subcell::from_cells(fallingsand_sim::player::STAND_ROWS as f32 * 0.5);
-pub const PLAYER_MASS: f32 = 4.0 * PLAYER_HALF_W.to_cells() * PLAYER_HALF_H.to_cells();
+pub const PLAYER_MASS_CELLS: u32 =
+    (fallingsand_sim::player::PLAYER_COLS * fallingsand_sim::player::STAND_ROWS) as u32;
+pub const PLAYER_MASS: f32 = PLAYER_MASS_CELLS as f32;
 
 #[derive(Default)]
 pub struct Players {

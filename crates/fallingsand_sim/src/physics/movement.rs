@@ -19,8 +19,8 @@ const CLIMB_DRAIN: f32 = 0.5;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Blocked {
     pub pos: CellPos,
-    pub dvx: f32,
-    pub dvy: f32,
+    pub velocity_delta_x: Subcell,
+    pub velocity_delta_y: Subcell,
 }
 
 #[derive(Debug, Default)]
@@ -31,16 +31,21 @@ pub struct MoveResult {
 }
 
 impl MoveResult {
-    fn record_blocked(&mut self, solids: &[CellPos], dvx: f32, dvy: f32) {
+    fn record_blocked(
+        &mut self,
+        solids: &[CellPos],
+        velocity_delta_x: Subcell,
+        velocity_delta_y: Subcell,
+    ) {
         if solids.is_empty() {
             return;
         }
-        let share = 1.0 / solids.len() as f32;
+        let count = solids.len() as u32;
         for &pos in solids {
             self.blocked.push(Blocked {
                 pos,
-                dvx: dvx * share,
-                dvy: dvy * share,
+                velocity_delta_x: velocity_delta_x.per_substep(count),
+                velocity_delta_y: velocity_delta_y.per_substep(count),
             });
         }
     }
@@ -249,11 +254,7 @@ pub fn move_body<W: CellSource>(
                 }
                 let e = solids_bounce(world, &blockage.solids);
                 let after = resolve_axis(body.vx, e);
-                result.record_blocked(
-                    &blockage.solids,
-                    (body.vx - after).to_cells_per_second(),
-                    0.0,
-                );
+                result.record_blocked(&blockage.solids, body.vx - after, Subcell::ZERO);
                 body.vx = after;
                 break;
             }
@@ -269,11 +270,7 @@ pub fn move_body<W: CellSource>(
             }
             let e = solids_bounce(world, &blockage.solids);
             let after = resolve_axis(body.vx, e);
-            result.record_blocked(
-                &blockage.solids,
-                (body.vx - after).to_cells_per_second(),
-                0.0,
-            );
+            result.record_blocked(&blockage.solids, body.vx - after, Subcell::ZERO);
             let snap = blockage.near_col(dir);
             body.x = match snap {
                 Some(near) if dir > 0 => Subcell::from_cell(near - w_right) - Subcell::QUANTUM,
@@ -340,11 +337,7 @@ pub fn move_body<W: CellSource>(
                 } else {
                     let e = solids_bounce(world, &blockage.solids);
                     let after = resolve_axis(body.vy, e);
-                    result.record_blocked(
-                        &blockage.solids,
-                        0.0,
-                        (body.vy - after).to_cells_per_second(),
-                    );
+                    result.record_blocked(&blockage.solids, Subcell::ZERO, body.vy - after);
                     if dir > 0 {
                         result.hit_ceiling = true;
                     }
@@ -369,11 +362,7 @@ pub fn move_body<W: CellSource>(
                         body.vy = vy0 - removed;
                         let redirect = removed.scaled_by(CEILING_VX_REDIRECT).min(body.vy);
                         body.vx += redirect.times(side);
-                        result.record_blocked(
-                            &[contact],
-                            (vx0 - body.vx).to_cells_per_second(),
-                            (vy0 - body.vy).to_cells_per_second(),
-                        );
+                        result.record_blocked(&[contact], vx0 - body.vx, vy0 - body.vy);
                         result.hit_ceiling = true;
                         result.corrected_ceiling = true;
                         body.x = corrected_x;
@@ -387,11 +376,7 @@ pub fn move_body<W: CellSource>(
                 }
                 let e = solids_bounce(world, &blockage.solids);
                 let after = resolve_axis(body.vy, e);
-                result.record_blocked(
-                    &blockage.solids,
-                    0.0,
-                    (body.vy - after).to_cells_per_second(),
-                );
+                result.record_blocked(&blockage.solids, Subcell::ZERO, body.vy - after);
                 body.y = match blockage.near_row(dir) {
                     Some(near) if dir > 0 => Subcell::from_cell(near - h_up) - Subcell::QUANTUM,
                     Some(near) => Subcell::from_cell(near + 1 + h_down),

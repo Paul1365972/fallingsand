@@ -21,6 +21,9 @@ macro_rules! material_dispatch {
 fallingsand_core::for_each_material!(material_dispatch);
 
 fn apply_effects<M: MatSpec>(window: &mut SimWindow, pos: CellPos, cell: Cell, tick: u64) {
+    if cell.is_body() {
+        return;
+    }
     let mut rng = Hash::seed(tick).salt(EFFECT_SALT).pos(pos.x, pos.y).rng();
     if chemistry::apply::<M>(window, pos, &mut rng) {
         return;
@@ -39,6 +42,9 @@ pub(crate) fn move_cell(window: &mut SimWindow, pos: CellPos, tick: u64) {
     let Some(cell) = window.get(pos) else {
         return;
     };
+    if cell.is_body() {
+        return;
+    }
     if cell.flags & Cell::MOVED != 0 {
         window.mark(pos);
         return;

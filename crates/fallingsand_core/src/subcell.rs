@@ -25,6 +25,10 @@ impl Subcell {
         self.0
     }
 
+    pub const fn from_raw(raw: i64) -> Self {
+        Self(raw)
+    }
+
     pub const fn from_cell(cell: i32) -> Self {
         Self((cell as i64) << SUBCELL_BITS)
     }
@@ -50,8 +54,11 @@ impl Subcell {
         Self::from_cells(v * TICK_DT)
     }
 
-    pub const fn from_cells_per_second_squared(a: f32) -> Self {
-        Self::from_cells(a * TICK_DT * TICK_DT)
+    pub const fn from_cells_per_second_squared(a: i32) -> Self {
+        Self(round_div(
+            a as i128 * UNITS_PER_CELL as i128,
+            TICK_RATE as i128 * TICK_RATE as i128,
+        ) as i64)
     }
 
     pub const fn to_cells_per_second(self) -> f32 {

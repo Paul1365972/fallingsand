@@ -15,7 +15,7 @@ Roster and physical presence are separate: roster messages maintain connected na
 
 A wire cell is 3 bytes — material and shade, no velocity or timing; the server re-derives them. Chunk payloads are paletted containers, smallest encoding wins.
 
-The opt-in debug stream adds per-chunk sim/change rects and live body ownership offsets for diagnostic outlines; neither participates in gameplay state.
+The opt-in debug stream keeps chunk sim/change rects and complete live-body rasters as separate payloads; neither participates in gameplay state.
 
 ## Client → server
 

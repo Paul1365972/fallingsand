@@ -7,11 +7,11 @@ mod motion;
 pub mod physics;
 pub mod player;
 mod powder;
+mod raster;
 mod rules;
 mod window;
 mod world;
 
-pub use bodies::PixelBody;
 pub use kernel::{SimTimings, Simulator};
 pub use physics::ActorAabb;
 pub use player::PlayerStamp;

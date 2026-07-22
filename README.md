@@ -29,7 +29,6 @@ crates/
 cargo dev                                  # native client (dev mode)
 cargo dev-server                           # dedicated headless server
 bevy run -p fallingsand_client web         # web client, needs the bevy CLI
-cargo test --workspace                     # tests
 cargo run -p fallingsand_core --example gen_icons   # regenerate item/material icons
 ```
 

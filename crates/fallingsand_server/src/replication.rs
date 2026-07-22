@@ -6,7 +6,7 @@ use crate::session::Sessions;
 use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y};
 use fallingsand_core::{CHUNK_SIZE, Calendar, CellOffset, ChunkPos, ItemStack};
 use fallingsand_protocol::{
-    BodyDebugCell, ChunkDebugRects, ChunkOp, InteractionState, InteractionStatus, ParticleSpawn,
+    BodyDebugRaster, ChunkDebugRects, ChunkOp, InteractionState, InteractionStatus, ParticleSpawn,
     PlayerAvatarState, PlayerId, PlayerState, SelfAvatarState, SelfLife, SelfState, ServerMessage,
     TickFrame, cells_to_wire,
 };
@@ -108,15 +108,23 @@ pub fn replicate(
             }
         }
 
-        let mut debug = Vec::new();
+        let mut debug_rects = Vec::new();
         let chunks = build_tiles(
             &mut session.replication.known_chunks,
             session.replication.debug,
             sim,
             &interest,
-            bodies,
-            &mut debug,
+            &mut debug_rects,
         );
+        let debug_bodies = if session.replication.debug {
+            bodies
+                .debug_rasters()
+                .filter(|cells| cells.iter().any(|cell| interest.contains(&cell.chunk())))
+                .map(|cells| BodyDebugRaster { cells })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let in_interest = particles_in_interest(particles, center);
         let public_players = if session.replication.fresh {
             all_players.clone()
@@ -146,7 +154,8 @@ pub fn replicate(
             trash: inventory.trash,
             self_state,
             particles: in_interest,
-            debug,
+            debug_rects,
+            debug_bodies,
         })));
     }
 
@@ -263,7 +272,6 @@ fn build_tiles(
     debug: bool,
     sim: &CellWorld,
     interest: &FxHashSet<ChunkPos>,
-    bodies: &BodyWorld,
     debug_rects: &mut Vec<ChunkDebugRects>,
 ) -> Vec<ChunkOp> {
     let mut ops = Vec::new();
@@ -279,21 +287,8 @@ fn build_tiles(
         if debug {
             let change = chunk.change_rect();
             let sim = chunk.sim_rect();
-            let body_cells: Vec<_> = bodies
-                .debug_cells_in(pos)
-                .into_iter()
-                .map(|(body, cell)| BodyDebugCell {
-                    body,
-                    offset: cell.offset(),
-                })
-                .collect();
-            if !sim.is_empty() || !body_cells.is_empty() {
-                debug_rects.push(ChunkDebugRects {
-                    pos,
-                    change,
-                    sim,
-                    bodies: body_cells,
-                });
+            if !sim.is_empty() {
+                debug_rects.push(ChunkDebugRects { pos, change, sim });
             }
         }
         if known.insert(pos) {

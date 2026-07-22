@@ -45,23 +45,23 @@ impl Default for PlayerParams {
     fn default() -> Self {
         Self {
             max_run: Subcell::from_cells_per_second(90.0),
-            run_accel: Subcell::from_cells_per_second_squared(1000.0),
-            run_reduce: Subcell::from_cells_per_second_squared(400.0),
+            run_accel: Subcell::from_cells_per_second_squared(1000),
+            run_reduce: Subcell::from_cells_per_second_squared(400),
             air_mult: 0.65,
-            duck_friction: Subcell::from_cells_per_second_squared(500.0),
+            duck_friction: Subcell::from_cells_per_second_squared(500),
             duck_run_mult: 0.4,
-            gravity: Subcell::from_cells_per_second_squared(900.0),
+            gravity: Subcell::from_cells_per_second_squared(900),
             half_grav_threshold: Subcell::from_cells_per_second(40.0),
             max_fall: Subcell::from_cells_per_second(160.0),
             fast_max_fall: Subcell::from_cells_per_second(240.0),
-            fast_max_accel: Subcell::from_cells_per_second_squared(300.0),
+            fast_max_accel: Subcell::from_cells_per_second_squared(300),
             jump_speed: Subcell::from_cells_per_second(105.0),
             jump_h_boost: Subcell::from_cells_per_second(40.0),
-            swim_thrust: Subcell::from_cells_per_second_squared(450.0),
+            swim_thrust: Subcell::from_cells_per_second_squared(450),
             density: 1050.0,
             wade_run_mult: 0.5,
             fly_max: Subcell::from_cells_per_second(160.0),
-            fly_accel: Subcell::from_cells_per_second_squared(1200.0),
+            fly_accel: Subcell::from_cells_per_second_squared(1200),
         }
     }
 }

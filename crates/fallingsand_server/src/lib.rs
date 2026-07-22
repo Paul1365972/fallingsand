@@ -287,7 +287,7 @@ impl ServerState {
             "bodies",
             |t| &mut t.bodies,
             |s| {
-                let metrics = s.bodies.step(&mut s.sim, &s.tickets, &mut s.players);
+                let metrics = s.bodies.step(&mut s.sim, &s.tickets);
                 s.stats.pixel_bodies = metrics.bodies;
             },
         );
@@ -351,7 +351,6 @@ impl ServerState {
                 persistence::autosave(
                     &s.sim,
                     &s.regions,
-                    &s.bodies,
                     &s.world,
                     &s.clock,
                     &s.players,
@@ -362,28 +361,6 @@ impl ServerState {
 
         let total = tick_start.elapsed().as_micros() as u32;
         self.stats.timing.finish(tick, total);
-        if self.stats.pixel_bodies != 0 || total >= 10_000 {
-            tracing::info!(
-                target: "tick_diag",
-                tick,
-                total_us = total,
-                network_us = self.stats.timing.network,
-                input_us = self.stats.timing.player_input,
-                regions_us = self.stats.timing.regions,
-                simulate_us = self.stats.timing.sim_simulate,
-                random_us = self.stats.timing.sim_random_tick,
-                physics_us = self.stats.timing.physics,
-                bodies_us = self.stats.timing.bodies,
-                hazards_us = self.stats.timing.hazards,
-                lifecycle_us = self.stats.timing.lifecycle,
-                replicate_us = self.stats.timing.replicate,
-                persistence_us = self.stats.timing.persistence,
-                live_bodies = self.stats.pixel_bodies,
-                awake_chunks = self.stats.awake_chunks,
-                awake_cells = self.stats.awake_cells,
-                "TICK DIAGNOSTICS"
-            );
-        }
         Ok(())
     }
 

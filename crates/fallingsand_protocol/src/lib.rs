@@ -3,7 +3,7 @@ pub mod stats;
 pub mod wire;
 
 pub use messages::{
-    BodyDebugCell, ChunkDebugRects, ChunkOp, ClientMessage, CursorMode, GameMode, InputAction,
+    BodyDebugRaster, ChunkDebugRects, ChunkOp, ClientMessage, CursorMode, GameMode, InputAction,
     InputFrame, InputState, InteractionState, InteractionStatus, ParticleSpawn, PlayerAvatarState,
     PlayerId, PlayerState, PlayerUuid, SelfAvatarState, SelfLife, SelfState, ServerMessage,
     SlotAction, TickFrame, UseButton,
@@ -11,7 +11,7 @@ pub use messages::{
 pub use stats::{ServerStats, TickProfile};
 pub use wire::{WireError, cells_from_wire, cells_to_wire, decode_message, encode_message};
 
-pub const PROTOCOL_VERSION: u16 = 56;
+pub const PROTOCOL_VERSION: u16 = 58;
 pub const MAX_INPUT_ACTIONS_PER_FRAME: usize = 64;
 
 const IDENTITY_DOMAIN: &[u8] = b"fallingsand identity v1\0";

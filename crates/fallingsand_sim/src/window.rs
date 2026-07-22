@@ -13,22 +13,16 @@ pub struct SimWindow<'a> {
 
 #[derive(Default)]
 pub(crate) struct WindowEvents {
-    structural: Vec<CellPos>,
-    damage: Vec<CellPos>,
+    detachment_checks: Vec<CellPos>,
 }
 
 impl WindowEvents {
     pub(crate) fn clear(&mut self) {
-        self.structural.clear();
-        self.damage.clear();
+        self.detachment_checks.clear();
     }
 
-    pub(crate) fn drain_structural(&mut self) -> impl Iterator<Item = CellPos> + '_ {
-        self.structural.drain(..)
-    }
-
-    pub(crate) fn drain_damage(&mut self) -> impl Iterator<Item = CellPos> + '_ {
-        self.damage.drain(..)
+    pub(crate) fn drain_detachment_checks(&mut self) -> impl Iterator<Item = CellPos> + '_ {
+        self.detachment_checks.drain(..)
     }
 }
 
@@ -89,16 +83,12 @@ impl<'a> SimWindow<'a> {
             debug_assert!(false, "write to unloaded chunk at {pos:?}");
             return;
         };
-        let old = chunk.get(pos.offset());
         chunk.set(pos.offset(), cell);
-        if old.is_body() && !cell.is_body() {
-            self.events.damage.push(pos);
-        }
         self.mark_sim_border(pos);
-        self.note_observers(pos);
+        self.queue_detachment_checks_around(pos);
     }
 
-    fn note_observers(&mut self, changed: CellPos) {
+    fn queue_detachment_checks_around(&mut self, changed: CellPos) {
         for dy in -1..=1 {
             for dx in -1..=1 {
                 let pos = changed.translated(dx, dy);
@@ -106,7 +96,7 @@ impl<'a> SimWindow<'a> {
                     .get(pos)
                     .is_some_and(|cell| cell.is_body() || content::is_rigid_capable(cell.material))
                 {
-                    self.events.structural.push(pos);
+                    self.events.detachment_checks.push(pos);
                 }
             }
         }
