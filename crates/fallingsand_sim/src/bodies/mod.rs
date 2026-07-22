@@ -14,7 +14,8 @@ use fallingsand_core::{
     CARDINAL_NEIGHBORS as NEIGHBORS, Cell, CellPos, MaterialId, Phase, Subcell,
 };
 use rotation::{ANGLE_STEPS, ANGLE_STEPS_LARGE, LARGE_BODY_EXTENT, quantize_step, rotate_offset};
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
+use std::time::Instant;
 
 const REFERENCE_DENSITY_MILLI: f32 = 1_000_000.0;
 const RELOCATE_RADIUS: i32 = 8;
@@ -32,10 +33,20 @@ pub struct ActorDynamics {
     pub inv_mass: f32,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct BodyPose {
+    pub pivot: CellPos,
+    pub x: Subcell,
+    pub y: Subcell,
+    pub angle: f32,
+    pub angle_steps: u32,
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Raster {
     pub(crate) cells: Vec<(CellPos, u16)>,
     pub(crate) set: FxHashSet<CellPos>,
+    pub(crate) pivot: Option<CellPos>,
 }
 
 impl Raster {
@@ -46,52 +57,31 @@ impl Raster {
     fn clear(&mut self) {
         self.cells.clear();
         self.set.clear();
+        self.pivot = None;
     }
 }
 
-#[derive(Debug, Clone, Default)]
-struct OwnerMap {
-    owner: FxHashMap<CellPos, usize>,
-}
-
-impl OwnerMap {
-    fn rebuild(&mut self, bodies: &[PixelBody]) {
-        self.owner.clear();
-        for (index, body) in bodies.iter().enumerate() {
-            for &pos in &body.raster.set {
-                self.owner.insert(pos, index);
-            }
-        }
-    }
-
-    fn get(&self, pos: CellPos) -> Option<usize> {
-        self.owner.get(&pos).copied()
-    }
-
-    fn insert(&mut self, index: usize, body: &PixelBody) {
-        for &pos in &body.raster.set {
-            self.owner.insert(pos, index);
-        }
-    }
-
-    fn reseat(&mut self, index: usize, old: &Raster, new: &Raster) {
-        for pos in old.set.difference(&new.set) {
-            if self.owner.get(pos) == Some(&index) {
-                self.owner.remove(pos);
-            }
-        }
-        for &pos in &new.set {
-            self.owner.insert(pos, index);
-        }
-    }
+#[derive(Debug, Clone)]
+struct BodyCell {
+    cell: Cell,
+    local: (i32, i32),
+    mass: f32,
 }
 
 #[derive(Default)]
 pub struct BodySet {
     bodies: Vec<PixelBody>,
-    owners: OwnerMap,
     next_id: u32,
     stepper: step::BodyStepper,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct BodyCounts {
+    pub live: usize,
+    pub members: usize,
+    pub awake: usize,
+    pub resting: usize,
+    pub frozen: usize,
 }
 
 impl BodySet {
@@ -116,10 +106,34 @@ impl BodySet {
             .collect()
     }
 
+    pub fn counts(&self) -> BodyCounts {
+        let mut counts = BodyCounts {
+            live: self.bodies.len(),
+            members: 0,
+            awake: 0,
+            resting: 0,
+            frozen: 0,
+        };
+        for body in &self.bodies {
+            counts.members += body.raster.cells.len();
+            if body.frozen {
+                counts.frozen += 1;
+            } else if body.rest_secs > 0.0 {
+                counts.resting += 1;
+            } else {
+                counts.awake += 1;
+            }
+        }
+        counts
+    }
+
+    fn body_index_at(&self, pos: CellPos) -> Option<usize> {
+        self.bodies.iter().position(|body| body.covers(pos))
+    }
+
     fn body_at_mut(&mut self, pos: CellPos) -> Option<&mut PixelBody> {
-        self.owners
-            .get(pos)
-            .and_then(|index| self.bodies.get_mut(index))
+        let index = self.body_index_at(pos)?;
+        self.bodies.get_mut(index)
     }
 
     pub fn receive_player_contact(&mut self, pos: CellPos, wake: bool) -> Option<bool> {
@@ -133,15 +147,51 @@ impl BodySet {
         Some(true)
     }
 
-    pub fn wake_at(&mut self, pos: CellPos) {
-        wake_covering(&mut self.bodies, &self.owners, pos);
+    pub fn wake_many(&mut self, positions: &[CellPos]) {
+        if positions.is_empty() {
+            return;
+        }
+        let positions: FxHashSet<_> = positions.iter().copied().collect();
+        for body in &mut self.bodies {
+            if body
+                .raster
+                .cells
+                .iter()
+                .any(|(pos, _)| positions.contains(pos))
+            {
+                body.rest_secs = 0.0;
+            }
+        }
     }
 
     pub fn register_island(&mut self, world: &mut CellWorld, island: &[CellPos]) {
         let id = self.allocate_id();
-        self.bodies.push(island::register_body(world, id, island));
-        let index = self.bodies.len() - 1;
-        self.owners.insert(index, &self.bodies[index]);
+        self.bodies
+            .push(island::register_body(world, id, island, 0.0, None));
+    }
+
+    pub fn register_island_with_pose(
+        &mut self,
+        world: &mut CellWorld,
+        island: &[CellPos],
+        pose: BodyPose,
+    ) {
+        let id = self.allocate_id();
+        let mut body = island::register_body(world, id, island, pose.angle, None);
+        if body.covers(pose.pivot) {
+            body.pivot = pose.pivot;
+        }
+        body.x = pose.x;
+        body.y = pose.y;
+        if matches!(pose.angle_steps, ANGLE_STEPS | ANGLE_STEPS_LARGE) {
+            body.angle_steps = pose.angle_steps;
+        }
+        island::derive_body(world, &mut body);
+        self.bodies.push(body);
+    }
+
+    pub fn poses(&self) -> Vec<BodyPose> {
+        self.bodies.iter().map(PixelBody::pose).collect()
     }
 
     pub fn apply_damage(&mut self, world: &mut CellWorld, notes: &mut Vec<CellPos>) {
@@ -149,12 +199,11 @@ impl BodySet {
             return;
         }
         let next_id = &mut self.next_id;
-        island::apply_damage(world, &mut self.bodies, &self.owners, notes, || {
+        island::apply_damage(world, &mut self.bodies, notes, || {
             let id = *next_id;
             *next_id = next_id.checked_add(1).expect("body id space exhausted");
             id
         });
-        self.owners.rebuild(&self.bodies);
     }
 
     pub fn step<S>(
@@ -167,28 +216,100 @@ impl BodySet {
     where
         S: Fn(fallingsand_core::ChunkPos) -> bool,
     {
+        let bodies_before = self.bodies.len();
+        let reflood_start = Instant::now();
+        let (flooded_bodies, split_bodies, split_fragments) = self.reflood_awake(world);
+        let reflood_us = reflood_start.elapsed().as_micros() as u64;
+        let bodies_after_reflood = self.bodies.len();
+        let derive_start = Instant::now();
+        let mut index = 0;
+        while index < self.bodies.len() {
+            if self.bodies[index].rest_secs > 0.0 {
+                index += 1;
+                continue;
+            }
+            if island::derive_body(world, &mut self.bodies[index]) {
+                index += 1;
+            } else {
+                let body = self.bodies.swap_remove(index);
+                release_unowned_cells(world, &body, &self.bodies);
+            }
+        }
+        let derive_us = derive_start.elapsed().as_micros() as u64;
+        let bodies_after_derive = self.bodies.len();
         self.stepper.step(
             world,
             &mut self.bodies,
-            &mut self.owners,
             entities,
             gravity,
             simulated,
+            step::PreparationDiagnostics {
+                reflood_us,
+                derive_us,
+                bodies_before,
+                bodies_after_reflood,
+                bodies_after_derive,
+                flooded_bodies,
+                split_bodies,
+                split_fragments,
+            },
         )
     }
 
-    pub fn settle_resting(&mut self, world: &mut CellWorld) {
+    fn reflood_awake(&mut self, world: &mut CellWorld) -> (usize, usize, usize) {
+        let mut index = 0;
+        let mut flooded_bodies = 0;
+        let mut split_bodies = 0;
+        let mut split_fragments = 0;
+        while index < self.bodies.len() {
+            if self.bodies[index].rest_secs > 0.0 {
+                index += 1;
+                continue;
+            }
+            flooded_bodies += 1;
+            let components = island::split_components(world, &self.bodies[index]);
+            let intact = components.len() == 1
+                && components[0].len() == self.bodies[index].raster.cells.len();
+            if intact {
+                index += 1;
+                continue;
+            }
+            split_bodies += 1;
+            split_fragments += components.len();
+            let body = self.bodies.swap_remove(index);
+            let offset = island::pose_offset(world, &body);
+            let inherited = island::inherited_component(&components, body.pivot);
+            for (component_index, component) in components.into_iter().enumerate() {
+                let inherits = component_index == inherited;
+                let id = if inherits {
+                    body.id
+                } else {
+                    self.allocate_id()
+                };
+                self.bodies.push(island::register_body(
+                    world,
+                    id,
+                    &component,
+                    body.angle,
+                    if inherits { offset } else { None },
+                ));
+            }
+        }
+        (flooded_bodies, split_bodies, split_fragments)
+    }
+
+    pub fn settle_resting(&mut self, world: &mut CellWorld) -> Vec<BodyPose> {
         self.settle_where(world, false, |body| {
             !body.frozen && body.rest_secs >= SETTLE_SECS
-        });
+        })
     }
 
     pub fn settle_quiet_where(
         &mut self,
         world: &mut CellWorld,
         predicate: impl FnMut(&PixelBody) -> bool,
-    ) {
-        self.settle_where(world, true, predicate);
+    ) -> Vec<BodyPose> {
+        self.settle_where(world, true, predicate)
     }
 
     fn settle_where(
@@ -196,25 +317,23 @@ impl BodySet {
         world: &mut CellWorld,
         quiet: bool,
         mut predicate: impl FnMut(&PixelBody) -> bool,
-    ) {
+    ) -> Vec<BodyPose> {
         let mut index = 0;
-        let mut changed = false;
+        let mut poses = Vec::new();
         while index < self.bodies.len() {
             if predicate(&self.bodies[index]) {
                 let body = self.bodies.swap_remove(index);
-                if quiet {
+                poses.push(body.pose());
+                if quiet || body.liquid_resting {
                     settle_body_quiet(world, &body);
                 } else {
                     settle_body(world, &body);
                 }
-                changed = true;
             } else {
                 index += 1;
             }
         }
-        if changed {
-            self.owners.rebuild(&self.bodies);
-        }
+        poses
     }
 
     fn allocate_id(&mut self) -> u32 {
@@ -227,15 +346,24 @@ impl BodySet {
     }
 }
 
+fn release_unowned_cells(world: &mut CellWorld, body: &PixelBody, owners: &[PixelBody]) {
+    for &(pos, _) in &body.raster.cells {
+        if owners.iter().any(|owner| owner.covers(pos)) {
+            continue;
+        }
+        if let Some(mut cell) = world.get_cell(pos).filter(|cell| cell.is_body()) {
+            cell.set_body(false);
+            world.set_cell_raw(pos, cell);
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PixelBody {
     id: u32,
     width: u8,
     height: u8,
-    cells: Vec<Cell>,
-    perimeter: Vec<(u8, u8)>,
-    com_local: (f32, f32),
-    pivot: (i32, i32),
+    pivot: CellPos,
     angle_steps: u32,
     x: Subcell,
     y: Subcell,
@@ -247,14 +375,11 @@ pub struct PixelBody {
     inv_inertia: f32,
     restitution: f32,
     rest_secs: f32,
+    liquid_resting: bool,
     raster: Raster,
+    cells: Vec<BodyCell>,
+    perimeter: Vec<CellPos>,
     frozen: bool,
-}
-
-fn wake_covering(bodies: &mut [PixelBody], owners: &OwnerMap, pos: CellPos) {
-    if let Some(body) = owners.get(pos).and_then(|index| bodies.get_mut(index)) {
-        body.rest_secs = 0.0;
-    }
 }
 
 fn append_vacated_wake_targets(
@@ -290,37 +415,44 @@ impl PixelBody {
         CellPos::new(self.x.floor_cell(), self.y.floor_cell())
     }
 
-    fn offset_with(&self, sin: f32, cos: f32, lx: f32, ly: f32) -> (f32, f32) {
-        let (dx, dy) = (lx - self.com_local.0, ly - self.com_local.1);
-        (dx * cos - dy * sin, dx * sin + dy * cos)
+    pub fn covers(&self, pos: CellPos) -> bool {
+        self.raster.covers(pos)
     }
 
-    fn local_offset(&self, lx: f32, ly: f32) -> (f32, f32) {
-        let (sin, cos) = quantized_trig_of(self.angle, self.angle_steps);
-        self.offset_with(sin, cos, lx, ly)
+    fn pose(&self) -> BodyPose {
+        BodyPose {
+            pivot: self.pivot,
+            x: self.x,
+            y: self.y,
+            angle: self.angle,
+            angle_steps: self.angle_steps,
+        }
     }
 
-    fn pivot_cell(&self, x: Subcell, y: Subcell) -> CellPos {
-        let (px, py) = self.pivot;
-        let ox = px as f32 + 0.5 - self.com_local.0;
-        let oy = py as f32 + 0.5 - self.com_local.1;
-        CellPos::new(x.add_cells(ox).floor_cell(), y.add_cells(oy).floor_cell())
+    fn transformed_com(&self, step: u32) -> (f32, f32) {
+        let mut mass = 0.0;
+        let mut sum = (0.0, 0.0);
+        for body_cell in &self.cells {
+            let (dx, dy) =
+                rotate_offset(step, self.angle_steps, body_cell.local.0, body_cell.local.1);
+            mass += body_cell.mass;
+            sum.0 += body_cell.mass * dx as f32;
+            sum.1 += body_cell.mass * dy as f32;
+        }
+        if mass == 0.0 {
+            (0.0, 0.0)
+        } else {
+            (sum.0 / mass, sum.1 / mass)
+        }
     }
 
-    fn body_cell(&self, pivot_cell: CellPos, step: u32, lx: u8, ly: u8) -> CellPos {
-        let (dx, dy) = rotate_offset(
-            step,
-            self.angle_steps,
-            lx as i32 - self.pivot.0,
-            ly as i32 - self.pivot.1,
-        );
-        pivot_cell.translated(dx, dy)
+    fn pivot_cell_at(&self, x: Subcell, y: Subcell, step: u32) -> CellPos {
+        let com = self.transformed_com(step);
+        CellPos::new(
+            x.add_cells(-com.0).floor_cell(),
+            y.add_cells(-com.1).floor_cell(),
+        )
     }
-}
-
-fn quantized_trig_of(angle: f32, steps: u32) -> (f32, f32) {
-    let step = quantize_step(angle, steps);
-    (step as f32 / steps as f32 * std::f32::consts::TAU).sin_cos()
 }
 
 fn angle_steps_for(width: u8, height: u8) -> u32 {
@@ -331,24 +463,15 @@ fn angle_steps_for(width: u8, height: u8) -> u32 {
     }
 }
 
-fn rasterize_at(body: &PixelBody, x: Subcell, y: Subcell, angle: f32) -> Raster {
-    let mut raster = Raster::default();
-    rasterize_into(&mut raster, body, x, y, angle);
-    raster
-}
-
 fn rasterize_into(raster: &mut Raster, body: &PixelBody, x: Subcell, y: Subcell, angle: f32) {
     raster.clear();
     let step = quantize_step(angle, body.angle_steps);
-    let pivot_cell = body.pivot_cell(x, y);
-    for ly in 0..body.height {
-        for lx in 0..body.width {
-            let index = ly as usize * body.width as usize + lx as usize;
-            if body.cells[index].is_air() {
-                continue;
-            }
-            let pos = body.body_cell(pivot_cell, step, lx, ly);
-            raster.set.insert(pos);
+    let pivot = body.pivot_cell_at(x, y, step);
+    raster.pivot = Some(pivot);
+    for (index, body_cell) in body.cells.iter().enumerate() {
+        let (dx, dy) = rotate_offset(step, body.angle_steps, body_cell.local.0, body_cell.local.1);
+        let pos = pivot.translated(dx, dy);
+        if raster.set.insert(pos) {
             raster.cells.push((pos, index as u16));
         }
     }
@@ -387,7 +510,13 @@ pub(crate) fn commit_stamp(
         .copied()
         .collect();
     vacated.sort_unstable_by_key(|pos| (pos.y, pos.x));
-    displaced.sort_unstable_by_key(|&(pos, _)| (pos.y, pos.x));
+    displaced.sort_unstable_by_key(|&(pos, cell)| {
+        (
+            std::cmp::Reverse(content::density_milli(cell.material)),
+            pos.y,
+            pos.x,
+        )
+    });
 
     let mut writes: Vec<(CellPos, Cell)> = Vec::new();
     let mut claimed: FxHashSet<CellPos> = FxHashSet::default();
@@ -409,10 +538,19 @@ pub(crate) fn commit_stamp(
     }
 
     for (pos, cell) in writes {
-        world.set_cell_raw(pos, cell);
+        if world.get_cell(pos) != Some(cell) {
+            world.set_cell_raw(pos, cell);
+        }
     }
     for &(pos, local) in &new.cells {
-        world.set_cell_raw(pos, cell_for(local));
+        let cell = cell_for(local);
+        if world.get_cell(pos) != Some(cell) {
+            if old.covers(pos) {
+                world.set_cell_raw_quiet(pos, cell);
+            } else {
+                world.set_cell_raw(pos, cell);
+            }
+        }
     }
     Some(vacated)
 }
@@ -438,7 +576,7 @@ fn relocation_spot(
 ) -> Option<CellPos> {
     for radius in 1..=RELOCATE_RADIUS {
         let mut ring = chebyshev_ring(radius);
-        ring.sort_by_key(|&(dx, dy)| (-dy, dx.abs()));
+        ring.sort_by_key(|&(dx, dy)| (-dy, dx.abs(), dx));
         for (dx, dy) in ring {
             let pos = from.translated(dx, dy);
             if claimed.contains(&pos)

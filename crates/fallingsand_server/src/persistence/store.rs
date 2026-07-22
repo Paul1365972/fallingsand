@@ -1,7 +1,7 @@
 use super::region_codec::{decode_region, encode_region};
-use super::{META, PLAYERS, REGIONS, SaveBatch, StoreError, WorldMeta, parse_meta};
+use super::{META, PLAYERS, REGIONS, SaveBatch, StoreError, StoredRegion, WorldMeta, parse_meta};
 use crate::persistence::player_record::PlayerRecord;
-use fallingsand_core::{Region, RegionPos};
+use fallingsand_core::RegionPos;
 use fallingsand_protocol::PlayerUuid;
 use redb::{Database, ReadableDatabase};
 use std::path::Path;
@@ -47,7 +47,7 @@ impl WorldStore {
         parse_meta(guard.value()).map(Some)
     }
 
-    pub(super) fn load_region(&self, pos: RegionPos) -> Result<Option<Region>, StoreError> {
+    pub(super) fn load_region(&self, pos: RegionPos) -> Result<Option<StoredRegion>, StoreError> {
         let read = self.db.begin_read()?;
         let table = read.open_table(REGIONS)?;
         let Some(guard) = table.get(pos.zorder_key())? else {

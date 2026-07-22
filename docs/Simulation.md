@@ -10,7 +10,7 @@ The world is one cellular automaton: every pixel is matter. Physics is phase-bas
 - **Locality (speed of light)** — no update reaches farther than 64 cells in one tick; longer-range behavior propagates locally over ticks. A queued between-tick world-event list is the sanctioned escape hatch — none exists today.
 - **Idle cost** — unloaded chunks cost nothing; a settled ticketed chunk does no movement work, paying only a bounded random-tick sample. No unbounded or growing per-tick cost.
 - **Sleeping is sound** — a slept world is a fixed point: force-evaluating every cell of a quiescent world changes nothing. Marks may defer a cascade one tick versus evaluating everything — they never lose work. A rule whose outcome depends on anything outside its marked footprint, or pending stochastic work that goes quiet without a keep-alive, is a bug.
-- **Suspend/resume** — loaded chunks wake fully once, conservatively resuming every grid process without persisting scheduling state. Runtime-only rigid motion snapshots as ordinary terrain at its current raster.
+- **Suspend/resume** — loaded chunks wake fully once, conservatively resuming every grid process without persisting scheduling state. Rigid cells persist as terrain with velocity; a compact pivot pose record restores continuous body orientation and offset.
 
 ## The grid
 
@@ -20,7 +20,7 @@ The world is one cellular automaton: every pixel is matter. Physics is phase-bas
 | Chunk | 64×64 cells | dirty tracking, sleeping, replication, rendering |
 | Region | 8×8 chunks | generation, storage, load/unload |
 
-A cell is a compact heap-free value: material, velocity, shade, a runtime flags byte — the tick-local moved stamp and body ownership, never persisted — and a persistent per-material aux byte. Every cell is a particle — velocity drives all energetic movement; liquids use no aux state. Burning is a material, not a flag: a lit fuel transmutes into its synthesized burning twin and probabilistic burnout *is* the burn duration; there is no per-cell HP.
+A cell is a compact heap-free value: material, velocity, shade, a runtime flags byte — the tick-local moved stamp and body membership marker, never persisted — and a persistent per-material aux byte. Body identity and member positions belong to the body itself, not to a parallel grid plane. Every cell is a particle — velocity drives all energetic movement; liquids use no aux state. Burning is a material, not a flag: a lit fuel transmutes into its synthesized burning twin and probabilistic burnout *is* the burn duration; there is no per-cell HP.
 
 ## Scheduling
 
@@ -73,7 +73,7 @@ A water neighbour quenches: a flame dies to steam keeping the water; a burning f
 | SimWindow | a worker's 4×4-chunk view: simulates the inner 2×2 block, reads one chunk beyond |
 | Speed of light | max reach of one update = one chunk = 64 cells |
 | Cell velocity | per-cell fixed-point cells/tick; sim-only, persisted, never on the wire |
-| Flags byte | runtime per-cell flags — the tick-local moved stamp and body ownership; never persisted |
+| Flags byte | runtime per-cell flags — the tick-local moved stamp and body membership marker; never persisted |
 | Aux byte | persistent per-material per-cell state; liquids keep it zero |
 | Downhill swap | a resting liquid exchange that strictly lowers density-weighted potential |
 | Passive step | one downhill or exposed neutral swap proposed only by a zero-velocity liquid, optionally rate-gated |

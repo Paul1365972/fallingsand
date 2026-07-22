@@ -51,3 +51,18 @@ pub(super) fn rotate_offset(step: u32, steps: u32, dx: i32, dy: i32) -> (i32, i3
     x -= round_shift(t * y);
     (x as i32, y as i32)
 }
+
+pub(super) fn unrotate_offset(step: u32, steps: u32, dx: i32, dy: i32) -> (i32, i32) {
+    let (quarters, residual_steps) = decompose(step, steps);
+    let (t, s) = residual_shears(residual_steps, steps);
+    let (mut x, mut y) = (dx as i64, dy as i64);
+    x += round_shift(t * y);
+    y -= round_shift(s * x);
+    x += round_shift(t * y);
+    for _ in 0..quarters {
+        let (nx, ny) = (y, -x);
+        x = nx;
+        y = ny;
+    }
+    (x as i32, y as i32)
+}

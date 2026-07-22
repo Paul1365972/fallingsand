@@ -1,5 +1,5 @@
 use crate::bodies::BodyWorld;
-use crate::persistence::{Persistence, RegionReady, StoreError};
+use crate::persistence::{Persistence, RegionReady, StoreError, StoredRegion};
 use crate::player::{Players, SearchWindow};
 use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y};
 use fallingsand_core::{Chunk, ChunkPos, Region, RegionPos};
@@ -115,7 +115,9 @@ fn extract_region(sim: &mut CellWorld, pos: RegionPos) -> Region {
 pub(crate) fn snapshot_regions(
     sim: &CellWorld,
     regions: &RegionMap,
-) -> Vec<(RegionPos, std::sync::Arc<Region>)> {
+    bodies: &BodyWorld,
+) -> Vec<(RegionPos, std::sync::Arc<StoredRegion>)> {
+    let poses = bodies.poses();
     regions
         .states
         .keys()
@@ -127,7 +129,12 @@ pub(crate) fn snapshot_regions(
                         .clone(),
                 )
             });
-            (pos, region.into())
+            let poses = poses
+                .iter()
+                .copied()
+                .filter(|pose| pose.pivot.chunk().region() == pos)
+                .collect();
+            (pos, StoredRegion { region, poses }.into())
         })
         .collect()
 }
@@ -170,6 +177,7 @@ pub fn manage_regions(
         let load = ready.result?;
         regions.requested.remove(&ready.pos);
         insert_region(sim, ready.pos, load.region);
+        bodies.restore_poses(load.poses);
         regions
             .states
             .insert(ready.pos, RegionState { last_wanted: tick });
@@ -217,7 +225,8 @@ pub fn manage_regions(
     for pos in expired {
         regions.states.remove(&pos).expect("state exists");
         let region = extract_region(sim, pos);
-        persistence.stage_region(pos, region);
+        let poses = bodies.take_dormant_poses(pos);
+        persistence.stage_region(pos, StoredRegion { region, poses });
     }
     Ok(())
 }

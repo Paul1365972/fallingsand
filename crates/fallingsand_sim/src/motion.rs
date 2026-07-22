@@ -1,7 +1,7 @@
 use crate::window::{SPEED_OF_LIGHT, SimWindow};
 use fallingsand_core::{
-    CARDINAL_NEIGHBORS as NEIGHBORS, Cell, CellPos, MaterialId, Phase, TICK_DT, VelocityFactor,
-    content,
+    CARDINAL_NEIGHBORS as NEIGHBORS, Cell, CellPos, MaterialId, Phase, TICK_DT, Tag,
+    VelocityFactor, content,
 };
 use fallingsand_math::{Hash, Rng, SUBCELL_BITS, SUBCELL_UNITS_PER_CELL};
 
@@ -119,10 +119,11 @@ pub(crate) fn move_cell(window: &mut SimWindow, pos: CellPos, cell: Cell, tick: 
             continue;
         };
         let blocker_phase = content::phase(blocker.material);
-        let dynamic = !blocker.is_body()
-            && matches!(blocker_phase, Phase::Powder | Phase::Liquid | Phase::Gas);
+        let dynamic = matches!(blocker_phase, Phase::Powder | Phase::Liquid | Phase::Gas);
         let velocity = if dx != 0 { &mut vx } else { &mut vy };
-        *velocity = if dynamic {
+        let pixel_body =
+            blocker.is_body() && !content::tags(blocker.material).contains(Tag::Player);
+        *velocity = if pixel_body || dynamic {
             transfer_momentum(window, material, target, (dx, dy), *velocity, restitution)
         } else if blocker_phase == phase {
             *velocity / 2
@@ -359,7 +360,7 @@ fn admits(mover: MaterialId, dy: i32, target: Cell) -> bool {
         || (dy == 0 && target.is_air())
 }
 
-fn transfer_momentum(
+pub(crate) fn transfer_momentum(
     window: &mut SimWindow,
     mover: MaterialId,
     target: CellPos,

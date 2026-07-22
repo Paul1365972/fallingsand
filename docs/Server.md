@@ -7,7 +7,7 @@ The server is authoritative for every gameplay rule; clients send raw input and 
 - **Server authority** — gameplay rules live here, including single player through the embedded server.
 - **Exclusive lifecycle** — exactly one life state per player (entering, alive, dead, reviving); only alive owns an avatar, and the avatar owns every physical and deferred-physical value. Input or queued work from an old connection never leaks into a new incarnation.
 - **Persistence is faithful** — pending state survives failed writes; a region is generated only after a confirmed missing read; a read or decode error is fatal, never papered over. No migrations: a format-version mismatch is rejected.
-- **Suspend/resume** — loaded chunks wake fully for one tick; rigid bodies are intentionally reduced to terrain at their current raster.
+- **Suspend/resume** — loaded chunks wake fully for one tick; rigid cells persist as terrain with velocity, while compact pivot pose records restore continuous orientation and offset.
 
 ## Players
 
@@ -36,7 +36,7 @@ Entering and revive share one deterministic ring search advancing over ticks, ex
 
 Every ten seconds, one transaction saves every loaded or pending region, every present player, and world metadata. Unload and departure only replace pending snapshots; persisted unloaded regions remain valid. Startup and shutdown never initiate saves, and shutdown finishes any in-flight batch. Without a save path, pending snapshots retain unloaded state in memory.
 
-The worker owns reads, confirmed-missing generation, encoding, compression, and writes; ready regions integrate deterministically at one per tick. Success drops the immutable batch, failure restores entries without newer replacements, and read or decode errors are fatal. Region blobs omit player flesh and runtime flags; bodies settle into terrain before unload. Validated DTOs isolate gameplay from storage. Interrupted revives persist as dead.
+The worker owns reads, confirmed-missing generation, encoding, compression, and writes; ready regions integrate deterministically at one per tick. Success drops the immutable batch, failure restores entries without newer replacements, and read or decode errors are fatal. Region blobs omit player flesh and runtime flags; bodies settle into terrain before unload and store pose records in the pivot's region. Validated DTOs isolate gameplay from storage. Interrupted revives persist as dead.
 
 ## Glossary
 

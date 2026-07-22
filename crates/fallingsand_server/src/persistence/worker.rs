@@ -89,7 +89,11 @@ fn worker_main(
                     .as_ref()
                     .map_or(Ok(None), |store| store.load_region(pos))
                     .map(|loaded| RegionLoad {
-                        region: loaded.unwrap_or_else(|| generator.generate_region(pos)),
+                        region: loaded.as_ref().map_or_else(
+                            || generator.generate_region(pos),
+                            |stored| stored.region.clone(),
+                        ),
+                        poses: loaded.map_or_else(Vec::new, |stored| stored.poses),
                     })
                     .map_err(|source| StoreError::RegionLoad {
                         pos,

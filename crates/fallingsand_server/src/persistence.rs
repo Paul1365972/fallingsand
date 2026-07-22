@@ -18,7 +18,7 @@ use std::sync::Arc;
 use store::WorldStore;
 use worker::{PersistenceWorker, WorkerCompletion};
 
-pub const REGION_FORMAT_VERSION: u8 = 21;
+pub const REGION_FORMAT_VERSION: u8 = 22;
 pub const WORLD_FORMAT_VERSION: u16 = 24;
 const AUTOSAVE_INTERVAL_TICKS: u64 = fallingsand_core::ticks_from_secs(10.0);
 
@@ -37,6 +37,13 @@ pub struct WorldMeta {
 
 pub struct RegionLoad {
     pub region: Region,
+    pub poses: Vec<fallingsand_sim::bodies::BodyPose>,
+}
+
+#[derive(Clone)]
+pub struct StoredRegion {
+    pub region: Region,
+    pub poses: Vec<fallingsand_sim::bodies::BodyPose>,
 }
 
 pub struct RegionReady {
@@ -114,7 +121,7 @@ impl From<redb::CommitError> for StoreError {
 
 #[derive(Clone)]
 struct SaveBatch {
-    regions: BTreeMap<RegionPos, Arc<Region>>,
+    regions: BTreeMap<RegionPos, Arc<StoredRegion>>,
     players: BTreeMap<PlayerUuid, PlayerRecord>,
     meta: Option<WorldMeta>,
 }
@@ -122,7 +129,7 @@ struct SaveBatch {
 pub struct Persistence {
     store: Option<Arc<WorldStore>>,
     worker: Option<PersistenceWorker>,
-    pending_regions: BTreeMap<RegionPos, Arc<Region>>,
+    pending_regions: BTreeMap<RegionPos, Arc<StoredRegion>>,
     pending_players: BTreeMap<PlayerUuid, PlayerRecord>,
     pending_meta: Option<WorldMeta>,
     next_request: u64,
@@ -176,7 +183,8 @@ impl Persistence {
             return Ok((
                 request,
                 Some(RegionLoad {
-                    region: (*pending).clone(),
+                    region: pending.region.clone(),
+                    poses: pending.poses.clone(),
                 }),
             ));
         }
@@ -187,11 +195,11 @@ impl Persistence {
         Ok((request, None))
     }
 
-    pub fn stage_region(&mut self, pos: RegionPos, region: impl Into<Arc<Region>>) {
+    pub fn stage_region(&mut self, pos: RegionPos, region: impl Into<Arc<StoredRegion>>) {
         self.pending_regions.insert(pos, region.into());
     }
 
-    fn stage_regions(&mut self, regions: impl IntoIterator<Item = (RegionPos, Arc<Region>)>) {
+    fn stage_regions(&mut self, regions: impl IntoIterator<Item = (RegionPos, Arc<StoredRegion>)>) {
         self.pending_regions.extend(regions);
     }
 
@@ -343,6 +351,7 @@ impl Persistence {
 pub fn autosave(
     sim: &CellWorld,
     regions: &RegionMap,
+    bodies: &crate::bodies::BodyWorld,
     info: &WorldInfo,
     clock: &Calendar,
     players: &Players,
@@ -353,20 +362,21 @@ pub fn autosave(
         return Ok(());
     }
 
-    stage_world_snapshot(sim, regions, players, persistence, info, clock)?;
+    stage_world_snapshot(sim, regions, bodies, players, persistence, info, clock)?;
     persistence.start_save()
 }
 
 fn stage_world_snapshot(
     sim: &CellWorld,
     regions: &RegionMap,
+    bodies: &crate::bodies::BodyWorld,
     players: &Players,
     persistence: &mut Persistence,
     info: &WorldInfo,
     clock: &Calendar,
 ) -> Result<(), StoreError> {
     persistence.stage_players(players.iter().map(|(_, player)| player))?;
-    persistence.stage_regions(snapshot_regions(sim, regions));
+    persistence.stage_regions(snapshot_regions(sim, regions, bodies));
     persistence.stage_meta(world_meta(info, clock, sim.tick()));
     Ok(())
 }

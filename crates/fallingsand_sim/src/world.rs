@@ -110,8 +110,12 @@ impl CellWorld {
         }
     }
 
-    pub(crate) fn note_interaction(&mut self, pos: CellPos) {
-        self.note_observers(pos);
+    pub(crate) fn note_terrain_interaction(&mut self, pos: CellPos) {
+        if self.get_cell(pos).is_some_and(|cell| {
+            !cell.is_body() && fallingsand_core::content::is_rigid_capable(cell.material)
+        }) {
+            self.structural.push(pos);
+        }
     }
 
     fn mark_sim_border(&mut self, pos: CellPos) {

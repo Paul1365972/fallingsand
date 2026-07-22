@@ -1,7 +1,9 @@
-use super::{REGION_FORMAT_VERSION, StoreError};
+use super::{REGION_FORMAT_VERSION, StoreError, StoredRegion};
 use fallingsand_core::{
-    CHUNK_AREA, Cell, DirtyRect, MaterialId, REGION_AREA_CHUNKS, Region, Tag, content,
+    CHUNK_AREA, Cell, CellPos, DirtyRect, MaterialId, REGION_AREA_CHUNKS, Region, Subcell, Tag,
+    content,
 };
+use fallingsand_sim::bodies::BodyPose;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
@@ -57,10 +59,56 @@ struct ChunkRecord {
 #[derive(Serialize, Deserialize)]
 struct RegionRecord {
     chunks: Vec<ChunkRecord>,
+    poses: Vec<BodyPoseRecord>,
 }
 
-pub(super) fn encode_region(region: &Region) -> Result<Vec<u8>, StoreError> {
-    let chunks = region
+#[derive(Serialize, Deserialize)]
+struct BodyPoseRecord {
+    pivot: CellPos,
+    x: Subcell,
+    y: Subcell,
+    angle: f32,
+    angle_steps: u32,
+}
+
+impl From<BodyPose> for BodyPoseRecord {
+    fn from(pose: BodyPose) -> Self {
+        Self {
+            pivot: pose.pivot,
+            x: pose.x,
+            y: pose.y,
+            angle: pose.angle,
+            angle_steps: pose.angle_steps,
+        }
+    }
+}
+
+impl BodyPoseRecord {
+    fn restore(&self) -> Result<BodyPose, StoreError> {
+        if !self.angle.is_finite() || !matches!(self.angle_steps, 64 | 128) {
+            return Err(StoreError::CorruptRegion("invalid body pose".into()));
+        }
+        let pivot_x = Subcell::cell_center(self.pivot.x);
+        let pivot_y = Subcell::cell_center(self.pivot.y);
+        let reach = Subcell::from_cell(64);
+        if (self.x - pivot_x).abs() > reach || (self.y - pivot_y).abs() > reach {
+            return Err(StoreError::CorruptRegion(
+                "body pose escapes its pivot".into(),
+            ));
+        }
+        Ok(BodyPose {
+            pivot: self.pivot,
+            x: self.x,
+            y: self.y,
+            angle: self.angle.rem_euclid(std::f32::consts::TAU),
+            angle_steps: self.angle_steps,
+        })
+    }
+}
+
+pub(super) fn encode_region(stored: &StoredRegion) -> Result<Vec<u8>, StoreError> {
+    let chunks = stored
+        .region
         .chunks()
         .iter()
         .map(|chunk| {
@@ -76,7 +124,8 @@ pub(super) fn encode_region(region: &Region) -> Result<Vec<u8>, StoreError> {
             Ok(ChunkRecord { cells })
         })
         .collect::<Result<Vec<_>, StoreError>>()?;
-    let record = RegionRecord { chunks };
+    let poses = stored.poses.iter().copied().map(Into::into).collect();
+    let record = RegionRecord { chunks, poses };
     let compressed = lz4_flex::compress_prepend_size(&postcard::to_allocvec(&record)?);
     let mut blob = Vec::with_capacity(compressed.len() + 1);
     blob.push(REGION_FORMAT_VERSION);
@@ -84,7 +133,7 @@ pub(super) fn encode_region(region: &Region) -> Result<Vec<u8>, StoreError> {
     Ok(blob)
 }
 
-pub(super) fn decode_region(blob: &[u8]) -> Result<Region, StoreError> {
+pub(super) fn decode_region(blob: &[u8]) -> Result<StoredRegion, StoreError> {
     let (&version, compressed) = blob
         .split_first()
         .ok_or_else(|| StoreError::CorruptRegion("empty blob".into()))?;
@@ -113,5 +162,19 @@ pub(super) fn decode_region(blob: &[u8]) -> Result<Region, StoreError> {
         }
         chunk.sim = DirtyRect::FULL;
     }
-    Ok(region)
+    let mut poses = record
+        .poses
+        .iter()
+        .map(BodyPoseRecord::restore)
+        .collect::<Result<Vec<_>, _>>()?;
+    poses.sort_by_key(|pose| (pose.pivot.y, pose.pivot.x));
+    let pose_count = poses.len();
+    poses.dedup_by_key(|pose| pose.pivot);
+    if poses.len() != pose_count {
+        tracing::warn!(
+            duplicate_poses = pose_count - poses.len(),
+            "discarded duplicate body pose metadata"
+        );
+    }
+    Ok(StoredRegion { region, poses })
 }
