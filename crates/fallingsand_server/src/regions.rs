@@ -2,7 +2,7 @@ use crate::bodies::BodyWorld;
 use crate::persistence::{Persistence, RegionReady, StoreError};
 use crate::player::{Players, SearchWindow};
 use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y};
-use fallingsand_core::{CellPos, Chunk, ChunkPos, Region, RegionPos};
+use fallingsand_core::{Chunk, ChunkPos, Region, RegionPos};
 use fallingsand_sim::CellWorld;
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -46,7 +46,7 @@ impl ChunkTickets {
     }
 }
 
-pub fn compute_tickets(tickets: &mut ChunkTickets, spawn: CellPos, players: &Players) {
+pub fn compute_tickets(tickets: &mut ChunkTickets, players: &Players) {
     tickets.active.clear();
     tickets.border.clear();
     tickets.random_tick.clear();
@@ -54,12 +54,6 @@ pub fn compute_tickets(tickets: &mut ChunkTickets, spawn: CellPos, players: &Pla
         add_view(tickets, player.view_anchor().chunk());
         if let Some(materialization) = player.life.materialization() {
             add_search_window(tickets, materialization.search.window());
-        }
-    }
-    let center = spawn.chunk();
-    for dy in -INTEREST_RADIUS_Y..=INTEREST_RADIUS_Y {
-        for dx in -INTEREST_RADIUS_X..=INTEREST_RADIUS_X {
-            tickets.active.insert(center.translated(dx, dy));
         }
     }
     tickets.border.retain(|pos| !tickets.active.contains(pos));

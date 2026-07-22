@@ -257,7 +257,7 @@ impl ServerState {
             "regions",
             |t| &mut t.regions,
             |s| {
-                regions::compute_tickets(&mut s.tickets, s.spawn, &s.players);
+                regions::compute_tickets(&mut s.tickets, &s.players);
                 regions::manage_regions(
                     &mut s.sim,
                     &mut s.regions,
@@ -332,6 +332,7 @@ impl ServerState {
                     &s.regions,
                     &s.generator,
                     &s.emitter.spawns,
+                    &s.bodies,
                     &mut s.replication,
                 );
                 s.stats.players = metrics.players;
