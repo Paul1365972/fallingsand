@@ -114,36 +114,23 @@ fn commit_pose(
     snapshot: fallingsand_sim::physics::Actor,
     facing_left: bool,
 ) {
-    let candidates = [
-        (avatar.actor.x, avatar.actor.y, avatar.actor.half_h),
-        (avatar.actor.x, snapshot.y, snapshot.half_h),
-        (snapshot.x, avatar.actor.y, avatar.actor.half_h),
-    ];
-    for (attempt, &(x, y, half_h)) in candidates.iter().enumerate() {
-        let fp = footprint_at(x, y, avatar.actor.half_w, half_h);
-        let Some(()) = stamp_player(sim, &mut avatar.stamp, fp, facing_left) else {
-            continue;
-        };
-        match attempt {
-            1 => {
-                avatar.actor.y = snapshot.y;
-                avatar.actor.half_h = snapshot.half_h;
-                avatar.actor.vy = Subcell::ZERO;
-            }
-            2 => {
-                avatar.actor.x = snapshot.x;
-                avatar.actor.vx = Subcell::ZERO;
-            }
-            _ => {}
-        }
-        if attempt != 0 {
-            avatar.actor.on_ground = grounded(sim, &avatar.actor, avatar.stamp.own_cells());
-        }
+    let actor = avatar.actor;
+    let full = footprint_at(actor.x, actor.y, actor.half_w, actor.half_h);
+    if stamp_player(sim, &mut avatar.stamp, full, facing_left).is_some() {
         return;
     }
-    avatar.actor = snapshot;
-    avatar.actor.vx = Subcell::ZERO;
-    avatar.actor.vy = Subcell::ZERO;
+
+    let d_step = Subcell::from_cells((actor.rows() / 2 - snapshot.rows() / 2) as f32);
+    avatar.actor.y = actor.y - d_step;
+    avatar.actor.half_h = snapshot.half_h;
+    let held = footprint_at(
+        avatar.actor.x,
+        avatar.actor.y,
+        avatar.actor.half_w,
+        avatar.actor.half_h,
+    );
+    stamp_player(sim, &mut avatar.stamp, held, facing_left)
+        .expect("a same-height translation always stamps");
     avatar.actor.on_ground = grounded(sim, &avatar.actor, avatar.stamp.own_cells());
 }
 
