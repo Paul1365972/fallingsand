@@ -34,7 +34,7 @@ Entering and revive share one deterministic ring search advancing over ticks, ex
 
 ## Persistence
 
-Every ten seconds, one transaction saves every loaded or pending region, every present player, and world metadata. Unload and departure only replace pending snapshots; persisted unloaded regions remain valid. Startup and shutdown never initiate saves, and shutdown finishes any in-flight batch. Without a save path, pending snapshots retain unloaded state in memory.
+Every ten seconds, one transaction saves every loaded or pending region, every present player, and world metadata. Unload and departure only replace pending snapshots; persisted unloaded regions remain valid. Graceful shutdown takes one final snapshot, finishes any in-flight batch, then commits the final batch. A crash or forced termination recovers from the latest completed autosave. Without a save path, pending snapshots retain unloaded state in memory.
 
 The worker owns reads, confirmed-missing generation, encoding, compression, and writes; ready regions integrate deterministically at one per tick. Success drops the immutable batch, failure restores entries without newer replacements, and read or decode errors are fatal. Region blobs omit player flesh and runtime flags; bodies need no storage representation beyond their visible cells. Validated DTOs isolate gameplay from storage. Interrupted revives persist as dead.
 

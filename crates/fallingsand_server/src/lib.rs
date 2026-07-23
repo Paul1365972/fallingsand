@@ -365,7 +365,14 @@ impl ServerState {
     }
 
     fn shutdown_persistence(&mut self) -> Result<(), persistence::StoreError> {
-        self.persistence.shutdown()
+        persistence::shutdown_world(
+            &self.sim,
+            &self.regions,
+            &self.world,
+            &self.clock,
+            &self.players,
+            &mut self.persistence,
+        )
     }
 
     fn remove_disconnected_players(

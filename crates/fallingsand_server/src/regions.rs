@@ -142,8 +142,7 @@ pub fn manage_regions(
     let tick = sim.tick();
     let wanted = wanted_regions(tickets);
 
-    let completions = persistence.drain_completions()?;
-    regions.ready.extend(completions.regions);
+    regions.ready.extend(persistence.drain_completions()?);
     regions
         .ready
         .sort_unstable_by_key(|ready| (ready.pos.y, ready.pos.x));

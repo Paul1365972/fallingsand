@@ -45,11 +45,6 @@ pub struct RegionReady {
     pub result: Result<RegionLoad, StoreError>,
 }
 
-#[derive(Default)]
-pub struct PersistenceCompletions {
-    pub regions: Vec<RegionReady>,
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
     #[error("redb: {0}")]
@@ -246,23 +241,31 @@ impl Persistence {
         Ok(())
     }
 
-    pub fn drain_completions(&mut self) -> Result<PersistenceCompletions, StoreError> {
-        let mut completed = PersistenceCompletions::default();
+    pub fn drain_completions(&mut self) -> Result<Vec<RegionReady>, StoreError> {
+        let mut regions = Vec::new();
         let messages = self
             .worker
             .as_ref()
             .ok_or(StoreError::WorkerDisconnected)?
             .drain_completions()?;
         for message in messages {
-            self.apply_completion(message, &mut completed, false)?;
+            if let Some(region) = self.apply_completion(message, false)? {
+                regions.push(region);
+            }
         }
-        Ok(completed)
+        Ok(regions)
     }
 
     pub fn shutdown(&mut self) -> Result<(), StoreError> {
-        let save_result = self.finish_in_flight();
+        let flush_result = self.flush();
         let shutdown_result = self.shutdown_worker();
-        save_result.and(shutdown_result)
+        flush_result.and(shutdown_result)
+    }
+
+    fn flush(&mut self) -> Result<(), StoreError> {
+        self.finish_in_flight()?;
+        self.start_save()?;
+        self.finish_in_flight()
     }
 
     fn finish_in_flight(&mut self) -> Result<(), StoreError> {
@@ -272,8 +275,7 @@ impl Persistence {
                 .as_ref()
                 .ok_or(StoreError::WorkerDisconnected)?
                 .recv_completion()?;
-            let mut completed = PersistenceCompletions::default();
-            self.apply_completion(message, &mut completed, true)?;
+            let _ = self.apply_completion(message, true)?;
         }
         Ok(())
     }
@@ -308,24 +310,23 @@ impl Persistence {
     fn apply_completion(
         &mut self,
         message: WorkerCompletion,
-        completed: &mut PersistenceCompletions,
-        durable: bool,
-    ) -> Result<(), StoreError> {
+        fail_on_save_error: bool,
+    ) -> Result<Option<RegionReady>, StoreError> {
         match message {
-            WorkerCompletion::RegionReady(ready) => completed.regions.push(ready),
+            WorkerCompletion::RegionReady(ready) => return Ok(Some(ready)),
             WorkerCompletion::SaveComplete => {
                 self.take_in_flight()?;
             }
             WorkerCompletion::SaveFailed(error) => {
                 let batch = self.take_in_flight()?;
                 self.restore_batch(batch);
-                if durable {
+                if fail_on_save_error {
                     return Err(error);
                 }
                 tracing::error!("persistence batch failed: {error}");
             }
         }
-        Ok(())
+        Ok(None)
     }
 
     fn take_in_flight(&mut self) -> Result<Arc<SaveBatch>, StoreError> {
@@ -353,17 +354,34 @@ pub fn autosave(
         return Ok(());
     }
 
-    stage_world_snapshot(sim, regions, players, persistence, info, clock)?;
+    stage_world_snapshot(sim, regions, info, clock, players, persistence)?;
     persistence.start_save()
+}
+
+pub fn shutdown_world(
+    sim: &CellWorld,
+    regions: &RegionMap,
+    info: &WorldInfo,
+    clock: &Calendar,
+    players: &Players,
+    persistence: &mut Persistence,
+) -> Result<(), StoreError> {
+    let snapshot_result = if persistence.store.is_some() {
+        stage_world_snapshot(sim, regions, info, clock, players, persistence)
+    } else {
+        Ok(())
+    };
+    let shutdown_result = persistence.shutdown();
+    snapshot_result.and(shutdown_result)
 }
 
 fn stage_world_snapshot(
     sim: &CellWorld,
     regions: &RegionMap,
-    players: &Players,
-    persistence: &mut Persistence,
     info: &WorldInfo,
     clock: &Calendar,
+    players: &Players,
+    persistence: &mut Persistence,
 ) -> Result<(), StoreError> {
     persistence.stage_players(players.iter().map(|(_, player)| player))?;
     persistence.stage_regions(snapshot_regions(sim, regions));
