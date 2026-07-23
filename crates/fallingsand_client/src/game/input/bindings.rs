@@ -206,6 +206,8 @@ impl Default for Bindings {
             bind(MouseButton::Left, Action::Primary),
             bind(MouseButton::Right, Action::Secondary),
             double_tap(KeyCode::Space, Action::ToggleFlight),
+            double_tap(KeyCode::KeyW, Action::ToggleFlight),
+            double_tap(KeyCode::ArrowUp, Action::ToggleFlight),
             bind(Button::ScrollUp, Action::SlotPrev),
             bind(Button::ScrollDown, Action::SlotNext),
             bind(KeyCode::KeyE, Action::OpenInventory),
