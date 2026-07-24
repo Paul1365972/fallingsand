@@ -1,9 +1,7 @@
-use super::rotation::Spin;
 use super::shape::{Motion, Pose, Slot, Vector, center_of, frame, rotated_mean};
 use super::{Body, UNCLAIMED};
-use crate::world::CellWorld;
+use crate::world::{CellWorld, mobile};
 use fallingsand_core::{CARDINAL_NEIGHBORS, CellPos, MaterialId, Subcell, content};
-use fallingsand_math::round_div;
 use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
 
@@ -32,33 +30,17 @@ pub(super) fn capture(world: &mut CellWorld, raster: Vec<CellPos>) -> Body {
         .collect();
     let frame = frame(&slots);
     let (x, y) = center_of(&raster, &slots, frame.mass);
-
-    let mut momentum = (0i128, 0i128);
-    let mut angular = 0i128;
-    for (slot, &pos) in slots.iter().zip(&raster) {
+    for &pos in &raster {
         let mut cell = world.get_cell(pos).expect("body island is loaded");
-        let mass = i128::from(slot.mass());
-        let velocity = Vector::new(i64::from(cell.vx), i64::from(cell.vy));
-        momentum.0 += mass * i128::from(velocity.x);
-        momentum.1 += mass * i128::from(velocity.y);
-        angular += mass
-            * Vector::of_cell(pos)
-                .from(Vector::new(x.raw(), y.raw()))
-                .cross(velocity);
         cell.set_body(true);
         world.set(pos, cell, false);
     }
-    let mass = i128::from(frame.mass);
 
     Body {
         slots,
         raster,
         pose: Pose { x, y, angle: 0 },
-        motion: Motion {
-            x: Subcell::from_raw(round_div(momentum.0, mass) as i64),
-            y: Subcell::from_raw(round_div(momentum.1, mass) as i64),
-            spin: Spin::from_angular_impulse(angular, frame.moment),
-        },
+        motion: Motion::default(),
         mass: frame.mass,
         moment: frame.moment,
         radius: frame.radius,
@@ -118,7 +100,7 @@ pub(super) fn split(
 
     for (&pos, live) in body.raster.iter().zip(&scratch.live) {
         if live.is_none() {
-            hand_back(world, body, pos);
+            release(world, body, pos);
         }
     }
 
@@ -155,7 +137,7 @@ pub(super) fn split(
     }
     for (slot, &index) in scratch.keep.iter().enumerate() {
         if scratch.part[slot] == UNCLAIMED {
-            hand_back(world, body, body.raster[index]);
+            release(world, body, body.raster[index]);
         }
     }
     Some(bodies)
@@ -205,16 +187,16 @@ fn neighbours(scratch: &Scratch, local: (i32, i32)) -> [Option<u32>; 4] {
     CARDINAL_NEIGHBORS.map(|(dx, dy)| scratch.by_local.get(&(local.0 + dx, local.1 + dy)).copied())
 }
 
-pub(super) fn hand_back(world: &mut CellWorld, body: &Body, pos: CellPos) {
+pub(super) fn release(world: &mut CellWorld, body: &Body, pos: CellPos) {
     let Some(mut cell) = world.get_cell(pos).filter(|cell| !cell.is_air()) else {
         return;
     };
-    let (vx, vy) = body.point_velocity(pos);
-    cell.set_vel(reach(vx), reach(vy));
+    let (vx, vy) = if mobile(cell.material) {
+        body.point_velocity(pos)
+    } else {
+        (0, 0)
+    };
+    cell.set_vel(vx as i32, vy as i32);
     cell.set_body(false);
     world.set(pos, cell, false);
-}
-
-fn reach(value: i64) -> i32 {
-    value.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
 }

@@ -1,5 +1,5 @@
 use super::rotation::{Spin, quantize_step, rotate_offset};
-use fallingsand_core::{CellPos, MaterialId, Subcell, content};
+use fallingsand_core::{CellPos, MaterialId, Subcell, VelocityFactor, content};
 use fallingsand_math::{SUBCELL_UNITS_PER_CELL, round_div};
 
 const UNITS: i128 = SUBCELL_UNITS_PER_CELL as i128;
@@ -102,19 +102,19 @@ pub(super) struct Frame {
     pub mass: i64,
     pub moment: i128,
     pub radius: i64,
-    pub restitution: u32,
+    pub restitution: VelocityFactor,
 }
 
 pub(super) fn frame(slots: &[Slot]) -> Frame {
     let mut mass = 0i128;
     let mut weighted = (0i128, 0i128);
-    let mut restitution = 0;
+    let mut restitution = VelocityFactor::from_raw(0);
     for slot in slots {
         let cell = i128::from(slot.mass());
         mass += cell;
         weighted.0 += cell * i128::from(slot.local.0);
         weighted.1 += cell * i128::from(slot.local.1);
-        restitution = restitution.max(content::restitution_q16(slot.material));
+        restitution = restitution.max(content::restitution(slot.material));
     }
     let center = (
         round_div(weighted.0 * UNITS, mass),

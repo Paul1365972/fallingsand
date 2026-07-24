@@ -51,23 +51,23 @@ pub fn emit(content: &Content) -> TokenStream {
         }),
         true,
     );
-    let restitution_q16 = accessor_fn(
-        "restitution_q16",
-        quote!(u32),
+    let restitution = accessor_fn(
+        "restitution",
+        quote!(crate::material::VelocityFactor),
         content.materials.iter().map(|mat| {
             let raw = (f64::from(mat.restitution.clamp(0.0, 1.0)) * 65536.0).round() as u32;
             let value = Literal::u32_suffixed(raw);
-            quote!(#value)
+            quote!(crate::material::VelocityFactor::from_raw(#value))
         }),
         true,
     );
-    let surface_grip_q16 = accessor_fn(
-        "surface_grip_q16",
-        quote!(u32),
+    let surface_grip = accessor_fn(
+        "surface_grip",
+        quote!(crate::material::VelocityFactor),
         content.materials.iter().map(|mat| {
             let raw = (f64::from(mat.surface_grip.clamp(0.0, 1.0)) * 65536.0).round() as u32;
             let value = Literal::u32_suffixed(raw);
-            quote!(#value)
+            quote!(crate::material::VelocityFactor::from_raw(#value))
         }),
         true,
     );
@@ -80,16 +80,16 @@ pub fn emit(content: &Content) -> TokenStream {
         }),
         true,
     );
-    let liquid_impact_q16 = accessor_fn(
-        "liquid_impact_q16",
-        quote!(u32),
+    let liquid_impact = accessor_fn(
+        "liquid_impact",
+        quote!(crate::material::VelocityFactor),
         content.materials.iter().map(|mat| {
             let raw = match mat.dynamics {
                 Dynamics::Liquid(d) => d.impact_keep.raw(),
                 _ => 0,
             };
             let value = Literal::u32_suffixed(raw);
-            quote!(#value)
+            quote!(crate::material::VelocityFactor::from_raw(#value))
         }),
         true,
     );
@@ -183,10 +183,10 @@ pub fn emit(content: &Content) -> TokenStream {
         #tags
         #is_rigid_capable
         #bond_group
-        #restitution_q16
-        #surface_grip_q16
+        #restitution
+        #surface_grip
         #flow_threshold
-        #liquid_impact_q16
+        #liquid_impact
         #ignition
         #material
 

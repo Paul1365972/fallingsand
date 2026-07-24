@@ -12,6 +12,10 @@ pub(crate) fn blocking(cell: Cell) -> bool {
     cell.is_body() || obstructs(cell.material)
 }
 
+pub(crate) fn mobile(material: MaterialId) -> bool {
+    !matches!(content::phase(material), Phase::Empty | Phase::Solid)
+}
+
 pub(crate) fn rigid_seed(cell: Cell) -> bool {
     !cell.is_body()
         && content::phase(cell.material) == Phase::Solid

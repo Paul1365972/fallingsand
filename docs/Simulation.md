@@ -20,6 +20,8 @@ The world is one cellular automaton: every pixel is matter. Physics is phase-bas
 | Chunk | 64×64 cells | dirty tracking, sleeping, replication, rendering |
 | Region | 8×8 chunks | generation, storage, load/unload |
 
+Velocity belongs to matter that moves under it. Powders, liquids and gases integrate theirs every tick; a solid has no dynamics and no movement step, so a velocity parked on one is state nothing would ever read back honestly. Solids are written inert.
+
 A cell is a compact heap-free value: material, velocity, shade, a runtime flags byte — the tick-local moved stamp and raster ownership marker, never persisted — and a persistent per-material aux byte. Every cell is a particle — velocity drives all energetic movement; liquids use no aux state. Burning is a material, not a flag: a lit fuel transmutes into its synthesized burning twin and probabilistic burnout *is* the burn duration; there is no per-cell HP.
 
 ## Scheduling

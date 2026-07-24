@@ -1,10 +1,9 @@
 use super::rotation::Spin;
 use super::shape::Vector;
 use super::{Body, Shove, Stander};
-use fallingsand_core::{CellPos, Subcell};
+use fallingsand_core::{CellPos, Subcell, VelocityFactor};
 use fallingsand_math::round_div;
 
-const Q16: i128 = 1 << 16;
 const ITERATIONS: u32 = 4;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -48,8 +47,8 @@ pub(super) struct Contact {
     pub cell: CellPos,
     pub axis: Axis,
     pub point: Vector,
-    pub restitution: u32,
-    pub grip: u32,
+    pub restitution: VelocityFactor,
+    pub grip: VelocityFactor,
     pub peer: Peer,
     bias: i128,
     push: i128,
@@ -62,8 +61,8 @@ impl Contact {
         cell: CellPos,
         axis: Axis,
         point: Vector,
-        restitution: u32,
-        grip: u32,
+        restitution: VelocityFactor,
+        grip: VelocityFactor,
         peer: Peer,
     ) -> Self {
         Self {
@@ -111,7 +110,7 @@ impl Party {
         }
     }
 
-    fn reach(&self, direction: Vector) -> i128 {
+    fn effective_mass(&self, direction: Vector) -> i128 {
         let mass = i128::from(self.mass);
         if self.moment == 0 {
             return mass;
@@ -129,12 +128,9 @@ pub(super) fn resolve(
     shoves: &mut Vec<Shove>,
 ) {
     for contact in contacts.iter_mut() {
-        let closing = closing_speed(bodies, index, contact, contact.axis.normal());
+        let closing = sides(bodies, index, contact).closing(contact.axis.normal());
         contact.bias = if elastic && closing < 0 {
-            round_div(
-                -closing * i128::from(restitution(bodies, index, contact)),
-                Q16,
-            )
+            restitution(bodies, index, contact).scale(-closing)
         } else {
             0
         };
@@ -146,8 +142,8 @@ pub(super) fn resolve(
     for _ in 0..ITERATIONS {
         for contact in contacts.iter_mut() {
             let normal = contact.axis.normal();
-            let closing = closing_speed(bodies, index, contact, normal);
-            let wanted = -(closing + contact.bias) * reach(bodies, index, contact, normal);
+            let sides = sides(bodies, index, contact);
+            let wanted = -(sides.closing(normal) + contact.bias) * sides.effective_mass(normal);
             let total = (contact.push + wanted).max(0);
             apply(bodies, index, contact, normal, total - contact.push);
             contact.push = total;
@@ -157,9 +153,9 @@ pub(super) fn resolve(
     for _ in 0..ITERATIONS {
         for contact in contacts.iter_mut() {
             let tangent = contact.axis.normal().perpendicular();
-            let sliding = closing_speed(bodies, index, contact, tangent);
-            let limit = round_div(i128::from(contact.grip) * contact.push, Q16);
-            let wanted = -sliding * reach(bodies, index, contact, tangent);
+            let sides = sides(bodies, index, contact);
+            let limit = contact.grip.scale(contact.push);
+            let wanted = -sides.closing(tangent) * sides.effective_mass(tangent);
             let total = (contact.drag + wanted).clamp(-limit, limit);
             apply(bodies, index, contact, tangent, total - contact.drag);
             contact.drag = total;
@@ -183,40 +179,48 @@ pub(super) fn resolve(
     }
 }
 
-fn parties(bodies: &[Body], index: usize, contact: &Contact) -> (Party, Option<Party>) {
-    let mine = Party::of(&bodies[index], contact.point);
-    let theirs = match contact.peer {
-        Peer::Terrain => None,
-        Peer::Body(peer) if peer as usize == index => None,
-        Peer::Body(peer) => Some(Party::of(&bodies[peer as usize], contact.point)),
-        Peer::Stander(stander) => Some(Party::standing(stander)),
-    };
-
-    (mine, theirs)
+struct Sides {
+    mine: Party,
+    theirs: Option<Party>,
 }
 
-fn closing_speed(bodies: &[Body], index: usize, contact: &Contact, direction: Vector) -> i128 {
-    let (mine, theirs) = parties(bodies, index, contact);
-    let theirs = theirs.map_or(Vector::new(0, 0), |party| party.velocity);
-    mine.velocity.from(theirs).dot(direction)
-}
+impl Sides {
+    fn closing(&self, direction: Vector) -> i128 {
+        let theirs = self
+            .theirs
+            .as_ref()
+            .map_or(Vector::new(0, 0), |party| party.velocity);
+        self.mine.velocity.from(theirs).dot(direction)
+    }
 
-fn reach(bodies: &[Body], index: usize, contact: &Contact, direction: Vector) -> i128 {
-    let (mine, theirs) = parties(bodies, index, contact);
-    let mine = mine.reach(direction);
-    match theirs {
-        Some(theirs) => {
-            let theirs = theirs.reach(direction);
-            (mine * theirs / (mine + theirs)).max(1)
+    fn effective_mass(&self, direction: Vector) -> i128 {
+        let mine = self.mine.effective_mass(direction);
+        match &self.theirs {
+            Some(theirs) => {
+                let theirs = theirs.effective_mass(direction);
+                (mine * theirs / (mine + theirs)).max(1)
+            }
+            None => mine,
         }
-        None => mine,
     }
 }
 
-fn restitution(bodies: &[Body], index: usize, contact: &Contact) -> u32 {
+fn sides(bodies: &[Body], index: usize, contact: &Contact) -> Sides {
+    Sides {
+        mine: Party::of(&bodies[index], contact.point),
+        theirs: match contact.peer {
+            Peer::Terrain => None,
+            Peer::Body(peer) if peer as usize == index => None,
+            Peer::Body(peer) => Some(Party::of(&bodies[peer as usize], contact.point)),
+            Peer::Stander(stander) => Some(Party::standing(stander)),
+        },
+    }
+}
+
+fn restitution(bodies: &[Body], index: usize, contact: &Contact) -> VelocityFactor {
     let peer = match contact.peer {
         Peer::Body(peer) if peer as usize != index => bodies[peer as usize].restitution,
-        _ => 0,
+        _ => VelocityFactor::from_raw(0),
     };
     bodies[index].restitution.max(contact.restitution).max(peer)
 }

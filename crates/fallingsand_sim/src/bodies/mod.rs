@@ -9,8 +9,8 @@ pub use island::detect_detached_island;
 pub use shape::material_mass;
 
 use crate::world::CellWorld;
-use fallingsand_core::{Cell, CellPos, ChunkPos, RegionPos, Subcell, content};
-use grid::{capture, hand_back, split};
+use fallingsand_core::{Cell, CellPos, ChunkPos, RegionPos, Subcell, VelocityFactor, content};
+use grid::{capture, release, split};
 use rustc_hash::FxHashMap;
 use shape::{Motion, Pose, Slot, Vector};
 
@@ -60,7 +60,7 @@ pub(crate) struct Body {
     mass: i64,
     moment: i128,
     radius: i64,
-    restitution: u32,
+    restitution: VelocityFactor,
     rest: u32,
 }
 
@@ -269,7 +269,7 @@ fn relocate(
 fn settle(world: &mut CellWorld, body: &Body) {
     for &pos in &body.raster {
         if world.get_cell(pos).is_some_and(|cell| cell.is_body()) {
-            hand_back(world, body, pos);
+            release(world, body, pos);
         }
     }
 }

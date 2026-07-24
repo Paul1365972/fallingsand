@@ -108,7 +108,7 @@ pub(crate) fn move_cell(window: &mut SimWindow, pos: CellPos, cell: Cell, tick: 
     if let Some(current) = window.get(travel.pos) {
         (vx, vy) = current.vel();
     }
-    let restitution = VelocityFactor::from_raw(content::restitution_q16(material));
+    let restitution = content::restitution(material);
     for (dx, dy) in NEIGHBORS {
         let incoming = if dx != 0 { vx * dx > 0 } else { vy * dy > 0 };
         let target = travel.pos.translated(dx, dy);
@@ -244,13 +244,12 @@ fn density_exchange_speed(
 }
 
 fn liquid_wake_keep(mover: MaterialId, displaced: MaterialId) -> VelocityFactor {
-    let displaced_retention = content::liquid_impact_q16(displaced);
-    let retained = if content::phase(mover) == Phase::Liquid {
-        displaced_retention.min(content::liquid_impact_q16(mover))
+    let displaced_retention = content::liquid_impact(displaced);
+    if content::phase(mover) == Phase::Liquid {
+        displaced_retention.min(content::liquid_impact(mover))
     } else {
         displaced_retention
-    };
-    VelocityFactor::from_raw(retained)
+    }
 }
 
 fn density_scatter(
@@ -388,7 +387,7 @@ fn transfer_momentum(
     } else {
         restitution
             .raw()
-            .min(content::restitution_q16(blocker.material))
+            .min(content::restitution(blocker.material).raw())
     };
     let impulse = i64::from(1u32 << 16) + i64::from(restitution);
     let denominator = (mover_mass + blocker_mass) * i64::from(1u32 << 16);

@@ -64,7 +64,7 @@ pub(crate) fn move_cell(window: &mut SimWindow, pos: CellPos, cell: Cell, tick: 
         return;
     };
     (vx, vy) = current.vel();
-    let impact = VelocityFactor::from_raw(content::liquid_impact_q16(cell.material));
+    let impact = content::liquid_impact(cell.material);
     if travel.blocked[1] < 0 {
         (vx, vy) = redirect_impact(window, travel.pos, vx, vy, impact, &mut rng);
     } else {

@@ -114,8 +114,23 @@ impl VelocityFactor {
         (if product < 0 { -magnitude } else { magnitude }) as i32
     }
 
+    pub const fn scale(self, value: i128) -> i128 {
+        let product = value * self.0 as i128;
+        let half = 1i128 << 15;
+        let magnitude = (product.abs() + half) >> 16;
+        if product < 0 { -magnitude } else { magnitude }
+    }
+
     pub const fn is_zero(self) -> bool {
         self.0 == 0
+    }
+
+    pub const fn min(self, other: Self) -> Self {
+        if self.0 < other.0 { self } else { other }
+    }
+
+    pub const fn max(self, other: Self) -> Self {
+        if self.0 > other.0 { self } else { other }
     }
 }
 

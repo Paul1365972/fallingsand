@@ -39,8 +39,13 @@ pub(super) fn advance(
         let body = &mut bodies[index];
         body.motion.y += ambient.gravity;
         body.motion = capped(body.motion, body.radius);
-        rasterize(&body.slots, body.mass, body.pose, &mut scratch.current);
-        debug_assert_eq!(scratch.current, body.raster);
+        scratch.current.clone_from(&body.raster);
+        #[cfg(debug_assertions)]
+        {
+            let mut fresh = Vec::new();
+            rasterize(&body.slots, body.mass, body.pose, &mut fresh);
+            assert_eq!(fresh, body.raster, "pose no longer describes the raster");
+        }
     }
 
     let mut unspent = WHOLE_TICK;
@@ -216,8 +221,8 @@ fn probe(
             pos,
             axis,
             Vector::of_cell(from).midpoint(Vector::of_cell(pos)),
-            content::restitution_q16(cell.material),
-            content::surface_grip_q16(cell.material),
+            content::restitution(cell.material),
+            content::surface_grip(cell.material),
             peer,
         ));
     }
