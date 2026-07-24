@@ -1,5 +1,5 @@
-use crate::world::structural;
-use fallingsand_core::{CHUNK_SIZE, Cell, CellPos, Chunk, ChunkPos, Phase, content};
+use crate::world::{Unseated, obstructs, rigid_seed, unseated};
+use fallingsand_core::{CHUNK_SIZE, Cell, CellPos, Chunk, ChunkPos};
 
 pub const WINDOW_CHUNKS: i32 = 4;
 pub const WINDOW_SLOTS: usize = (WINDOW_CHUNKS * WINDOW_CHUNKS) as usize;
@@ -14,16 +14,16 @@ pub struct SimWindow<'a> {
 
 #[derive(Default)]
 pub(crate) struct WindowEvents {
-    structural: Vec<CellPos>,
+    unseated: Vec<CellPos>,
 }
 
 impl WindowEvents {
     pub(crate) fn clear(&mut self) {
-        self.structural.clear();
+        self.unseated.clear();
     }
 
-    pub(crate) fn drain_structural(&mut self) -> impl Iterator<Item = CellPos> + '_ {
-        self.structural.drain(..)
+    pub(crate) fn drain_unseated(&mut self) -> impl Iterator<Item = CellPos> + '_ {
+        self.unseated.drain(..)
     }
 }
 
@@ -98,11 +98,27 @@ impl<'a> SimWindow<'a> {
             return;
         };
         let old = chunk.get(pos.offset());
-        cell.set_body(old.is_body() && content::phase(cell.material) == Phase::Solid);
+        cell.set_body(old.is_body() && obstructs(cell.material));
         chunk.set(pos.offset(), cell);
         self.mark_sim_border(pos);
-        if old != cell && (structural(old) || structural(cell)) {
-            self.events.structural.push(pos);
+        self.note(pos, old, cell);
+    }
+
+    fn note(&mut self, pos: CellPos, old: Cell, new: Cell) {
+        match unseated(old, new) {
+            Unseated::Nothing => {}
+            Unseated::Written => self.unseat(pos),
+            Unseated::Neighbours => {
+                for around in pos.neighbourhood() {
+                    self.unseat(around);
+                }
+            }
+        }
+    }
+
+    fn unseat(&mut self, pos: CellPos) {
+        if self.get(pos).is_some_and(rigid_seed) {
+            self.events.unseated.push(pos);
         }
     }
 
@@ -148,8 +164,7 @@ impl<'a> SimWindow<'a> {
         displaced.flags |= Cell::MOVED;
         self.set(mover, displaced);
         self.set(target, moving);
-        if structural(moving) || structural(displaced) {
-            self.events.structural.extend([mover, target]);
-        }
+        self.note(mover, moving, displaced);
+        self.note(target, displaced, moving);
     }
 }

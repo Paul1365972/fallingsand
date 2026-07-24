@@ -1,7 +1,8 @@
+use crate::player::{PLAYER_MASS_UNITS, Players};
 use crate::regions::ChunkTickets;
 use fallingsand_core::{CellPos, RegionPos, Subcell};
 use fallingsand_sim::CellWorld;
-use fallingsand_sim::bodies::{BodySet, detect_detached_island};
+use fallingsand_sim::bodies::{Ambient, BodySet, Shove, Stander, detect_detached_island};
 
 pub const BODY_GRAVITY: Subcell = Subcell::from_cells_per_second_squared(-400);
 
@@ -13,8 +14,8 @@ pub struct BodyWorld {
 }
 
 impl BodyWorld {
-    pub fn push_at(&mut self, pos: CellPos, dvx: Subcell, dvy: Subcell, source_mass: u32) -> bool {
-        self.set.push_at(pos, dvx, dvy, source_mass)
+    pub fn push(&mut self, pos: CellPos, dvx: Subcell, dvy: Subcell) -> bool {
+        self.set.push(pos, dvx, dvy, PLAYER_MASS_UNITS)
     }
 
     pub fn settle_overlapping_regions(&mut self, sim: &mut CellWorld, regions: &[RegionPos]) {
@@ -25,15 +26,18 @@ impl BodyWorld {
         self.set.rasters().map(Iterator::collect)
     }
 
-    pub fn step(&mut self, sim: &mut CellWorld, tickets: &ChunkTickets) -> BodyStepMetrics {
+    pub fn drain_shoves(&mut self) -> impl Iterator<Item = Shove> + '_ {
+        self.set.drain_shoves()
+    }
+
+    pub fn step(
+        &mut self,
+        sim: &mut CellWorld,
+        tickets: &ChunkTickets,
+        players: &Players,
+    ) -> BodyStepMetrics {
         self.set.reconcile(sim);
-        for changed in sim.drain_structural() {
-            for dy in -1..=1 {
-                for dx in -1..=1 {
-                    self.pending_checks.push(changed.translated(dx, dy));
-                }
-            }
-        }
+        self.pending_checks.extend(sim.drain_unseated());
         std::mem::swap(&mut self.pending_checks, &mut self.checks);
         self.checks.sort_unstable_by_key(|pos| (pos.y, pos.x));
         self.checks.dedup();
@@ -50,8 +54,14 @@ impl BodyWorld {
                 self.pending_checks.push(seed);
             }
         }
-        self.set
-            .step(sim, BODY_GRAVITY, |chunk| tickets.simulates(chunk));
+        self.set.step(
+            sim,
+            &Ambient {
+                gravity: BODY_GRAVITY,
+                simulated: &|chunk| tickets.simulates(chunk),
+                stander: &|pos| stander_at(players, pos),
+            },
+        );
         BodyStepMetrics {
             bodies: self.set.body_count(),
         }
@@ -60,6 +70,19 @@ impl BodyWorld {
 
 pub struct BodyStepMetrics {
     pub bodies: usize,
+}
+
+fn stander_at(players: &Players, pos: CellPos) -> Option<Stander> {
+    players.iter().find_map(|(_, player)| {
+        player
+            .avatar()
+            .filter(|avatar| avatar.stamp.covers(pos))
+            .map(|avatar| Stander {
+                mass: PLAYER_MASS_UNITS,
+                vx: avatar.actor.vx,
+                vy: avatar.actor.vy,
+            })
+    })
 }
 
 fn island_simulated(world: &CellWorld, tickets: &ChunkTickets, island: &[CellPos]) -> bool {

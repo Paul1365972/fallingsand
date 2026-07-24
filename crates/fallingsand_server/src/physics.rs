@@ -1,11 +1,11 @@
 use crate::bodies::BodyWorld;
 use crate::player::{
-    Avatar, AvatarSnapshot, Health, PLAYER_HALF_H, PLAYER_HALF_W, PLAYER_MASS, PLAYER_MASS_CELLS,
-    PlayerLife, Players,
+    Avatar, AvatarSnapshot, Health, PLAYER_HALF_H, PLAYER_HALF_W, PLAYER_MASS, PlayerLife, Players,
 };
 use fallingsand_core::{CellPos, Subcell};
 use fallingsand_protocol::GameMode;
 use fallingsand_sim::CellWorld;
+use fallingsand_sim::bodies::Shove;
 use fallingsand_sim::physics::{
     Footprint, PlayerParams, StepInput, footprint_at, grounded, step_player,
 };
@@ -70,11 +70,10 @@ pub fn step_physics(sim: &mut CellWorld, bodies: &mut BodyWorld, players: &mut P
             if !cell.is_body() {
                 continue;
             }
-            if !bodies.push_at(
+            if !bodies.push(
                 blocked.pos,
                 blocked.velocity_delta_x,
                 blocked.velocity_delta_y,
-                PLAYER_MASS_CELLS,
             ) {
                 let jx = PLAYER_MASS * blocked.velocity_delta_x.to_cells_per_second();
                 let jy = PLAYER_MASS * blocked.velocity_delta_y.to_cells_per_second();
@@ -104,6 +103,24 @@ pub fn step_physics(sim: &mut CellWorld, bodies: &mut BodyWorld, players: &mut P
         {
             avatar.pending_impulse.0 += jx;
             avatar.pending_impulse.1 += jy;
+        }
+    }
+}
+
+pub fn deliver(players: &mut Players, shoves: impl Iterator<Item = Shove>) {
+    for shove in shoves {
+        let target = players.iter().find_map(|(&id, player)| {
+            player
+                .avatar()
+                .filter(|avatar| avatar.stamp.covers(shove.pos))
+                .map(|_| id)
+        });
+        if let Some(avatar) = target
+            .and_then(|id| players.get_mut(id))
+            .and_then(|player| player.avatar_mut())
+        {
+            avatar.pending_impulse.0 += PLAYER_MASS * shove.dvx.to_cells_per_second();
+            avatar.pending_impulse.1 += PLAYER_MASS * shove.dvy.to_cells_per_second();
         }
     }
 }

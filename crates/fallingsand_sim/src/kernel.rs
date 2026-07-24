@@ -190,7 +190,7 @@ impl Simulator {
         windows.par_iter_mut().for_each(kernel);
         drop(windows);
         for events in &mut self.events[..self.origins.len()] {
-            world.push_structural(events.drain_structural());
+            world.push_unseated(events.drain_unseated());
         }
     }
 }

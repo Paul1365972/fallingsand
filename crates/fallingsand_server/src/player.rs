@@ -15,6 +15,8 @@ pub const PLAYER_HALF_H: Subcell =
 pub const PLAYER_MASS_CELLS: u32 =
     (fallingsand_sim::player::PLAYER_COLS * fallingsand_sim::player::STAND_ROWS) as u32;
 pub const PLAYER_MASS: f32 = PLAYER_MASS_CELLS as f32;
+pub const PLAYER_MASS_UNITS: i64 = PLAYER_MASS_CELLS as i64
+    * fallingsand_sim::bodies::material_mass(fallingsand_core::content::material::FLESH);
 
 #[derive(Default)]
 pub struct Players {

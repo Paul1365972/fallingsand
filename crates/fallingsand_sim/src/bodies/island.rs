@@ -1,5 +1,5 @@
-use crate::world::CellWorld;
-use fallingsand_core::{Cell, CellPos, Phase, content};
+use crate::world::{CellWorld, blocking, rigid_seed};
+use fallingsand_core::{Cell, CellPos, MaterialId, content};
 use rustc_hash::FxHashSet;
 use std::collections::VecDeque;
 
@@ -7,11 +7,7 @@ const MAX_BODY_EXTENT: i32 = 48;
 const MAX_ISLAND_CELLS: usize = 2048;
 
 fn rigid_terrain(world: &CellWorld, pos: CellPos) -> Option<Cell> {
-    let cell = world.get_cell(pos)?;
-    (!cell.is_body()
-        && content::phase(cell.material) == Phase::Solid
-        && content::is_rigid_capable(cell.material))
-    .then_some(cell)
+    world.get_cell(pos).filter(|&cell| rigid_seed(cell))
 }
 
 pub fn detect_detached_island(world: &CellWorld, seed: CellPos) -> Option<Vec<CellPos>> {
@@ -57,12 +53,10 @@ pub fn detect_detached_island(world: &CellWorld, seed: CellPos) -> Option<Vec<Ce
     Some(island)
 }
 
-fn supported(world: &CellWorld, pos: CellPos, material: fallingsand_core::MaterialId) -> bool {
+fn supported(world: &CellWorld, pos: CellPos, material: MaterialId) -> bool {
     let below = pos.translated(0, -1);
     if rigid_terrain(world, below).is_some_and(|cell| content::bonds(material, cell.material)) {
         return false;
     }
-    world.get_cell(below).is_some_and(|cell| {
-        cell.is_body() || matches!(content::phase(cell.material), Phase::Solid | Phase::Powder)
-    })
+    world.get_cell(below).is_some_and(blocking)
 }

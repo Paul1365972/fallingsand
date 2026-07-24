@@ -4,14 +4,51 @@ use rustc_hash::FxHashMap;
 
 const CELL_SHADE_SALT: Hash = Hash::label("simulation.cell_shade");
 
-pub(crate) fn structural(cell: Cell) -> bool {
-    cell.is_body() || matches!(content::phase(cell.material), Phase::Solid | Phase::Powder)
+pub(crate) fn obstructs(material: MaterialId) -> bool {
+    matches!(content::phase(material), Phase::Solid | Phase::Powder)
+}
+
+pub(crate) fn blocking(cell: Cell) -> bool {
+    cell.is_body() || obstructs(cell.material)
+}
+
+pub(crate) fn rigid_seed(cell: Cell) -> bool {
+    !cell.is_body()
+        && content::phase(cell.material) == Phase::Solid
+        && content::is_rigid_capable(cell.material)
+}
+
+fn support_class(cell: Cell) -> u8 {
+    if !obstructs(cell.material) {
+        return 0;
+    }
+    match content::bond_group(cell.material) {
+        u8::MAX => 1,
+        group => 2 + group,
+    }
+}
+
+pub(crate) enum Unseated {
+    Nothing,
+    Written,
+    Neighbours,
+}
+
+pub(crate) fn unseated(old: Cell, new: Cell) -> Unseated {
+    let before = support_class(old);
+    if before == support_class(new) {
+        Unseated::Nothing
+    } else if before != 0 {
+        Unseated::Neighbours
+    } else {
+        Unseated::Written
+    }
 }
 
 #[derive(Default)]
 pub struct CellWorld {
     chunks: FxHashMap<ChunkPos, Chunk>,
-    structural: Vec<CellPos>,
+    unseated: Vec<CellPos>,
     tick: u64,
 }
 
@@ -61,16 +98,31 @@ impl CellWorld {
     }
 
     pub(crate) fn set(&mut self, pos: CellPos, mut cell: Cell, notify: bool) {
+        cell.flags &= Cell::BODY;
         let Some(chunk) = self.chunks.get_mut(&pos.chunk()) else {
             return;
         };
         let old = chunk.get(pos.offset());
-        cell.flags &= Cell::BODY;
         chunk.set(pos.offset(), cell);
-        if notify && old != cell && (structural(old) || structural(cell)) {
-            self.structural.push(pos);
-        }
         self.mark_sim_border(pos);
+        if !notify {
+            return;
+        }
+        match unseated(old, cell) {
+            Unseated::Nothing => {}
+            Unseated::Written => self.unseat(pos),
+            Unseated::Neighbours => {
+                for around in pos.neighbourhood() {
+                    self.unseat(around);
+                }
+            }
+        }
+    }
+
+    fn unseat(&mut self, pos: CellPos) {
+        if self.get_cell(pos).is_some_and(rigid_seed) {
+            self.unseated.push(pos);
+        }
     }
 
     fn mark_sim_border(&mut self, pos: CellPos) {
@@ -113,12 +165,12 @@ impl CellWorld {
         true
     }
 
-    pub(crate) fn push_structural(&mut self, positions: impl IntoIterator<Item = CellPos>) {
-        self.structural.extend(positions);
+    pub(crate) fn push_unseated(&mut self, positions: impl IntoIterator<Item = CellPos>) {
+        self.unseated.extend(positions);
     }
 
-    pub fn drain_structural(&mut self) -> impl Iterator<Item = CellPos> + '_ {
-        self.structural.drain(..)
+    pub fn drain_unseated(&mut self) -> impl Iterator<Item = CellPos> + '_ {
+        self.unseated.drain(..)
     }
 
     pub fn awake_counts(&self) -> (usize, u64) {

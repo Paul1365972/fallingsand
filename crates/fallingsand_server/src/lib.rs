@@ -287,7 +287,9 @@ impl ServerState {
             "bodies",
             |t| &mut t.bodies,
             |s| {
-                let metrics = s.bodies.step(&mut s.sim, &s.tickets);
+                let metrics = s.bodies.step(&mut s.sim, &s.tickets, &s.players);
+                let shoves: Vec<_> = s.bodies.drain_shoves().collect();
+                physics::deliver(&mut s.players, shoves.into_iter());
                 s.stats.pixel_bodies = metrics.bodies;
             },
         );

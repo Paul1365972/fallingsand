@@ -7,6 +7,19 @@ pub const fn ticks_from_secs(secs: f32) -> u64 {
     (secs * TICK_RATE as f32 + 0.5) as u64
 }
 
+pub const fn round_div(numerator: i128, denominator: i128) -> i128 {
+    let half = denominator / 2;
+    if numerator >= 0 {
+        (numerator + half) / denominator
+    } else {
+        (numerator - half) / denominator
+    }
+}
+
+pub const fn ceil_div(numerator: i128, denominator: i128) -> i128 {
+    (numerator + denominator - 1) / denominator
+}
+
 const GOLDEN: u64 = 0x9e37_79b9_7f4a_7c15;
 
 #[inline]

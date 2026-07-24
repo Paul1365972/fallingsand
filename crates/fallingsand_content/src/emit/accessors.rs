@@ -61,6 +61,16 @@ pub fn emit(content: &Content) -> TokenStream {
         }),
         true,
     );
+    let surface_grip_q16 = accessor_fn(
+        "surface_grip_q16",
+        quote!(u32),
+        content.materials.iter().map(|mat| {
+            let raw = (f64::from(mat.surface_grip.clamp(0.0, 1.0)) * 65536.0).round() as u32;
+            let value = Literal::u32_suffixed(raw);
+            quote!(#value)
+        }),
+        true,
+    );
     let flow_threshold = accessor_fn(
         "flow_threshold",
         quote!(u64),
@@ -174,6 +184,7 @@ pub fn emit(content: &Content) -> TokenStream {
         #is_rigid_capable
         #bond_group
         #restitution_q16
+        #surface_grip_q16
         #flow_threshold
         #liquid_impact_q16
         #ignition

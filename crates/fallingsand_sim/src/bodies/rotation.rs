@@ -39,6 +39,73 @@ const SHEARS_128: [(i64, i64); 33] = [
 const SHEAR_STEPS: u32 = 128;
 pub(super) const ANGLE_STEPS: u32 = 64;
 pub(super) const TURN_UNITS: i64 = 1 << 20;
+const ORIENTATION: i64 = TURN_UNITS / ANGLE_STEPS as i64;
+
+const TAU_NUMERATOR: i128 = 710;
+const TAU_DENOMINATOR: i128 = 113;
+const RADIANS_PER_TURN: i128 = TURN_UNITS as i128 * TAU_DENOMINATOR;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, PartialOrd, Ord)]
+pub(super) struct Spin(i64);
+
+impl Spin {
+    pub(super) const ZERO: Self = Self(0);
+
+    pub(super) const fn from_raw(raw: i64) -> Self {
+        Self(raw)
+    }
+
+    pub(super) const fn raw(self) -> i64 {
+        self.0
+    }
+
+    pub(super) fn speed_at(self, lever: i64) -> i64 {
+        round_div_i128(
+            TAU_NUMERATOR * i128::from(self.0) * i128::from(lever),
+            RADIANS_PER_TURN,
+        ) as i64
+    }
+
+    pub(super) fn for_speed_at(speed: i64, lever: i64) -> Self {
+        Self(round_div_i128(
+            i128::from(speed) * RADIANS_PER_TURN,
+            TAU_NUMERATOR * i128::from(lever.max(1)),
+        ) as i64)
+    }
+
+    pub(super) fn from_angular_impulse(impulse: i128, moment: i128) -> Self {
+        if moment == 0 {
+            return Self::ZERO;
+        }
+        Self(round_div_i128(impulse * RADIANS_PER_TURN, moment * TAU_NUMERATOR) as i64)
+    }
+
+    pub(super) fn orientations(self) -> i64 {
+        (self.0.abs() + ORIENTATION - 1) / ORIENTATION
+    }
+
+    pub(super) fn clamped(self, limit: Self) -> Self {
+        Self(self.0.clamp(-limit.0, limit.0))
+    }
+
+    pub(super) fn part(self, of: i64, over: i64) -> Self {
+        Self(round_div_i128(i128::from(self.0) * i128::from(of), i128::from(over)) as i64)
+    }
+}
+
+impl std::ops::Add for Spin {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Self(self.0 + other.0)
+    }
+}
+
+impl std::ops::AddAssign for Spin {
+    fn add_assign(&mut self, other: Self) {
+        self.0 += other.0;
+    }
+}
 
 pub(super) fn quantize_step(angle: i64) -> u32 {
     round_div_i128(

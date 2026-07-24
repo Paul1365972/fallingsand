@@ -8,9 +8,9 @@ use fallingsand_math::{Hash, Rng, SUBCELL_BITS, SUBCELL_UNITS_PER_CELL};
 const GRID_GRAVITY: f32 = 600.0;
 const MOVEMENT_SALT: Hash = Hash::label("simulation.movement");
 const LIQUID_WAKE_SALT: Hash = Hash::label("simulation.liquid_wake");
-const MAX_COMPONENT_CELLS: i32 = 31;
-const _: () = assert!(MAX_COMPONENT_CELLS < SPEED_OF_LIGHT);
-const MAX_COMPONENT_RAW: i32 = MAX_COMPONENT_CELLS * SUBCELL_UNITS_PER_CELL;
+pub(crate) const MAX_SPEED_CELLS: i32 = 31;
+const _: () = assert!(MAX_SPEED_CELLS < SPEED_OF_LIGHT);
+const MAX_COMPONENT_RAW: i32 = MAX_SPEED_CELLS * SUBCELL_UNITS_PER_CELL;
 const SETTLE: i32 = (7.5 * TICK_DT * SUBCELL_UNITS_PER_CELL as f32) as i32;
 pub(crate) const GRAVITY_DV: i32 =
     (GRID_GRAVITY * TICK_DT * TICK_DT * SUBCELL_UNITS_PER_CELL as f32 + 0.5) as i32;
@@ -323,7 +323,7 @@ fn step_cells(velocity: i32, rng: &mut Rng) -> i32 {
     let fraction = magnitude % SUBCELL_UNITS_PER_CELL;
     let cells = magnitude / SUBCELL_UNITS_PER_CELL
         + i32::from((rng.draw().bits(SUBCELL_BITS) as i32) < fraction);
-    cells.min(MAX_COMPONENT_CELLS) * velocity.signum()
+    cells.min(MAX_SPEED_CELLS) * velocity.signum()
 }
 
 pub(crate) fn can_enter(window: &SimWindow, mover: MaterialId, dy: i32, target: CellPos) -> bool {

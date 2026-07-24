@@ -1,4 +1,4 @@
-use fallingsand_math::{SUBCELL_BITS, SUBCELL_UNITS_PER_CELL, TICK_DT, TICK_RATE};
+use fallingsand_math::{SUBCELL_BITS, SUBCELL_UNITS_PER_CELL, TICK_DT, TICK_RATE, round_div};
 use serde::{Deserialize, Serialize};
 
 const UNITS_PER_CELL: i64 = SUBCELL_UNITS_PER_CELL as i64;
@@ -7,15 +7,6 @@ const UNITS_PER_CELL: i64 = SUBCELL_UNITS_PER_CELL as i64;
     Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
 )]
 pub struct Subcell(i64);
-
-const fn round_div(n: i128, d: i128) -> i128 {
-    let half = d / 2;
-    if n >= 0 {
-        (n + half) / d
-    } else {
-        (n - half) / d
-    }
-}
 
 impl Subcell {
     pub const ZERO: Self = Self(0);
