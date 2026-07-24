@@ -1,13 +1,17 @@
-use fallingsand_core::{CHUNK_SIZE, Cell, CellPos, Chunk, ChunkPos, MaterialId};
+use fallingsand_core::{CHUNK_SIZE, Cell, CellPos, Chunk, ChunkPos, MaterialId, Phase, content};
 use fallingsand_math::Hash;
 use rustc_hash::FxHashMap;
 
 const CELL_SHADE_SALT: Hash = Hash::label("simulation.cell_shade");
 
+pub(crate) fn structural(cell: Cell) -> bool {
+    cell.is_body() || matches!(content::phase(cell.material), Phase::Solid | Phase::Powder)
+}
+
 #[derive(Default)]
 pub struct CellWorld {
     chunks: FxHashMap<ChunkPos, Chunk>,
-    detachment_checks: Vec<CellPos>,
+    structural: Vec<CellPos>,
     tick: u64,
 }
 
@@ -56,63 +60,17 @@ impl CellWorld {
         self.chunks.get(&pos.chunk()).map(|c| c.get(pos.offset()))
     }
 
-    pub(crate) fn set_cell(&mut self, pos: CellPos, cell: Cell) {
-        self.set_cell_with_detachment_checks(pos, cell, true);
-    }
-
-    fn set_cell_with_detachment_checks(
-        &mut self,
-        pos: CellPos,
-        mut cell: Cell,
-        check_detachment: bool,
-    ) {
+    pub(crate) fn set(&mut self, pos: CellPos, mut cell: Cell, notify: bool) {
         let Some(chunk) = self.chunks.get_mut(&pos.chunk()) else {
             return;
         };
-        cell.flags = 0;
-        chunk.set(pos.offset(), cell);
-        self.mark_sim_border(pos);
-        if check_detachment {
-            self.queue_detachment_checks_around(pos);
-        }
-    }
-
-    pub(crate) fn set_cell_raw(&mut self, pos: CellPos, cell: Cell) {
-        self.set_cell_raw_with_detachment_checks(pos, cell, true);
-    }
-
-    pub(crate) fn set_cell_raw_quiet(&mut self, pos: CellPos, cell: Cell) {
-        self.set_cell_raw_with_detachment_checks(pos, cell, false);
-    }
-
-    fn set_cell_raw_with_detachment_checks(
-        &mut self,
-        pos: CellPos,
-        mut cell: Cell,
-        check_detachment: bool,
-    ) {
-        let Some(chunk) = self.chunks.get_mut(&pos.chunk()) else {
-            return;
-        };
+        let old = chunk.get(pos.offset());
         cell.flags &= Cell::BODY;
         chunk.set(pos.offset(), cell);
+        if notify && old != cell && (structural(old) || structural(cell)) {
+            self.structural.push(pos);
+        }
         self.mark_sim_border(pos);
-        if check_detachment {
-            self.queue_detachment_checks_around(pos);
-        }
-    }
-
-    fn queue_detachment_checks_around(&mut self, changed: CellPos) {
-        for dy in -1..=1 {
-            for dx in -1..=1 {
-                let pos = changed.translated(dx, dy);
-                if self.get_cell(pos).is_some_and(|cell| {
-                    cell.is_body() || fallingsand_core::content::is_rigid_capable(cell.material)
-                }) {
-                    self.detachment_checks.push(pos);
-                }
-            }
-        }
     }
 
     fn mark_sim_border(&mut self, pos: CellPos) {
@@ -135,46 +93,32 @@ impl CellWorld {
         }
     }
 
-    fn material_cell(&self, pos: CellPos, material: MaterialId) -> Cell {
-        let shade = Hash::seed(self.tick)
-            .salt(CELL_SHADE_SALT)
-            .pos(pos.x, pos.y)
-            .bits(4) as u8;
-        Cell::new(material, shade)
-    }
-
-    pub fn clear_cell(&mut self, pos: CellPos) {
-        self.set_cell(pos, Cell::AIR);
-    }
-
-    pub fn fill_material(&mut self, pos: CellPos, material: MaterialId) -> bool {
-        self.fill_material_with_detachment_checks(pos, material, true)
-    }
-
-    pub fn fill_material_quiet(&mut self, pos: CellPos, material: MaterialId) -> bool {
-        self.fill_material_with_detachment_checks(pos, material, false)
-    }
-
-    fn fill_material_with_detachment_checks(
-        &mut self,
-        pos: CellPos,
-        material: MaterialId,
-        check_detachment: bool,
-    ) -> bool {
-        if !self.get_cell(pos).is_some_and(|cell| cell.is_air()) {
+    pub fn set_material(&mut self, pos: CellPos, material: MaterialId, notify: bool) -> bool {
+        let Some(old) = self.get_cell(pos) else {
+            return false;
+        };
+        if material != MaterialId::AIR && !old.is_air() {
             return false;
         }
-        let cell = self.material_cell(pos, material);
-        self.set_cell_with_detachment_checks(pos, cell, check_detachment);
+        let cell = if material == MaterialId::AIR {
+            Cell::AIR
+        } else {
+            let shade = Hash::seed(self.tick)
+                .salt(CELL_SHADE_SALT)
+                .pos(pos.x, pos.y)
+                .bits(4) as u8;
+            Cell::new(material, shade)
+        };
+        self.set(pos, cell, notify);
         true
     }
 
-    pub(crate) fn push_detachment_checks(&mut self, positions: impl IntoIterator<Item = CellPos>) {
-        self.detachment_checks.extend(positions);
+    pub(crate) fn push_structural(&mut self, positions: impl IntoIterator<Item = CellPos>) {
+        self.structural.extend(positions);
     }
 
-    pub fn drain_detachment_checks(&mut self) -> impl Iterator<Item = CellPos> + '_ {
-        self.detachment_checks.drain(..)
+    pub fn drain_structural(&mut self) -> impl Iterator<Item = CellPos> + '_ {
+        self.structural.drain(..)
     }
 
     pub fn awake_counts(&self) -> (usize, u64) {

@@ -1,4 +1,5 @@
-use fallingsand_core::{CHUNK_SIZE, Cell, CellPos, Chunk, ChunkPos, content};
+use crate::world::structural;
+use fallingsand_core::{CHUNK_SIZE, Cell, CellPos, Chunk, ChunkPos, Phase, content};
 
 pub const WINDOW_CHUNKS: i32 = 4;
 pub const WINDOW_SLOTS: usize = (WINDOW_CHUNKS * WINDOW_CHUNKS) as usize;
@@ -13,16 +14,16 @@ pub struct SimWindow<'a> {
 
 #[derive(Default)]
 pub(crate) struct WindowEvents {
-    detachment_checks: Vec<CellPos>,
+    structural: Vec<CellPos>,
 }
 
 impl WindowEvents {
     pub(crate) fn clear(&mut self) {
-        self.detachment_checks.clear();
+        self.structural.clear();
     }
 
-    pub(crate) fn drain_detachment_checks(&mut self) -> impl Iterator<Item = CellPos> + '_ {
-        self.detachment_checks.drain(..)
+    pub(crate) fn drain_structural(&mut self) -> impl Iterator<Item = CellPos> + '_ {
+        self.structural.drain(..)
     }
 }
 
@@ -75,6 +76,7 @@ impl<'a> SimWindow<'a> {
         self.slots[slot].as_ref().map(|c| c.get(pos.offset()))
     }
 
+    #[inline]
     pub fn set(&mut self, pos: CellPos, cell: Cell) {
         let Some(slot) = self.slot_of(pos) else {
             return;
@@ -85,23 +87,26 @@ impl<'a> SimWindow<'a> {
         };
         chunk.set(pos.offset(), cell);
         self.mark_sim_border(pos);
-        self.queue_detachment_checks_around(pos);
     }
 
-    fn queue_detachment_checks_around(&mut self, changed: CellPos) {
-        for dy in -1..=1 {
-            for dx in -1..=1 {
-                let pos = changed.translated(dx, dy);
-                if self
-                    .get(pos)
-                    .is_some_and(|cell| cell.is_body() || content::is_rigid_capable(cell.material))
-                {
-                    self.events.detachment_checks.push(pos);
-                }
-            }
+    pub fn transform(&mut self, pos: CellPos, mut cell: Cell) {
+        let Some(slot) = self.slot_of(pos) else {
+            return;
+        };
+        let Some(chunk) = self.slots[slot].as_mut() else {
+            debug_assert!(false, "write to unloaded chunk at {pos:?}");
+            return;
+        };
+        let old = chunk.get(pos.offset());
+        cell.set_body(old.is_body() && content::phase(cell.material) == Phase::Solid);
+        chunk.set(pos.offset(), cell);
+        self.mark_sim_border(pos);
+        if old != cell && (structural(old) || structural(cell)) {
+            self.events.structural.push(pos);
         }
     }
 
+    #[inline]
     fn mark_sim_border(&mut self, pos: CellPos) {
         let off = pos.offset();
         let last = (CHUNK_SIZE - 1) as u8;
@@ -143,5 +148,8 @@ impl<'a> SimWindow<'a> {
         displaced.flags |= Cell::MOVED;
         self.set(mover, displaced);
         self.set(target, moving);
+        if structural(moving) || structural(displaced) {
+            self.events.structural.extend([mover, target]);
+        }
     }
 }

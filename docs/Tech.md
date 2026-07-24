@@ -24,6 +24,6 @@ Direction: `{math, material} ← content ← core(build)`, `{math, material} ←
 
 Verify behavior with a temporary example (deleted before commit) that drives the real kernel:
 
-- Build a `CellWorld`, insert fresh chunks one chunk beyond the scenario on every side (a chunk simulates only with its full 3×3 loaded), place cells with `fill_material` / `clear_cell`, and step with `step_scoped(&mut world, &|_| true, &|_| true)` — keep the random-tick closure on, it is part of behavior.
+- Build a `CellWorld`, insert fresh chunks one chunk beyond the scenario on every side (a chunk simulates only with its full 3×3 loaded), place and remove cells with `set_material`, and step with `step_scoped(&mut world, &|_| true, &|_| true)` — keep the random-tick closure on, it is part of behavior.
 - Measure, don't eyeball: print regions top-down (Y is up), count cells per material for conservation, track per-column tops for leveling, and check `awake_counts()` to prove settling actually sleeps.
 - For realistic coverage, place the example in `fallingsand_server` and insert `WorldGenerator::generate_region` output — multiple bodies on real terrain expose scheduling and wake bugs that single-basin tubs cannot.

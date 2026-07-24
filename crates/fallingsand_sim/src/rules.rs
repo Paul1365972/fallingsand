@@ -21,11 +21,11 @@ macro_rules! material_dispatch {
 fallingsand_core::for_each_material!(material_dispatch);
 
 fn apply_effects<M: MatSpec>(window: &mut SimWindow, pos: CellPos, cell: Cell, tick: u64) {
-    if cell.is_body() {
-        return;
-    }
     let mut rng = Hash::seed(tick).salt(EFFECT_SALT).pos(pos.x, pos.y).rng();
     if chemistry::apply::<M>(window, pos, &mut rng) {
+        return;
+    }
+    if cell.is_body() {
         return;
     }
     match const { M::DYNAMICS } {

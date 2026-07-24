@@ -163,7 +163,7 @@ pub fn stamp_player(
         });
         if !intact {
             for &(pos, local) in &raster.cells {
-                world.set_cell_raw(pos, flesh_cell(local, rows, facing_left));
+                world.set(pos, flesh_cell(local, rows, facing_left), true);
             }
         }
         return Some(());
@@ -183,7 +183,7 @@ pub fn stamp_player(
 pub fn unstamp_player(world: &mut CellWorld, stamp: &mut PlayerStamp) {
     if let Some(raster) = stamp.raster.take() {
         for &(pos, _) in &raster.cells {
-            world.set_cell_raw(pos, Cell::AIR);
+            world.set(pos, Cell::AIR, true);
         }
     }
 }

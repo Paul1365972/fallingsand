@@ -76,16 +76,16 @@ pub(crate) fn commit_stamp(
 
     for (pos, cell) in writes {
         if world.get_cell(pos) != Some(cell) {
-            world.set_cell_raw(pos, cell);
+            world.set(pos, cell, true);
         }
     }
     for &(pos, local) in &new.cells {
         let cell = cell_for(local);
         if world.get_cell(pos) != Some(cell) {
             if old.covers(pos) {
-                world.set_cell_raw_quiet(pos, cell);
+                world.set(pos, cell, false);
             } else {
-                world.set_cell_raw(pos, cell);
+                world.set(pos, cell, true);
             }
         }
     }

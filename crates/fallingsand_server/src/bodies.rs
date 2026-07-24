@@ -26,7 +26,14 @@ impl BodyWorld {
     }
 
     pub fn step(&mut self, sim: &mut CellWorld, tickets: &ChunkTickets) -> BodyStepMetrics {
-        self.pending_checks.extend(sim.drain_detachment_checks());
+        self.set.reconcile(sim);
+        for changed in sim.drain_structural() {
+            for dy in -1..=1 {
+                for dx in -1..=1 {
+                    self.pending_checks.push(changed.translated(dx, dy));
+                }
+            }
+        }
         std::mem::swap(&mut self.pending_checks, &mut self.checks);
         self.checks.sort_unstable_by_key(|pos| (pos.y, pos.x));
         self.checks.dedup();

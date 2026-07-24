@@ -78,8 +78,7 @@ fn ignite(window: &mut SimWindow, pos: CellPos, ignition: Ignition, rng: &mut Rn
         };
         cell.material = ignition.into;
         cell.aux = 0;
-        cell.set_body(false);
-        window.set(pos, cell);
+        window.transform(pos, cell);
         return true;
     }
     false
@@ -108,7 +107,7 @@ fn burn(window: &mut SimWindow, pos: CellPos, burning: Burning, rng: &mut Rng) -
                 };
                 cell.material = material;
                 cell.aux = 0;
-                window.set(pos, cell);
+                window.transform(pos, cell);
                 return true;
             }
             SealedBurn::Smoulder(threshold) => threshold,
@@ -157,5 +156,5 @@ fn oxygen_exposed(window: &SimWindow, pos: CellPos) -> bool {
 }
 
 fn set_product(window: &mut SimWindow, pos: CellPos, material: MaterialId, rng: &mut Rng) {
-    window.set(pos, Cell::new(material, rng.draw().bits(4) as u8));
+    window.transform(pos, Cell::new(material, rng.draw().bits(4) as u8));
 }

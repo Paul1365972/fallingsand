@@ -167,7 +167,7 @@ fn active_dig(
             return;
         }
     }
-    world.clear_cell(target);
+    world.set_material(target, MaterialId::AIR, true);
     dig.clear_progress();
     dig.interaction = Some(dig_interaction(target, 1.0, plan.material));
 }
@@ -202,11 +202,7 @@ fn active_place(
         return;
     };
 
-    let placed = if context.survival {
-        world.fill_material(target, material)
-    } else {
-        world.fill_material_quiet(target, material)
-    };
+    let placed = world.set_material(target, material, context.survival);
     if !placed {
         dig.interaction = Some(interaction(target, InteractionStatus::Occupied, 0.0));
         return;
@@ -262,9 +258,6 @@ fn classify_dig(
     let Some(cell) = world.get_cell(target) else {
         return Err(InteractionStatus::OutOfReach);
     };
-    if cell.is_body() {
-        return Err(InteractionStatus::Occupied);
-    }
     let material = cell.material;
     if !destructible(material, context.survival) {
         return Err(InteractionStatus::Occupied);
@@ -429,7 +422,7 @@ fn destructible(material: MaterialId, survival: bool) -> bool {
 fn diggable(world: &World, pos: CellPos, survival: bool) -> bool {
     world
         .get_cell(pos)
-        .is_some_and(|cell| !cell.is_body() && destructible(cell.material, survival))
+        .is_some_and(|cell| destructible(cell.material, survival))
 }
 
 fn cell_distance_sq(body: &Actor, pos: CellPos) -> f32 {

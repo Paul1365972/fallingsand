@@ -5,9 +5,10 @@ Players and detached terrain are real cells in the world, moved by a small custo
 ## Invariants
 
 - **One cell, one owner** — terrain, one body, or one player; stamps are exclusive by construction.
-- **Body raster integrity** — a body flag corresponds to exactly one live body or player raster; public cell writes create only unflagged cells.
+- **Body raster integrity** — a body flag corresponds to exactly one live body or player raster. Material transmutation retains ownership only when an owned cell remains solid; removals and placements clear it. The body reconciles its tracked members from the grid before motion.
 - **Mass through motion** — exact lattice rotation maps every member to one cell; every relocation pairs entered fluid with a vacated cell; settling only clears ownership flags.
-- **Transient bodies** — a detached island is a short-lived motion event. Its cells are inert and undiggable while moving, then regain every terrain rule the instant they land.
+- **Bodies are terrain** — owned cells run the same reactions, decay, combustion, digging, and material writes as terrain. Ownership suspends only independent cell movement.
+- **No active welding** — an active body retains only its existing transformed members. Reactions may split or release them, but contact with terrain or another body never adds members or merges bodies.
 - **Suspend/resume** — unload settles crossing bodies; a save naturally records any live raster as terrain because runtime flags are never persisted. There is no body persistence format.
 
 ## Player
@@ -20,14 +21,14 @@ The stamp commits the sweep's pose: liquids in newly claimed cells pair into vac
 
 ## Pixel bodies
 
-A pixel body is an immutable canonical cell shape, fixed-point motion and rotation accumulators, and one flagged world raster. It has no solver state, contact graph, owner plane, damage queue, sleep state, or persistence record.
+A pixel body is canonical local membership, a bond cache, fixed-point motion and rotation, and one flagged world raster. Material state and per-cell reactions live only in the grid. It has no copied material state, solver state, contact graph, owner plane, damage queue, sleep state, or persistence record.
 
-- **Bonds decide detachment** — rigid materials author bond groups; the symmetric bond matrix flood-fills an island and any solid or powder support rejects it. Moving bodies never merge. Landed cells are terrain again and participate in the next flood fill normally.
-- **Detachment discovery is local** — ordinary writes queue nearby rigid cells for support checks. Discovery waits when the whole island margin is not simulated, then atomically flags a detached island.
+- **Bonds decide detachment and splitting** — rigid materials author bond groups; the symmetric bond matrix flood-fills an island and any solid or powder support rejects it. Reconciliation is a cached linear scan while membership and bond groups are unchanged. On invalidation, the owned cells return to the grid with their rigid point velocities, the original membership alone is split by bonds, and each surviving component is recaptured. Newly adjacent cells are never considered, so active bodies cannot weld. Landed cells are terrain again and participate in the next flood fill normally.
+- **Detachment discovery is local** — writes record only the changed structural positions. The sequential body phase expands, sorts, and deduplicates their neighborhoods before support checks, keeping topology work out of the parallel cell kernel. Discovery waits when the whole island margin is not simulated, then atomically flags a detached island.
 - **Motion is swept and exact** — gravity and player pushes advance one combined translation-and-rotation traversal over 64 authoritative lattice orientations; continuous turn is only the accumulator between them. Fixed-point traversal steps bound requested point travel and cross at most one orientation per step, with every proposal compared against the immediately preceding valid raster. The reversible integer-lattice rotation map keeps every member unique, and a blocked combined transition is never decomposed into a path that was not swept.
-- **Blocked transitions redirect motion** — obstructed entering cell faces propose temporary bounce, slide, and spin responses in the mass-and-inertia metric; redundant faces collapse to their extreme lever arms, and parallel extremes share one whole-body response so broad faces bounce together. Incoming motion uses an impact response, while gravity-only support may sweep around its contact anchor so an overhanging body can tip without penetration or persistent contact state. Each proposal must sweep without crossing a blocked raster boundary before it can become motion; contact-only angle phase continues only when its next authoritative orientation is reachable. Only committed pose displacement contributes gravitational work. The most elastic body or struck cell controls restitution above a small body-wide minimum, tangential projection dissipates friction, and the absence of a valid nonzero successor settles immediately. A simulation frontier freezes the body in place.
+- **Blocked transitions use one response** — rejected entering cells identify blocked axes and one contact point. The most elastic body or struck cell controls restitution above a small body-wide minimum, tangential motion loses friction, and the off-center impulse changes spin. Low-energy downward contact settles immediately. A simulation frontier freezes the body in place.
 - **Relocation is transactional** — only the final raster is committed. Entered liquid and gas cells pair deterministically into vacated cells, conserving matter without a spill search.
-- **Interaction stays small** — a player push changes body velocity and torque at the contacted cell. Transfer uses at most the body's mass, so a one-cell body gains the blocked player speed instead of the player's full momentum divided by one cell. Bodies do not solve body–body stacks, buoyancy, crush damage, or in-flight reactions.
+- **Interaction stays small** — a player push changes body velocity and torque at the contacted cell. Transfer uses at most the body's mass, so a one-cell body gains the blocked player speed instead of the player's full momentum divided by one cell. Grid writes handle digging and chemistry without body-specific paths. Bodies do not solve body–body stacks, buoyancy, or crush damage.
 
 There is no gameplay body protocol or renderer: flagged cells ride ordinary chunk deltas and render as terrain. The opt-in diagnostic stream sends complete live rasters for ownership outlines.
 
@@ -42,4 +43,4 @@ There is no gameplay body protocol or renderer: flagged cells ride ordinary chun
 | Flesh | The player's inert body material — body-flagged, undiggable, and omitted from region snapshots |
 | PixelBody | Transient tumbling canonical cell shape over a flagged world raster |
 | Bond group | Authored connectivity class deciding which rigid materials hold together |
-| Detachment check | Tick-local request to reconsider the support of a nearby rigid cell |
+| Structural change | Tick-local position whose neighborhood may need a rigid support check |
