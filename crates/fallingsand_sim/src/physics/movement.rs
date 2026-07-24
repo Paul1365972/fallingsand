@@ -99,7 +99,7 @@ fn solids_bounce<W: CellSource>(world: &W, solids: &[CellPos]) -> f32 {
     let mut e = 0.0f32;
     for &pos in solids {
         if let Some(cell) = world.cell_at(pos) {
-            e = e.max(content::material(cell.material).surface_bounce);
+            e = e.max(content::material(cell.material).entity_bounce);
         }
     }
     e

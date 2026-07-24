@@ -343,10 +343,11 @@ pub struct MaterialDef {
     pub(crate) phase: Option<PhaseDef>,
     pub(crate) density: Option<f32>,
     pub(crate) colors: Option<Vec<Color>>,
-    pub(crate) surface_grip: Option<f32>,
+    pub(crate) entity_grip: Option<f32>,
+    pub(crate) friction: Option<f32>,
     pub(crate) hardness: Option<f32>,
     pub(crate) restitution: Option<f32>,
-    pub(crate) surface_bounce: Option<f32>,
+    pub(crate) entity_bounce: Option<f32>,
     pub(crate) contact_damage: Option<f32>,
     pub(crate) tags: Option<Vec<Tag>>,
     pub(crate) flammable: Option<FlammableDef>,
@@ -370,8 +371,13 @@ impl MaterialDef {
         self
     }
 
-    pub fn surface_grip(mut self, value: f32) -> Self {
-        self.surface_grip = Some(value);
+    pub fn entity_grip(mut self, value: f32) -> Self {
+        self.entity_grip = Some(value);
+        self
+    }
+
+    pub fn friction(mut self, value: f32) -> Self {
+        self.friction = Some(value);
         self
     }
 
@@ -385,8 +391,8 @@ impl MaterialDef {
         self
     }
 
-    pub fn surface_bounce(mut self, value: f32) -> Self {
-        self.surface_bounce = Some(value);
+    pub fn entity_bounce(mut self, value: f32) -> Self {
+        self.entity_bounce = Some(value);
         self
     }
 

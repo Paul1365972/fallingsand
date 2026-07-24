@@ -89,6 +89,14 @@ impl Subcell {
         Self(round_div(self.0 as i128, substeps as i128) as i64)
     }
 
+    pub const fn signum_cell(self) -> Self {
+        if self.0 < 0 {
+            Self(-UNITS_PER_CELL)
+        } else {
+            Self(UNITS_PER_CELL)
+        }
+    }
+
     pub const fn add_cells(self, cells: f32) -> Self {
         Self(self.0 + Self::from_cells(cells).0)
     }

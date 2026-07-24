@@ -58,10 +58,10 @@ impl Standing {
     }
 }
 
-pub struct Ambient<'a> {
+pub struct Ambient<S, P> {
     pub gravity: Subcell,
-    pub simulated: &'a dyn Fn(ChunkPos) -> bool,
-    pub stander: &'a dyn Fn(CellPos) -> Option<Stander>,
+    pub simulated: S,
+    pub stander: P,
 }
 
 #[derive(Default)]
@@ -179,7 +179,11 @@ impl BodySet {
         }
     }
 
-    pub fn step(&mut self, world: &mut CellWorld, ambient: &Ambient<'_>) {
+    pub fn step<S: Fn(ChunkPos) -> bool, P: Fn(CellPos) -> Option<Stander>>(
+        &mut self,
+        world: &mut CellWorld,
+        ambient: &Ambient<S, P>,
+    ) {
         self.bodies
             .sort_unstable_by_key(|body| body.raster.iter().map(|pos| pos.y).min());
         self.peers.owner.clear();

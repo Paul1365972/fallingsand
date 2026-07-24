@@ -12,10 +12,11 @@ pub(super) struct RawMaterial {
     pub(super) phase: PhaseDef,
     pub(super) density: f32,
     pub(super) colors: Vec<[u8; 4]>,
-    pub(super) surface_grip: f32,
+    pub(super) entity_grip: f32,
+    pub(super) friction: f32,
     pub(super) hardness: f32,
     pub(super) restitution: f32,
-    pub(super) surface_bounce: f32,
+    pub(super) entity_bounce: f32,
     pub(super) contact_damage: f32,
     pub(super) tags: Tags,
     pub(super) flammable: Option<FlammableDef>,
@@ -30,10 +31,11 @@ impl RawMaterial {
             phase: PhaseDef::Empty,
             density: 0.0,
             colors: Vec::new(),
-            surface_grip: 1.0,
+            entity_grip: 1.0,
+            friction: 0.5,
             hardness: 0.0,
             restitution: 0.0,
-            surface_bounce: 0.0,
+            entity_bounce: 0.0,
             contact_damage: 0.0,
             tags: Tags::EMPTY,
             flammable: None,
@@ -81,8 +83,11 @@ fn apply_definition(raw: &mut RawMaterial, definition: &MaterialDef) {
     if let Some(value) = &definition.colors {
         raw.colors.clone_from(value);
     }
-    if let Some(value) = definition.surface_grip {
-        raw.surface_grip = value;
+    if let Some(value) = definition.entity_grip {
+        raw.entity_grip = value;
+    }
+    if let Some(value) = definition.friction {
+        raw.friction = value;
     }
     if let Some(value) = definition.hardness {
         raw.hardness = value;
@@ -90,8 +95,8 @@ fn apply_definition(raw: &mut RawMaterial, definition: &MaterialDef) {
     if let Some(value) = definition.restitution {
         raw.restitution = value;
     }
-    if let Some(value) = definition.surface_bounce {
-        raw.surface_bounce = value;
+    if let Some(value) = definition.entity_bounce {
+        raw.entity_bounce = value;
     }
     if let Some(value) = definition.contact_damage {
         raw.contact_damage = value;
@@ -122,10 +127,11 @@ fn validate_material(raw: &RawMaterial) -> Result<(), Error> {
     }
     for (field, value) in [
         ("density", raw.density),
-        ("surface_grip", raw.surface_grip),
+        ("entity_grip", raw.entity_grip),
+        ("friction", raw.friction),
         ("hardness", raw.hardness),
         ("restitution", raw.restitution),
-        ("surface_bounce", raw.surface_bounce),
+        ("entity_bounce", raw.entity_bounce),
         ("contact_damage", raw.contact_damage),
     ] {
         validate_number(&format!("{context}: {field}"), value)?;

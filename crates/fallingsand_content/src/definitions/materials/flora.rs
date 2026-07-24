@@ -20,6 +20,7 @@ pub fn define(catalog: &mut Catalog) {
                 [110, 76, 52, 255],
             ])
             .hardness(0.35)
+            .friction(0.4)
             .restitution(0.3)
             .tag(Tag::Dissolvable)
             .flammable(
@@ -109,7 +110,7 @@ pub fn define(catalog: &mut Catalog) {
             ])
             .hardness(0.1)
             .restitution(0.3)
-            .surface_bounce(0.6),
+            .entity_bounce(0.6),
     );
     catalog.add(
         GLOWSHROOM,

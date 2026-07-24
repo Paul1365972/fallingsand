@@ -98,7 +98,7 @@ fn ground_grip<W: CellSource>(world: &W, body: &Actor) -> f32 {
             && matches!(content::phase(cell.material), Phase::Solid | Phase::Powder)
         {
             found = true;
-            grip = grip.max(content::material(cell.material).surface_grip);
+            grip = grip.max(content::material(cell.material).entity_grip);
         }
     }
     if found {

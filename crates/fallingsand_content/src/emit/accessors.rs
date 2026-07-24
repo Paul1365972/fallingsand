@@ -52,11 +52,11 @@ pub fn emit(content: &Content) -> TokenStream {
         }),
         true,
     );
-    let surface_grip = accessor_fn(
-        "surface_grip",
+    let friction = accessor_fn(
+        "friction",
         quote!(crate::material::Fraction),
         content.materials.iter().map(|mat| {
-            let raw = (f64::from(mat.surface_grip.clamp(0.0, 1.0)) * 65536.0).round() as u32;
+            let raw = (f64::from(mat.friction.clamp(0.0, 1.0)) * 65536.0).round() as u32;
             let value = Literal::u32_suffixed(raw);
             quote!(crate::material::Fraction::from_raw(#value))
         }),
@@ -118,8 +118,8 @@ pub fn emit(content: &Content) -> TokenStream {
             let hardness = Literal::f32_suffixed(mat.hardness);
             let mining_tier = Literal::u8_suffixed(mining_tier_from_hardness(mat.hardness));
             let restitution = Literal::f32_suffixed(mat.restitution);
-            let surface_grip = Literal::f32_suffixed(mat.surface_grip);
-            let surface_bounce = Literal::f32_suffixed(mat.surface_bounce);
+            let entity_grip = Literal::f32_suffixed(mat.entity_grip);
+            let entity_bounce = Literal::f32_suffixed(mat.entity_bounce);
             let contact_damage = Literal::f32_suffixed(mat.contact_damage);
             let [er, eg, eb] = mat.emission;
             let emission_r = Literal::f32_suffixed(er);
@@ -133,8 +133,8 @@ pub fn emit(content: &Content) -> TokenStream {
                     hardness: #hardness,
                     mining_tier: #mining_tier,
                     restitution: #restitution,
-                    surface_grip: #surface_grip,
-                    surface_bounce: #surface_bounce,
+                    entity_grip: #entity_grip,
+                    entity_bounce: #entity_bounce,
                     contact_damage: #contact_damage,
                     emission: [#emission_r, #emission_g, #emission_b],
                     flicker: #flicker,
@@ -174,7 +174,7 @@ pub fn emit(content: &Content) -> TokenStream {
         #tags
         #bond_group
         #restitution
-        #surface_grip
+        #friction
         #flow_threshold
         #liquid_impact
         #ignition

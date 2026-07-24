@@ -58,8 +58,8 @@ impl BodyWorld {
             sim,
             &Ambient {
                 gravity: BODY_GRAVITY,
-                simulated: &|chunk| tickets.simulates(chunk),
-                stander: &|pos| stander_at(players, pos),
+                simulated: |chunk| tickets.simulates(chunk),
+                stander: |pos| stander_at(players, pos),
             },
         );
         BodyStepMetrics {

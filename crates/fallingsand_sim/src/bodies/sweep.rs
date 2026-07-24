@@ -1,17 +1,17 @@
 use super::contact::{Axis, Contact, Peer, resolve};
 use super::rotation::{Spin, TURN_UNITS};
 use super::shape::{Motion, Pose, Vector, rasterize};
-use super::{Ambient, Body, Peers, Standing};
+use super::{Ambient, Body, Peers, Stander, Standing};
 use crate::motion::MAX_SPEED_CELLS;
 use crate::world::{CellWorld, blocking};
-use fallingsand_core::{CellPos, Subcell, content};
+use fallingsand_core::{CellPos, ChunkPos, Subcell, content};
 use fallingsand_math::{SUBCELL_UNITS_PER_CELL, ceil_div, round_div, ticks_from_secs};
 
 const CELL: i64 = SUBCELL_UNITS_PER_CELL as i64;
 const MAX_SPEED: i64 = MAX_SPEED_CELLS as i64 * CELL;
 const MAX_SUBSTEPS: u32 = 96;
 const WHOLE_TICK: i64 = 1 << 16;
-const REST_TICKS: u32 = ticks_from_secs(0.5) as u32;
+const REST_TICKS: u32 = ticks_from_secs(1.5) as u32;
 
 #[derive(Default)]
 pub(super) struct Scratch {
@@ -25,12 +25,12 @@ pub(super) struct Advance {
     pub settled: bool,
 }
 
-pub(super) fn advance(
+pub(super) fn advance<S: Fn(ChunkPos) -> bool, P: Fn(CellPos) -> Option<Stander>>(
     world: &CellWorld,
     bodies: &mut [Body],
     index: usize,
     peers: &mut Peers,
-    ambient: &Ambient<'_>,
+    ambient: &Ambient<S, P>,
     scratch: &mut Scratch,
 ) -> Advance {
     {
@@ -44,6 +44,7 @@ pub(super) fn advance(
     let mut substeps = 0;
     let mut elastic = true;
     let mut frozen = false;
+    let mut touched = false;
 
     while unspent > 0 && substeps < MAX_SUBSTEPS {
         let pass = sweep(
@@ -63,6 +64,7 @@ pub(super) fn advance(
                 break;
             }
             Stop::Blocked => {
+                touched = true;
                 unspent -= round_div(
                     i128::from(unspent) * i128::from(pass.consumed),
                     i128::from(pass.steps),
@@ -77,16 +79,62 @@ pub(super) fn advance(
         }
     }
 
+    if !touched {
+        touched = lean(world, bodies, index, peers, ambient, scratch);
+    }
+
     let body = &mut bodies[index];
     body.pose.angle = body.pose.angle.rem_euclid(TURN_UNITS);
     if frozen {
         body.motion = Motion::default();
     }
     let moved = scratch.current != body.raster;
-    body.rest = if moved || frozen { 0 } else { body.rest + 1 };
+    body.rest = if touched && !moved && !frozen {
+        body.rest + 1
+    } else {
+        0
+    };
     Advance {
         moved,
         settled: body.rest >= REST_TICKS,
+    }
+}
+
+/// A body whose motion never changed a cell has learnt nothing about what holds
+/// it up. Leaning one cell into gravity asks the grid directly, so a resting body
+/// keeps its weight on its contacts every tick instead of quietly free-falling
+/// between raster crossings.
+fn lean<S: Fn(ChunkPos) -> bool, P: Fn(CellPos) -> Option<Stander>>(
+    world: &CellWorld,
+    bodies: &mut [Body],
+    index: usize,
+    peers: &mut Peers,
+    ambient: &Ambient<S, P>,
+    scratch: &mut Scratch,
+) -> bool {
+    let body = &bodies[index];
+    let below = Pose {
+        y: body.pose.y + ambient.gravity.signum_cell(),
+        ..body.pose
+    };
+    rasterize(&body.slots, body.mass, below, &mut scratch.candidate);
+    if scratch.candidate == scratch.current {
+        return false;
+    }
+    match probe(
+        world,
+        index as u32,
+        peers,
+        ambient,
+        &scratch.current,
+        &scratch.candidate,
+        &mut scratch.contacts,
+    ) {
+        Probe::Blocked => {
+            resolve(bodies, index, &mut scratch.contacts, false, peers);
+            true
+        }
+        _ => false,
     }
 }
 
@@ -102,12 +150,12 @@ enum Stop {
     Frontier,
 }
 
-fn sweep(
+fn sweep<S: Fn(ChunkPos) -> bool, P: Fn(CellPos) -> Option<Stander>>(
     world: &CellWorld,
     body: &mut Body,
     index: u32,
     peers: &mut Peers,
-    ambient: &Ambient<'_>,
+    ambient: &Ambient<S, P>,
     unspent: i64,
     scratch: &mut Scratch,
 ) -> Pass {
@@ -177,11 +225,11 @@ enum Probe {
     Frontier,
 }
 
-fn probe(
+fn probe<S: Fn(ChunkPos) -> bool, P: Fn(CellPos) -> Option<Stander>>(
     world: &CellWorld,
     index: u32,
     peers: &mut Peers,
-    ambient: &Ambient<'_>,
+    ambient: &Ambient<S, P>,
     current: &[CellPos],
     candidate: &[CellPos],
     contacts: &mut Vec<Contact>,
@@ -222,7 +270,7 @@ fn probe(
             axis,
             Vector::of_cell(from).midpoint(Vector::of_cell(pos)),
             content::restitution(cell.material),
-            content::surface_grip(cell.material),
+            content::friction(cell.material),
             peer,
         ));
     }

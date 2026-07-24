@@ -20,6 +20,7 @@ pub fn define(catalog: &mut Catalog) {
         STONE,
         material(solid().rigid(BondGroup::Mineral))
             .density(2600.0)
+            .friction(0.6)
             .colors([
                 [110, 110, 115, 255],
                 [100, 100, 105, 255],
@@ -138,7 +139,8 @@ pub fn define(catalog: &mut Catalog) {
             ])
             .hardness(0.4)
             .restitution(0.1)
-            .surface_grip(0.05)
+            .entity_grip(0.05)
+            .friction(0.05)
             .tag(Tag::Dissolvable),
     );
     catalog.add(
