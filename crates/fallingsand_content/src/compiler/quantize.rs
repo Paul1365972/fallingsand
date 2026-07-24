@@ -1,7 +1,7 @@
 use super::RawMaterial;
 use crate::{EmissionDef, GasDef, LiquidDef, PhaseDef, PowderDef};
 use fallingsand_material::{
-    Dynamics, GasDynamics, LiquidDynamics, Phase, PowderDynamics, VelocityFactor,
+    Dynamics, Fraction, GasDynamics, LiquidDynamics, Phase, PowderDynamics,
 };
 use fallingsand_math::{SUBCELL_UNITS_PER_CELL, TICK_DT, chance_threshold};
 
@@ -17,8 +17,8 @@ fn quantize_q16(value: f32) -> u32 {
     (f64::from(value) * 65536.0).round() as u32
 }
 
-fn velocity_factor(value: f32) -> VelocityFactor {
-    VelocityFactor::from_raw(quantize_q16(value))
+fn fraction(value: f32) -> Fraction {
+    Fraction::from_raw(quantize_q16(value))
 }
 
 pub(super) fn milli(value: f32) -> i32 {
@@ -58,11 +58,11 @@ pub(super) fn bake_emission(def: Option<EmissionDef>) -> ([f32; 3], f32) {
     }
 }
 
-fn drag_keeps(air_drag: f32) -> (VelocityFactor, VelocityFactor) {
+fn drag_keeps(air_drag: f32) -> (Fraction, Fraction) {
     let drag_loss = 1.0 - per_tick_keep(air_drag);
     (
-        velocity_factor(1.0 - drag_loss.min(0.9)),
-        velocity_factor(1.0 - (drag_loss * 6.0).min(0.9)),
+        fraction(1.0 - drag_loss.min(0.9)),
+        fraction(1.0 - (drag_loss * 6.0).min(0.9)),
     )
 }
 
@@ -80,8 +80,8 @@ pub(super) fn quantize_dynamics(raw: &RawMaterial) -> Dynamics {
             Dynamics::Powder(PowderDynamics {
                 air_drag_keep,
                 submerged_drag_keep,
-                ground_friction_keep: velocity_factor(per_tick_keep(ground_friction)),
-                deflect_keep: velocity_factor(deflect.clamp(0.0, 1.0)),
+                ground_friction_keep: fraction(per_tick_keep(ground_friction)),
+                deflect_keep: fraction(deflect.clamp(0.0, 1.0)),
                 topple_start_threshold: chance_threshold(per_tick_chance(topple_start)),
                 topple_keep_threshold: chance_threshold(per_tick_chance(topple_keep)),
             })
@@ -91,8 +91,8 @@ pub(super) fn quantize_dynamics(raw: &RawMaterial) -> Dynamics {
             impact,
             flow_rate: _,
         }) => Dynamics::Liquid(LiquidDynamics {
-            drag_keep: velocity_factor(per_tick_keep(drag)),
-            impact_keep: velocity_factor(impact.clamp(0.0, 1.0)),
+            drag_keep: fraction(per_tick_keep(drag)),
+            impact_keep: fraction(impact.clamp(0.0, 1.0)),
         }),
         PhaseDef::Gas(GasDef {
             air_drag,

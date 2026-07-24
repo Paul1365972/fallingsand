@@ -5,7 +5,7 @@ use crate::{
     },
     window::SimWindow,
 };
-use fallingsand_core::{Cell, CellPos, LiquidDynamics, Phase, VelocityFactor, content};
+use fallingsand_core::{Cell, CellPos, Fraction, LiquidDynamics, Phase, content};
 use fallingsand_math::{Hash, Rng};
 
 const MOVEMENT_SALT: Hash = Hash::label("simulation.movement");
@@ -152,7 +152,7 @@ fn redirect_impact(
     pos: CellPos,
     vx: i32,
     vy: i32,
-    keep: VelocityFactor,
+    keep: Fraction,
     rng: &mut Rng,
 ) -> (i32, i32) {
     let speed = keep.apply(vector_length(vx, vy));

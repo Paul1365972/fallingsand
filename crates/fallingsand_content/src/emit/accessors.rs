@@ -33,15 +33,6 @@ pub fn emit(content: &Content) -> TokenStream {
         content.materials.iter().map(|mat| tags_tokens(mat.tags)),
         true,
     );
-    let is_rigid_capable = accessor_fn(
-        "is_rigid_capable",
-        quote!(bool),
-        content.materials.iter().map(|mat| {
-            let value = mat.rigid_capable;
-            quote!(#value)
-        }),
-        true,
-    );
     let bond_group = accessor_fn(
         "bond_group",
         quote!(u8),
@@ -53,21 +44,21 @@ pub fn emit(content: &Content) -> TokenStream {
     );
     let restitution = accessor_fn(
         "restitution",
-        quote!(crate::material::VelocityFactor),
+        quote!(crate::material::Fraction),
         content.materials.iter().map(|mat| {
             let raw = (f64::from(mat.restitution.clamp(0.0, 1.0)) * 65536.0).round() as u32;
             let value = Literal::u32_suffixed(raw);
-            quote!(crate::material::VelocityFactor::from_raw(#value))
+            quote!(crate::material::Fraction::from_raw(#value))
         }),
         true,
     );
     let surface_grip = accessor_fn(
         "surface_grip",
-        quote!(crate::material::VelocityFactor),
+        quote!(crate::material::Fraction),
         content.materials.iter().map(|mat| {
             let raw = (f64::from(mat.surface_grip.clamp(0.0, 1.0)) * 65536.0).round() as u32;
             let value = Literal::u32_suffixed(raw);
-            quote!(crate::material::VelocityFactor::from_raw(#value))
+            quote!(crate::material::Fraction::from_raw(#value))
         }),
         true,
     );
@@ -82,14 +73,14 @@ pub fn emit(content: &Content) -> TokenStream {
     );
     let liquid_impact = accessor_fn(
         "liquid_impact",
-        quote!(crate::material::VelocityFactor),
+        quote!(crate::material::Fraction),
         content.materials.iter().map(|mat| {
             let raw = match mat.dynamics {
                 Dynamics::Liquid(d) => d.impact_keep.raw(),
                 _ => 0,
             };
             let value = Literal::u32_suffixed(raw);
-            quote!(crate::material::VelocityFactor::from_raw(#value))
+            quote!(crate::material::Fraction::from_raw(#value))
         }),
         true,
     );
@@ -181,7 +172,6 @@ pub fn emit(content: &Content) -> TokenStream {
         #phase
         #density_milli
         #tags
-        #is_rigid_capable
         #bond_group
         #restitution
         #surface_grip

@@ -1,5 +1,5 @@
 use super::rotation::{Spin, quantize_step, rotate_offset};
-use fallingsand_core::{CellPos, MaterialId, Subcell, VelocityFactor, content};
+use fallingsand_core::{CellPos, Fraction, MaterialId, Subcell, content};
 use fallingsand_math::{SUBCELL_UNITS_PER_CELL, round_div};
 
 const UNITS: i128 = SUBCELL_UNITS_PER_CELL as i128;
@@ -98,17 +98,17 @@ impl Vector {
     }
 }
 
-pub(super) struct Frame {
+pub(super) struct Inertia {
     pub mass: i64,
     pub moment: i128,
     pub radius: i64,
-    pub restitution: VelocityFactor,
+    pub restitution: Fraction,
 }
 
-pub(super) fn frame(slots: &[Slot]) -> Frame {
+pub(super) fn inertia(slots: &[Slot]) -> Inertia {
     let mut mass = 0i128;
     let mut weighted = (0i128, 0i128);
-    let mut restitution = VelocityFactor::from_raw(0);
+    let mut restitution = Fraction::from_raw(0);
     for slot in slots {
         let cell = i128::from(slot.mass());
         mass += cell;
@@ -128,7 +128,7 @@ pub(super) fn frame(slots: &[Slot]) -> Frame {
         moment += i128::from(slot.mass()) * (dx * dx + dy * dy);
         reach = reach.max(dx * dx + dy * dy);
     }
-    Frame {
+    Inertia {
         mass: mass as i64,
         moment,
         radius: reach.isqrt() as i64 / i64::from(SUBCELL_UNITS_PER_CELL) + 1,

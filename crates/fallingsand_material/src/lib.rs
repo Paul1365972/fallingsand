@@ -96,9 +96,9 @@ pub struct Burning {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct VelocityFactor(u32);
+pub struct Fraction(u32);
 
-impl VelocityFactor {
+impl Fraction {
     pub const fn from_raw(raw: u32) -> Self {
         Self(raw)
     }
@@ -136,23 +136,23 @@ impl VelocityFactor {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PowderDynamics {
-    pub air_drag_keep: VelocityFactor,
-    pub submerged_drag_keep: VelocityFactor,
-    pub ground_friction_keep: VelocityFactor,
-    pub deflect_keep: VelocityFactor,
+    pub air_drag_keep: Fraction,
+    pub submerged_drag_keep: Fraction,
+    pub ground_friction_keep: Fraction,
+    pub deflect_keep: Fraction,
     pub topple_start_threshold: u64,
     pub topple_keep_threshold: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LiquidDynamics {
-    pub drag_keep: VelocityFactor,
-    pub impact_keep: VelocityFactor,
+    pub drag_keep: Fraction,
+    pub impact_keep: Fraction,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GasDynamics {
-    pub air_drag_keep: VelocityFactor,
+    pub air_drag_keep: Fraction,
     pub turbulence_q16: u32,
 }
 

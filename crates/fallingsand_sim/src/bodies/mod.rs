@@ -9,7 +9,7 @@ pub use island::detect_detached_island;
 pub use shape::material_mass;
 
 use crate::world::CellWorld;
-use fallingsand_core::{Cell, CellPos, ChunkPos, RegionPos, Subcell, VelocityFactor, content};
+use fallingsand_core::{Cell, CellPos, ChunkPos, Fraction, RegionPos, Subcell, content};
 use grid::{capture, release, split};
 use rustc_hash::FxHashMap;
 use shape::{Motion, Pose, Slot, Vector};
@@ -60,7 +60,7 @@ pub(crate) struct Body {
     mass: i64,
     moment: i128,
     radius: i64,
-    restitution: VelocityFactor,
+    restitution: Fraction,
     rest: u32,
 }
 
@@ -90,13 +90,13 @@ impl BodySet {
         let body = &mut self.bodies[index as usize];
         let momentum = i128::from(body.mass.min(mass.max(1)));
         let point = Vector::of_cell(pos);
-        contact::drive(
+        contact::apply_impulse(
             body,
             point,
             Vector::new(1, 0),
             i128::from(dvx.raw()) * momentum,
         );
-        contact::drive(
+        contact::apply_impulse(
             body,
             point,
             Vector::new(0, 1),

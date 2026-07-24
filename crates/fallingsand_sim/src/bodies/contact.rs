@@ -1,7 +1,7 @@
 use super::rotation::Spin;
 use super::shape::Vector;
 use super::{Body, Shove, Stander};
-use fallingsand_core::{CellPos, Subcell, VelocityFactor};
+use fallingsand_core::{CellPos, Fraction, Subcell};
 use fallingsand_math::round_div;
 
 const ITERATIONS: u32 = 4;
@@ -47,8 +47,8 @@ pub(super) struct Contact {
     pub cell: CellPos,
     pub axis: Axis,
     pub point: Vector,
-    pub restitution: VelocityFactor,
-    pub grip: VelocityFactor,
+    pub restitution: Fraction,
+    pub grip: Fraction,
     pub peer: Peer,
     bias: i128,
     push: i128,
@@ -61,8 +61,8 @@ impl Contact {
         cell: CellPos,
         axis: Axis,
         point: Vector,
-        restitution: VelocityFactor,
-        grip: VelocityFactor,
+        restitution: Fraction,
+        grip: Fraction,
         peer: Peer,
     ) -> Self {
         Self {
@@ -80,14 +80,14 @@ impl Contact {
     }
 }
 
-struct Party {
+struct Side {
     mass: i64,
     moment: i128,
     velocity: Vector,
     arm: Vector,
 }
 
-impl Party {
+impl Side {
     fn of(body: &Body, point: Vector) -> Self {
         let arm = point.from(Vector::new(body.pose.x.raw(), body.pose.y.raw()));
         Self {
@@ -180,8 +180,8 @@ pub(super) fn resolve(
 }
 
 struct Sides {
-    mine: Party,
-    theirs: Option<Party>,
+    mine: Side,
+    theirs: Option<Side>,
 }
 
 impl Sides {
@@ -207,20 +207,20 @@ impl Sides {
 
 fn sides(bodies: &[Body], index: usize, contact: &Contact) -> Sides {
     Sides {
-        mine: Party::of(&bodies[index], contact.point),
+        mine: Side::of(&bodies[index], contact.point),
         theirs: match contact.peer {
             Peer::Terrain => None,
             Peer::Body(peer) if peer as usize == index => None,
-            Peer::Body(peer) => Some(Party::of(&bodies[peer as usize], contact.point)),
-            Peer::Stander(stander) => Some(Party::standing(stander)),
+            Peer::Body(peer) => Some(Side::of(&bodies[peer as usize], contact.point)),
+            Peer::Stander(stander) => Some(Side::standing(stander)),
         },
     }
 }
 
-fn restitution(bodies: &[Body], index: usize, contact: &Contact) -> VelocityFactor {
+fn restitution(bodies: &[Body], index: usize, contact: &Contact) -> Fraction {
     let peer = match contact.peer {
         Peer::Body(peer) if peer as usize != index => bodies[peer as usize].restitution,
-        _ => VelocityFactor::from_raw(0),
+        _ => Fraction::from_raw(0),
     };
     bodies[index].restitution.max(contact.restitution).max(peer)
 }
@@ -235,11 +235,11 @@ fn apply(
     if magnitude == 0 {
         return;
     }
-    drive(&mut bodies[index], contact.point, direction, magnitude);
+    apply_impulse(&mut bodies[index], contact.point, direction, magnitude);
     match contact.peer {
         Peer::Terrain => {}
         Peer::Body(peer) if peer as usize == index => {}
-        Peer::Body(peer) => drive(
+        Peer::Body(peer) => apply_impulse(
             &mut bodies[peer as usize],
             contact.point,
             direction,
@@ -252,7 +252,7 @@ fn apply(
     }
 }
 
-pub(super) fn drive(body: &mut Body, point: Vector, direction: Vector, magnitude: i128) {
+pub(super) fn apply_impulse(body: &mut Body, point: Vector, direction: Vector, magnitude: i128) {
     let arm = point.from(Vector::new(body.pose.x.raw(), body.pose.y.raw()));
     let delta = round_div(magnitude, i128::from(body.mass)) as i64;
     body.motion.x += Subcell::from_raw(delta * direction.x);

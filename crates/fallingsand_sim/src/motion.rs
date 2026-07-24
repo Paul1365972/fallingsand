@@ -1,7 +1,6 @@
 use crate::window::{SPEED_OF_LIGHT, SimWindow};
 use fallingsand_core::{
-    CARDINAL_NEIGHBORS as NEIGHBORS, Cell, CellPos, MaterialId, Phase, TICK_DT, VelocityFactor,
-    content,
+    CARDINAL_NEIGHBORS as NEIGHBORS, Cell, CellPos, Fraction, MaterialId, Phase, TICK_DT, content,
 };
 use fallingsand_math::{Hash, Rng, SUBCELL_BITS, SUBCELL_UNITS_PER_CELL};
 
@@ -243,7 +242,7 @@ fn density_exchange_speed(
     (potential / inertia).isqrt() as i32
 }
 
-fn liquid_wake_keep(mover: MaterialId, displaced: MaterialId) -> VelocityFactor {
+fn liquid_wake_keep(mover: MaterialId, displaced: MaterialId) -> Fraction {
     let displaced_retention = content::liquid_impact(displaced);
     if content::phase(mover) == Phase::Liquid {
         displaced_retention.min(content::liquid_impact(mover))
@@ -253,10 +252,10 @@ fn liquid_wake_keep(mover: MaterialId, displaced: MaterialId) -> VelocityFactor 
 }
 
 fn density_scatter(
-    retention: VelocityFactor,
+    retention: Fraction,
     mover_mass: i64,
     displaced_mass: i64,
-) -> (VelocityFactor, VelocityFactor) {
+) -> (Fraction, Fraction) {
     let density_delta = mover_mass.abs_diff(displaced_mass);
     let density_max = mover_mass.max(displaced_mass) as u64;
     let contrast_q32 = (u128::from(density_delta) << 32) / u128::from(density_max);
@@ -268,9 +267,9 @@ fn density_scatter(
     )
 }
 
-fn combine_factors(a: VelocityFactor, b_q16: u32) -> VelocityFactor {
+fn combine_factors(a: Fraction, b_q16: u32) -> Fraction {
     let product = u64::from(a.raw()) * u64::from(b_q16);
-    VelocityFactor::from_raw(((product + (1 << 15)) >> 16) as u32)
+    Fraction::from_raw(((product + (1 << 15)) >> 16) as u32)
 }
 
 pub(crate) fn movement_rng(tick: u64, pos: CellPos) -> Rng {
@@ -364,7 +363,7 @@ fn transfer_momentum(
     target: CellPos,
     direction: (i32, i32),
     velocity: i32,
-    restitution: VelocityFactor,
+    restitution: Fraction,
 ) -> i32 {
     let Some(mut blocker) = window.get(target) else {
         return velocity;

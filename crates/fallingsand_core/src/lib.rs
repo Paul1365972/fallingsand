@@ -24,8 +24,8 @@ pub use item::{
     ToolSpec,
 };
 pub use material::{
-    Burning, BurningKind, Dynamics, GasDynamics, Ignition, LiquidDynamics, MaterialId,
-    MaterialInfo, Phase, PowderDynamics, Reaction, SealedBurn, Tag, Tags, VelocityFactor,
+    Burning, BurningKind, Dynamics, Fraction, GasDynamics, Ignition, LiquidDynamics, MaterialId,
+    MaterialInfo, Phase, PowderDynamics, Reaction, SealedBurn, Tag, Tags,
 };
 pub use region::{REGION_AREA_CHUNKS, REGION_SIZE_CELLS, REGION_SIZE_CHUNKS, Region};
 pub use subcell::Subcell;

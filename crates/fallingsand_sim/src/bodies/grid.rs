@@ -1,4 +1,4 @@
-use super::shape::{Motion, Pose, Slot, Vector, center_of, frame, rotated_mean};
+use super::shape::{Motion, Pose, Slot, Vector, center_of, inertia, rotated_mean};
 use super::{Body, UNCLAIMED};
 use crate::world::{CellWorld, mobile};
 use fallingsand_core::{CARDINAL_NEIGHBORS, CellPos, MaterialId, Subcell, content};
@@ -28,8 +28,8 @@ pub(super) fn capture(world: &mut CellWorld, raster: Vec<CellPos>) -> Body {
             material: world.get_cell(pos).expect("body island is loaded").material,
         })
         .collect();
-    let frame = frame(&slots);
-    let (x, y) = center_of(&raster, &slots, frame.mass);
+    let inertia = inertia(&slots);
+    let (x, y) = center_of(&raster, &slots, inertia.mass);
     for &pos in &raster {
         let mut cell = world.get_cell(pos).expect("body island is loaded");
         cell.set_body(true);
@@ -41,18 +41,18 @@ pub(super) fn capture(world: &mut CellWorld, raster: Vec<CellPos>) -> Body {
         raster,
         pose: Pose { x, y, angle: 0 },
         motion: Motion::default(),
-        mass: frame.mass,
-        moment: frame.moment,
-        radius: frame.radius,
-        restitution: frame.restitution,
+        mass: inertia.mass,
+        moment: inertia.moment,
+        radius: inertia.radius,
+        restitution: inertia.restitution,
         rest: 0,
     }
 }
 
 fn derive(source: &Body, slots: Vec<Slot>, raster: Vec<CellPos>) -> Body {
     let before = rotated_mean(&source.slots, source.mass, source.pose.angle);
-    let frame = frame(&slots);
-    let after = rotated_mean(&slots, frame.mass, source.pose.angle);
+    let inertia = inertia(&slots);
+    let after = rotated_mean(&slots, inertia.mass, source.pose.angle);
     let shift = Vector::new(after.0 - before.0, after.1 - before.1);
     Body {
         slots,
@@ -67,10 +67,10 @@ fn derive(source: &Body, slots: Vec<Slot>, raster: Vec<CellPos>) -> Body {
             y: Subcell::from_raw(source.motion.y.raw() + source.motion.spin.speed_at(shift.x)),
             spin: source.motion.spin,
         },
-        mass: frame.mass,
-        moment: frame.moment,
-        radius: frame.radius,
-        restitution: frame.restitution,
+        mass: inertia.mass,
+        moment: inertia.moment,
+        radius: inertia.radius,
+        restitution: inertia.restitution,
         rest: 0,
     }
 }

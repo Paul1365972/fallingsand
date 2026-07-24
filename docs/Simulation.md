@@ -20,7 +20,7 @@ The world is one cellular automaton: every pixel is matter. Physics is phase-bas
 | Chunk | 64×64 cells | dirty tracking, sleeping, replication, rendering |
 | Region | 8×8 chunks | generation, storage, load/unload |
 
-Velocity belongs to matter that moves under it. Powders, liquids and gases integrate theirs every tick; a solid has no dynamics and no movement step, so a velocity parked on one is state nothing would ever read back honestly. Solids are written inert.
+Velocity belongs to matter that moves under it. Powders, liquids and gases integrate theirs; a solid has neither dynamics nor a movement step, so velocity parked on one is state nothing reads back honestly. Solids are written inert.
 
 A cell is a compact heap-free value: material, velocity, shade, a runtime flags byte — the tick-local moved stamp and raster ownership marker, never persisted — and a persistent per-material aux byte. Every cell is a particle — velocity drives all energetic movement; liquids use no aux state. Burning is a material, not a flag: a lit fuel transmutes into its synthesized burning twin and probabilistic burnout *is* the burn duration; there is no per-cell HP.
 
@@ -30,7 +30,7 @@ One simulator owns scheduling and window-event scratch across ticks. Capacity gr
 
 - Chunks group into 2×2 blocks run in four phases by block parity; a worker owns its block plus a one-chunk halo, and same-phase windows share no chunks — race-free without locks. A chunk simulates only when its whole 3×3 neighbourhood is loaded; frontier chunks defer, keeping their rects.
 - Each tick runs two full passes over awake cells: **effects** then **movement**. Effects never swap cells: forces write velocity, while combustion and reactions transmute cells at their existing coordinates. Body-owned materials run chemistry normally, then skip per-cell forces. Movement owns every swap: velocity integrates kinematically; a resting liquid may take one local energy descent or exposed interface step, and a capped gas may take one flow step. Body-owned cells skip independent movement because their body relocates them transactionally.
-- A write whose support class — obstruction plus bond group — differs from what it replaced unseats rigid matter and seeds an island check; velocity-only writes, which are most writes, cost nothing. The filter runs in the parallel kernel, so the sequential body phase receives seeds rather than neighbourhoods.
+- A write whose support class — obstruction plus bond group — differs from what it replaced unseats rigid matter and seeds an island check; velocity-only writes cost nothing. The filter runs in the parallel kernel, so the body phase receives seeds, not neighbourhoods.
 - Every moved stamp is clear when the first pass begins: each chunk starts the tick by clearing them inside its sim rect, then ready chunks roll their rects. Movement swaps stamp both cells and a collision impulse stamps its receiver; every stamp is a write, so stamped cells always lie inside that rect and no stale tick-local state survives awake, frontier, or freshly loaded.
 - Rows scan bottom-up so a faller vacates space the cell above enters the same tick; the horizontal direction is tick-hashed per world row and the four phases run in a tick-hashed order to cancel scan bias.
 - Random ticks are a third, sleep-independent pass scoped to a bounded chunk range around each player: each chunk samples a few tick-seeded cells for ambient processes. Reserved infrastructure for plant growth and decay; nothing uses it today.

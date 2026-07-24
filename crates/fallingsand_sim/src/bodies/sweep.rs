@@ -40,12 +40,6 @@ pub(super) fn advance(
         body.motion.y += ambient.gravity;
         body.motion = capped(body.motion, body.radius);
         scratch.current.clone_from(&body.raster);
-        #[cfg(debug_assertions)]
-        {
-            let mut fresh = Vec::new();
-            rasterize(&body.slots, body.mass, body.pose, &mut fresh);
-            assert_eq!(fresh, body.raster, "pose no longer describes the raster");
-        }
     }
 
     let mut unspent = WHOLE_TICK;

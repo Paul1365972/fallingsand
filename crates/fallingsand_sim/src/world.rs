@@ -19,7 +19,7 @@ pub(crate) fn mobile(material: MaterialId) -> bool {
 pub(crate) fn rigid_seed(cell: Cell) -> bool {
     !cell.is_body()
         && content::phase(cell.material) == Phase::Solid
-        && content::is_rigid_capable(cell.material)
+        && content::bond_group(cell.material) != u8::MAX
 }
 
 fn support_class(cell: Cell) -> u8 {
