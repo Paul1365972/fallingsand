@@ -18,15 +18,44 @@ const UNCLAIMED: u32 = u32::MAX;
 
 #[derive(Clone, Copy)]
 pub struct Stander {
+    pub id: u32,
     pub mass: i64,
     pub vx: Subcell,
     pub vy: Subcell,
+    pub grounded: bool,
 }
 
 pub struct Shove {
-    pub pos: CellPos,
+    pub id: u32,
     pub dvx: Subcell,
     pub dvy: Subcell,
+}
+
+struct Standing {
+    mass: i64,
+    start: Vector,
+    velocity: Vector,
+    grounded: bool,
+}
+
+impl Standing {
+    fn new(stander: Stander) -> Self {
+        let velocity = Vector::new(stander.vx.raw(), stander.vy.raw());
+        Self {
+            mass: stander.mass,
+            start: velocity,
+            velocity,
+            grounded: stander.grounded,
+        }
+    }
+
+    pub(super) fn braced(&self, direction: Vector) -> bool {
+        self.grounded && direction.y > 0
+    }
+
+    fn gained(&self) -> Vector {
+        self.velocity.from(self.start)
+    }
 }
 
 pub struct Ambient<'a> {
@@ -36,9 +65,33 @@ pub struct Ambient<'a> {
 }
 
 #[derive(Default)]
+struct Peers {
+    owner: FxHashMap<CellPos, u32>,
+    standing: FxHashMap<u32, Standing>,
+}
+
+impl Peers {
+    fn owner_of(&self, pos: CellPos) -> Option<u32> {
+        self.owner.get(&pos).copied()
+    }
+
+    fn claim(&mut self, index: usize, raster: &[CellPos]) {
+        for &pos in raster {
+            self.owner.insert(pos, index as u32);
+        }
+    }
+
+    fn disown(&mut self, raster: &[CellPos]) {
+        for &pos in raster {
+            self.owner.remove(&pos);
+        }
+    }
+}
+
+#[derive(Default)]
 pub struct BodySet {
     bodies: Vec<Body>,
-    owner: FxHashMap<CellPos, u32>,
+    peers: Peers,
     shoves: Vec<Shove>,
     sweep: sweep::Scratch,
     split: grid::Scratch,
@@ -79,12 +132,12 @@ impl BodySet {
 
     pub fn detach(&mut self, world: &mut CellWorld, island: Vec<CellPos>) {
         let body = capture(world, island);
-        self.claim(self.bodies.len(), &body.raster);
+        self.peers.claim(self.bodies.len(), &body.raster);
         self.bodies.push(body);
     }
 
     pub fn push(&mut self, pos: CellPos, dvx: Subcell, dvy: Subcell, mass: i64) -> bool {
-        let Some(&index) = self.owner.get(&pos) else {
+        let Some(index) = self.peers.owner_of(pos) else {
             return false;
         };
         let body = &mut self.bodies[index as usize];
@@ -129,9 +182,11 @@ impl BodySet {
     pub fn step(&mut self, world: &mut CellWorld, ambient: &Ambient<'_>) {
         self.bodies
             .sort_unstable_by_key(|body| body.raster.iter().map(|pos| pos.y).min());
-        self.owner.clear();
+        self.peers.owner.clear();
+        self.peers.standing.clear();
         for index in 0..self.bodies.len() {
-            self.claim(index, &self.bodies[index].raster.clone());
+            let raster = self.bodies[index].raster.clone();
+            self.peers.claim(index, &raster);
         }
         let mut index = 0;
         while index < self.bodies.len() {
@@ -139,17 +194,16 @@ impl BodySet {
                 world,
                 &mut self.bodies,
                 index,
-                &self.owner,
+                &mut self.peers,
                 ambient,
                 &mut self.sweep,
-                &mut self.shoves,
             );
             if advance.moved {
                 relocate(
                     world,
                     &mut self.bodies[index],
                     index as u32,
-                    &mut self.owner,
+                    &mut self.peers,
                     &self.sweep.current,
                     &mut self.relocate,
                 );
@@ -159,6 +213,16 @@ impl BodySet {
                 settle(world, &body);
             } else {
                 index += 1;
+            }
+        }
+        for (&id, standing) in &self.peers.standing {
+            let gained = standing.gained();
+            if gained != Vector::new(0, 0) {
+                self.shoves.push(Shove {
+                    id,
+                    dvx: Subcell::from_raw(gained.x),
+                    dvy: Subcell::from_raw(gained.y),
+                });
             }
         }
     }
@@ -180,20 +244,12 @@ impl BodySet {
         }
     }
 
-    fn claim(&mut self, index: usize, raster: &[CellPos]) {
-        for &pos in raster {
-            self.owner.insert(pos, index as u32);
-        }
-    }
-
     fn remove(&mut self, index: usize) -> Body {
         let body = self.bodies.swap_remove(index);
-        for &pos in &body.raster {
-            self.owner.remove(&pos);
-        }
+        self.peers.disown(&body.raster);
         if index < self.bodies.len() {
             let moved = self.bodies[index].raster.clone();
-            self.claim(index, &moved);
+            self.peers.claim(index, &moved);
         }
         body
     }
@@ -217,7 +273,7 @@ fn relocate(
     world: &mut CellWorld,
     body: &mut Body,
     index: u32,
-    owner: &mut FxHashMap<CellPos, u32>,
+    peers: &mut Peers,
     raster: &[CellPos],
     scratch: &mut RelocateScratch,
 ) {
@@ -231,25 +287,21 @@ fn relocate(
     scratch.displaced.extend(
         raster
             .iter()
-            .filter(|pos| owner.get(pos) != Some(&index))
+            .filter(|pos| peers.owner_of(**pos) != Some(index))
             .map(|&pos| world.get_cell(pos).expect("body proposal is loaded")),
     );
     scratch
         .displaced
         .sort_unstable_by_key(|cell| std::cmp::Reverse(content::density_milli(cell.material)));
 
-    for &pos in &body.raster {
-        owner.remove(&pos);
-    }
-    for &pos in raster {
-        owner.insert(pos, index);
-    }
+    peers.disown(&body.raster);
+    peers.claim(index as usize, raster);
     scratch.vacated.clear();
     scratch.vacated.extend(
         body.raster
             .iter()
             .copied()
-            .filter(|pos| owner.get(pos) != Some(&index)),
+            .filter(|pos| peers.owner_of(*pos) != Some(index)),
     );
     scratch.vacated.sort_unstable_by_key(|pos| (pos.y, pos.x));
     debug_assert_eq!(scratch.vacated.len(), scratch.displaced.len());

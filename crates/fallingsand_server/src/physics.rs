@@ -3,7 +3,7 @@ use crate::player::{
     Avatar, AvatarSnapshot, Health, PLAYER_HALF_H, PLAYER_HALF_W, PLAYER_MASS, PlayerLife, Players,
 };
 use fallingsand_core::{CellPos, Subcell};
-use fallingsand_protocol::GameMode;
+use fallingsand_protocol::{GameMode, PlayerId};
 use fallingsand_sim::CellWorld;
 use fallingsand_sim::bodies::Shove;
 use fallingsand_sim::physics::{
@@ -109,14 +109,8 @@ pub fn step_physics(sim: &mut CellWorld, bodies: &mut BodyWorld, players: &mut P
 
 pub fn deliver(players: &mut Players, shoves: impl Iterator<Item = Shove>) {
     for shove in shoves {
-        let target = players.iter().find_map(|(&id, player)| {
-            player
-                .avatar()
-                .filter(|avatar| avatar.stamp.covers(shove.pos))
-                .map(|_| id)
-        });
-        if let Some(avatar) = target
-            .and_then(|id| players.get_mut(id))
+        if let Some(avatar) = players
+            .get_mut(PlayerId(shove.id))
             .and_then(|player| player.avatar_mut())
         {
             avatar.pending_impulse.0 += PLAYER_MASS * shove.dvx.to_cells_per_second();

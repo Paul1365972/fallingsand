@@ -1,12 +1,11 @@
 use super::contact::{Axis, Contact, Peer, resolve};
 use super::rotation::{Spin, TURN_UNITS};
 use super::shape::{Motion, Pose, Vector, rasterize};
-use super::{Ambient, Body, Shove};
+use super::{Ambient, Body, Peers, Standing};
 use crate::motion::MAX_SPEED_CELLS;
 use crate::world::{CellWorld, blocking};
 use fallingsand_core::{CellPos, Subcell, content};
 use fallingsand_math::{SUBCELL_UNITS_PER_CELL, ceil_div, round_div, ticks_from_secs};
-use rustc_hash::FxHashMap;
 
 const CELL: i64 = SUBCELL_UNITS_PER_CELL as i64;
 const MAX_SPEED: i64 = MAX_SPEED_CELLS as i64 * CELL;
@@ -30,10 +29,9 @@ pub(super) fn advance(
     world: &CellWorld,
     bodies: &mut [Body],
     index: usize,
-    owner: &FxHashMap<CellPos, u32>,
+    peers: &mut Peers,
     ambient: &Ambient<'_>,
     scratch: &mut Scratch,
-    shoves: &mut Vec<Shove>,
 ) -> Advance {
     {
         let body = &mut bodies[index];
@@ -52,7 +50,7 @@ pub(super) fn advance(
             world,
             &mut bodies[index],
             index as u32,
-            owner,
+            peers,
             ambient,
             unspent,
             scratch,
@@ -70,7 +68,7 @@ pub(super) fn advance(
                     i128::from(pass.steps),
                 ) as i64;
                 let before = bodies[index].motion;
-                resolve(bodies, index, &mut scratch.contacts, elastic, shoves);
+                resolve(bodies, index, &mut scratch.contacts, elastic, peers);
                 elastic = false;
                 if bodies[index].motion == before {
                     break;
@@ -108,7 +106,7 @@ fn sweep(
     world: &CellWorld,
     body: &mut Body,
     index: u32,
-    owner: &FxHashMap<CellPos, u32>,
+    peers: &mut Peers,
     ambient: &Ambient<'_>,
     unspent: i64,
     scratch: &mut Scratch,
@@ -139,7 +137,7 @@ fn sweep(
         match probe(
             world,
             index,
-            owner,
+            peers,
             ambient,
             &scratch.current,
             &scratch.candidate,
@@ -182,7 +180,7 @@ enum Probe {
 fn probe(
     world: &CellWorld,
     index: u32,
-    owner: &FxHashMap<CellPos, u32>,
+    peers: &mut Peers,
     ambient: &Ambient<'_>,
     current: &[CellPos],
     candidate: &[CellPos],
@@ -191,7 +189,7 @@ fn probe(
     contacts.clear();
     for (slot, &pos) in candidate.iter().enumerate() {
         let from = current[slot];
-        let owned = owner.get(&pos).copied();
+        let owned = peers.owner_of(pos);
         if pos == from || owned == Some(index) {
             continue;
         }
@@ -209,10 +207,18 @@ fn probe(
         };
         let peer = match owned {
             Some(peer) => Peer::Body(peer),
-            None => (ambient.stander)(pos).map_or(Peer::Terrain, Peer::Stander),
+            None => match (ambient.stander)(pos) {
+                Some(stander) => {
+                    peers
+                        .standing
+                        .entry(stander.id)
+                        .or_insert_with(|| Standing::new(stander));
+                    Peer::Stander(stander.id)
+                }
+                None => Peer::Terrain,
+            },
         };
         contacts.push(Contact::new(
-            pos,
             axis,
             Vector::of_cell(from).midpoint(Vector::of_cell(pos)),
             content::restitution(cell.material),

@@ -30,9 +30,9 @@ A pixel body is canonical local slots, one flagged world raster, and fixed-point
 - **Contacts are impulses** — rejected entering cells become cardinal contacts. Accumulated sequential impulses resolve every normal before any friction, which is what stops a symmetric landing crabbing sideways. Effective mass is exact integer arithmetic and combines harmonically. Off-centre support turns gravity into spin, so an overhang topples with no rule saying it should.
 - **One impact per tick** — restitution is a target separation speed only the tick's first impact may ask for; later contacts are inelastic. A body wedged between two surfaces therefore cannot pump itself full of energy.
 - **A blocked tick keeps its budget** — the unspent fraction is re-swept against the post-impulse velocity, so bodies slide and roll instead of stopping at a graze. The sweep gives up when a contact can no longer change the motion; a simulation frontier freezes the body.
-- **Everything solid is a peer** — terrain has infinite mass, another body takes the equal and opposite impulse, and a live player raster takes its reaction as a velocity change routed to that avatar. Bodies do not solve stacks, buoyancy, or crush damage.
+- **Everything solid is a peer** — terrain has infinite mass, another body takes the equal and opposite impulse, and a live player raster takes its reaction as a velocity change routed to that avatar. A player carries one shared velocity for the whole tick, so several contacts cannot each re-apply the same reaction, and a grounded one is braced: an impulse pressing them into their footing goes to the ground. A slab lands on you; it does not launch you. Bodies do not solve stacks, buoyancy, or crush damage.
 - **Relocation is transactional** — only the final raster is committed. Entered liquid and gas pair deterministically into vacated cells, conserving matter without a spill search.
-- **Rest, then terrain** — a body is a motion event. Half a second without changing a cell writes the raster back as terrain. A push or slot change restarts the window, which is what makes a landed boulder kickable.
+- **Rest, then terrain** — a body is a motion event. Half a second without changing a cell writes the raster back as terrain. Only a push restarts the window; losing cells to fire does not move a body, so a burning pile still settles.
 - **Interaction stays small** — a player push changes velocity and spin at the contacted cell, transferring at most the body's mass. Grid writes handle digging and chemistry without body-specific paths.
 
 There is no gameplay body protocol or renderer: flagged cells ride ordinary chunk deltas and render as terrain. The opt-in diagnostic stream sends complete live rasters for ownership outlines.
@@ -51,5 +51,5 @@ There is no gameplay body protocol or renderer: flagged cells ride ordinary chun
 | Bond group | Authored connectivity class deciding which rigid materials hold together |
 | Support class | What a cell contributes to holding rigid matter up: obstruction plus bond group |
 | Unseated | A cell a write may have left standing on nothing |
-| Stander | A live player raster acting as a finite-mass contact peer |
+| Stander | A live player raster as a contact peer: finite mass, braced when grounded |
 | Rest window | Half a second unmoved, after which a body writes itself back as terrain |

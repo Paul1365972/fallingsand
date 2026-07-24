@@ -71,7 +71,7 @@ fn derive(source: &Body, slots: Vec<Slot>, raster: Vec<CellPos>) -> Body {
         moment: inertia.moment,
         radius: inertia.radius,
         restitution: inertia.restitution,
-        rest: 0,
+        rest: source.rest,
     }
 }
 

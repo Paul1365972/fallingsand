@@ -1,7 +1,7 @@
 use super::rotation::Spin;
 use super::shape::Vector;
-use super::{Body, Shove, Stander};
-use fallingsand_core::{CellPos, Fraction, Subcell};
+use super::{Body, Peers, Standing};
+use fallingsand_core::{Fraction, Subcell};
 use fallingsand_math::round_div;
 
 const ITERATIONS: u32 = 4;
@@ -39,12 +39,11 @@ impl Axis {
 pub(super) enum Peer {
     Terrain,
     Body(u32),
-    Stander(Stander),
+    Stander(u32),
 }
 
 #[derive(Clone, Copy)]
 pub(super) struct Contact {
-    pub cell: CellPos,
     pub axis: Axis,
     pub point: Vector,
     pub restitution: Fraction,
@@ -53,12 +52,10 @@ pub(super) struct Contact {
     bias: i128,
     push: i128,
     drag: i128,
-    reaction: Vector,
 }
 
 impl Contact {
     pub(super) fn new(
-        cell: CellPos,
         axis: Axis,
         point: Vector,
         restitution: Fraction,
@@ -66,7 +63,6 @@ impl Contact {
         peer: Peer,
     ) -> Self {
         Self {
-            cell,
             axis,
             point,
             restitution,
@@ -75,7 +71,6 @@ impl Contact {
             bias: 0,
             push: 0,
             drag: 0,
-            reaction: Vector::new(0, 0),
         }
     }
 }
@@ -101,11 +96,11 @@ impl Side {
         }
     }
 
-    fn standing(stander: Stander) -> Self {
+    fn standing(standing: &Standing) -> Self {
         Self {
-            mass: stander.mass,
+            mass: standing.mass,
             moment: 0,
-            velocity: Vector::new(stander.vx.raw(), stander.vy.raw()),
+            velocity: standing.velocity,
             arm: Vector::new(0, 0),
         }
     }
@@ -125,10 +120,11 @@ pub(super) fn resolve(
     index: usize,
     contacts: &mut [Contact],
     elastic: bool,
-    shoves: &mut Vec<Shove>,
+    peers: &mut Peers,
 ) {
     for contact in contacts.iter_mut() {
-        let closing = sides(bodies, index, contact).closing(contact.axis.normal());
+        let closing = sides(bodies, peers, index, contact, contact.axis.normal())
+            .closing(contact.axis.normal());
         contact.bias = if elastic && closing < 0 {
             restitution(bodies, index, contact).scale(-closing)
         } else {
@@ -136,16 +132,15 @@ pub(super) fn resolve(
         };
         contact.push = 0;
         contact.drag = 0;
-        contact.reaction = Vector::new(0, 0);
     }
 
     for _ in 0..ITERATIONS {
         for contact in contacts.iter_mut() {
             let normal = contact.axis.normal();
-            let sides = sides(bodies, index, contact);
+            let sides = sides(bodies, peers, index, contact, normal);
             let wanted = -(sides.closing(normal) + contact.bias) * sides.effective_mass(normal);
             let total = (contact.push + wanted).max(0);
-            apply(bodies, index, contact, normal, total - contact.push);
+            apply(bodies, peers, index, contact, normal, total - contact.push);
             contact.push = total;
         }
     }
@@ -153,28 +148,12 @@ pub(super) fn resolve(
     for _ in 0..ITERATIONS {
         for contact in contacts.iter_mut() {
             let tangent = contact.axis.normal().perpendicular();
-            let sides = sides(bodies, index, contact);
+            let sides = sides(bodies, peers, index, contact, tangent);
             let limit = contact.grip.scale(contact.push);
             let wanted = -sides.closing(tangent) * sides.effective_mass(tangent);
             let total = (contact.drag + wanted).clamp(-limit, limit);
-            apply(bodies, index, contact, tangent, total - contact.drag);
+            apply(bodies, peers, index, contact, tangent, total - contact.drag);
             contact.drag = total;
-        }
-    }
-
-    for contact in contacts.iter() {
-        let Peer::Stander(stander) = contact.peer else {
-            continue;
-        };
-        let mass = i128::from(stander.mass);
-        let dvx = round_div(i128::from(contact.reaction.x), mass) as i64;
-        let dvy = round_div(i128::from(contact.reaction.y), mass) as i64;
-        if dvx != 0 || dvy != 0 {
-            shoves.push(Shove {
-                pos: contact.cell,
-                dvx: Subcell::from_raw(dvx),
-                dvy: Subcell::from_raw(dvy),
-            });
         }
     }
 }
@@ -205,14 +184,24 @@ impl Sides {
     }
 }
 
-fn sides(bodies: &[Body], index: usize, contact: &Contact) -> Sides {
+fn sides(
+    bodies: &[Body],
+    peers: &Peers,
+    index: usize,
+    contact: &Contact,
+    direction: Vector,
+) -> Sides {
     Sides {
         mine: Side::of(&bodies[index], contact.point),
         theirs: match contact.peer {
             Peer::Terrain => None,
             Peer::Body(peer) if peer as usize == index => None,
             Peer::Body(peer) => Some(Side::of(&bodies[peer as usize], contact.point)),
-            Peer::Stander(stander) => Some(Side::standing(stander)),
+            Peer::Stander(id) => peers
+                .standing
+                .get(&id)
+                .filter(|standing| !standing.braced(direction))
+                .map(Side::standing),
         },
     }
 }
@@ -227,8 +216,9 @@ fn restitution(bodies: &[Body], index: usize, contact: &Contact) -> Fraction {
 
 fn apply(
     bodies: &mut [Body],
+    peers: &mut Peers,
     index: usize,
-    contact: &mut Contact,
+    contact: &Contact,
     direction: Vector,
     magnitude: i128,
 ) {
@@ -245,9 +235,12 @@ fn apply(
             direction,
             -magnitude,
         ),
-        Peer::Stander(_) => {
-            contact.reaction.x -= (magnitude * i128::from(direction.x)) as i64;
-            contact.reaction.y -= (magnitude * i128::from(direction.y)) as i64;
+        Peer::Stander(id) => {
+            if let Some(standing) = peers.standing.get_mut(&id).filter(|s| !s.braced(direction)) {
+                let delta = round_div(-magnitude, i128::from(standing.mass)) as i64;
+                standing.velocity.x += delta * direction.x;
+                standing.velocity.y += delta * direction.y;
+            }
         }
     }
 }

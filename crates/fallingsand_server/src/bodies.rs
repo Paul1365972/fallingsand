@@ -73,14 +73,16 @@ pub struct BodyStepMetrics {
 }
 
 fn stander_at(players: &Players, pos: CellPos) -> Option<Stander> {
-    players.iter().find_map(|(_, player)| {
+    players.iter().find_map(|(&id, player)| {
         player
             .avatar()
             .filter(|avatar| avatar.stamp.covers(pos))
             .map(|avatar| Stander {
+                id: id.0,
                 mass: PLAYER_MASS_UNITS,
                 vx: avatar.actor.vx,
                 vy: avatar.actor.vy,
+                grounded: avatar.actor.on_ground,
             })
     })
 }
