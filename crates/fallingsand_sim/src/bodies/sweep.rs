@@ -25,6 +25,50 @@ pub(super) struct Advance {
     pub settled: bool,
 }
 
+#[derive(Clone, Copy)]
+enum Freedom {
+    Turn,
+    X,
+    Y,
+}
+
+impl Freedom {
+    const ALL: [Self; 3] = [Self::Turn, Self::X, Self::Y];
+
+    fn of(self, motion: Motion) -> i64 {
+        match self {
+            Self::Turn => motion.spin.raw(),
+            Self::X => motion.x.raw(),
+            Self::Y => motion.y.raw(),
+        }
+    }
+
+    fn shifted(self, pose: Pose, delta: i64) -> Pose {
+        match self {
+            Self::Turn => Pose {
+                angle: pose.angle + delta,
+                ..pose
+            },
+            Self::X => Pose {
+                x: pose.x + Subcell::from_raw(delta),
+                ..pose
+            },
+            Self::Y => Pose {
+                y: pose.y + Subcell::from_raw(delta),
+                ..pose
+            },
+        }
+    }
+
+    fn absorb(self, motion: &mut Motion) {
+        match self {
+            Self::Turn => motion.spin = Spin::ZERO,
+            Self::X => motion.x = Subcell::ZERO,
+            Self::Y => motion.y = Subcell::ZERO,
+        }
+    }
+}
+
 pub(super) fn advance<S: Fn(ChunkPos) -> bool, P: Fn(CellPos) -> Option<Stander>>(
     world: &CellWorld,
     bodies: &mut [Body],
@@ -41,42 +85,59 @@ pub(super) fn advance<S: Fn(ChunkPos) -> bool, P: Fn(CellPos) -> Option<Stander>
     }
 
     let mut unspent = WHOLE_TICK;
-    let mut substeps = 0;
     let mut elastic = true;
     let mut frozen = false;
     let mut touched = false;
 
-    while unspent > 0 && substeps < MAX_SUBSTEPS {
-        let pass = sweep(
-            world,
-            &mut bodies[index],
-            index as u32,
-            peers,
-            ambient,
-            unspent,
-            scratch,
-        );
-        substeps += pass.steps;
-        match pass.stop {
-            Stop::Spent => break,
-            Stop::Frontier => {
-                frozen = true;
-                break;
+    'tick: for _ in 0..MAX_SUBSTEPS {
+        let remaining = bodies[index].motion.part(unspent, WHOLE_TICK);
+        if unspent <= 0 || remaining.is_still() {
+            break;
+        }
+        let budget = unspent / substeps(remaining, bodies[index].radius) as i64;
+        for freedom in Freedom::ALL {
+            let body = &bodies[index];
+            let motion = body.motion.part(unspent, WHOLE_TICK);
+            let steps = substeps(motion, body.radius);
+            let delta = round_div(i128::from(freedom.of(motion)), i128::from(steps)) as i64;
+            if delta == 0 {
+                continue;
             }
-            Stop::Blocked => {
-                touched = true;
-                unspent -= round_div(
-                    i128::from(unspent) * i128::from(pass.consumed),
-                    i128::from(pass.steps),
-                ) as i64;
-                let before = bodies[index].motion;
-                resolve(bodies, index, &mut scratch.contacts, elastic, peers);
-                elastic = false;
-                if bodies[index].motion == before {
-                    break;
+            let next = freedom.shifted(body.pose, delta);
+            rasterize(&body.slots, body.mass, next, &mut scratch.candidate);
+            if scratch.candidate == scratch.current {
+                bodies[index].pose = next;
+                continue;
+            }
+            match probe(
+                world,
+                index as u32,
+                peers,
+                ambient,
+                &scratch.current,
+                &scratch.candidate,
+                &mut scratch.contacts,
+            ) {
+                Probe::Free => {
+                    bodies[index].pose = next;
+                    std::mem::swap(&mut scratch.current, &mut scratch.candidate);
+                }
+                Probe::Frontier => {
+                    frozen = true;
+                    break 'tick;
+                }
+                Probe::Blocked => {
+                    touched = true;
+                    let before = freedom.of(bodies[index].motion);
+                    resolve(bodies, index, &mut scratch.contacts, elastic, peers);
+                    elastic = false;
+                    if freedom.of(bodies[index].motion) == before {
+                        freedom.absorb(&mut bodies[index].motion);
+                    }
                 }
             }
         }
+        unspent -= budget.max(1);
     }
 
     if !touched {
@@ -100,10 +161,6 @@ pub(super) fn advance<S: Fn(ChunkPos) -> bool, P: Fn(CellPos) -> Option<Stander>
     }
 }
 
-/// A body whose motion never changed a cell has learnt nothing about what holds
-/// it up. Leaning one cell into gravity asks the grid directly, so a resting body
-/// keeps its weight on its contacts every tick instead of quietly free-falling
-/// between raster crossings.
 fn lean<S: Fn(ChunkPos) -> bool, P: Fn(CellPos) -> Option<Stander>>(
     world: &CellWorld,
     bodies: &mut [Body],
@@ -135,87 +192,6 @@ fn lean<S: Fn(ChunkPos) -> bool, P: Fn(CellPos) -> Option<Stander>>(
             true
         }
         _ => false,
-    }
-}
-
-struct Pass {
-    steps: u32,
-    consumed: u32,
-    stop: Stop,
-}
-
-enum Stop {
-    Spent,
-    Blocked,
-    Frontier,
-}
-
-fn sweep<S: Fn(ChunkPos) -> bool, P: Fn(CellPos) -> Option<Stander>>(
-    world: &CellWorld,
-    body: &mut Body,
-    index: u32,
-    peers: &mut Peers,
-    ambient: &Ambient<S, P>,
-    unspent: i64,
-    scratch: &mut Scratch,
-) -> Pass {
-    let motion = body.motion.part(unspent, WHOLE_TICK);
-    if motion.is_still() {
-        return Pass {
-            steps: 0,
-            consumed: 0,
-            stop: Stop::Spent,
-        };
-    }
-    let steps = substeps(motion, body.radius);
-    let mut consumed = 0;
-    let (mut x, mut y, mut angle) = (0i128, 0i128, 0i128);
-    for _ in 0..steps {
-        let next = Pose {
-            x: body.pose.x + Subcell::from_raw(split(&mut x, motion.x.raw(), steps)),
-            y: body.pose.y + Subcell::from_raw(split(&mut y, motion.y.raw(), steps)),
-            angle: body.pose.angle + split(&mut angle, motion.spin.raw(), steps),
-        };
-        rasterize(&body.slots, body.mass, next, &mut scratch.candidate);
-        if scratch.candidate == scratch.current {
-            body.pose = next;
-            consumed += 1;
-            continue;
-        }
-        match probe(
-            world,
-            index,
-            peers,
-            ambient,
-            &scratch.current,
-            &scratch.candidate,
-            &mut scratch.contacts,
-        ) {
-            Probe::Free => {
-                body.pose = next;
-                consumed += 1;
-                std::mem::swap(&mut scratch.current, &mut scratch.candidate);
-            }
-            Probe::Blocked => {
-                return Pass {
-                    steps,
-                    consumed,
-                    stop: Stop::Blocked,
-                };
-            }
-            Probe::Frontier => {
-                return Pass {
-                    steps,
-                    consumed,
-                    stop: Stop::Frontier,
-                };
-            }
-        }
-    }
-    Pass {
-        steps,
-        consumed,
-        stop: Stop::Spent,
     }
 }
 
@@ -297,11 +273,4 @@ fn capped(motion: Motion, radius: i64) -> Motion {
         y: Subcell::from_raw(motion.y.raw().clamp(-MAX_SPEED, MAX_SPEED)),
         spin: motion.spin.clamped(turning),
     }
-}
-
-fn split(remainder: &mut i128, motion: i64, steps: u32) -> i64 {
-    *remainder += i128::from(motion);
-    let step = *remainder / i128::from(steps);
-    *remainder %= i128::from(steps);
-    step as i64
 }
