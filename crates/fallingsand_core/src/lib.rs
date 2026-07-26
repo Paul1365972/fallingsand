@@ -14,7 +14,7 @@ pub use fallingsand_math::{TICK_DT, TICK_RATE, ticks_from_secs};
 
 pub use calendar::{Calendar, DAY_UNITS, SEASON_DAYS, Season};
 pub use celestial::{CelestialState, smoothstep};
-pub use cell::Cell;
+pub use cell::{Cell, Motion};
 pub use chunk::{CHUNK_AREA, CHUNK_SIZE, Chunk, DirtyRect};
 pub use coords::{
     CARDINAL_NEIGHBORS, CellOffset, CellPos, ChunkOffset, ChunkPos, RegionPos, ray_cells,
@@ -24,8 +24,8 @@ pub use item::{
     ToolSpec,
 };
 pub use material::{
-    Burning, BurningKind, Dynamics, Fraction, GasDynamics, Ignition, LiquidDynamics, MaterialId,
-    MaterialInfo, Phase, PowderDynamics, Reaction, SealedBurn, Tag, Tags,
+    Burning, BurningKind, Dynamics, GasDynamics, Ignition, LiquidDynamics, MaterialId,
+    MaterialInfo, Phase, PowderDynamics, Q16, Reaction, SealedBurn, Tag, Tags,
 };
 pub use region::{REGION_AREA_CHUNKS, REGION_SIZE_CELLS, REGION_SIZE_CHUNKS, Region};
 pub use subcell::Subcell;

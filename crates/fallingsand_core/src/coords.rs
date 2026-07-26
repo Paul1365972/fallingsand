@@ -8,12 +8,6 @@ const REGION_BITS: u32 = REGION_SIZE_CHUNKS.trailing_zeros();
 
 pub const CARDINAL_NEIGHBORS: [(i32, i32); 4] = [(0, -1), (-1, 0), (1, 0), (0, 1)];
 
-impl CellPos {
-    pub fn neighbourhood(self) -> impl Iterator<Item = Self> {
-        (-1..=1).flat_map(move |dy| (-1..=1).map(move |dx| self.translated(dx, dy)))
-    }
-}
-
 pub fn ray_cells(start: CellPos, end: CellPos) -> impl Iterator<Item = CellPos> {
     let ex = end.x as i64;
     let ey = end.y as i64;

@@ -33,32 +33,13 @@ pub fn emit(content: &Content) -> TokenStream {
         content.materials.iter().map(|mat| tags_tokens(mat.tags)),
         true,
     );
-    let bond_group = accessor_fn(
-        "bond_group",
-        quote!(u8),
-        content.materials.iter().map(|mat| {
-            let value = mat.bond_group.unwrap_or(u8::MAX);
-            quote!(#value)
-        }),
-        true,
-    );
     let restitution = accessor_fn(
         "restitution",
-        quote!(crate::material::Fraction),
+        quote!(crate::material::Q16),
         content.materials.iter().map(|mat| {
             let raw = (f64::from(mat.restitution.clamp(0.0, 1.0)) * 65536.0).round() as u32;
             let value = Literal::u32_suffixed(raw);
-            quote!(crate::material::Fraction::from_raw(#value))
-        }),
-        true,
-    );
-    let friction = accessor_fn(
-        "friction",
-        quote!(crate::material::Fraction),
-        content.materials.iter().map(|mat| {
-            let raw = (f64::from(mat.friction.clamp(0.0, 1.0)) * 65536.0).round() as u32;
-            let value = Literal::u32_suffixed(raw);
-            quote!(crate::material::Fraction::from_raw(#value))
+            quote!(crate::material::Q16::from_raw(#value))
         }),
         true,
     );
@@ -73,14 +54,14 @@ pub fn emit(content: &Content) -> TokenStream {
     );
     let liquid_impact = accessor_fn(
         "liquid_impact",
-        quote!(crate::material::Fraction),
+        quote!(crate::material::Q16),
         content.materials.iter().map(|mat| {
             let raw = match mat.dynamics {
                 Dynamics::Liquid(d) => d.impact_keep.raw(),
                 _ => 0,
             };
             let value = Literal::u32_suffixed(raw);
-            quote!(crate::material::Fraction::from_raw(#value))
+            quote!(crate::material::Q16::from_raw(#value))
         }),
         true,
     );
@@ -117,7 +98,6 @@ pub fn emit(content: &Content) -> TokenStream {
             let colors = colors_tokens(&mat.colors);
             let hardness = Literal::f32_suffixed(mat.hardness);
             let mining_tier = Literal::u8_suffixed(mining_tier_from_hardness(mat.hardness));
-            let restitution = Literal::f32_suffixed(mat.restitution);
             let entity_grip = Literal::f32_suffixed(mat.entity_grip);
             let entity_bounce = Literal::f32_suffixed(mat.entity_bounce);
             let contact_damage = Literal::f32_suffixed(mat.contact_damage);
@@ -132,7 +112,6 @@ pub fn emit(content: &Content) -> TokenStream {
                     colors: #colors,
                     hardness: #hardness,
                     mining_tier: #mining_tier,
-                    restitution: #restitution,
                     entity_grip: #entity_grip,
                     entity_bounce: #entity_bounce,
                     contact_damage: #contact_damage,
@@ -143,12 +122,6 @@ pub fn emit(content: &Content) -> TokenStream {
         }),
         false,
     );
-    let bond_group_count = Literal::usize_unsuffixed(content.bond_masks.len());
-    let bond_masks = content
-        .bond_masks
-        .iter()
-        .map(|&mask| Literal::u32_suffixed(mask))
-        .collect::<Vec<_>>();
     let mut row_consts = Vec::new();
     for index in 0..len {
         let row = &content.reactions[index * len..(index + 1) * len];
@@ -172,9 +145,7 @@ pub fn emit(content: &Content) -> TokenStream {
         #phase
         #density_milli
         #tags
-        #bond_group
         #restitution
-        #friction
         #flow_threshold
         #liquid_impact
         #ignition
@@ -189,15 +160,6 @@ pub fn emit(content: &Content) -> TokenStream {
             b: crate::material::MaterialId,
         ) -> u64 {
             LIQUID_EXCHANGE_THRESHOLDS[a.0 as usize * MATERIAL_COUNT + b.0 as usize]
-        }
-
-        const BOND_MASKS: [u32; #bond_group_count] = [#(#bond_masks),*];
-
-        #[inline]
-        pub const fn bonds(a: crate::material::MaterialId, b: crate::material::MaterialId) -> bool {
-            let ga = bond_group(a);
-            let gb = bond_group(b);
-            ga != u8::MAX && gb != u8::MAX && BOND_MASKS[ga as usize] & (1 << gb) != 0
         }
 
         const NO_REACTION: crate::material::Reaction = crate::material::Reaction {

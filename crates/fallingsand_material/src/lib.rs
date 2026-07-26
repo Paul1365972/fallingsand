@@ -96,11 +96,15 @@ pub struct Burning {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Fraction(u32);
+pub struct Q16(u32);
 
-impl Fraction {
+impl Q16 {
     pub const fn from_raw(raw: u32) -> Self {
         Self(raw)
+    }
+
+    pub fn from_f32(value: f32) -> Self {
+        Self((f64::from(value) * 65536.0).round() as u32)
     }
 
     pub const fn raw(self) -> u32 {
@@ -114,11 +118,9 @@ impl Fraction {
         (if product < 0 { -magnitude } else { magnitude }) as i32
     }
 
-    pub const fn scale(self, value: i128) -> i128 {
-        let product = value * self.0 as i128;
-        let half = 1i128 << 15;
-        let magnitude = (product.abs() + half) >> 16;
-        if product < 0 { -magnitude } else { magnitude }
+    pub const fn mul(self, other: Self) -> Self {
+        let product = self.0 as u64 * other.0 as u64;
+        Self(((product + (1 << 15)) >> 16) as u32)
     }
 
     pub const fn is_zero(self) -> bool {
@@ -128,32 +130,28 @@ impl Fraction {
     pub const fn min(self, other: Self) -> Self {
         if self.0 < other.0 { self } else { other }
     }
-
-    pub const fn max(self, other: Self) -> Self {
-        if self.0 > other.0 { self } else { other }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PowderDynamics {
-    pub air_drag_keep: Fraction,
-    pub submerged_drag_keep: Fraction,
-    pub ground_friction_keep: Fraction,
-    pub deflect_keep: Fraction,
+    pub air_drag_keep: Q16,
+    pub submerged_drag_keep: Q16,
+    pub ground_friction_keep: Q16,
+    pub deflect_keep: Q16,
     pub topple_start_threshold: u64,
     pub topple_keep_threshold: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LiquidDynamics {
-    pub drag_keep: Fraction,
-    pub impact_keep: Fraction,
+    pub drag_keep: Q16,
+    pub impact_keep: Q16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GasDynamics {
-    pub air_drag_keep: Fraction,
-    pub turbulence_q16: u32,
+    pub air_drag_keep: Q16,
+    pub turbulence: Q16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,7 +168,6 @@ pub struct MaterialInfo {
     pub colors: &'static [[u8; 4]],
     pub hardness: f32,
     pub mining_tier: u8,
-    pub restitution: f32,
     pub entity_grip: f32,
     pub entity_bounce: f32,
     pub contact_damage: f32,

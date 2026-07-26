@@ -4,14 +4,13 @@ use fallingsand_core::content;
 use fallingsand_core::{CellPos, Phase, TICK_DT, Tag};
 use fallingsand_protocol::GameMode;
 use fallingsand_sim::CellWorld;
-use fallingsand_sim::physics::{Actor, CellSource};
+use fallingsand_sim::creature::Creature;
+use fallingsand_sim::shape::CellSource;
 
 pub const BURN_SECS: f32 = 4.0;
 pub const BURN_DPS: f32 = 6.0;
 pub const DROWN_DPS: f32 = 10.0;
 pub const AIR_REFILL_MULT: f32 = 4.0;
-pub const CRUSH_THRESHOLD_DV: f32 = 120.0;
-pub const CRUSH_DAMAGE_PER_DV: f32 = 0.3;
 pub const REGEN_DELAY_SECS: f32 = 8.0;
 pub const REGEN_RATE: f32 = 2.0;
 const REGEN_DELAY_TICKS: u64 = fallingsand_core::ticks_from_secs(REGEN_DELAY_SECS);
@@ -24,7 +23,7 @@ pub struct HazardSample {
     pub head_submerged: bool,
 }
 
-pub fn sample_hazards<W: CellSource>(world: &W, body: &Actor) -> HazardSample {
+pub fn sample_hazards<W: CellSource>(world: &W, body: &Creature) -> HazardSample {
     let mut sample = HazardSample::default();
     let fp = body.footprint();
     let mut probe = |pos: CellPos| {
@@ -54,10 +53,6 @@ pub fn sample_hazards<W: CellSource>(world: &W, body: &Actor) -> HazardSample {
     sample
 }
 
-pub fn crush_damage(dv: f32) -> f32 {
-    ((dv - CRUSH_THRESHOLD_DV) * CRUSH_DAMAGE_PER_DV).max(0.0)
-}
-
 pub fn apply_hazards(sim: &CellWorld, players: &mut Players) {
     for (_, player) in players.iter_mut() {
         let survival = player.profile.mode == GameMode::Survival;
@@ -67,10 +62,9 @@ pub fn apply_hazards(sim: &CellWorld, players: &mut Players) {
         if !survival {
             avatar.air = MAX_AIR_SECONDS;
             avatar.burning_secs = 0.0;
-            avatar.pending_crush_dv = 0.0;
             continue;
         }
-        let sample = sample_hazards(sim, &avatar.actor);
+        let sample = sample_hazards(sim, &avatar.creature);
         let mut damage = sample.contact_dps * TICK_DT;
         if sample.hot {
             avatar.burning_secs = BURN_SECS;
@@ -90,7 +84,6 @@ pub fn apply_hazards(sim: &CellWorld, players: &mut Players) {
         } else {
             avatar.air = (avatar.air + AIR_REFILL_MULT * TICK_DT).min(MAX_AIR_SECONDS);
         }
-        damage += crush_damage(std::mem::take(&mut avatar.pending_crush_dv));
         if damage > 0.0 {
             avatar.health.hp -= damage;
             avatar.health.regen_delay_ticks = REGEN_DELAY_TICKS;

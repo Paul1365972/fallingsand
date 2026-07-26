@@ -3,9 +3,7 @@ mod materials;
 mod quantize;
 mod reactions;
 
-use crate::{
-    BOND_GROUP_COUNT, BurningDef, Catalog, EmissionDef, Error, MaterialKey, PhaseDef, SolidDef,
-};
+use crate::{BurningDef, Catalog, EmissionDef, Error, MaterialKey, PhaseDef};
 use fallingsand_material::{
     Burning, BurningKind, Dynamics, Ignition, MaterialId, Phase, Reaction, SealedBurn, Tag, Tags,
 };
@@ -46,11 +44,9 @@ pub struct Mat {
     pub density_milli: i32,
     pub colors: Vec<[u8; 4]>,
     pub tags: Tags,
-    pub bond_group: Option<u8>,
     pub hardness: f32,
     pub restitution: f32,
     pub entity_grip: f32,
-    pub friction: f32,
     pub entity_bounce: f32,
     pub contact_damage: f32,
     pub emission: [f32; 3],
@@ -84,7 +80,6 @@ pub struct Content {
     pub items: Vec<ItemOut>,
     pub recipes: Vec<RecipeOut>,
     pub item_for_material: Vec<u16>,
-    pub bond_masks: Vec<u32>,
 }
 
 pub fn build(catalog: &Catalog) -> Result<Content, Error> {
@@ -242,10 +237,6 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
                 .any(Option::is_some);
         let const_name = raw.name.to_ascii_uppercase();
         let (emission, flicker) = bake_emission(raw.emission);
-        let bond_group = match raw.phase {
-            PhaseDef::Solid(SolidDef { bond: Some(group) }) => Some(group as u8),
-            _ => None,
-        };
         materials.push(Mat {
             spec_name: camel_case(&const_name),
             name: raw.name.to_ascii_lowercase(),
@@ -256,11 +247,9 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
             emission,
             flicker,
             tags: raw.tags,
-            bond_group,
             hardness: raw.hardness,
             restitution: raw.restitution,
             entity_grip: raw.entity_grip,
-            friction: raw.friction,
             entity_bounce: raw.entity_bounce,
             contact_damage: raw.contact_damage,
             burning,
@@ -281,15 +270,6 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
     let (items, item_for_material) = build_items(catalog, &materials, &fuel_base)?;
     let recipes = build_recipes(catalog, &by_name, &item_for_material)?;
 
-    let mut bond_masks = vec![0u32; BOND_GROUP_COUNT];
-    for (group, mask) in bond_masks.iter_mut().enumerate() {
-        *mask |= 1 << group;
-    }
-    for &(a, b) in &catalog.bonds {
-        bond_masks[a as usize] |= 1 << (b as usize);
-        bond_masks[b as usize] |= 1 << (a as usize);
-    }
-
     Ok(Content {
         materials,
         ignitions,
@@ -298,7 +278,6 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
         items,
         recipes,
         item_for_material,
-        bond_masks,
     })
 }
 

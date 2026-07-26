@@ -77,14 +77,9 @@ fn entry_cell(entry: &[u8]) -> Result<Cell, WireError> {
     if material as usize >= fallingsand_core::content::MATERIAL_COUNT {
         return Err(WireError::InvalidMaterial(material));
     }
-    Ok(Cell {
-        material: MaterialId(material),
-        vx: 0,
-        vy: 0,
-        shade: entry[2],
-        flags: 0,
-        aux: 0,
-    })
+    let mut cell = Cell::new(MaterialId(material), 0);
+    cell.shade = entry[2];
+    Ok(cell)
 }
 
 fn index_bits(palette_len: usize) -> u32 {

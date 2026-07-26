@@ -35,7 +35,7 @@ impl DigState {
     }
 }
 
-type Actor = fallingsand_sim::physics::Actor;
+type Creature = fallingsand_sim::creature::Creature;
 type World = fallingsand_sim::CellWorld;
 
 #[derive(Clone, Copy)]
@@ -73,7 +73,7 @@ pub fn apply_player_inputs(sim: &mut World, players: &mut Players) {
                 CREATIVE_REACH
             },
         };
-        let body = &avatar.actor;
+        let body = &avatar.creature;
         let dig = &mut avatar.dig;
         let inventory = &mut player.profile.inventory;
 
@@ -106,7 +106,7 @@ pub fn apply_player_inputs(sim: &mut World, players: &mut Players) {
 fn active_dig(
     world: &mut World,
     context: &InteractionContext,
-    body: &Actor,
+    body: &Creature,
     dig: &mut DigState,
     inventory: &mut Inventory,
 ) {
@@ -167,7 +167,7 @@ fn active_dig(
             return;
         }
     }
-    world.set_material(target, MaterialId::AIR, true);
+    world.set_material(target, MaterialId::AIR);
     dig.clear_progress();
     dig.interaction = Some(dig_interaction(target, 1.0, plan.material));
 }
@@ -175,7 +175,7 @@ fn active_dig(
 fn active_place(
     world: &mut World,
     context: &InteractionContext,
-    body: &Actor,
+    body: &Creature,
     dig: &mut DigState,
     inventory: &mut Inventory,
 ) {
@@ -202,7 +202,7 @@ fn active_place(
         return;
     };
 
-    let placed = world.set_material(target, material, context.survival);
+    let placed = world.set_material(target, material);
     if !placed {
         dig.interaction = Some(interaction(target, InteractionStatus::Occupied, 0.0));
         return;
@@ -221,7 +221,7 @@ fn active_place(
 fn idle_preview(
     world: &World,
     context: &InteractionContext,
-    body: &Actor,
+    body: &Creature,
     inventory: &Inventory,
 ) -> Option<InteractionState> {
     let slot = context.selected_slot as usize;
@@ -293,7 +293,7 @@ fn classify_dig(
 fn select_dig(
     world: &World,
     input: &InputState,
-    body: &Actor,
+    body: &Creature,
     reach: f32,
     survival: bool,
 ) -> Option<CellPos> {
@@ -308,7 +308,7 @@ fn select_dig(
 
 fn smart_dig_target(
     world: &World,
-    body: &Actor,
+    body: &Creature,
     aim: CellPos,
     reach: f32,
     survival: bool,
@@ -353,7 +353,7 @@ fn smart_dig_target(
     None
 }
 
-fn select_place(world: &World, input: &InputState, body: &Actor, reach: f32) -> Option<CellPos> {
+fn select_place(world: &World, input: &InputState, body: &Creature, reach: f32) -> Option<CellPos> {
     let aim = input.aim;
     let target = match input.cursor_mode {
         CursorMode::Precise => world
@@ -369,7 +369,7 @@ fn select_place(world: &World, input: &InputState, body: &Actor, reach: f32) -> 
     (cell_distance_sq(body, target) <= reach * reach).then_some(target)
 }
 
-fn miss_reason(body: &Actor, input: &InputState, reach: f32) -> InteractionStatus {
+fn miss_reason(body: &Creature, input: &InputState, reach: f32) -> InteractionStatus {
     if cell_distance_sq(body, input.aim) <= reach * reach {
         InteractionStatus::NoTarget
     } else {
@@ -377,7 +377,7 @@ fn miss_reason(body: &Actor, input: &InputState, reach: f32) -> InteractionStatu
     }
 }
 
-fn clamp_to_reach(body: &Actor, aim: CellPos, reach: f32) -> CellPos {
+fn clamp_to_reach(body: &Creature, aim: CellPos, reach: f32) -> CellPos {
     let cx = body.x.to_cells();
     let cy = body.y.to_cells();
     let dx = aim.x as f32 + 0.5 - cx;
@@ -425,7 +425,7 @@ fn diggable(world: &World, pos: CellPos, survival: bool) -> bool {
         .is_some_and(|cell| destructible(cell.material, survival))
 }
 
-fn cell_distance_sq(body: &Actor, pos: CellPos) -> f32 {
+fn cell_distance_sq(body: &Creature, pos: CellPos) -> f32 {
     let dx = pos.x as f32 + 0.5 - body.x.to_cells();
     let dy = pos.y as f32 + 0.5 - body.y.to_cells();
     dx * dx + dy * dy

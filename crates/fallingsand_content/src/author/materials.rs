@@ -25,32 +25,10 @@ impl std::fmt::Display for MaterialKey {
 #[derive(Debug, Clone, Copy)]
 pub enum PhaseDef {
     Empty,
-    Solid(SolidDef),
+    Solid,
     Powder(PowderDef),
     Liquid(LiquidDef),
     Gas(GasDef),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BondGroup {
-    Mineral,
-    Wood,
-    Foliage,
-    Ice,
-}
-
-pub const BOND_GROUP_COUNT: usize = 4;
-
-#[derive(Debug, Clone, Copy, Default)]
-pub struct SolidDef {
-    pub(crate) bond: Option<BondGroup>,
-}
-
-impl SolidDef {
-    pub fn rigid(mut self, group: BondGroup) -> Self {
-        self.bond = Some(group);
-        self
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -165,12 +143,6 @@ impl GasDef {
     }
 }
 
-impl From<SolidDef> for PhaseDef {
-    fn from(value: SolidDef) -> Self {
-        Self::Solid(value)
-    }
-}
-
 impl From<PowderDef> for PhaseDef {
     fn from(value: PowderDef) -> Self {
         Self::Powder(value)
@@ -193,8 +165,8 @@ pub fn empty() -> PhaseDef {
     PhaseDef::Empty
 }
 
-pub fn solid() -> SolidDef {
-    SolidDef::default()
+pub fn solid() -> PhaseDef {
+    PhaseDef::Solid
 }
 
 pub fn powder() -> PowderDef {
@@ -344,7 +316,6 @@ pub struct MaterialDef {
     pub(crate) density: Option<f32>,
     pub(crate) colors: Option<Vec<Color>>,
     pub(crate) entity_grip: Option<f32>,
-    pub(crate) friction: Option<f32>,
     pub(crate) hardness: Option<f32>,
     pub(crate) restitution: Option<f32>,
     pub(crate) entity_bounce: Option<f32>,
@@ -373,11 +344,6 @@ impl MaterialDef {
 
     pub fn entity_grip(mut self, value: f32) -> Self {
         self.entity_grip = Some(value);
-        self
-    }
-
-    pub fn friction(mut self, value: f32) -> Self {
-        self.friction = Some(value);
         self
     }
 

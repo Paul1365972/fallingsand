@@ -130,10 +130,6 @@ pub(super) fn update_debug_primitives(
     let region = REGION_SIZE_CELLS as f32;
     let chunk_color = Color::srgba(1.0, 1.0, 1.0, 0.12);
     let region_color = Color::srgba(1.0, 0.55, 0.2, 0.6);
-    let body_color: Vec4 = Color::srgba(0.2, 1.0, 0.85, 0.95)
-        .to_linear()
-        .to_f32_array()
-        .into();
 
     let mut x = (min.x / chunk).floor() * chunk;
     while x <= max.x {
@@ -163,14 +159,6 @@ pub(super) fn update_debug_primitives(
         });
         y += chunk;
     }
-
-    primitives
-        .lines
-        .extend(ingame.debug.body_edges.iter().map(|edge| DebugLine {
-            a: to_px(Vec2::new(edge.a.x as f32, edge.a.y as f32)),
-            b: to_px(Vec2::new(edge.b.x as f32, edge.b.y as f32)),
-            color: body_color,
-        }));
 
     for flash in &ingame.debug.rects {
         let origin = Vec2::new(flash.pos.x as f32 * chunk, flash.pos.y as f32 * chunk);

@@ -25,7 +25,7 @@ fn apply_effects<M: MatSpec>(window: &mut SimWindow, pos: CellPos, cell: Cell, t
     if chemistry::apply::<M>(window, pos, &mut rng) {
         return;
     }
-    if cell.is_body() {
+    if cell.body_id().is_some() {
         return;
     }
     match const { M::DYNAMICS } {
@@ -42,10 +42,10 @@ pub(crate) fn move_cell(window: &mut SimWindow, pos: CellPos, tick: u64) {
     let Some(cell) = window.get(pos) else {
         return;
     };
-    if cell.is_body() {
+    if cell.body_id().is_some() {
         return;
     }
-    if cell.flags & Cell::MOVED != 0 {
+    if cell.is_moved() {
         window.mark(pos);
         return;
     }

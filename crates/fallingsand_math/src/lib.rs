@@ -16,10 +16,6 @@ pub const fn round_div(numerator: i128, denominator: i128) -> i128 {
     }
 }
 
-pub const fn ceil_div(numerator: i128, denominator: i128) -> i128 {
-    (numerator + denominator - 1) / denominator
-}
-
 const GOLDEN: u64 = 0x9e37_79b9_7f4a_7c15;
 
 #[inline]

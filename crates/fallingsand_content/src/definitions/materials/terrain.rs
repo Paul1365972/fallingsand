@@ -1,5 +1,5 @@
 use super::fire::{ASH, SMOKE};
-use crate::{BondGroup, Catalog, MaterialKey, Tag, flammable, material, powder, solid};
+use crate::{Catalog, MaterialKey, Tag, flammable, material, powder, solid};
 
 pub const STONE: MaterialKey = MaterialKey::new("STONE");
 pub const DIRT: MaterialKey = MaterialKey::new("DIRT");
@@ -18,9 +18,8 @@ pub const BRICK: MaterialKey = MaterialKey::new("BRICK");
 pub fn define(catalog: &mut Catalog) {
     catalog.add(
         STONE,
-        material(solid().rigid(BondGroup::Mineral))
+        material(solid())
             .density(2600.0)
-            .friction(0.6)
             .colors([
                 [110, 110, 115, 255],
                 [100, 100, 105, 255],
@@ -129,7 +128,7 @@ pub fn define(catalog: &mut Catalog) {
 
     catalog.add(
         ICE,
-        material(solid().rigid(BondGroup::Ice))
+        material(solid())
             .density(917.0)
             .colors([
                 [158, 200, 234, 255],
@@ -140,7 +139,6 @@ pub fn define(catalog: &mut Catalog) {
             .hardness(0.4)
             .restitution(0.1)
             .entity_grip(0.05)
-            .friction(0.05)
             .tag(Tag::Dissolvable),
     );
     catalog.add(
@@ -177,7 +175,7 @@ pub fn define(catalog: &mut Catalog) {
     );
     catalog.add(
         SANDSTONE,
-        material(solid().rigid(BondGroup::Mineral))
+        material(solid())
             .density(2300.0)
             .colors([
                 [208, 178, 128, 255],
@@ -191,7 +189,7 @@ pub fn define(catalog: &mut Catalog) {
     );
     catalog.add(
         DEEPSTONE,
-        material(solid().rigid(BondGroup::Mineral))
+        material(solid())
             .density(2900.0)
             .colors([
                 [82, 82, 92, 255],
@@ -204,7 +202,7 @@ pub fn define(catalog: &mut Catalog) {
     );
     catalog.add(
         BASALT,
-        material(solid().rigid(BondGroup::Mineral))
+        material(solid())
             .density(3000.0)
             .colors([
                 [56, 52, 58, 255],
@@ -217,7 +215,7 @@ pub fn define(catalog: &mut Catalog) {
     );
     catalog.add(
         BRICK,
-        material(solid().rigid(BondGroup::Mineral))
+        material(solid())
             .density(2400.0)
             .colors([
                 [156, 90, 74, 255],

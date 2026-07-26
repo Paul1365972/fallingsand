@@ -4,24 +4,33 @@ use crate::{MAX_AIR_SECONDS, MAX_HEALTH};
 use fallingsand_core::{CellPos, Subcell};
 use fallingsand_protocol::{GameMode, InputState, PlayerId, PlayerUuid, SlotAction, UseButton};
 use fallingsand_sim::PlayerStamp;
-use fallingsand_sim::physics::{Actor, Controller};
+use fallingsand_sim::creature::{Controller, Creature};
 use rustc_hash::FxHashMap;
 use std::collections::BTreeMap;
 
-pub const PLAYER_HALF_W: Subcell =
-    Subcell::from_cells(fallingsand_sim::player::PLAYER_COLS as f32 * 0.5);
-pub const PLAYER_HALF_H: Subcell =
-    Subcell::from_cells(fallingsand_sim::player::STAND_ROWS as f32 * 0.5);
-pub const PLAYER_MASS_CELLS: u32 =
-    (fallingsand_sim::player::PLAYER_COLS * fallingsand_sim::player::STAND_ROWS) as u32;
-pub const PLAYER_MASS: f32 = PLAYER_MASS_CELLS as f32;
-pub const PLAYER_MASS_UNITS: i64 = PLAYER_MASS_CELLS as i64
-    * fallingsand_sim::bodies::material_mass(fallingsand_core::content::material::FLESH);
+pub struct BodyIds {
+    next: u32,
+}
+
+impl Default for BodyIds {
+    fn default() -> Self {
+        Self { next: 1 }
+    }
+}
+
+impl BodyIds {
+    pub fn allocate(&mut self) -> u32 {
+        let id = self.next;
+        self.next = self.next.checked_add(1).expect("body id space exhausted");
+        id
+    }
+}
 
 #[derive(Default)]
 pub struct Players {
     by_id: BTreeMap<PlayerId, Player>,
     by_uuid: FxHashMap<PlayerUuid, PlayerId>,
+    body_owner: FxHashMap<u32, PlayerId>,
     next_id: u32,
 }
 
@@ -42,7 +51,23 @@ impl Players {
     pub fn remove(&mut self, id: PlayerId) -> Option<Player> {
         let player = self.by_id.remove(&id)?;
         self.by_uuid.remove(&player.uuid);
+        if let Some(avatar) = player.avatar() {
+            self.body_owner.remove(&avatar.body_id);
+        }
         Some(player)
+    }
+
+    pub fn register_body(&mut self, body_id: u32, player: PlayerId) {
+        let old = self.body_owner.insert(body_id, player);
+        debug_assert!(old.is_none());
+    }
+
+    pub fn unregister_body(&mut self, body_id: u32) {
+        self.body_owner.remove(&body_id);
+    }
+
+    pub fn player_for_body(&self, body_id: u32) -> Option<PlayerId> {
+        self.body_owner.get(&body_id).copied()
     }
 
     pub fn id_for_uuid(&self, uuid: PlayerUuid) -> Option<PlayerId> {
@@ -124,7 +149,7 @@ impl PlayerControl {
 
 pub enum PlayerLife {
     Entering(EnteringPlayer),
-    Alive(Avatar),
+    Alive(Box<Avatar>),
     Dead(DeadPlayer),
     Reviving(RevivingPlayer),
 }
@@ -178,16 +203,15 @@ impl PlayerLife {
 }
 
 pub struct Avatar {
-    pub actor: Actor,
+    pub creature: Creature,
     pub stamp: PlayerStamp,
+    pub body_id: u32,
     pub controller: Controller,
     pub health: Health,
     pub air: f32,
     pub burning_secs: f32,
     pub flying: bool,
     pub dig: DigState,
-    pub pending_impulse: (f32, f32),
-    pub pending_crush_dv: f32,
 }
 
 pub struct Health {
@@ -383,7 +407,7 @@ impl Player {
     pub fn view_anchor(&self) -> CellPos {
         match &self.life {
             PlayerLife::Entering(entering) => entering.materialization.search.origin,
-            PlayerLife::Alive(avatar) => avatar.actor.cell(),
+            PlayerLife::Alive(avatar) => avatar.creature.cell(),
             PlayerLife::Dead(dead) => dead.view_anchor,
             PlayerLife::Reviving(reviving) => reviving.death.view_anchor,
         }
@@ -409,7 +433,7 @@ impl Player {
     }
 
     pub fn finish_materialization(&mut self, avatar: Avatar, tick: u64) {
-        self.transition_life(PlayerLife::Alive(avatar), tick);
+        self.transition_life(PlayerLife::Alive(Box::new(avatar)), tick);
     }
 
     fn transition_life(&mut self, life: PlayerLife, tick: u64) {
@@ -439,14 +463,14 @@ impl AvatarSnapshot {
 
     pub fn from_avatar(avatar: &Avatar) -> Self {
         Self {
-            x: avatar.actor.x,
-            y: avatar.actor.y
+            x: avatar.creature.x,
+            y: avatar.creature.y
                 + Subcell::from_cells(
-                    (fallingsand_sim::player::STAND_ROWS as i32 / 2 - avatar.actor.rows() / 2)
+                    (fallingsand_sim::player::STAND_ROWS as i32 / 2 - avatar.creature.rows() / 2)
                         as f32,
                 ),
-            vx: avatar.actor.vx,
-            vy: avatar.actor.vy,
+            vx: avatar.creature.vx,
+            vy: avatar.creature.vy,
             hp: avatar.health.hp,
             regen_delay_ticks: avatar.health.regen_delay_ticks,
             air: avatar.air,

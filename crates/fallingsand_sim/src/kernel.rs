@@ -1,5 +1,5 @@
 use crate::rules;
-use crate::window::{SimWindow, WINDOW_CHUNKS, WindowEvents};
+use crate::window::{SimWindow, WINDOW_CHUNKS};
 use crate::world::CellWorld;
 use fallingsand_core::{CHUNK_SIZE, CellPos, Chunk, ChunkPos, DirtyRect};
 use fallingsand_math::Hash;
@@ -55,7 +55,6 @@ pub struct Simulator {
     ready: FxHashSet<ChunkPos>,
     origins: Vec<ChunkPos>,
     members: FxHashMap<ChunkPos, (usize, i32, i32)>,
-    events: Vec<WindowEvents>,
 }
 
 impl Simulator {
@@ -169,17 +168,10 @@ impl Simulator {
             }
         }
 
-        self.events
-            .resize_with(self.origins.len(), WindowEvents::default);
-        for events in &mut self.events[..self.origins.len()] {
-            events.clear();
-        }
         let mut windows: Vec<SimWindow> = self
             .origins
             .iter()
-            .copied()
-            .zip(self.events.iter_mut())
-            .map(|(origin, events)| SimWindow::new(origin, std::array::from_fn(|_| None), events))
+            .map(|&origin| SimWindow::new(origin, std::array::from_fn(|_| None)))
             .collect();
         for (&pos, chunk) in map.iter_mut() {
             if let Some(&(index, sx, sy)) = self.members.get(&pos) {
@@ -188,10 +180,6 @@ impl Simulator {
         }
 
         windows.par_iter_mut().for_each(kernel);
-        drop(windows);
-        for events in &mut self.events[..self.origins.len()] {
-            world.push_unseated(events.drain_unseated());
-        }
     }
 }
 

@@ -1,4 +1,3 @@
-pub(crate) mod bodies;
 pub(crate) mod commands;
 pub(crate) mod dig;
 pub(crate) mod hazards;
@@ -19,7 +18,7 @@ use fallingsand_protocol::{ServerStats, TickProfile};
 use fallingsand_sim::{CellWorld, Simulator};
 use fallingsand_worldgen::WorldGenerator;
 use persistence::{Persistence, WorldMeta};
-use player::Players;
+use player::{BodyIds, Players};
 use regions::{ChunkTickets, RegionMap};
 use replication::ReplicationState;
 use session::Sessions;
@@ -56,8 +55,8 @@ struct ServerState {
     sim: CellWorld,
     simulator: Simulator,
     players: Players,
+    body_ids: BodyIds,
     sessions: Sessions,
-    bodies: bodies::BodyWorld,
     generator: WorldGenerator,
     regions: RegionMap,
     tickets: ChunkTickets,
@@ -142,8 +141,8 @@ impl Server {
                 sim,
                 simulator: Simulator::new(),
                 players: Players::default(),
+                body_ids: BodyIds::default(),
                 sessions: Sessions::default(),
-                bodies: bodies::BodyWorld::default(),
                 generator,
                 regions: RegionMap::default(),
                 tickets: ChunkTickets::default(),
@@ -184,12 +183,11 @@ impl Server {
                 let stats = self.stats();
                 if stats.tick.is_multiple_of(10 * TICK_RATE as u64) {
                     tracing::debug!(
-                        "tick {}: {} players, {}/{} chunks awake, {} bodies, sim {:.1}ms tick {:.1}ms",
+                        "tick {}: {} players, {}/{} chunks awake, sim {:.1}ms tick {:.1}ms",
                         stats.tick,
                         stats.players,
                         stats.awake_chunks,
                         stats.loaded_chunks,
-                        stats.pixel_bodies,
                         stats.timing.sim() as f64 / 1000.0,
                         stats.timing.total as f64 / 1000.0,
                     );
@@ -258,13 +256,7 @@ impl ServerState {
             |t| &mut t.regions,
             |s| {
                 regions::compute_tickets(&mut s.tickets, &s.players);
-                regions::manage_regions(
-                    &mut s.sim,
-                    &mut s.regions,
-                    &mut s.persistence,
-                    &s.tickets,
-                    &mut s.bodies,
-                )
+                regions::manage_regions(&mut s.sim, &mut s.regions, &mut s.persistence, &s.tickets)
             },
         )?;
 
@@ -279,18 +271,7 @@ impl ServerState {
             "physics",
             |t| &mut t.physics,
             |s| {
-                physics::step_physics(&mut s.sim, &mut s.bodies, &mut s.players);
-            },
-        );
-
-        self.timed(
-            "bodies",
-            |t| &mut t.bodies,
-            |s| {
-                let metrics = s.bodies.step(&mut s.sim, &s.tickets, &s.players);
-                let shoves: Vec<_> = s.bodies.drain_shoves().collect();
-                physics::deliver(&mut s.players, shoves.into_iter());
-                s.stats.pixel_bodies = metrics.bodies;
+                physics::step_physics(&mut s.sim, &mut s.players);
             },
         );
 
@@ -308,9 +289,12 @@ impl ServerState {
             |t| &mut t.lifecycle,
             |s| {
                 lifecycle::resolve_lethal(&mut s.sim, &mut s.players, tick);
-                for (player, text) in
-                    lifecycle::advance_materializations(&mut s.sim, &mut s.players, tick)
-                {
+                for (player, text) in lifecycle::advance_materializations(
+                    &mut s.sim,
+                    &mut s.players,
+                    &mut s.body_ids,
+                    tick,
+                ) {
                     s.sessions.send_to_player(
                         player,
                         &fallingsand_protocol::ServerMessage::System { text },
@@ -334,7 +318,6 @@ impl ServerState {
                     &s.regions,
                     &s.generator,
                     &s.emitter.spawns,
-                    &s.bodies,
                     &mut s.replication,
                 );
                 s.stats.players = metrics.players;
@@ -388,7 +371,8 @@ impl ServerState {
                 continue;
             };
             if let Some(avatar) = player.avatar_mut() {
-                physics::unstamp(&mut self.sim, &mut avatar.stamp);
+                let body_id = avatar.body_id;
+                physics::unstamp(&mut self.sim, &mut avatar.stamp, body_id);
             }
         }
         Ok(())

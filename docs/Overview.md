@@ -9,7 +9,7 @@ Multiplayer Noita-like falling-sand game. Inspirations: Noita (world sim, destru
 3. **Performance is a feature** — sleep what can sleep, parallelize what can't.
 4. **Architecture before content** — foundations the final game grows on without rewrites.
 
-Cross-cutting principles: physics is phase-based and semi-realistic — natural behavior over artificial caps and clamps; **universality** — every matter-affecting system handles grid cells, rigid bodies, and entities, or explicitly flags the gap; the quality bar is great-not-good, with Noita and Celeste as benchmarks and human playtesting deciding feel.
+Cross-cutting principles: physics is phase-based and semi-realistic — natural behavior over artificial caps and clamps; **universality** — every matter-affecting system handles grid cells, debris, and creatures, or explicitly flags the gap; the quality bar is great-not-good, with Noita and Celeste as benchmarks and human playtesting deciding feel.
 
 ## Gameplay
 
@@ -22,7 +22,7 @@ Each system doc states its goal, its invariants, and its vocabulary; the invaria
 - [Tech.md](Tech.md) — crates, dependency rules, profiling
 - [Content.md](Content.md) — compiled content and units
 - [Simulation.md](Simulation.md) — the grid, scheduling, movement, sleeping, combustion
-- [Physics.md](Physics.md) — players and pixel bodies
+- [Physics.md](Physics.md) — shapes, creatures, debris: the unified movement system
 - [Server.md](Server.md) — authority, tick, interest, persistence
 - [Networking.md](Networking.md) — protocol
 - [Client.md](Client.md) — rendering and UI

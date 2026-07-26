@@ -13,7 +13,6 @@ pub(super) struct RawMaterial {
     pub(super) density: f32,
     pub(super) colors: Vec<[u8; 4]>,
     pub(super) entity_grip: f32,
-    pub(super) friction: f32,
     pub(super) hardness: f32,
     pub(super) restitution: f32,
     pub(super) entity_bounce: f32,
@@ -32,7 +31,6 @@ impl RawMaterial {
             density: 0.0,
             colors: Vec::new(),
             entity_grip: 1.0,
-            friction: 0.5,
             hardness: 0.0,
             restitution: 0.0,
             entity_bounce: 0.0,
@@ -86,9 +84,6 @@ fn apply_definition(raw: &mut RawMaterial, definition: &MaterialDef) {
     if let Some(value) = definition.entity_grip {
         raw.entity_grip = value;
     }
-    if let Some(value) = definition.friction {
-        raw.friction = value;
-    }
     if let Some(value) = definition.hardness {
         raw.hardness = value;
     }
@@ -122,13 +117,12 @@ fn validate_material(raw: &RawMaterial) -> Result<(), Error> {
             "{context}: a burning material cannot also be flammable"
         )));
     }
-    if !matches!(raw.phase, PhaseDef::Empty | PhaseDef::Solid(_)) && raw.density <= 0.0 {
+    if !matches!(raw.phase, PhaseDef::Empty | PhaseDef::Solid) && raw.density <= 0.0 {
         return Err(fail(format!("{context}: moving phases need density > 0")));
     }
     for (field, value) in [
         ("density", raw.density),
         ("entity_grip", raw.entity_grip),
-        ("friction", raw.friction),
         ("hardness", raw.hardness),
         ("restitution", raw.restitution),
         ("entity_bounce", raw.entity_bounce),
@@ -137,7 +131,7 @@ fn validate_material(raw: &RawMaterial) -> Result<(), Error> {
         validate_number(&format!("{context}: {field}"), value)?;
     }
     match raw.phase {
-        PhaseDef::Empty | PhaseDef::Solid(_) => {}
+        PhaseDef::Empty | PhaseDef::Solid => {}
         PhaseDef::Powder(PowderDef {
             air_drag,
             ground_friction,

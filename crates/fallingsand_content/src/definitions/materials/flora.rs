@@ -1,5 +1,5 @@
 use super::fire::{ASH, SMOKE};
-use crate::{BondGroup, Catalog, MaterialKey, Tag, emission, flammable, inherit, material, solid};
+use crate::{Catalog, MaterialKey, Tag, emission, flammable, inherit, material, solid};
 
 pub const WOOD: MaterialKey = MaterialKey::new("WOOD");
 pub const MOSS: MaterialKey = MaterialKey::new("MOSS");
@@ -11,7 +11,7 @@ pub const GLOWSHROOM: MaterialKey = MaterialKey::new("GLOWSHROOM");
 pub fn define(catalog: &mut Catalog) {
     catalog.add(
         WOOD,
-        material(solid().rigid(BondGroup::Wood))
+        material(solid())
             .density(700.0)
             .colors([
                 [133, 94, 66, 255],
@@ -20,7 +20,6 @@ pub fn define(catalog: &mut Catalog) {
                 [110, 76, 52, 255],
             ])
             .hardness(0.35)
-            .friction(0.4)
             .restitution(0.3)
             .tag(Tag::Dissolvable)
             .flammable(
@@ -65,7 +64,7 @@ pub fn define(catalog: &mut Catalog) {
     catalog.add(
         LEAVES,
         inherit(MOSS)
-            .phase(solid().rigid(BondGroup::Foliage))
+            .phase(solid())
             .density(350.0)
             .colors([
                 [68, 138, 58, 255],
@@ -87,7 +86,7 @@ pub fn define(catalog: &mut Catalog) {
     catalog.add(
         PLANKS,
         inherit(WOOD)
-            .phase(solid().rigid(BondGroup::Wood))
+            .phase(solid())
             .density(600.0)
             .colors([
                 [172, 132, 86, 255],
@@ -100,7 +99,7 @@ pub fn define(catalog: &mut Catalog) {
     catalog.add(
         MUSHROOM_STEM,
         inherit(MOSS)
-            .phase(solid().rigid(BondGroup::Wood))
+            .phase(solid())
             .density(400.0)
             .colors([
                 [216, 206, 186, 255],

@@ -1,4 +1,4 @@
-use crate::world::{Unseated, obstructs, rigid_seed, unseated};
+use crate::world::obstructs;
 use fallingsand_core::{CHUNK_SIZE, Cell, CellPos, Chunk, ChunkPos};
 
 pub const WINDOW_CHUNKS: i32 = 4;
@@ -9,35 +9,11 @@ const _: () = assert!(SPEED_OF_LIGHT as usize <= ((WINDOW_CHUNKS as usize - 2) /
 pub struct SimWindow<'a> {
     origin: ChunkPos,
     slots: [Option<&'a mut Chunk>; WINDOW_SLOTS],
-    events: &'a mut WindowEvents,
-}
-
-#[derive(Default)]
-pub(crate) struct WindowEvents {
-    unseated: Vec<CellPos>,
-}
-
-impl WindowEvents {
-    pub(crate) fn clear(&mut self) {
-        self.unseated.clear();
-    }
-
-    pub(crate) fn drain_unseated(&mut self) -> impl Iterator<Item = CellPos> + '_ {
-        self.unseated.drain(..)
-    }
 }
 
 impl<'a> SimWindow<'a> {
-    pub(crate) fn new(
-        origin: ChunkPos,
-        slots: [Option<&'a mut Chunk>; WINDOW_SLOTS],
-        events: &'a mut WindowEvents,
-    ) -> Self {
-        Self {
-            origin,
-            slots,
-            events,
-        }
+    pub(crate) fn new(origin: ChunkPos, slots: [Option<&'a mut Chunk>; WINDOW_SLOTS]) -> Self {
+        Self { origin, slots }
     }
 
     pub(crate) fn set_slot(&mut self, sx: i32, sy: i32, chunk: &'a mut Chunk) {
@@ -98,28 +74,12 @@ impl<'a> SimWindow<'a> {
             return;
         };
         let old = chunk.get(pos.offset());
-        cell.set_body(old.is_body() && obstructs(cell.material));
+        match old.body_id() {
+            Some(id) if obstructs(cell.material) => cell.set_body(id),
+            _ => cell.clear_body(),
+        }
         chunk.set(pos.offset(), cell);
         self.mark_sim_border(pos);
-        self.note(pos, old, cell);
-    }
-
-    fn note(&mut self, pos: CellPos, old: Cell, new: Cell) {
-        match unseated(old, new) {
-            Unseated::Nothing => {}
-            Unseated::Written => self.unseat(pos),
-            Unseated::Neighbours => {
-                for around in pos.neighbourhood() {
-                    self.unseat(around);
-                }
-            }
-        }
-    }
-
-    fn unseat(&mut self, pos: CellPos) {
-        if self.get(pos).is_some_and(rigid_seed) {
-            self.events.unseated.push(pos);
-        }
     }
 
     #[inline]
@@ -160,11 +120,9 @@ impl<'a> SimWindow<'a> {
             debug_assert!(false, "swap with unloaded cell");
             return;
         };
-        moving.flags |= Cell::MOVED;
-        displaced.flags |= Cell::MOVED;
+        moving.set_moved();
+        displaced.set_moved();
         self.set(mover, displaced);
         self.set(target, moving);
-        self.note(mover, moving, displaced);
-        self.note(target, displaced, moving);
     }
 }

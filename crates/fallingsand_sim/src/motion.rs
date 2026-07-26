@@ -1,6 +1,6 @@
 use crate::window::{SPEED_OF_LIGHT, SimWindow};
 use fallingsand_core::{
-    CARDINAL_NEIGHBORS as NEIGHBORS, Cell, CellPos, Fraction, MaterialId, Phase, TICK_DT, content,
+    CARDINAL_NEIGHBORS as NEIGHBORS, Cell, CellPos, MaterialId, Phase, Q16, TICK_DT, content,
 };
 use fallingsand_math::{Hash, Rng, SUBCELL_BITS, SUBCELL_UNITS_PER_CELL};
 
@@ -118,7 +118,7 @@ pub(crate) fn move_cell(window: &mut SimWindow, pos: CellPos, cell: Cell, tick: 
             continue;
         };
         let blocker_phase = content::phase(blocker.material);
-        let dynamic = !blocker.is_body()
+        let dynamic = blocker.body_id().is_none()
             && matches!(blocker_phase, Phase::Powder | Phase::Liquid | Phase::Gas);
         let velocity = if dx != 0 { &mut vx } else { &mut vy };
         *velocity = if dynamic {
@@ -167,15 +167,17 @@ pub(crate) fn swap_through_liquid(
     let (Some(mut mover), Some(mut displaced)) = (window.get(from), window.get(to)) else {
         return None;
     };
+    let (mover_vx0, mover_vy0) = mover.vel();
+    let (displaced_vx0, displaced_vy0) = displaced.vel();
     let mover_mass = i64::from(content::density_milli(mover.material).max(1));
     let displaced_mass = i64::from(content::density_milli(displaced.material).max(1));
     let mass = mover_mass + displaced_mass;
     let center_vx = divide_signed(
-        mover_mass * i64::from(mover.vx) + displaced_mass * i64::from(displaced.vx),
+        mover_mass * i64::from(mover_vx0) + displaced_mass * i64::from(displaced_vx0),
         mass,
     ) as i32;
     let center_vy = divide_signed(
-        mover_mass * i64::from(mover.vy) + displaced_mass * i64::from(displaced.vy),
+        mover_mass * i64::from(mover_vy0) + displaced_mass * i64::from(displaced_vy0),
         mass,
     ) as i32;
     let retention = liquid_wake_keep(mover.material, displaced.material);
@@ -189,8 +191,8 @@ pub(crate) fn swap_through_liquid(
     } else {
         1
     };
-    let relative_vx = i32::from(mover.vx) - i32::from(displaced.vx);
-    let relative_vy = i32::from(mover.vy) - i32::from(displaced.vy);
+    let relative_vx = mover_vx0 - displaced_vx0;
+    let relative_vy = mover_vy0 - displaced_vy0;
     let wake_vx = forward.apply(relative_vx) - side * transverse.apply(relative_vy);
     let wake_vy = forward.apply(relative_vy) + side * transverse.apply(relative_vx);
     let density_vx = side
@@ -242,7 +244,7 @@ fn density_exchange_speed(
     (potential / inertia).isqrt() as i32
 }
 
-fn liquid_wake_keep(mover: MaterialId, displaced: MaterialId) -> Fraction {
+fn liquid_wake_keep(mover: MaterialId, displaced: MaterialId) -> Q16 {
     let displaced_retention = content::liquid_impact(displaced);
     if content::phase(mover) == Phase::Liquid {
         displaced_retention.min(content::liquid_impact(mover))
@@ -251,25 +253,13 @@ fn liquid_wake_keep(mover: MaterialId, displaced: MaterialId) -> Fraction {
     }
 }
 
-fn density_scatter(
-    retention: Fraction,
-    mover_mass: i64,
-    displaced_mass: i64,
-) -> (Fraction, Fraction) {
+fn density_scatter(retention: Q16, mover_mass: i64, displaced_mass: i64) -> (Q16, Q16) {
     let density_delta = mover_mass.abs_diff(displaced_mass);
     let density_max = mover_mass.max(displaced_mass) as u64;
     let contrast_q32 = (u128::from(density_delta) << 32) / u128::from(density_max);
-    let forward_q16 = contrast_q32.isqrt() as u32;
-    let transverse_q16 = ((1u128 << 32) - contrast_q32).isqrt() as u32;
-    (
-        combine_factors(retention, forward_q16),
-        combine_factors(retention, transverse_q16),
-    )
-}
-
-fn combine_factors(a: Fraction, b_q16: u32) -> Fraction {
-    let product = u64::from(a.raw()) * u64::from(b_q16);
-    Fraction::from_raw(((product + (1 << 15)) >> 16) as u32)
+    let forward = Q16::from_raw(contrast_q32.isqrt() as u32);
+    let transverse = Q16::from_raw(((1u128 << 32) - contrast_q32).isqrt() as u32);
+    (retention.mul(forward), retention.mul(transverse))
 }
 
 pub(crate) fn movement_rng(tick: u64, pos: CellPos) -> Rng {
@@ -290,7 +280,7 @@ pub(crate) fn write_velocity(
     }
     vx = vx.clamp(-MAX_COMPONENT_RAW, MAX_COMPONENT_RAW);
     vy = vy.clamp(-MAX_COMPONENT_RAW, MAX_COMPONENT_RAW);
-    if cell.vx as i32 != vx || cell.vy as i32 != vy {
+    if cell.vel() != (vx, vy) {
         let mut written = cell;
         written.set_vel(vx, vy);
         window.set(pos, written);
@@ -337,7 +327,7 @@ pub(crate) fn entry(window: &SimWindow, mover: MaterialId, dy: i32, target: Cell
     if !admits(mover, dy, cell) {
         return Entry::Blocked;
     }
-    if !cell.is_air() && cell.flags & Cell::MOVED != 0 {
+    if !cell.is_air() && cell.is_moved() {
         return Entry::Busy;
     }
     Entry::Open
@@ -363,18 +353,15 @@ fn transfer_momentum(
     target: CellPos,
     direction: (i32, i32),
     velocity: i32,
-    restitution: Fraction,
+    restitution: Q16,
 ) -> i32 {
     let Some(mut blocker) = window.get(target) else {
         return velocity;
     };
     let horizontal = direction.0 != 0;
     let sign = if horizontal { direction.0 } else { direction.1 };
-    let blocker_velocity = if horizontal {
-        i32::from(blocker.vx)
-    } else {
-        i32::from(blocker.vy)
-    };
+    let (blocker_vx, blocker_vy) = blocker.vel();
+    let blocker_velocity = if horizontal { blocker_vx } else { blocker_vy };
     let closing = (velocity - blocker_velocity) * sign;
     if closing <= 0 {
         return velocity;
@@ -396,11 +383,11 @@ fn transfer_momentum(
         divide_signed(i64::from(closing) * mover_mass * impulse, denominator) as i32;
     let received = blocker_velocity + sign * blocker_delta;
     if horizontal {
-        blocker.set_vel(received, i32::from(blocker.vy));
+        blocker.set_vel(received, blocker_vy);
     } else {
-        blocker.set_vel(i32::from(blocker.vx), received);
+        blocker.set_vel(blocker_vx, received);
     }
-    blocker.flags |= Cell::MOVED;
+    blocker.set_moved();
     window.set(target, blocker);
     velocity - sign * mover_delta
 }

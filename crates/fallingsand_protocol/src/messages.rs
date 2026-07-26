@@ -214,11 +214,6 @@ pub struct ChunkDebugRects {
     pub sim: DirtyRect,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BodyDebugRaster {
-    pub cells: Vec<CellPos>,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SelfState {
     pub life: SelfLife,
@@ -256,7 +251,6 @@ pub struct TickFrame {
     pub self_state: Option<SelfState>,
     pub particles: Vec<ParticleSpawn>,
     pub debug_rects: Vec<ChunkDebugRects>,
-    pub debug_bodies: Vec<BodyDebugRaster>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

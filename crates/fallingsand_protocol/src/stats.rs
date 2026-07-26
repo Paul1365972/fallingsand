@@ -8,7 +8,6 @@ pub struct TickProfile {
     pub sim_simulate: u32,
     pub sim_random_tick: u32,
     pub physics: u32,
-    pub bodies: u32,
     pub hazards: u32,
     pub lifecycle: u32,
     pub replicate: u32,
@@ -19,7 +18,7 @@ pub struct TickProfile {
 }
 
 impl TickProfile {
-    pub const PHASE_GROUPS: [usize; 4] = [3, 2, 4, 2];
+    pub const PHASE_GROUPS: [usize; 4] = [3, 2, 3, 2];
     pub const PHASE_COUNT: usize = {
         let mut count = 0;
         let mut i = 0;
@@ -42,7 +41,6 @@ impl TickProfile {
             ("simulate", self.sim_simulate),
             ("random", self.sim_random_tick),
             ("physics", self.physics),
-            ("bodies", self.bodies),
             ("hazards", self.hazards),
             ("lifecycle", self.lifecycle),
             ("replicate", self.replicate),
@@ -74,7 +72,6 @@ pub struct ServerStats {
     pub awake_chunks: usize,
     pub awake_cells: u64,
     pub loaded_regions: u32,
-    pub pixel_bodies: usize,
     pub players: usize,
     pub replicated_bytes: u64,
     pub timing: TickProfile,

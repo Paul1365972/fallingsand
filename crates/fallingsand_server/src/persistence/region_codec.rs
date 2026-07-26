@@ -14,16 +14,19 @@ struct CellRecord {
 }
 
 impl From<Cell> for CellRecord {
-    fn from(cell: Cell) -> Self {
-        let cell = if cell.is_body() && content::tags(cell.material).contains(Tag::Player) {
-            Cell::AIR
-        } else {
-            cell
-        };
+    fn from(mut cell: Cell) -> Self {
+        if cell.body_id().is_some() {
+            if content::tags(cell.material).contains(Tag::Player) {
+                cell = Cell::AIR;
+            } else {
+                cell.clear_body();
+            }
+        }
+        let (vx, vy) = cell.vel();
         Self {
             material: cell.material.0,
-            vx: cell.vx,
-            vy: cell.vy,
+            vx: vx as i16,
+            vy: vy as i16,
             shade: cell.shade,
             aux: cell.aux,
         }
@@ -38,14 +41,11 @@ impl CellRecord {
                 self.material
             )));
         }
-        Ok(Cell {
-            material: MaterialId(self.material),
-            vx: self.vx,
-            vy: self.vy,
-            shade: self.shade,
-            flags: 0,
-            aux: self.aux,
-        })
+        let mut cell = Cell::new(MaterialId(self.material), 0);
+        cell.shade = self.shade;
+        cell.aux = self.aux;
+        cell.set_vel(self.vx as i32, self.vy as i32);
+        Ok(cell)
     }
 }
 

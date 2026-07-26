@@ -173,8 +173,7 @@ pub(super) fn server_lines(
     ));
     let mem = server.loaded_chunks as u64 * CHUNK_AREA as u64 * std::mem::size_of::<Cell>() as u64;
     out.push(format!(
-        "bodies {}  tx {}/tick  mem ~{}",
-        server.pixel_bodies,
+        "tx {}/tick  mem ~{}",
         human_bytes(windows.tx_bytes.avg(now, server.replicated_bytes as f32) as u64),
         human_bytes(mem),
     ));

@@ -1,4 +1,3 @@
-use crate::bodies::BodyWorld;
 use crate::persistence::{Persistence, RegionReady, StoreError};
 use crate::player::{Players, SearchWindow};
 use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y};
@@ -137,7 +136,6 @@ pub fn manage_regions(
     regions: &mut RegionMap,
     persistence: &mut Persistence,
     tickets: &ChunkTickets,
-    bodies: &mut BodyWorld,
 ) -> Result<(), StoreError> {
     let tick = sim.tick();
     let wanted = wanted_regions(tickets);
@@ -210,8 +208,6 @@ pub fn manage_regions(
         .map(|(&pos, _)| pos)
         .collect();
     expired.sort_unstable_by_key(|pos| (pos.y, pos.x));
-
-    bodies.settle_overlapping_regions(sim, &expired);
 
     for pos in expired {
         regions.states.remove(&pos).expect("state exists");

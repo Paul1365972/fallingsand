@@ -16,16 +16,8 @@ impl Subcell {
         self.0
     }
 
-    pub const fn from_raw(raw: i64) -> Self {
-        Self(raw)
-    }
-
     pub const fn from_cell(cell: i32) -> Self {
         Self((cell as i64) << SUBCELL_BITS)
-    }
-
-    pub const fn cell_center(cell: i32) -> Self {
-        Self(((cell as i64) << SUBCELL_BITS) + UNITS_PER_CELL / 2)
     }
 
     pub const fn from_cells(v: f32) -> Self {
@@ -64,10 +56,6 @@ impl Subcell {
         round_div(self.0 as i128, UNITS_PER_CELL as i128) as i32
     }
 
-    pub const fn max_cell(self) -> i32 {
-        ((self.0 - 1) >> SUBCELL_BITS) as i32
-    }
-
     pub const fn abs(self) -> Self {
         Self(self.0.abs())
     }
@@ -87,18 +75,6 @@ impl Subcell {
 
     pub const fn per_substep(self, substeps: u32) -> Self {
         Self(round_div(self.0 as i128, substeps as i128) as i64)
-    }
-
-    pub const fn signum_cell(self) -> Self {
-        if self.0 < 0 {
-            Self(-UNITS_PER_CELL)
-        } else {
-            Self(UNITS_PER_CELL)
-        }
-    }
-
-    pub const fn add_cells(self, cells: f32) -> Self {
-        Self(self.0 + Self::from_cells(cells).0)
     }
 
     pub fn add_cells_per_second(self, velocity: f32) -> Self {

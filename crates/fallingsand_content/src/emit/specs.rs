@@ -123,9 +123,9 @@ fn option_tokens(value: Option<TokenStream>) -> TokenStream {
     }
 }
 
-fn fraction_tokens(factor: fallingsand_material::Fraction) -> TokenStream {
+fn q16_tokens(factor: fallingsand_material::Q16) -> TokenStream {
     let raw = Literal::u32_suffixed(factor.raw());
-    quote!(crate::material::Fraction::from_raw(#raw))
+    quote!(crate::material::Q16::from_raw(#raw))
 }
 
 fn dynamics_tokens(dynamics: &fallingsand_material::Dynamics) -> TokenStream {
@@ -133,10 +133,10 @@ fn dynamics_tokens(dynamics: &fallingsand_material::Dynamics) -> TokenStream {
     match dynamics {
         Dynamics::None => quote!(crate::material::Dynamics::None),
         Dynamics::Powder(d) => {
-            let drag_keep = fraction_tokens(d.air_drag_keep);
-            let drag_keep_submerged = fraction_tokens(d.submerged_drag_keep);
-            let friction_keep = fraction_tokens(d.ground_friction_keep);
-            let redirect_keep = fraction_tokens(d.deflect_keep);
+            let drag_keep = q16_tokens(d.air_drag_keep);
+            let drag_keep_submerged = q16_tokens(d.submerged_drag_keep);
+            let friction_keep = q16_tokens(d.ground_friction_keep);
+            let redirect_keep = q16_tokens(d.deflect_keep);
             let slide_start = Literal::u64_suffixed(d.topple_start_threshold);
             let slide_keep = Literal::u64_suffixed(d.topple_keep_threshold);
             quote! {
@@ -151,8 +151,8 @@ fn dynamics_tokens(dynamics: &fallingsand_material::Dynamics) -> TokenStream {
             }
         }
         Dynamics::Liquid(d) => {
-            let drag_keep = fraction_tokens(d.drag_keep);
-            let impact_keep = fraction_tokens(d.impact_keep);
+            let drag_keep = q16_tokens(d.drag_keep);
+            let impact_keep = q16_tokens(d.impact_keep);
             quote! {
                 crate::material::Dynamics::Liquid(crate::material::LiquidDynamics {
                     drag_keep: #drag_keep,
@@ -161,12 +161,12 @@ fn dynamics_tokens(dynamics: &fallingsand_material::Dynamics) -> TokenStream {
             }
         }
         Dynamics::Gas(d) => {
-            let drag_keep = fraction_tokens(d.air_drag_keep);
-            let turbulence_q16 = Literal::u32_suffixed(d.turbulence_q16);
+            let drag_keep = q16_tokens(d.air_drag_keep);
+            let turbulence = q16_tokens(d.turbulence);
             quote! {
                 crate::material::Dynamics::Gas(crate::material::GasDynamics {
                     air_drag_keep: #drag_keep,
-                    turbulence_q16: #turbulence_q16,
+                    turbulence: #turbulence,
                 })
             }
         }

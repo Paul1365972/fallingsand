@@ -1,8 +1,6 @@
 use super::RawMaterial;
 use crate::{EmissionDef, GasDef, LiquidDef, PhaseDef, PowderDef};
-use fallingsand_material::{
-    Dynamics, Fraction, GasDynamics, LiquidDynamics, Phase, PowderDynamics,
-};
+use fallingsand_material::{Dynamics, GasDynamics, LiquidDynamics, Phase, PowderDynamics, Q16};
 use fallingsand_math::{SUBCELL_UNITS_PER_CELL, TICK_DT, chance_threshold};
 
 pub(super) fn per_tick_chance(rate: f32) -> f32 {
@@ -13,14 +11,6 @@ fn per_tick_keep(rate: f32) -> f32 {
     (-rate * TICK_DT).exp()
 }
 
-fn quantize_q16(value: f32) -> u32 {
-    (f64::from(value) * 65536.0).round() as u32
-}
-
-fn fraction(value: f32) -> Fraction {
-    Fraction::from_raw(quantize_q16(value))
-}
-
 pub(super) fn milli(value: f32) -> i32 {
     (f64::from(value) * 1000.0).round() as i32
 }
@@ -28,7 +18,7 @@ pub(super) fn milli(value: f32) -> i32 {
 pub(super) fn phase_tag(phase: PhaseDef) -> Phase {
     match phase {
         PhaseDef::Empty => Phase::Empty,
-        PhaseDef::Solid(_) => Phase::Solid,
+        PhaseDef::Solid => Phase::Solid,
         PhaseDef::Powder(_) => Phase::Powder,
         PhaseDef::Liquid(_) => Phase::Liquid,
         PhaseDef::Gas(_) => Phase::Gas,
@@ -58,17 +48,17 @@ pub(super) fn bake_emission(def: Option<EmissionDef>) -> ([f32; 3], f32) {
     }
 }
 
-fn drag_keeps(air_drag: f32) -> (Fraction, Fraction) {
+fn drag_keeps(air_drag: f32) -> (Q16, Q16) {
     let drag_loss = 1.0 - per_tick_keep(air_drag);
     (
-        fraction(1.0 - drag_loss.min(0.9)),
-        fraction(1.0 - (drag_loss * 6.0).min(0.9)),
+        Q16::from_f32(1.0 - drag_loss.min(0.9)),
+        Q16::from_f32(1.0 - (drag_loss * 6.0).min(0.9)),
     )
 }
 
 pub(super) fn quantize_dynamics(raw: &RawMaterial) -> Dynamics {
     match raw.phase {
-        PhaseDef::Empty | PhaseDef::Solid(_) => Dynamics::None,
+        PhaseDef::Empty | PhaseDef::Solid => Dynamics::None,
         PhaseDef::Powder(PowderDef {
             air_drag,
             ground_friction,
@@ -80,8 +70,8 @@ pub(super) fn quantize_dynamics(raw: &RawMaterial) -> Dynamics {
             Dynamics::Powder(PowderDynamics {
                 air_drag_keep,
                 submerged_drag_keep,
-                ground_friction_keep: fraction(per_tick_keep(ground_friction)),
-                deflect_keep: fraction(deflect.clamp(0.0, 1.0)),
+                ground_friction_keep: Q16::from_f32(per_tick_keep(ground_friction)),
+                deflect_keep: Q16::from_f32(deflect.clamp(0.0, 1.0)),
                 topple_start_threshold: chance_threshold(per_tick_chance(topple_start)),
                 topple_keep_threshold: chance_threshold(per_tick_chance(topple_keep)),
             })
@@ -91,8 +81,8 @@ pub(super) fn quantize_dynamics(raw: &RawMaterial) -> Dynamics {
             impact,
             flow_rate: _,
         }) => Dynamics::Liquid(LiquidDynamics {
-            drag_keep: fraction(per_tick_keep(drag)),
-            impact_keep: fraction(impact.clamp(0.0, 1.0)),
+            drag_keep: Q16::from_f32(per_tick_keep(drag)),
+            impact_keep: Q16::from_f32(impact.clamp(0.0, 1.0)),
         }),
         PhaseDef::Gas(GasDef {
             air_drag,
@@ -100,7 +90,7 @@ pub(super) fn quantize_dynamics(raw: &RawMaterial) -> Dynamics {
             flow_rate: _,
         }) => Dynamics::Gas(GasDynamics {
             air_drag_keep: drag_keeps(air_drag).0,
-            turbulence_q16: quantize_q16(
+            turbulence: Q16::from_f32(
                 turbulence * TICK_DT.sqrt() * TICK_DT * SUBCELL_UNITS_PER_CELL as f32,
             ),
         }),

@@ -11,11 +11,11 @@ One reliable ordered stream per connection; compact binary frames, compressed ab
 
 ## Server → client
 
-Roster and physical presence are separate: roster messages maintain connected names, while the tick frame carries change-gated per-subsystem state — chunk load/delta/unload from the sim's change rect (bodies and player flesh ride these deltas), optional avatar anchors for presentation, per-slot inventory diffs, a private self state whose lifecycle carries health/air/interaction exactly while alive and a camera anchor while not, and dig-spray particle spawn events (the server decides when and where; the client only integrates and fades them).
+Roster and physical presence are separate: roster messages maintain connected names, while the tick frame carries change-gated per-subsystem state — chunk load/delta/unload from the sim's change rect (player flesh rides these deltas), optional avatar anchors for presentation, per-slot inventory diffs, a private self state whose lifecycle carries health/air/interaction exactly while alive and a camera anchor while not, and dig-spray particle spawn events (the server decides when and where; the client only integrates and fades them).
 
 A wire cell is 3 bytes — material and shade, no velocity or timing; the server re-derives them. Chunk payloads are paletted containers, smallest encoding wins.
 
-The opt-in debug stream keeps chunk sim/change rects and complete live-body rasters as separate payloads; neither participates in gameplay state.
+The opt-in debug stream keeps chunk sim/change rects as separate payloads outside gameplay state.
 
 ## Client → server
 

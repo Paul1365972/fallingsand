@@ -5,7 +5,7 @@ use crate::{
     },
     window::SimWindow,
 };
-use fallingsand_core::{Cell, CellPos, Fraction, LiquidDynamics, Phase, content};
+use fallingsand_core::{Cell, CellPos, LiquidDynamics, Phase, Q16, content};
 use fallingsand_math::{Hash, Rng};
 
 const MOVEMENT_SALT: Hash = Hash::label("simulation.movement");
@@ -152,7 +152,7 @@ fn redirect_impact(
     pos: CellPos,
     vx: i32,
     vy: i32,
-    keep: Fraction,
+    keep: Q16,
     rng: &mut Rng,
 ) -> (i32, i32) {
     let speed = keep.apply(vector_length(vx, vy));
@@ -170,14 +170,14 @@ fn entry(window: &SimWindow, target: CellPos) -> Entry {
     if !dynamic(cell) {
         return Entry::Blocked;
     }
-    if !cell.is_air() && cell.flags & Cell::MOVED != 0 {
+    if !cell.is_air() && cell.is_moved() {
         return Entry::Busy;
     }
     Entry::Open
 }
 
 fn dynamic(cell: Cell) -> bool {
-    !cell.is_body()
+    cell.body_id().is_none()
         && matches!(
             content::phase(cell.material),
             Phase::Empty | Phase::Liquid | Phase::Gas

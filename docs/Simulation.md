@@ -1,16 +1,16 @@
 # Simulation
 
-The world is one cellular automaton: every pixel is matter. Physics is phase-based and semi-realistic — natural behavior over artificial caps and clamps. Players and rigid bodies live in the same grid and everything collides against it directly, so terrain changes never rebuild collision geometry.
+The world is one cellular automaton: every pixel is matter. Physics is phase-based and semi-realistic — natural behavior over artificial caps and clamps. Players live in the same grid and everything collides against it directly, so terrain changes never rebuild collision geometry.
 
 ## Invariants
 
 - **Conservation of mass** — cells are created or destroyed only by a physical cause.
-- **One cell, one owner** — a cell belongs to terrain, one rigid body, or one player raster; double occupancy is an architecture bug, not a tuning problem.
+- **One cell, one owner** — a cell belongs to terrain or one player raster; double occupancy is an architecture bug, not a tuning problem.
 - **Determinism** — the same seed and inputs produce the same result on one machine; every random domain has a compile-time string-labeled salt and simulation paths avoid iteration-order-dependent collections. Duration processes use tick-seeded stateless rolls and stay awake while a roll is possible; fixed-point responses derive resistance from cell state, so evaluating an unchanged state repeats the same result.
 - **Locality (speed of light)** — no update reaches farther than 64 cells in one tick; longer-range behavior propagates locally over ticks. A queued between-tick world-event list is the sanctioned escape hatch — none exists today.
 - **Idle cost** — unloaded chunks cost nothing; a settled ticketed chunk does no movement work, paying only a bounded random-tick sample. No unbounded or growing per-tick cost.
 - **Sleeping is sound** — a slept world is a fixed point: force-evaluating every cell of a quiescent world changes nothing. Marks may defer a cascade one tick versus evaluating everything — they never lose work. A rule whose outcome depends on anything outside its marked footprint, or pending stochastic work that goes quiet without a keep-alive, is a bug.
-- **Suspend/resume** — loaded chunks wake fully once, conservatively resuming every grid process without persisting scheduling state. Live body rasters serialize as terrain; region unload settles crossing bodies first.
+- **Suspend/resume** — loaded chunks wake fully once, conservatively resuming every grid process without persisting scheduling state.
 
 ## The grid
 
@@ -29,8 +29,7 @@ A cell is a compact heap-free value: material, velocity, shade, a runtime flags 
 One simulator owns scheduling and window-event scratch across ticks. Capacity grows with the high-water mark of active windows and is reused thereafter; phase eligibility is still recalculated after every pass because writes can wake later work.
 
 - Chunks group into 2×2 blocks run in four phases by block parity; a worker owns its block plus a one-chunk halo, and same-phase windows share no chunks — race-free without locks. A chunk simulates only when its whole 3×3 neighbourhood is loaded; frontier chunks defer, keeping their rects.
-- Each tick runs two full passes over awake cells: **effects** then **movement**. Effects never swap cells: forces write velocity, while combustion and reactions transmute cells at their existing coordinates. Body-owned materials run chemistry normally, then skip per-cell forces. Movement owns every swap: velocity integrates kinematically; a resting liquid may take one local energy descent or exposed interface step, and a capped gas may take one flow step. Body-owned cells skip independent movement because their body relocates them transactionally.
-- A write whose support class — obstruction plus bond group — differs from what it replaced unseats rigid matter and seeds an island check; velocity-only writes cost nothing. The filter runs in the parallel kernel, so the body phase receives seeds, not neighbourhoods.
+- Each tick runs two full passes over awake cells: **effects** then **movement**. Effects never swap cells: forces write velocity, while combustion and reactions transmute cells at their existing coordinates. Owned materials run chemistry normally, then skip per-cell forces. Movement owns every swap: velocity integrates kinematically; a resting liquid may take one local energy descent or exposed interface step, and a capped gas may take one flow step. Owned cells skip independent movement because their owner relocates them transactionally.
 - Every moved stamp is clear when the first pass begins: each chunk starts the tick by clearing them inside its sim rect, then ready chunks roll their rects. Movement swaps stamp both cells and a collision impulse stamps its receiver; every stamp is a write, so stamped cells always lie inside that rect and no stale tick-local state survives awake, frontier, or freshly loaded.
 - Rows scan bottom-up so a faller vacates space the cell above enters the same tick; the horizontal direction is tick-hashed per world row and the four phases run in a tick-hashed order to cancel scan bias.
 - Random ticks are a third, sleep-independent pass scoped to a bounded chunk range around each player: each chunk samples a few tick-seeded cells for ambient processes. Reserved infrastructure for plant growth and decay; nothing uses it today.
@@ -76,7 +75,7 @@ A water neighbour quenches: a flame dies to steam keeping the water; a burning f
 | SimWindow | a worker's 4×4-chunk view: simulates the inner 2×2 block, reads one chunk beyond |
 | Speed of light | max reach of one update = one chunk = 64 cells |
 | Cell velocity | per-cell fixed-point cells/tick; sim-only, persisted, never on the wire |
-| Flags byte | runtime per-cell flags — the tick-local moved stamp and body membership marker; never persisted |
+| Flags byte | runtime per-cell flags — the tick-local moved stamp and cell-ownership marker; never persisted |
 | Aux byte | persistent per-material per-cell state; liquids keep it zero |
 | Downhill swap | a resting liquid exchange that strictly lowers density-weighted potential |
 | Passive step | one downhill or exposed neutral swap proposed only by a zero-velocity liquid, optionally rate-gated |

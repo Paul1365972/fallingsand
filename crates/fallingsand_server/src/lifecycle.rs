@@ -1,5 +1,5 @@
 use crate::physics::{try_materialize, unstamp};
-use crate::player::{AvatarSnapshot, PlayerLife, Players, SearchWindow, SpawnSearch};
+use crate::player::{AvatarSnapshot, BodyIds, PlayerLife, Players, SearchWindow, SpawnSearch};
 use fallingsand_core::{CHUNK_SIZE, CellPos};
 use fallingsand_protocol::PlayerId;
 use fallingsand_sim::CellWorld;
@@ -34,26 +34,40 @@ pub fn resolve_lethal(sim: &mut CellWorld, players: &mut Players, tick: u64) {
         let PlayerLife::Alive(avatar) = &mut player.life else {
             continue;
         };
-        unstamp(sim, &mut avatar.stamp);
+        let body_id = avatar.body_id;
+        unstamp(sim, &mut avatar.stamp, body_id);
         player.die(anchor, tick);
+        players.unregister_body(body_id);
     }
 }
 
 pub fn advance_materializations(
     sim: &mut CellWorld,
     players: &mut Players,
+    body_ids: &mut BodyIds,
     tick: u64,
 ) -> Vec<(PlayerId, String)> {
     let mut failures = Vec::new();
-    for (&id, player) in players.iter_mut() {
+    let ids: Vec<PlayerId> = players.iter().map(|(&id, _)| id).collect();
+    for id in ids {
+        let Some(player) = players.get_mut(id) else {
+            continue;
+        };
         let Some(materialization) = player.life.materialization_mut() else {
             continue;
         };
-        let result = advance_search(sim, &materialization.template, &mut materialization.search);
+        let result = advance_search(
+            sim,
+            body_ids,
+            &materialization.template,
+            &mut materialization.search,
+        );
         match result {
             SearchResult::Waiting => {}
             SearchResult::Found(avatar) => {
+                let body_id = avatar.body_id;
                 player.finish_materialization(*avatar, tick);
+                players.register_body(body_id, id);
             }
             SearchResult::Exhausted => {
                 let anchor = player.view_anchor();
@@ -73,6 +87,7 @@ enum SearchResult {
 
 fn advance_search(
     sim: &mut CellWorld,
+    body_ids: &mut BodyIds,
     template: &AvatarSnapshot,
     search: &mut SpawnSearch,
 ) -> SearchResult {
@@ -88,7 +103,7 @@ fn advance_search(
             search.center_window(candidate);
             return SearchResult::Waiting;
         }
-        if let Some(avatar) = try_materialize(sim, template, candidate) {
+        if let Some(avatar) = try_materialize(sim, body_ids, template, candidate) {
             return SearchResult::Found(Box::new(avatar));
         }
         if !search.advance() {
@@ -99,11 +114,9 @@ fn advance_search(
 }
 
 fn footprint_inside_window(candidate: CellPos, window: SearchWindow) -> bool {
-    let fp = fallingsand_sim::physics::footprint_at(
+    let fp = fallingsand_sim::player::player_shape(fallingsand_sim::player::STAND_ROWS).footprint(
         fallingsand_core::Subcell::from_cell(candidate.x),
         fallingsand_core::Subcell::from_cell(candidate.y),
-        crate::player::PLAYER_HALF_W,
-        crate::player::PLAYER_HALF_H,
     );
     window.contains(CellPos::new(fp.x0, fp.y0)) && window.contains(CellPos::new(fp.x1, fp.y1))
 }

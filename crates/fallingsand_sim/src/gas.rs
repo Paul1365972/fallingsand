@@ -20,13 +20,13 @@ pub(crate) fn apply_effects(
     }
     vx = dynamics.air_drag_keep.apply(vx);
     vy = dynamics.air_drag_keep.apply(vy);
-    if dynamics.turbulence_q16 != 0 {
+    if !dynamics.turbulence.is_zero() {
         let noise = Hash::seed(u64::from(cell.material.0) << 8 | u64::from(cell.shade))
             .salt(TURBULENCE_SALT)
             .pos(pos.x, pos.y)
             .bits(16) as i64
             - 32768;
-        vx += scaled_round(i64::from(dynamics.turbulence_q16) * noise, 31);
+        vx += scaled_round(i64::from(dynamics.turbulence.raw()) * noise, 31);
     }
     write_velocity(window, pos, cell, vx, vy, capped);
 }

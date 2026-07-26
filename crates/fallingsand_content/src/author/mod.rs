@@ -17,7 +17,6 @@ pub struct Catalog {
     pub(crate) decays: Vec<DecayDef>,
     pub(crate) items: Vec<(ItemKey, ItemDef)>,
     pub(crate) recipes: Vec<RecipeDef>,
-    pub(crate) bonds: Vec<(BondGroup, BondGroup)>,
 }
 
 impl Catalog {
@@ -46,9 +45,5 @@ impl Catalog {
 
     pub fn craft(&mut self, definition: RecipeDef) {
         self.recipes.push(definition);
-    }
-
-    pub fn bond(&mut self, a: BondGroup, b: BondGroup) {
-        self.bonds.push((a, b));
     }
 }

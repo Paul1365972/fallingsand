@@ -1,11 +1,10 @@
-use super::movement::move_body;
+use super::sweep::move_body;
 use super::{
-    Actor, CellSource, MoveResult, OwnCells, StepInput, Submersion, cell_blocks, fluid_drag,
-    ring_submersion,
+    BodySubmersion, Creature, MoveResult, StepInput, Submersion, body_submersion, fluid_drag,
 };
 use crate::player::{DUCK_ROWS, STAND_ROWS};
-use fallingsand_core::content;
-use fallingsand_core::{CellPos, Phase, Subcell, TICK_DT};
+use crate::shape::{CellSource, OwnCells, Shape, cell_blocks};
+use fallingsand_core::{CellPos, Subcell, TICK_DT};
 
 const MIN_GRIP: f32 = 0.06;
 const COYOTE_SECS: f32 = 0.1;
@@ -88,33 +87,21 @@ fn same_direction(v: Subcell, dir: i32) -> bool {
     (dir > 0 && v > Subcell::ZERO) || (dir < 0 && v < Subcell::ZERO)
 }
 
-fn ground_grip<W: CellSource>(world: &W, body: &Actor) -> f32 {
-    let fp = body.footprint();
-    let feet = fp.y0 - 1;
-    let mut grip = 0.0f32;
-    let mut found = false;
-    for x in fp.x0..=fp.x1 {
-        if let Some(cell) = world.cell_at(CellPos::new(x, feet))
-            && matches!(content::phase(cell.material), Phase::Solid | Phase::Powder)
-        {
-            found = true;
-            grip = grip.max(content::material(cell.material).entity_grip);
-        }
-    }
-    if found {
-        grip.clamp(MIN_GRIP, 1.0)
-    } else {
-        1.0
+fn ground_grip<W: CellSource>(world: &W, body: &Creature) -> f32 {
+    match body.shape.support_grip(world, None, body.origin()) {
+        Some(grip) => grip.clamp(MIN_GRIP, 1.0),
+        None => 1.0,
     }
 }
 
 pub fn step_player<W: CellSource>(
     world: &W,
     params: &PlayerParams,
-    body: &mut Actor,
+    body: &mut Creature,
     ctrl: &mut Controller,
     input: StepInput,
     own: OwnCells,
+    displaced: BodySubmersion,
 ) -> MoveResult {
     let jump_held = input.jump;
     let down_held = input.down;
@@ -132,7 +119,7 @@ pub fn step_player<W: CellSource>(
     ctrl.duck_step = (ctrl.duck_step - TICK_DT).max(-POSTURE_STEP_INTERVAL_SECS);
 
     let move_x = input.move_x.clamp(-1, 1) as i32;
-    let submersion = ring_submersion(world, body);
+    let submersion = body_submersion(world, body, displaced);
     if input.fly {
         fly_update(world, params, body, ctrl, move_x, jump_held, down_held);
     } else {
@@ -153,7 +140,7 @@ pub fn step_player<W: CellSource>(
 fn fly_update<W: CellSource>(
     world: &W,
     params: &PlayerParams,
-    body: &mut Actor,
+    body: &mut Creature,
     ctrl: &mut Controller,
     move_x: i32,
     jump_held: bool,
@@ -172,7 +159,7 @@ fn fly_update<W: CellSource>(
 fn normal_update<W: CellSource>(
     world: &W,
     params: &PlayerParams,
-    body: &mut Actor,
+    body: &mut Creature,
     ctrl: &mut Controller,
     move_x: i32,
     jump_held: bool,
@@ -283,7 +270,7 @@ fn normal_update<W: CellSource>(
     }
 }
 
-fn bank_ahead<W: CellSource>(world: &W, body: &Actor, move_x: i32) -> bool {
+fn bank_ahead<W: CellSource>(world: &W, body: &Creature, move_x: i32) -> bool {
     let fp = body.footprint();
     let dirs: &[i32] = match move_x {
         1 => &[1],
@@ -303,7 +290,13 @@ fn bank_ahead<W: CellSource>(world: &W, body: &Actor, move_x: i32) -> bool {
     false
 }
 
-fn jump(params: &PlayerParams, body: &mut Actor, ctrl: &mut Controller, move_x: i32, scale: f32) {
+fn jump(
+    params: &PlayerParams,
+    body: &mut Creature,
+    ctrl: &mut Controller,
+    move_x: i32,
+    scale: f32,
+) {
     ctrl.buffer = 0.0;
     ctrl.coyote = 0.0;
     body.vx += params.jump_h_boost.scaled_by(scale).times(move_x);
@@ -314,7 +307,7 @@ fn jump(params: &PlayerParams, body: &mut Actor, ctrl: &mut Controller, move_x: 
 
 fn step_height<W: CellSource>(
     world: &W,
-    body: &mut Actor,
+    body: &mut Creature,
     ctrl: &mut Controller,
     target_rows: i32,
 ) {
@@ -336,6 +329,6 @@ fn step_height<W: CellSource>(
         }
     }
     body.y += Subcell::from_cells((next / 2 - rows / 2) as f32);
-    body.half_h = Subcell::from_cells(next as f32).scaled_by(0.5);
+    body.shape = Shape::rect(body.shape.w(), next);
     ctrl.duck_step += POSTURE_STEP_INTERVAL_SECS;
 }

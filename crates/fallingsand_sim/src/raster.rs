@@ -2,7 +2,6 @@ use crate::world::CellWorld;
 use fallingsand_core::{Cell, CellPos, Phase, content};
 use rustc_hash::FxHashSet;
 
-const RELOCATE_RADIUS: i32 = 8;
 const SURFACE_PROBE: i32 = 64;
 
 #[derive(Debug, Default)]
@@ -21,21 +20,27 @@ pub(crate) fn commit_stamp(
     world: &mut CellWorld,
     old: &Raster,
     new: &Raster,
+    body_id: u32,
     cell_for: impl Fn(u16) -> Cell,
-) -> Option<()> {
+) -> Option<Vec<(CellPos, i32)>> {
     let mut displaced = Vec::new();
+    let mut claimed_liquids = Vec::new();
     for &(pos, _) in &new.cells {
         if old.covers(pos) {
             continue;
         }
         let cell = world.get_cell(pos)?;
-        if cell.is_body() {
+        if cell.body_id().is_some_and(|id| id != body_id) {
             return None;
         }
         match content::phase(cell.material) {
             Phase::Solid | Phase::Powder => return None,
             Phase::Empty => {}
-            Phase::Liquid | Phase::Gas => displaced.push((pos, cell)),
+            Phase::Liquid => {
+                claimed_liquids.push((pos, content::density_milli(cell.material)));
+                displaced.push((pos, cell));
+            }
+            Phase::Gas => displaced.push((pos, cell)),
         }
     }
 
@@ -69,59 +74,31 @@ pub(crate) fn commit_stamp(
         writes.push((target, Cell::AIR));
     }
     for (from, cell) in spill {
-        let target = relocation_spot(world, &claimed, &new.set, from)?;
+        let target = surface_spot(world, &claimed, &new.set, from)?;
         claimed.insert(target);
         writes.push((target, cell));
     }
 
     for (pos, cell) in writes {
         if world.get_cell(pos) != Some(cell) {
-            world.set(pos, cell, true);
+            world.set(pos, cell);
         }
     }
     for &(pos, local) in &new.cells {
         let cell = cell_for(local);
         if world.get_cell(pos) != Some(cell) {
-            if old.covers(pos) {
-                world.set(pos, cell, false);
-            } else {
-                world.set(pos, cell, true);
-            }
+            world.set(pos, cell);
         }
     }
-    Some(())
+    Some(claimed_liquids)
 }
 
-fn relocation_spot(
+fn surface_spot(
     world: &CellWorld,
     claimed: &FxHashSet<CellPos>,
     exclude: &FxHashSet<CellPos>,
     from: CellPos,
 ) -> Option<CellPos> {
-    for radius in 1..=RELOCATE_RADIUS {
-        let mut ring = Vec::new();
-        for dy in -radius..=radius {
-            for dx in -radius..=radius {
-                if dx.abs().max(dy.abs()) == radius {
-                    ring.push((dx, dy));
-                }
-            }
-        }
-        ring.sort_by_key(|&(dx, dy)| (-dy, dx.abs(), dx));
-        for (dx, dy) in ring {
-            let pos = from.translated(dx, dy);
-            if claimed.contains(&pos) || exclude.contains(&pos) {
-                continue;
-            }
-            if world
-                .get_cell(pos)
-                .is_some_and(|cell| content::phase(cell.material) == Phase::Empty)
-            {
-                return Some(pos);
-            }
-        }
-    }
-
     let mut pos = from;
     for _ in 0..SURFACE_PROBE {
         pos = pos.translated(0, 1);

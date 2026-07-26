@@ -1,4 +1,3 @@
-use crate::bodies::BodyWorld;
 use crate::inventory::Inventory;
 use crate::player::{PlayerLife, Players};
 use crate::regions::RegionMap;
@@ -6,7 +5,7 @@ use crate::session::Sessions;
 use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y};
 use fallingsand_core::{CHUNK_SIZE, Calendar, CellOffset, ChunkPos, ItemStack};
 use fallingsand_protocol::{
-    BodyDebugRaster, ChunkDebugRects, ChunkOp, InteractionState, InteractionStatus, ParticleSpawn,
+    ChunkDebugRects, ChunkOp, InteractionState, InteractionStatus, ParticleSpawn,
     PlayerAvatarState, PlayerId, PlayerState, SelfAvatarState, SelfLife, SelfState, ServerMessage,
     TickFrame, cells_to_wire,
 };
@@ -64,7 +63,6 @@ pub fn replicate(
     regions: &RegionMap,
     generator: &WorldGenerator,
     particles: &[ParticleSpawn],
-    bodies: &BodyWorld,
     replication: &mut ReplicationState,
 ) -> ReplicationMetrics {
     let tick = sim.tick();
@@ -73,9 +71,9 @@ pub fn replicate(
         .map(|(&id, player)| PlayerState {
             player: id,
             avatar: player.avatar().map(|avatar| PlayerAvatarState {
-                cx: avatar.actor.x.floor_cell(),
-                cy: avatar.actor.y.floor_cell(),
-                height: avatar.actor.rows() as u8,
+                cx: avatar.creature.x.floor_cell(),
+                cy: avatar.creature.y.floor_cell(),
+                height: avatar.creature.rows() as u8,
                 burning: avatar.burning_secs > 0.0,
             }),
         })
@@ -116,15 +114,6 @@ pub fn replicate(
             &interest,
             &mut debug_rects,
         );
-        let debug_bodies = if session.replication.debug {
-            bodies
-                .debug_rasters()
-                .filter(|cells| cells.iter().any(|cell| interest.contains(&cell.chunk())))
-                .map(|cells| BodyDebugRaster { cells })
-                .collect()
-        } else {
-            Vec::new()
-        };
         let in_interest = particles_in_interest(particles, center);
         let public_players = if session.replication.fresh {
             all_players.clone()
@@ -155,7 +144,6 @@ pub fn replicate(
             self_state,
             particles: in_interest,
             debug_rects,
-            debug_bodies,
         })));
     }
 
@@ -183,7 +171,7 @@ fn self_state(player: &crate::player::Player, biome: &str, band: &str) -> SelfSt
         PlayerLife::Entering(_) => SelfLife::Entering,
         PlayerLife::Alive(avatar) => {
             let interaction = avatar.dig.interaction.unwrap_or(InteractionState {
-                target: avatar.actor.cell(),
+                target: avatar.creature.cell(),
                 status: InteractionStatus::None,
                 progress: 0.0,
                 dig_material: None,
