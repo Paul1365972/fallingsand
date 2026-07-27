@@ -38,6 +38,7 @@ pub struct PowderDef {
     pub(crate) topple_start: f32,
     pub(crate) topple_keep: f32,
     pub(crate) deflect: f32,
+    pub(crate) cohesion: f32,
 }
 
 impl Default for PowderDef {
@@ -48,6 +49,7 @@ impl Default for PowderDef {
             topple_start: 0.0,
             topple_keep: 0.0,
             deflect: 1.0,
+            cohesion: 0.0,
         }
     }
 }
@@ -71,6 +73,11 @@ impl PowderDef {
 
     pub fn deflect(mut self, value: f32) -> Self {
         self.deflect = value;
+        self
+    }
+
+    pub fn cohesion(mut self, value: f32) -> Self {
+        self.cohesion = value;
         self
     }
 }

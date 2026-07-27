@@ -33,7 +33,8 @@ pub fn define(catalog: &mut Catalog) {
                 .air_drag(4.5)
                 .ground_friction(55.0)
                 .topple(31.0, 120.0)
-                .deflect(0.4),
+                .deflect(0.4)
+                .cohesion(0.05),
         )
         .density(550.0)
         .colors([

@@ -139,6 +139,7 @@ fn dynamics_tokens(dynamics: &fallingsand_material::Dynamics) -> TokenStream {
             let redirect_keep = q16_tokens(d.deflect_keep);
             let slide_start = Literal::u64_suffixed(d.topple_start_threshold);
             let slide_keep = Literal::u64_suffixed(d.topple_keep_threshold);
+            let cohesion = Literal::u64_suffixed(d.cohesion_threshold);
             quote! {
                 crate::material::Dynamics::Powder(crate::material::PowderDynamics {
                     air_drag_keep: #drag_keep,
@@ -147,6 +148,7 @@ fn dynamics_tokens(dynamics: &fallingsand_material::Dynamics) -> TokenStream {
                     deflect_keep: #redirect_keep,
                     topple_start_threshold: #slide_start,
                     topple_keep_threshold: #slide_keep,
+                    cohesion_threshold: #cohesion,
                 })
             }
         }

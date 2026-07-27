@@ -128,30 +128,61 @@ fn topple(
     let loaded = window
         .get(pos.translated(0, 1))
         .is_some_and(|above| content::phase(above.material) == Phase::Powder);
+    let left = can_enter(window, cell.material, 0, pos.translated(-1, 0));
+    let right = can_enter(window, cell.material, 0, pos.translated(1, 0));
+    if !kinetic && !loaded && left == right {
+        return;
+    }
+    let downhill = |side: i32| can_enter(window, cell.material, -1, pos.translated(side, -1));
+    let deflect = |vx: &mut i32, side: i32| {
+        *vx += side * dynamics.deflect_keep.apply(vy.abs()).max(AGITATED);
+    };
+
+    if kinetic {
+        let preferred = prefer_side(*vx, rng);
+        for side in [preferred, -preferred] {
+            let passable = if side > 0 { right } else { left };
+            if !passable {
+                continue;
+            }
+            if downhill(side) || rng.draw().below(dynamics.topple_keep_threshold) {
+                deflect(vx, side);
+                return;
+            }
+        }
+        return;
+    }
+
     let mut resistance = Hash::seed(u64::from(cell.material.0) << 8 | u64::from(cell.shade))
         .salt(TOPPLE_RESISTANCE_SALT)
         .pos(pos.x, pos.y)
         .rng();
-    let rng = if kinetic {
-        rng
-    } else if loaded {
-        &mut resistance
-    } else {
-        return;
-    };
-    let unsheltered = can_enter(window, cell.material, -1, pos.translated(-1, -1))
-        && can_enter(window, cell.material, -1, pos.translated(1, -1));
-    let threshold = if kinetic {
-        dynamics.topple_keep_threshold
-    } else {
-        dynamics.topple_start_threshold
-    };
-    let preferred = prefer_side(*vx, rng);
+    let preferred = prefer_side(*vx, &mut resistance);
+    let mut held = false;
     for side in [preferred, -preferred] {
-        let open = can_enter(window, cell.material, 0, pos.translated(side, 0))
-            && can_enter(window, cell.material, -1, pos.translated(side, -1));
-        if open && (unsheltered || rng.draw().below(threshold)) {
-            *vx += side * dynamics.deflect_keep.apply(vy.abs()).max(AGITATED);
+        let passable = if side > 0 { right } else { left };
+        if !passable || !downhill(side) {
+            continue;
+        }
+        if resistance.draw().below(dynamics.cohesion_threshold) {
+            held = true;
+            continue;
+        }
+        deflect(vx, side);
+        return;
+    }
+    if held {
+        return;
+    }
+    let toward_drop = |side: i32| {
+        let passable = if side > 0 { right } else { left };
+        passable
+            && can_enter(window, cell.material, 0, pos.translated(2 * side, 0))
+            && can_enter(window, cell.material, -1, pos.translated(2 * side, -1))
+    };
+    for side in [preferred, -preferred] {
+        if toward_drop(side) && resistance.draw().below(dynamics.topple_start_threshold) {
+            deflect(vx, side);
             return;
         }
     }

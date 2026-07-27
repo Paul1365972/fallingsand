@@ -87,7 +87,8 @@ Everything solid a contact touches is a peer with a mass.
 ### Materials
 
 Shapes read only authored data: `density` weighs mass, `restitution` is the same contact bounce cell collisions read, `friction` is the rigid-contact tangential coefficient, and a powder's repose resistance is its topple resistance compiled into a saturation depth.
-Repose is capped structurally at the diagonal: a loaded grain with both diagonal supports open always topples, and the authored dice only flatten piles below that.
+An open downhill diagonal topples unless the grain's authored `cohesion` holds it, so cliffs and columns stand exactly as steep as each powder is tuned — sand never cliffs, mud builds walls.
+Below that, a grain crawls only toward a drop visible within two cells — every crawl is strict descent, so crawls terminate by geometry — and the repose dice set how often, which is the powder's resting angle between the two-cell slope and the diagonal.
 `entity_grip` and `entity_bounce` are underfoot feel, read only by creature locomotion — never by the contact law.
 
 ### Settled law
@@ -208,4 +209,4 @@ Playtest criteria; human feel decides.
 | Derived support | Per-impulse immovability along a peer's own terrain-backed support normal |
 | Deferral | Parking a refused freedom for the tick, velocity intact |
 | Fixed point | The rest condition: nothing external, nothing moving, nothing realizable |
-| Shove channel | Interim creature↔creature velocity transfer until the contact law lands |
+| Stress | Tagged load momentum in a resting grain's velocity bytes; transmitted downward, never motion |

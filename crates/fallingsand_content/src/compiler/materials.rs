@@ -149,16 +149,23 @@ fn validate_material(raw: &RawMaterial) -> Result<(), Error> {
             topple_start,
             topple_keep,
             deflect,
-        }) => validate_numbers(
-            &context,
-            &[
-                ("air_drag", air_drag),
-                ("ground_friction", ground_friction),
-                ("topple_start", topple_start),
-                ("topple_keep", topple_keep),
-                ("deflect", deflect),
-            ],
-        )?,
+            cohesion,
+        }) => {
+            validate_numbers(
+                &context,
+                &[
+                    ("air_drag", air_drag),
+                    ("ground_friction", ground_friction),
+                    ("topple_start", topple_start),
+                    ("topple_keep", topple_keep),
+                    ("deflect", deflect),
+                    ("cohesion", cohesion),
+                ],
+            )?;
+            if cohesion > 1.0 {
+                return Err(fail(format!("{context}: cohesion must be at most 1")));
+            }
+        }
         PhaseDef::Liquid(LiquidDef {
             drag,
             impact,

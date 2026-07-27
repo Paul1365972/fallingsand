@@ -140,6 +140,7 @@ pub struct PowderDynamics {
     pub deflect_keep: Q16,
     pub topple_start_threshold: u64,
     pub topple_keep_threshold: u64,
+    pub cohesion_threshold: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

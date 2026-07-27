@@ -75,7 +75,8 @@ pub fn define(catalog: &mut Catalog) {
                 .air_drag(2.5)
                 .ground_friction(97.0)
                 .topple(13.0, 50.0)
-                .deflect(0.2),
+                .deflect(0.2)
+                .cohesion(0.12),
             1900.0,
             [
                 [139, 133, 125, 255],
@@ -109,7 +110,8 @@ pub fn define(catalog: &mut Catalog) {
                 .air_drag(8.0)
                 .ground_friction(36.0)
                 .topple(48.0, 190.0)
-                .deflect(0.55),
+                .deflect(0.55)
+                .cohesion(0.3),
             300.0,
             [
                 [238, 242, 248, 255],
@@ -156,7 +158,8 @@ pub fn define(catalog: &mut Catalog) {
                 .air_drag(4.0)
                 .ground_friction(114.0)
                 .topple(10.0, 40.0)
-                .deflect(0.15),
+                .deflect(0.15)
+                .cohesion(0.65),
         )
         .density(1700.0)
         .colors([

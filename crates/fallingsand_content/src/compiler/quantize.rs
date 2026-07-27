@@ -65,6 +65,7 @@ pub(super) fn quantize_dynamics(raw: &RawMaterial) -> Dynamics {
             topple_start,
             topple_keep,
             deflect,
+            cohesion,
         }) => {
             let (air_drag_keep, submerged_drag_keep) = drag_keeps(air_drag);
             Dynamics::Powder(PowderDynamics {
@@ -74,6 +75,7 @@ pub(super) fn quantize_dynamics(raw: &RawMaterial) -> Dynamics {
                 deflect_keep: Q16::from_f32(deflect.clamp(0.0, 1.0)),
                 topple_start_threshold: chance_threshold(per_tick_chance(topple_start)),
                 topple_keep_threshold: chance_threshold(per_tick_chance(topple_keep)),
+                cohesion_threshold: chance_threshold(cohesion.clamp(0.0, 1.0)),
             })
         }
         PhaseDef::Liquid(LiquidDef {
