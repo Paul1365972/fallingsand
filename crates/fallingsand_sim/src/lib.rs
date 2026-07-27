@@ -1,5 +1,6 @@
 mod chemistry;
 pub mod creature;
+pub mod debris;
 mod gas;
 mod kernel;
 mod liquid;
@@ -12,6 +13,7 @@ pub mod shape;
 mod window;
 mod world;
 
-pub use kernel::{SimTimings, Simulator};
+pub use kernel::{KernelEffects, SimTimings, Simulator};
 pub use player::PlayerStamp;
+pub use window::BodyImpulse;
 pub use world::CellWorld;

@@ -34,8 +34,85 @@ pub(crate) fn apply_effects<M: MatSpec>(
     vy = drag.apply(vy);
     if grounded {
         topple(window, pos, cell, dynamics, &mut vx, vy, rng);
+        if let Some(load) = transfer_load(window, pos, cell.material, vy) {
+            let mut written = cell;
+            written.set_vel(vx, -load.kept);
+            written.set_stressed();
+            if !load.saturated {
+                written.set_moved();
+            }
+            window.set(pos, written);
+            return;
+        }
+    }
+    if cell.is_stressed() {
+        let mut released = cell;
+        released.clear_stressed();
+        released.set_vel(vx, vy);
+        window.set(pos, released);
+        return;
     }
     write_velocity(window, pos, cell, vx, vy, grounded);
+}
+
+fn flux_cap(material: MaterialId) -> i32 {
+    content::repose_layers(material) as i32 * GRAVITY_DV
+}
+
+struct Load {
+    kept: i32,
+    saturated: bool,
+}
+
+fn retain(carried: i32, sent: i32, cap: i32) -> Load {
+    let kept = carried - sent;
+    if kept > cap {
+        Load {
+            kept: cap,
+            saturated: true,
+        }
+    } else {
+        Load {
+            kept: kept.max(0),
+            saturated: false,
+        }
+    }
+}
+
+fn transfer_load(
+    window: &mut SimWindow,
+    pos: CellPos,
+    material: MaterialId,
+    vy: i32,
+) -> Option<Load> {
+    let below = pos.translated(0, -1);
+    let support = window.get(below)?;
+    let cap = flux_cap(material);
+    if cap == 0 {
+        return None;
+    }
+    let carried = GRAVITY_DV + (-vy).max(0);
+    let mass = i64::from(content::density_milli(material).max(1));
+    if let Some(id) = support.body_id() {
+        let send = carried.min(cap);
+        window.body_impulse(id, below, 0, -i64::from(send) * mass);
+        return Some(retain(carried, send, cap));
+    }
+    if content::phase(support.material) != Phase::Powder || !support.is_stressed() {
+        return None;
+    }
+    let (support_vx, support_vy) = support.vel();
+    let support_mass = i64::from(content::density_milli(support.material).max(1));
+    let room = (i64::from(flux_cap(support.material)) + i64::from(support_vy.min(0))).max(0);
+    let send = carried.min(cap);
+    let deposited = (i64::from(send) * mass / support_mass).min(room) as i32;
+    if deposited > 0 {
+        let mut written = support;
+        written.set_vel(support_vx, support_vy - deposited);
+        window.set(below, written);
+    }
+    let sent = (i64::from(deposited) * support_mass / mass) as i32;
+    Some(retain(carried, sent, cap))
 }
 
 fn topple(
@@ -62,6 +139,8 @@ fn topple(
     } else {
         return;
     };
+    let unsheltered = can_enter(window, cell.material, -1, pos.translated(-1, -1))
+        && can_enter(window, cell.material, -1, pos.translated(1, -1));
     let threshold = if kinetic {
         dynamics.topple_keep_threshold
     } else {
@@ -71,7 +150,7 @@ fn topple(
     for side in [preferred, -preferred] {
         let open = can_enter(window, cell.material, 0, pos.translated(side, 0))
             && can_enter(window, cell.material, -1, pos.translated(side, -1));
-        if open && rng.draw().below(threshold) {
+        if open && (unsheltered || rng.draw().below(threshold)) {
             *vx += side * dynamics.deflect_keep.apply(vy.abs()).max(AGITATED);
             return;
         }

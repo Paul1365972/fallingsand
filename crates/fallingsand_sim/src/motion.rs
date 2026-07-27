@@ -10,7 +10,7 @@ const LIQUID_WAKE_SALT: Hash = Hash::label("simulation.liquid_wake");
 pub(crate) const MAX_SPEED_CELLS: i32 = 31;
 const _: () = assert!(MAX_SPEED_CELLS < SPEED_OF_LIGHT);
 const MAX_COMPONENT_RAW: i32 = MAX_SPEED_CELLS * SUBCELL_UNITS_PER_CELL;
-const SETTLE: i32 = (7.5 * TICK_DT * SUBCELL_UNITS_PER_CELL as f32) as i32;
+pub(crate) const SETTLE: i32 = (7.5 * TICK_DT * SUBCELL_UNITS_PER_CELL as f32) as i32;
 pub(crate) const GRAVITY_DV: i32 =
     (GRID_GRAVITY * TICK_DT * TICK_DT * SUBCELL_UNITS_PER_CELL as f32 + 0.5) as i32;
 pub(crate) const AGITATED: i32 = 2 * GRAVITY_DV;
@@ -121,6 +121,16 @@ pub(crate) fn move_cell(window: &mut SimWindow, pos: CellPos, cell: Cell, tick: 
         let dynamic = blocker.body_id().is_none()
             && matches!(blocker_phase, Phase::Powder | Phase::Liquid | Phase::Gas);
         let velocity = if dx != 0 { &mut vx } else { &mut vy };
+        if let Some(id) = blocker.body_id() {
+            let removed = i64::from(*velocity) * i64::from(content::density_milli(material).max(1));
+            if dx != 0 {
+                window.body_impulse(id, target, removed, 0);
+            } else {
+                window.body_impulse(id, target, 0, removed);
+            }
+            *velocity = 0;
+            continue;
+        }
         *velocity = if dynamic {
             transfer_momentum(window, material, target, (dx, dy), *velocity, restitution)
         } else if blocker_phase == phase {
@@ -395,4 +405,23 @@ fn transfer_momentum(
 fn divide_signed(numerator: i64, denominator: i64) -> i64 {
     let magnitude = (numerator.abs() + denominator / 2) / denominator;
     if numerator < 0 { -magnitude } else { magnitude }
+}
+
+pub(crate) fn strike_body(
+    window: &mut SimWindow,
+    mover: MaterialId,
+    target: CellPos,
+    removed_vx: i32,
+    removed_vy: i32,
+) {
+    let Some(id) = window.get(target).and_then(|cell| cell.body_id()) else {
+        return;
+    };
+    let mass = i64::from(content::density_milli(mover).max(1));
+    window.body_impulse(
+        id,
+        target,
+        i64::from(removed_vx) * mass,
+        i64::from(removed_vy) * mass,
+    );
 }

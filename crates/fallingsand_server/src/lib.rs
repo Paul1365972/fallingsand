@@ -12,9 +12,12 @@ pub(crate) mod replication;
 pub(crate) mod session;
 pub(crate) mod sim;
 
+use fallingsand_core::Subcell;
 use fallingsand_core::{Calendar, CellPos, DAY_UNITS};
+use fallingsand_math::round_div;
 use fallingsand_net::Listener;
 use fallingsand_protocol::{ServerStats, TickProfile};
+use fallingsand_sim::debris::DebrisWorld;
 use fallingsand_sim::{CellWorld, Simulator};
 use fallingsand_worldgen::WorldGenerator;
 use persistence::{Persistence, WorldMeta};
@@ -54,6 +57,7 @@ struct ServerState {
     listener: Box<dyn Listener>,
     sim: CellWorld,
     simulator: Simulator,
+    debris: DebrisWorld,
     players: Players,
     body_ids: BodyIds,
     sessions: Sessions,
@@ -140,6 +144,7 @@ impl Server {
                 listener: config.listener,
                 sim,
                 simulator: Simulator::new(),
+                debris: DebrisWorld::default(),
                 players: Players::default(),
                 body_ids: BodyIds::default(),
                 sessions: Sessions::default(),
@@ -256,11 +261,18 @@ impl ServerState {
             |t| &mut t.regions,
             |s| {
                 regions::compute_tickets(&mut s.tickets, &s.players);
-                regions::manage_regions(&mut s.sim, &mut s.regions, &mut s.persistence, &s.tickets)
+                regions::manage_regions(
+                    &mut s.sim,
+                    &mut s.regions,
+                    &mut s.persistence,
+                    &s.tickets,
+                    &mut s.debris,
+                )
             },
         )?;
 
-        let sim_metrics = sim::step_simulation(&mut self.simulator, &mut self.sim, &self.tickets);
+        let (sim_metrics, effects) =
+            sim::step_simulation(&mut self.simulator, &mut self.sim, &self.tickets);
         self.stats.tick = sim_metrics.tick;
         self.stats.timing.sim_simulate = sim_metrics.timings.simulate_micros;
         self.stats.timing.sim_random_tick = sim_metrics.timings.random_tick_micros;
@@ -270,8 +282,59 @@ impl ServerState {
         self.timed(
             "physics",
             |t| &mut t.physics,
-            |s| {
-                physics::step_physics(&mut s.sim, &mut s.players);
+            move |s| {
+                let mut seeds = s.sim.drain_unseated();
+                seeds.extend(effects.unseated.iter().copied());
+                s.debris.unseat(seeds);
+                let mut debris_impulses = Vec::with_capacity(effects.impulses.len());
+                let mut creature_impulses: std::collections::BTreeMap<u32, (i128, i128)> =
+                    std::collections::BTreeMap::new();
+                for impulse in &effects.impulses {
+                    if s.players.player_for_body(impulse.id).is_some() {
+                        let sum = creature_impulses.entry(impulse.id).or_insert((0, 0));
+                        sum.0 += i128::from(impulse.jx);
+                        sum.1 += i128::from(impulse.jy);
+                    } else {
+                        debris_impulses.push(*impulse);
+                    }
+                }
+                for (body, (jx, jy)) in creature_impulses {
+                    let Some(avatar) = s
+                        .players
+                        .player_for_body(body)
+                        .and_then(|player| s.players.get_mut(player))
+                        .and_then(|player| player.avatar_mut())
+                    else {
+                        continue;
+                    };
+                    let mass = i128::from(physics::creature_mass(&avatar.creature));
+                    avatar.creature.vx += Subcell::from_raw(round_div(jx, mass) as i64);
+                    avatar.creature.vy += Subcell::from_raw(round_div(jy, mass) as i64);
+                }
+                let ServerState {
+                    sim,
+                    debris,
+                    players,
+                    body_ids,
+                    tickets,
+                    ..
+                } = s;
+                let shoves = debris.step(
+                    sim,
+                    &debris_impulses,
+                    &|chunk| tickets.simulates(chunk),
+                    &|id| physics::creature_peer(players, id),
+                    &mut || body_ids.allocate(),
+                );
+                for shove in shoves {
+                    if let Some(player) = players.player_for_body(shove.body)
+                        && let Some(avatar) = players.get_mut(player).and_then(|p| p.avatar_mut())
+                    {
+                        avatar.creature.vx += shove.dvx;
+                        avatar.creature.vy += shove.dvy;
+                    }
+                }
+                physics::step_physics(sim, players, debris);
             },
         );
 

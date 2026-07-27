@@ -1,7 +1,7 @@
 use crate::{
     motion::{
-        Entry, GRAVITY_DV, TraverseControl, prefer_side, swap_through_liquid, traverse,
-        vector_length, write_velocity,
+        Entry, GRAVITY_DV, TraverseControl, prefer_side, strike_body, swap_through_liquid,
+        traverse, vector_length, write_velocity,
     },
     window::SimWindow,
 };
@@ -66,13 +66,23 @@ pub(crate) fn move_cell(window: &mut SimWindow, pos: CellPos, cell: Cell, tick: 
     (vx, vy) = current.vel();
     let impact = content::liquid_impact(cell.material);
     if travel.blocked[1] < 0 {
+        strike_body(window, cell.material, travel.pos.translated(0, -1), 0, vy);
         (vx, vy) = redirect_impact(window, travel.pos, vx, vy, impact, &mut rng);
     } else {
         if travel.blocked[1] > 0 {
+            strike_body(window, cell.material, travel.pos.translated(0, 1), 0, vy);
             vy = 0;
         }
         if travel.blocked[0] != 0 {
-            vx = -impact.apply(vx);
+            let after = -impact.apply(vx);
+            strike_body(
+                window,
+                cell.material,
+                travel.pos.translated(travel.blocked[0], 0),
+                vx - after,
+                0,
+            );
+            vx = after;
         }
     }
     let settled = !can_fall_freely_into(window, current, travel.pos.translated(0, -1));

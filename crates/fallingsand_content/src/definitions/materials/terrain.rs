@@ -28,6 +28,7 @@ pub fn define(catalog: &mut Catalog) {
             ])
             .hardness(0.9)
             .restitution(0.15)
+            .friction(0.55)
             .tag(Tag::Dissolvable),
     );
     catalog.add(
@@ -41,6 +42,7 @@ pub fn define(catalog: &mut Catalog) {
                 [105, 72, 48, 255],
             ])
             .hardness(0.08)
+            .friction(0.75)
             .tag(Tag::Dissolvable),
     );
     catalog.add(
@@ -66,7 +68,7 @@ pub fn define(catalog: &mut Catalog) {
             ),
     );
 
-    for (key, phase, density, colors, hardness) in [
+    for (key, phase, density, colors, hardness, friction) in [
         (
             GRAVEL,
             powder()
@@ -82,6 +84,7 @@ pub fn define(catalog: &mut Catalog) {
                 [118, 112, 105, 255],
             ],
             0.05,
+            0.7,
         ),
         (
             SAND,
@@ -98,6 +101,7 @@ pub fn define(catalog: &mut Catalog) {
                 [202, 172, 110, 255],
             ],
             0.03,
+            0.65,
         ),
         (
             SNOW,
@@ -114,6 +118,7 @@ pub fn define(catalog: &mut Catalog) {
                 [222, 228, 238, 255],
             ],
             0.02,
+            0.3,
         ),
     ] {
         catalog.add(
@@ -122,6 +127,7 @@ pub fn define(catalog: &mut Catalog) {
                 .density(density)
                 .colors(colors)
                 .hardness(hardness)
+                .friction(friction)
                 .tag(Tag::Dissolvable),
         );
     }
@@ -138,6 +144,8 @@ pub fn define(catalog: &mut Catalog) {
             ])
             .hardness(0.4)
             .restitution(0.1)
+            .friction(0.05)
+            .bond_group("ice")
             .entity_grip(0.05)
             .tag(Tag::Dissolvable),
     );
@@ -158,6 +166,7 @@ pub fn define(catalog: &mut Catalog) {
             [76, 58, 42, 255],
         ])
         .hardness(0.05)
+        .friction(0.85)
         .tag(Tag::Dissolvable),
     );
     catalog.add(
@@ -171,6 +180,7 @@ pub fn define(catalog: &mut Catalog) {
                 [142, 98, 80, 255],
             ])
             .hardness(0.3)
+            .friction(0.7)
             .tag(Tag::Dissolvable),
     );
     catalog.add(
@@ -185,6 +195,7 @@ pub fn define(catalog: &mut Catalog) {
             ])
             .hardness(0.6)
             .restitution(0.12)
+            .friction(0.55)
             .tag(Tag::Dissolvable),
     );
     catalog.add(
@@ -198,7 +209,8 @@ pub fn define(catalog: &mut Catalog) {
                 [66, 66, 76, 255],
             ])
             .hardness(2.5)
-            .restitution(0.15),
+            .restitution(0.15)
+            .friction(0.6),
     );
     catalog.add(
         BASALT,
@@ -211,7 +223,8 @@ pub fn define(catalog: &mut Catalog) {
                 [42, 39, 46, 255],
             ])
             .hardness(3.5)
-            .restitution(0.15),
+            .restitution(0.15)
+            .friction(0.6),
     );
     catalog.add(
         BRICK,
@@ -225,6 +238,8 @@ pub fn define(catalog: &mut Catalog) {
             ])
             .hardness(1.1)
             .restitution(0.15)
+            .friction(0.7)
+            .bond_group("brick")
             .tag(Tag::Dissolvable),
     );
 }

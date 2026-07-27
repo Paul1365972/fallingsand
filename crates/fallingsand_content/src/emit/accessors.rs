@@ -43,6 +43,34 @@ pub fn emit(content: &Content) -> TokenStream {
         }),
         true,
     );
+    let friction = accessor_fn(
+        "friction",
+        quote!(crate::material::Q16),
+        content.materials.iter().map(|mat| {
+            let raw = (f64::from(mat.friction.clamp(0.0, 4.0)) * 65536.0).round() as u32;
+            let value = Literal::u32_suffixed(raw);
+            quote!(crate::material::Q16::from_raw(#value))
+        }),
+        true,
+    );
+    let bond_group = accessor_fn(
+        "bond_group",
+        quote!(u8),
+        content.materials.iter().map(|mat| {
+            let value = Literal::u8_suffixed(mat.bond_group);
+            quote!(#value)
+        }),
+        true,
+    );
+    let repose_layers = accessor_fn(
+        "repose_layers",
+        quote!(u32),
+        content.materials.iter().map(|mat| {
+            let value = Literal::u32_suffixed(mat.repose_layers);
+            quote!(#value)
+        }),
+        true,
+    );
     let flow_threshold = accessor_fn(
         "flow_threshold",
         quote!(u64),
@@ -146,10 +174,21 @@ pub fn emit(content: &Content) -> TokenStream {
         #density_milli
         #tags
         #restitution
+        #friction
+        #bond_group
+        #repose_layers
         #flow_threshold
         #liquid_impact
         #ignition
         #material
+
+        #[inline]
+        pub const fn bonds(
+            a: crate::material::MaterialId,
+            b: crate::material::MaterialId,
+        ) -> bool {
+            bond_group(a) != u8::MAX && bond_group(a) == bond_group(b)
+        }
 
         const LIQUID_EXCHANGE_THRESHOLDS: [u64; MATERIAL_COUNT * MATERIAL_COUNT] =
             [#(#liquid_exchange_thresholds),*];

@@ -3,6 +3,7 @@ use crate::player::{Players, SearchWindow};
 use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y};
 use fallingsand_core::{Chunk, ChunkPos, Region, RegionPos};
 use fallingsand_sim::CellWorld;
+use fallingsand_sim::debris::DebrisWorld;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 pub const BORDER_MARGIN: i32 = 3;
@@ -136,6 +137,7 @@ pub fn manage_regions(
     regions: &mut RegionMap,
     persistence: &mut Persistence,
     tickets: &ChunkTickets,
+    debris: &mut DebrisWorld,
 ) -> Result<(), StoreError> {
     let tick = sim.tick();
     let wanted = wanted_regions(tickets);
@@ -208,6 +210,7 @@ pub fn manage_regions(
         .map(|(&pos, _)| pos)
         .collect();
     expired.sort_unstable_by_key(|pos| (pos.y, pos.x));
+    debris.settle_regions(sim, &expired);
 
     for pos in expired {
         regions.states.remove(&pos).expect("state exists");

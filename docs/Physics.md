@@ -4,7 +4,7 @@ One movement system over the grid: **shapes** in motion.
 A shape is a set of real world cells that move as a unit; everything collides per cell against the grid, so terrain changes never rebuild collision geometry.
 Two kinds share the substrate: **creatures** — controlled, living, never rotating, never settling — and **debris** — detached rigid matter that tumbles and returns to terrain.
 Y is up everywhere.
-The player is the substrate's first creature and runs on the body-id union; mobs, debris, and the contact law are design awaiting implementation.
+Creatures, debris, the simultaneity rounds, and the contact law all run on the body-id union; mobs await species content and controllers.
 
 ## Substrate
 
@@ -17,15 +17,18 @@ The player is the substrate's first creature and runs on the body-id union; mobs
 - **Integer anchor, quantized motion** — a body's position is its raster; fractions exist only as per-freedom motion accumulators, read by nothing but stepping.
   Velocity converts each tick to motion quanta per freedom, interleaved Bresenham-style; a quantum crosses at most one cell or orientation step, so no intermediate raster goes untested.
   A blocked quantum consumes its budget slot.
+  The substrate motion floor — the cells' settle speed — applies to every freedom: sub-floor velocity accrues no quanta and its accumulator drains, so equilibrium jitter never writes the world.
   Debris has three freedoms (turn, x, y); creatures have two.
 - **One pass, one law** — whether a shape should move, whether it can, how contact redirects it, and when it rests are the same underlying logic; there are no separate settle, lean, or wake paths.
 - **One law, two schedulers** — a free dynamic cell is the degenerate one-cell body under the same quantum, entry, and contact semantics; detachment is writing an id, settling is clearing it.
   The parallel kernel executes single cells; the rounds execute rigid bodies; the law is identical on both sides.
 - **Forces derive from parts** — a body stores only velocity and spin; each tick the effects kernel applies the same per-cell forces a lone cell gets — weight minus displaced medium, drag when submerged, updraft — accumulated as impulse and torque on the body id.
   Buoyancy, water drag, and currents therefore emerge from the existing cell laws: a plank floats because its submerged cells individually receive buoyant force.
+  A float bracketed by its buoyancy — lifted at its raster, sunk one cell higher — has zero realizable vertical motion: the vertical force suspends and the bob decays, so floating matter sits still between rows instead of churning the water.
 - **Touch exchanges momentum both ways** — every touching pair trades per-tick impulses, cells into bodies and bodies into cells, bounded by the pair's friction.
   Carriage is friction, not membership: sand stays on an accelerating cart because the cart drags it, and slips when inertia beats grip — nothing rides by attachment.
-- **Weight is momentum flux** — a resting cell whose support is live (a body cell, or a support that transferred this tick) does not settle; it transfers its blocked gravity momentum into its support instead.
+- **Weight is momentum flux** — a resting cell whose support is live (a body cell, or a stress-tagged support that is itself transmitting) does not settle; it transfers its blocked gravity momentum into its support instead.
+  Stress rides in the velocity bytes but under its own tag, so it is structurally distinct from motion: only transmitting cells bear the tag, deposits never spread it, movement strips it, and ordinary impact momentum can never impersonate a load chain.
   Load therefore propagates one cell per tick through the existing exchange, the pile wakes upward through the moved stamp and falls asleep from the root when the support becomes terrain, and a body under a pile receives the pile's true weight and torque — a scale tips with no law naming scales.
   Transmission saturates at the grain's repose-derived strength: load beyond the cap is refused, the refused momentum stays upstream and the pile fails by toppling — a confined shaft saturates like a silo instead of pressing without bound.
   A cell losing support releases at most its cap, never a column's worth of momentum; stress is not motion, and only the saturated flux ever becomes velocity.
@@ -58,6 +61,7 @@ A contact is an adjacent cell pair — face or corner — with its normal the pa
 Diagonal normal lengths are carried exactly, or every corner bounce gains energy.
 
 - Blocked quanta produce contacts, and resting contact is continuous: any into-surface velocity at a cell boundary emits its blocked quantum every tick, so weight rests on support and derived support never flickers with subcell phase.
+- Restitution belongs to impacts: a refused quantum bounces, a resting probe resolves without it — so a static load presses without ever gaining energy, and a landed body damps to its fixed point instead of chattering.
 - A corner contact counts only when motion closes on both of its axes; flat sliding is never kicked upward by its own leading corner.
 - Restitution and friction are per contact from the two touching materials: restitution pairs by the bouncier, friction multiplies so ice slides on everything.
 - Resolution fixes every contact's separation target once from its closing speed at resolve start; accumulated sequential impulses push toward targets and never past, so a wedged shape decays instead of pumping.
@@ -81,8 +85,8 @@ Everything solid a contact touches is a peer with a mass.
 
 ### Materials
 
-Shapes read only existing authored data: `density` weighs mass, `restitution` is the same contact bounce cell collisions read, `friction` is the rigid-contact tangential coefficient, and a powder's repose resistance is its topple resistance.
-The reset removed `friction` and bond groups from content entirely; both are re-authored when implementation starts.
+Shapes read only authored data: `density` weighs mass, `restitution` is the same contact bounce cell collisions read, `friction` is the rigid-contact tangential coefficient, and a powder's repose resistance is its topple resistance compiled into a saturation depth.
+Repose is capped structurally at the diagonal: a loaded grain with both diagonal supports open always topples, and the authored dice only flatten piles below that.
 `entity_grip` and `entity_bounce` are underfoot feel, read only by creature locomotion — never by the contact law.
 
 ### Settled law
@@ -114,8 +118,8 @@ It never rotates and never settles; players and mobs are the same kind, differin
   The stamp records which claimed cells held liquid; the record follows partial restamps, absorbs liquid found intruding during a heal, and drains to zero over a few ticks once no liquid borders the raster — it is the creature's submersion and displaced density, with flow still sampled from the bordering ring.
   A clobbered raster self-heals by re-stamp; an unchanged raster writes nothing, keeping chunks asleep.
   Death and departure unstamp to air.
-- **Interim momentum channel** — until the contact law lands, blocked sweep motion against another creature transfers the exact fixed-point velocity delta straight into the receiver's velocity at the end of the pass; no deferred state exists.
-  The channel dissolves into the rounds' in-pass contact resolution.
+- **Contact exchange** — a blocked sweep quantum against another body resolves through the contact law at the point of refusal: the removed velocity is the closing speed, the impulse splits by exact effective mass with angular response, and the unspent share returns to the creature.
+  Debris pushing a creature arrives as a velocity change before the creature's own sweep, so a shoved player moves the same tick.
 
 ## Debris
 
@@ -133,6 +137,8 @@ Persistent state per debris is exactly slots, pose, velocity, spin — nothing e
   The bond matrix splits survivors into parts.
 - **Detachment is local** — a grid write unseats its rigid neighbourhood; discovery flood-fills from unseated cells and flags a detached island atomically, waiting while its margin is unsimulated.
   Id-bearing cells are flood boundaries, never candidates — splitting a live body is exclusively its own bond recheck.
+- **Anchoring is adhesion** — an island holds while any member touches a foreign structural solid on any side, or rests on powder from below; only matter cut fully free falls.
+  Weak matter below a minimal hardness never anchors, so a canopy cannot hold a felled trunk, while built wood glues to walls and ceilings.
 
 ### Rotation
 
@@ -148,6 +154,7 @@ Rest is the fixed point of the pass, decided in isolation: no external impulse, 
 - A plank with its centre of mass past the ledge is not a fixed point — gravity becomes spin through the off-centre contact; a shape wedged in a crack is one, and settles instantly.
 - Spin that changes no raster is discarded at settle, never stored.
 - Settle requires every load-bearing contact to end in terrain or settled matter; a crate on a player's head never becomes terrain.
+- A static load is not an impulse: a body whose resting pile resolves through terrain-backed support settles under it, and the pile drains asleep above the new terrain.
 - Unload settles crossing debris before extraction, both halves; saves never record runtime state, so a live raster persists naturally as terrain — there is no debris persistence format.
 - A probe into an unloaded cell parks the whole body for the tick, velocity intact — never a contact, never a bounce, never a settle candidate; creatures keep their hard frontier wall as controller policy.
 

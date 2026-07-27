@@ -1,16 +1,45 @@
 use crate::player::{Avatar, AvatarSnapshot, BodyIds, Health, PlayerLife, Players};
+use fallingsand_core::content::{self, material};
 use fallingsand_core::{CellPos, Subcell};
-use fallingsand_protocol::GameMode;
+use fallingsand_protocol::{GameMode, PlayerId};
 use fallingsand_sim::CellWorld;
 use fallingsand_sim::creature::{Creature, PlayerParams, StepInput, grounded, step_player};
+use fallingsand_sim::debris::{CreaturePeer, DebrisWorld};
 use fallingsand_sim::player::{DUCK_ROWS, STAND_ROWS, player_shape, stamp_player, unstamp_player};
 use fallingsand_sim::shape::Footprint;
+use std::collections::BTreeMap;
 
-pub fn step_physics(sim: &mut CellWorld, players: &mut Players) {
+pub fn creature_mass(creature: &Creature) -> i64 {
+    let cells = i64::from(creature.shape.w()) * i64::from(creature.shape.h());
+    i64::from(content::density_milli(material::FLESH).max(1)) * cells
+}
+
+pub fn creature_peer(players: &Players, id: u32) -> Option<CreaturePeer> {
+    let player = players.player_for_body(id)?;
+    let avatar = players.get(player)?.avatar()?;
+    Some(CreaturePeer {
+        mass_milli: creature_mass(&avatar.creature),
+        vx: avatar.creature.vx,
+        vy: avatar.creature.vy,
+        grounded: avatar.creature.on_ground,
+    })
+}
+
+type BlockedGroups = BTreeMap<(u32, bool), (Subcell, Vec<(CellPos, i64)>)>;
+
+struct CreatureShove {
+    body_id: u32,
+    pusher: PlayerId,
+    horizontal: bool,
+    removed: Subcell,
+    pusher_mass: i64,
+}
+
+pub fn step_physics(sim: &mut CellWorld, players: &mut Players, debris: &mut DebrisWorld) {
     let params = PlayerParams::default();
-    let mut shoves: Vec<(u32, Subcell, Subcell)> = Vec::new();
+    let mut shoves: Vec<CreatureShove> = Vec::new();
 
-    for (_, player) in players.iter_mut() {
+    for (&id, player) in players.iter_mut() {
         let input = player.control.input;
         let jump_pressed = std::mem::take(&mut player.control.jump_pressed);
         let creative = player.profile.mode == GameMode::Creative;
@@ -35,11 +64,53 @@ pub fn step_physics(sim: &mut CellWorld, players: &mut Players) {
             avatar.stamp.own_cells(),
             avatar.stamp.submersion(),
         );
+        let mass = creature_mass(&avatar.creature);
+        let mut total_removed = (Subcell::ZERO, Subcell::ZERO);
+        for blocked in &result.blocked {
+            total_removed.0 += blocked.velocity_delta_x;
+            total_removed.1 += blocked.velocity_delta_y;
+        }
+        let before = (
+            avatar.creature.vx + total_removed.0,
+            avatar.creature.vy + total_removed.1,
+        );
+        let mut groups: BlockedGroups = BTreeMap::new();
         for blocked in &result.blocked {
             let Some(body_id) = sim.get_cell(blocked.pos).and_then(|cell| cell.body_id()) else {
                 continue;
             };
-            shoves.push((body_id, blocked.velocity_delta_x, blocked.velocity_delta_y));
+            for (horizontal, share) in [
+                (true, blocked.velocity_delta_x),
+                (false, blocked.velocity_delta_y),
+            ] {
+                if share == Subcell::ZERO {
+                    continue;
+                }
+                let entry = groups
+                    .entry((body_id, horizontal))
+                    .or_insert((Subcell::ZERO, Vec::new()));
+                entry.0 += share;
+                entry.1.push((blocked.pos, share.raw().abs().max(1)));
+            }
+        }
+        for ((body_id, horizontal), (removed, cells)) in groups {
+            let axis_before = if horizontal { before.0 } else { before.1 };
+            match debris.creature_collide(body_id, &cells, horizontal, removed, axis_before, mass) {
+                Some(returned) => {
+                    if horizontal {
+                        avatar.creature.vx += returned;
+                    } else {
+                        avatar.creature.vy += returned;
+                    }
+                }
+                None => shoves.push(CreatureShove {
+                    body_id,
+                    pusher: id,
+                    horizontal,
+                    removed,
+                    pusher_mass: mass,
+                }),
+            }
         }
         let facing_left = match input.move_x() {
             x if x < 0 => true,
@@ -49,14 +120,40 @@ pub fn step_physics(sim: &mut CellWorld, players: &mut Players) {
         commit_pose(sim, avatar, snapshot, facing_left);
     }
 
-    for (body_id, dvx, dvy) in shoves {
-        if let Some(target) = players.player_for_body(body_id)
-            && let Some(avatar) = players
-                .get_mut(target)
-                .and_then(|player| player.avatar_mut())
-        {
-            avatar.creature.vx += dvx;
-            avatar.creature.vy += dvy;
+    for shove in shoves {
+        apply_creature_shove(players, shove);
+    }
+}
+
+fn apply_creature_shove(players: &mut Players, shove: CreatureShove) {
+    let Some(target) = players.player_for_body(shove.body_id) else {
+        return;
+    };
+    let Some(avatar) = players
+        .get_mut(target)
+        .and_then(|player| player.avatar_mut())
+    else {
+        return;
+    };
+    let target_mass = creature_mass(&avatar.creature);
+    let removed = shove.removed.raw();
+    if !shove.horizontal && removed < 0 && avatar.creature.on_ground {
+        return;
+    }
+    let transferred = removed * shove.pusher_mass / (shove.pusher_mass + target_mass);
+    if shove.horizontal {
+        avatar.creature.vx += Subcell::from_raw(transferred);
+    } else {
+        avatar.creature.vy += Subcell::from_raw(transferred);
+    }
+    if let Some(pusher) = players
+        .get_mut(shove.pusher)
+        .and_then(|player| player.avatar_mut())
+    {
+        if shove.horizontal {
+            pusher.creature.vx += Subcell::from_raw(transferred);
+        } else {
+            pusher.creature.vy += Subcell::from_raw(transferred);
         }
     }
 }

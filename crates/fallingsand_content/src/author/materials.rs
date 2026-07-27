@@ -318,6 +318,8 @@ pub struct MaterialDef {
     pub(crate) entity_grip: Option<f32>,
     pub(crate) hardness: Option<f32>,
     pub(crate) restitution: Option<f32>,
+    pub(crate) friction: Option<f32>,
+    pub(crate) bond_group: Option<&'static str>,
     pub(crate) entity_bounce: Option<f32>,
     pub(crate) contact_damage: Option<f32>,
     pub(crate) tags: Option<Vec<Tag>>,
@@ -354,6 +356,16 @@ impl MaterialDef {
 
     pub fn restitution(mut self, value: f32) -> Self {
         self.restitution = Some(value);
+        self
+    }
+
+    pub fn friction(mut self, value: f32) -> Self {
+        self.friction = Some(value);
+        self
+    }
+
+    pub fn bond_group(mut self, group: &'static str) -> Self {
+        self.bond_group = Some(group);
         self
     }
 

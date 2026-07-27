@@ -12,6 +12,7 @@ pub(crate) fn obstructs(material: MaterialId) -> bool {
 pub struct CellWorld {
     chunks: FxHashMap<ChunkPos, Chunk>,
     tick: u64,
+    unseated: Vec<CellPos>,
 }
 
 impl CellWorld {
@@ -64,7 +65,11 @@ impl CellWorld {
         let Some(chunk) = self.chunks.get_mut(&pos.chunk()) else {
             return;
         };
+        let old = chunk.get(pos.offset());
         chunk.set(pos.offset(), cell);
+        if obstructs(old.material) && !obstructs(cell.material) {
+            self.unseated.push(pos);
+        }
         self.mark_sim_border(pos);
     }
 
@@ -88,12 +93,20 @@ impl CellWorld {
         }
     }
 
+    pub fn drain_unseated(&mut self) -> Vec<CellPos> {
+        std::mem::take(&mut self.unseated)
+    }
+
     pub fn set_material(&mut self, pos: CellPos, material: MaterialId) -> bool {
         let Some(old) = self.get_cell(pos) else {
             return false;
         };
         if material != MaterialId::AIR && !old.is_air() {
             return false;
+        }
+        let bondable = |m: MaterialId| content::bond_group(m) != u8::MAX;
+        if bondable(old.material) || bondable(material) {
+            self.unseated.push(pos);
         }
         let cell = if material == MaterialId::AIR {
             Cell::AIR

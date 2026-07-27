@@ -21,6 +21,8 @@ pub fn define(catalog: &mut Catalog) {
             ])
             .hardness(0.35)
             .restitution(0.3)
+            .friction(0.5)
+            .bond_group("wood")
             .tag(Tag::Dissolvable)
             .flammable(
                 flammable()
@@ -50,6 +52,7 @@ pub fn define(catalog: &mut Catalog) {
             ])
             .hardness(0.05)
             .restitution(0.05)
+            .friction(0.8)
             .tag(Tag::Dissolvable)
             .flammable(
                 flammable()
@@ -94,7 +97,8 @@ pub fn define(catalog: &mut Catalog) {
                 [182, 142, 94, 255],
                 [152, 114, 72, 255],
             ])
-            .hardness(0.3),
+            .hardness(0.3)
+            .friction(0.45),
     );
     catalog.add(
         MUSHROOM_STEM,

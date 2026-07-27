@@ -19,6 +19,7 @@ pub fn define(catalog: &mut Catalog) {
                 [245, 222, 145, 255],
             ])
             .entity_grip(0.8)
+            .friction(0.8)
             .tag(Tag::Player),
     );
 }

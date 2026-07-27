@@ -46,6 +46,9 @@ pub struct Mat {
     pub tags: Tags,
     pub hardness: f32,
     pub restitution: f32,
+    pub friction: f32,
+    pub bond_group: u8,
+    pub repose_layers: u32,
     pub entity_grip: f32,
     pub entity_bounce: f32,
     pub contact_damage: f32,
@@ -193,6 +196,18 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
         *slot = Some((chance_threshold(per_tick_chance(def.rate)), *into));
     }
 
+    let mut bond_groups: Vec<&str> = Vec::new();
+    for raw in &raws {
+        if let Some(group) = raw.bond_group
+            && !bond_groups.contains(&group)
+        {
+            bond_groups.push(group);
+        }
+    }
+    if bond_groups.len() >= u8::MAX as usize {
+        return Err(fail(format!("too many bond groups: {}", bond_groups.len())));
+    }
+
     let mut materials = Vec::with_capacity(len);
     for (index, raw) in raws.iter().enumerate() {
         let decay = decays[index];
@@ -249,6 +264,11 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
             tags: raw.tags,
             hardness: raw.hardness,
             restitution: raw.restitution,
+            friction: raw.friction,
+            bond_group: raw.bond_group.map_or(u8::MAX, |group| {
+                bond_groups.iter().position(|&g| g == group).unwrap() as u8
+            }),
+            repose_layers: repose_layers(raw),
             entity_grip: raw.entity_grip,
             entity_bounce: raw.entity_bounce,
             contact_damage: raw.contact_damage,
@@ -279,6 +299,19 @@ pub fn build(catalog: &Catalog) -> Result<Content, Error> {
         recipes,
         item_for_material,
     })
+}
+
+const MAX_REPOSE_LAYERS: u32 = 12;
+
+fn repose_layers(raw: &RawMaterial) -> u32 {
+    let PhaseDef::Powder(powder) = raw.phase else {
+        return 0;
+    };
+    let chance = per_tick_chance(powder.topple_start);
+    if chance <= 0.0 {
+        return MAX_REPOSE_LAYERS;
+    }
+    ((1.0 / chance).ceil() as u32).clamp(1, MAX_REPOSE_LAYERS)
 }
 
 fn camel_case(const_name: &str) -> String {

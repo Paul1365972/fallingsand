@@ -1,19 +1,38 @@
 use crate::world::obstructs;
-use fallingsand_core::{CHUNK_SIZE, Cell, CellPos, Chunk, ChunkPos};
+use fallingsand_core::{CHUNK_SIZE, Cell, CellPos, Chunk, ChunkPos, content};
 
 pub const WINDOW_CHUNKS: i32 = 4;
 pub const WINDOW_SLOTS: usize = (WINDOW_CHUNKS * WINDOW_CHUNKS) as usize;
 pub const SPEED_OF_LIGHT: i32 = CHUNK_SIZE as i32;
 const _: () = assert!(SPEED_OF_LIGHT as usize <= ((WINDOW_CHUNKS as usize - 2) / 2) * CHUNK_SIZE);
 
+#[derive(Debug, Clone, Copy)]
+pub struct BodyImpulse {
+    pub id: u32,
+    pub pos: CellPos,
+    pub jx: i64,
+    pub jy: i64,
+}
+
 pub struct SimWindow<'a> {
     origin: ChunkPos,
     slots: [Option<&'a mut Chunk>; WINDOW_SLOTS],
+    pub(crate) impulses: Vec<BodyImpulse>,
+    pub(crate) unseated: Vec<CellPos>,
 }
 
 impl<'a> SimWindow<'a> {
     pub(crate) fn new(origin: ChunkPos, slots: [Option<&'a mut Chunk>; WINDOW_SLOTS]) -> Self {
-        Self { origin, slots }
+        Self {
+            origin,
+            slots,
+            impulses: Vec::new(),
+            unseated: Vec::new(),
+        }
+    }
+
+    pub(crate) fn body_impulse(&mut self, id: u32, pos: CellPos, jx: i64, jy: i64) {
+        self.impulses.push(BodyImpulse { id, pos, jx, jy });
     }
 
     pub(crate) fn set_slot(&mut self, sx: i32, sy: i32, chunk: &'a mut Chunk) {
@@ -61,7 +80,11 @@ impl<'a> SimWindow<'a> {
             debug_assert!(false, "write to unloaded chunk at {pos:?}");
             return;
         };
+        let old = chunk.get(pos.offset());
         chunk.set(pos.offset(), cell);
+        if obstructs(old.material) && !obstructs(cell.material) {
+            self.unseated.push(pos);
+        }
         self.mark_sim_border(pos);
     }
 
@@ -80,6 +103,14 @@ impl<'a> SimWindow<'a> {
         }
         chunk.set(pos.offset(), cell);
         self.mark_sim_border(pos);
+        let bondable = |cell: Cell| content::bond_group(cell.material) != u8::MAX;
+        if old.material != cell.material
+            && (obstructs(old.material) != obstructs(cell.material)
+                || bondable(old)
+                || bondable(cell))
+        {
+            self.unseated.push(pos);
+        }
     }
 
     #[inline]
@@ -121,7 +152,9 @@ impl<'a> SimWindow<'a> {
             return;
         };
         moving.set_moved();
+        moving.clear_stressed();
         displaced.set_moved();
+        displaced.clear_stressed();
         self.set(mover, displaced);
         self.set(target, moving);
     }

@@ -1,5 +1,5 @@
 use crate::rules;
-use crate::window::{SimWindow, WINDOW_CHUNKS};
+use crate::window::{BodyImpulse, SimWindow, WINDOW_CHUNKS};
 use crate::world::CellWorld;
 use fallingsand_core::{CHUNK_SIZE, CellPos, Chunk, ChunkPos, DirtyRect};
 use fallingsand_math::Hash;
@@ -51,10 +51,17 @@ pub struct SimTimings {
 }
 
 #[derive(Default)]
+pub struct KernelEffects {
+    pub impulses: Vec<BodyImpulse>,
+    pub unseated: Vec<CellPos>,
+}
+
+#[derive(Default)]
 pub struct Simulator {
     ready: FxHashSet<ChunkPos>,
     origins: Vec<ChunkPos>,
     members: FxHashMap<ChunkPos, (usize, i32, i32)>,
+    effects: KernelEffects,
 }
 
 impl Simulator {
@@ -67,7 +74,7 @@ impl Simulator {
         world: &mut CellWorld,
         simulate: &S,
         random_tick: &R,
-    ) -> SimTimings
+    ) -> (SimTimings, KernelEffects)
     where
         S: Fn(ChunkPos) -> bool + Sync,
         R: Fn(ChunkPos) -> bool + Sync,
@@ -104,10 +111,13 @@ impl Simulator {
             &|window| random_tick_block(window, tick, random_tick),
         );
 
-        SimTimings {
-            simulate_micros: effect_micros + movement_micros,
-            random_tick_micros,
-        }
+        (
+            SimTimings {
+                simulate_micros: effect_micros + movement_micros,
+                random_tick_micros,
+            },
+            std::mem::take(&mut self.effects),
+        )
     }
 
     fn run_sim<S, K>(
@@ -180,6 +190,10 @@ impl Simulator {
         }
 
         windows.par_iter_mut().for_each(kernel);
+        for window in &mut windows {
+            self.effects.impulses.append(&mut window.impulses);
+            self.effects.unseated.append(&mut window.unseated);
+        }
     }
 }
 

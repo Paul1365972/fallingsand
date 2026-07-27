@@ -15,6 +15,8 @@ pub(super) struct RawMaterial {
     pub(super) entity_grip: f32,
     pub(super) hardness: f32,
     pub(super) restitution: f32,
+    pub(super) friction: f32,
+    pub(super) bond_group: Option<&'static str>,
     pub(super) entity_bounce: f32,
     pub(super) contact_damage: f32,
     pub(super) tags: Tags,
@@ -33,6 +35,8 @@ impl RawMaterial {
             entity_grip: 1.0,
             hardness: 0.0,
             restitution: 0.0,
+            friction: 0.5,
+            bond_group: None,
             entity_bounce: 0.0,
             contact_damage: 0.0,
             tags: Tags::EMPTY,
@@ -90,6 +94,12 @@ fn apply_definition(raw: &mut RawMaterial, definition: &MaterialDef) {
     if let Some(value) = definition.restitution {
         raw.restitution = value;
     }
+    if let Some(value) = definition.friction {
+        raw.friction = value;
+    }
+    if let Some(group) = definition.bond_group {
+        raw.bond_group = Some(group);
+    }
     if let Some(value) = definition.entity_bounce {
         raw.entity_bounce = value;
     }
@@ -125,6 +135,7 @@ fn validate_material(raw: &RawMaterial) -> Result<(), Error> {
         ("entity_grip", raw.entity_grip),
         ("hardness", raw.hardness),
         ("restitution", raw.restitution),
+        ("friction", raw.friction),
         ("entity_bounce", raw.entity_bounce),
         ("contact_damage", raw.contact_damage),
     ] {

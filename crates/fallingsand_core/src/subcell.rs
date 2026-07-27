@@ -16,6 +16,10 @@ impl Subcell {
         self.0
     }
 
+    pub const fn from_raw(raw: i64) -> Self {
+        Self(raw)
+    }
+
     pub const fn from_cell(cell: i32) -> Self {
         Self((cell as i64) << SUBCELL_BITS)
     }

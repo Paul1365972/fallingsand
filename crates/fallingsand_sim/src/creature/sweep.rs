@@ -38,11 +38,23 @@ impl MoveResult {
             return;
         }
         let count = solids.len() as u32;
-        for &pos in solids {
+        let share_x = velocity_delta_x.per_substep(count);
+        let share_y = velocity_delta_y.per_substep(count);
+        let head = (count - 1) as i32;
+        for (index, &pos) in solids.iter().enumerate() {
+            let last = index as i32 == head;
             self.blocked.push(Blocked {
                 pos,
-                velocity_delta_x: velocity_delta_x.per_substep(count),
-                velocity_delta_y: velocity_delta_y.per_substep(count),
+                velocity_delta_x: if last {
+                    velocity_delta_x - share_x.times(head)
+                } else {
+                    share_x
+                },
+                velocity_delta_y: if last {
+                    velocity_delta_y - share_y.times(head)
+                } else {
+                    share_y
+                },
             });
         }
     }

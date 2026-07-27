@@ -18,6 +18,7 @@ pub struct Cell {
 impl Cell {
     const MOVED: u8 = 0x01;
     const BODY: u8 = 0x02;
+    const STRESS: u8 = 0x04;
 
     pub const AIR: Self = Self {
         material: MaterialId::AIR,
@@ -106,6 +107,18 @@ impl Cell {
 
     pub fn clear_moved(&mut self) {
         self.flags &= !Self::MOVED;
+    }
+
+    pub const fn is_stressed(self) -> bool {
+        self.flags & Self::STRESS != 0
+    }
+
+    pub fn set_stressed(&mut self) {
+        self.flags |= Self::STRESS;
+    }
+
+    pub fn clear_stressed(&mut self) {
+        self.flags &= !Self::STRESS;
     }
 
     pub const fn is_air(self) -> bool {
