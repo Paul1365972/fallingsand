@@ -146,6 +146,7 @@ pub struct PowderDynamics {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LiquidDynamics {
     pub drag_keep: Q16,
+    pub glide_keep: Q16,
     pub impact_keep: Q16,
 }
 

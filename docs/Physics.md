@@ -82,6 +82,8 @@ Everything solid a contact touches is a peer with a mass.
   A slab rests on a grounded player's head while a sideways wedge still shoves them; an anvil on a plank's cantilevered tip still tips it.
 - **Powder** — a finite-mass peer at its density, holding like terrain below its authored repose resistance and yielding above it as cell velocity; matter yields by moving, never by rule.
 - **Liquid** — yields; relocation pairs it into vacated cells, and drag emerges from the momentum spent moving them.
+  Surface leveling is momentum along each row's hashed drain direction: unlevel water launches at wave speed toward that side, glides nearly drag-free over liquid, stops dead at the first matter ahead, and falls into any dip it crosses.
+  A parked cell's drain side is the matter that stopped it, so it can never relaunch backward — one-high steps drain by riding over the lower surface, deeper steps by the diagonal exchange, and level water sleeps.
   Displacement is an inelastic exchange at the meeting point's effective mass — translation and rotation combined — so the displaced cell accelerates toward the body, the body slows or unspins by the same momentum, and energy only ever dissipates: heavy water can stop a light body but never launch or spin it up.
 
 ### Materials

@@ -3,6 +3,8 @@ use crate::{EmissionDef, GasDef, LiquidDef, PhaseDef, PowderDef};
 use fallingsand_material::{Dynamics, GasDynamics, LiquidDynamics, Phase, PowderDynamics, Q16};
 use fallingsand_math::{SUBCELL_UNITS_PER_CELL, TICK_DT, chance_threshold};
 
+const GLIDE_DRAG_DIVISOR: f32 = 16.0;
+
 pub(super) fn per_tick_chance(rate: f32) -> f32 {
     1.0 - (-rate * TICK_DT).exp()
 }
@@ -84,6 +86,7 @@ pub(super) fn quantize_dynamics(raw: &RawMaterial) -> Dynamics {
             flow_rate: _,
         }) => Dynamics::Liquid(LiquidDynamics {
             drag_keep: Q16::from_f32(per_tick_keep(drag)),
+            glide_keep: Q16::from_f32(per_tick_keep(drag / GLIDE_DRAG_DIVISOR)),
             impact_keep: Q16::from_f32(impact.clamp(0.0, 1.0)),
         }),
         PhaseDef::Gas(GasDef {

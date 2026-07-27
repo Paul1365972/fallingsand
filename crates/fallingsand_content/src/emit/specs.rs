@@ -154,10 +154,12 @@ fn dynamics_tokens(dynamics: &fallingsand_material::Dynamics) -> TokenStream {
         }
         Dynamics::Liquid(d) => {
             let drag_keep = q16_tokens(d.drag_keep);
+            let glide_keep = q16_tokens(d.glide_keep);
             let impact_keep = q16_tokens(d.impact_keep);
             quote! {
                 crate::material::Dynamics::Liquid(crate::material::LiquidDynamics {
                     drag_keep: #drag_keep,
+                    glide_keep: #glide_keep,
                     impact_keep: #impact_keep,
                 })
             }
