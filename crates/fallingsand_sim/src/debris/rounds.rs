@@ -1,14 +1,16 @@
 use super::body::{CELL, Debris, cell_mass, rasterize, rotated_mean};
 use super::contact::{CellState, Contact, CreatureState, Peer, Resolver};
-use super::rotation::{ORIENTATION_UNITS, Spin};
+use super::rotation::{ANGLE_STEPS, ORIENTATION_UNITS, Spin};
 use crate::motion::{GRAVITY_DV, MAX_SPEED_CELLS, SETTLE};
 use crate::world::CellWorld;
 use fallingsand_core::{Cell, CellPos, ChunkPos, MaterialId, Phase, Q16, content};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 const GRAVITY: i64 = GRAVITY_DV as i64;
-const MAX_SPEED: i64 = MAX_SPEED_CELLS as i64 * CELL;
-const MAX_TURN_QUANTA: i64 = 8;
+const MAX_BODY_SPEED_CELLS: i64 = 6;
+const MAX_SPEED: i64 = MAX_BODY_SPEED_CELLS * CELL;
+const _: () = assert!(MAX_BODY_SPEED_CELLS <= MAX_SPEED_CELLS as i64);
+const MAX_TURN_QUANTA: i64 = 32;
 const DRAG_DIVISOR: i64 = 4;
 const SNAP: i64 = 16;
 const SETTLE_EPSILON: i64 = 4;
@@ -318,7 +320,7 @@ fn build_proposal(
             }
         }
         Freedom::Turn => {
-            new_step = (body.step as i32 + sign).rem_euclid(64) as u32;
+            new_step = (body.step as i32 + sign).rem_euclid(ANGLE_STEPS as i32) as u32;
             rasterize(&body.slots, body.anchor, new_step, &mut candidate);
             let mut seen = FxHashSet::default();
             for (slot, &to) in body.raster.iter().zip(&candidate) {
@@ -946,12 +948,24 @@ fn commit_group(
         if !cell.is_air() {
             let (owner, entrained) = entraining_body(bodies, proposals, group, pos);
             let mass = i128::from(cell_mass(cell.material));
-            let (cvx, cvy) = cell.vel();
-            let jx = (i128::from(entrained.0 - i64::from(cvx)) * mass) as i64;
-            let jy = (i128::from(entrained.1 - i64::from(cvy)) * mass) as i64;
-            cell.set_vel(entrained.0 as i32, entrained.1 as i32);
             let com = bodies[owner].com();
-            bodies[owner].apply_impulse(com, pos, -jx, -jy);
+            let center = (
+                super::body::cell_center(pos.x),
+                super::body::cell_center(pos.y),
+            );
+            let (cvx, cvy) = cell.vel();
+            let exchange = |rel: i64, normal: (i32, i32)| {
+                let point = super::contact::debris_point_mass(&bodies[owner], com, center, normal);
+                let pair = (mass * point / (mass + point)).max(1);
+                i128::from(rel) * pair
+            };
+            let jx = exchange(entrained.0 - i64::from(cvx), (1, 0));
+            let jy = exchange(entrained.1 - i64::from(cvy), (0, 1));
+            cell.set_vel(
+                cvx + fallingsand_math::round_div(jx, mass) as i32,
+                cvy + fallingsand_math::round_div(jy, mass) as i32,
+            );
+            bodies[owner].apply_impulse(com, pos, -(jx as i64), -(jy as i64));
         }
         displaced.push(cell);
     }
@@ -1142,8 +1156,17 @@ pub(super) fn carriage(world: &mut CellWorld, body: &mut Debris) {
         let pair = body.friction.mul(content::friction(cell.material));
         let load = GRAVITY + i64::from((-cvy).max(0));
         let limit = ((i128::from(pair.raw()) * i128::from(load) * i128::from(mass)) >> 16) as i64;
-        let inertia = i128::from(relative) * i128::from(mass) * i128::from(body.mass)
-            / i128::from(mass + body.mass);
+        let effective = super::contact::debris_point_mass(
+            body,
+            com,
+            (
+                super::body::cell_center(above.x),
+                super::body::cell_center(above.y),
+            ),
+            (1, 0),
+        );
+        let inertia =
+            i128::from(relative) * i128::from(mass) * effective / (i128::from(mass) + effective);
         let impulse = (inertia as i64).clamp(-limit, limit);
         if impulse == 0 {
             continue;

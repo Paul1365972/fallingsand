@@ -319,6 +319,7 @@ impl ServerState {
                     tickets,
                     ..
                 } = s;
+                debris.wake_chunks(tickets.newly_simulated.iter().copied());
                 let shoves = debris.step(
                     sim,
                     &debris_impulses,

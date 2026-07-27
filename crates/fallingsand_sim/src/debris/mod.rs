@@ -31,6 +31,7 @@ pub struct DebrisWorld {
     bodies: Vec<Debris>,
     by_id: FxHashMap<u32, usize>,
     pending: Vec<CellPos>,
+    parked_seeds: FxHashMap<ChunkPos, Vec<CellPos>>,
 }
 
 impl DebrisWorld {
@@ -46,6 +47,14 @@ impl DebrisWorld {
 
     pub fn unseat(&mut self, seeds: impl IntoIterator<Item = CellPos>) {
         self.pending.extend(seeds);
+    }
+
+    pub fn wake_chunks(&mut self, chunks: impl IntoIterator<Item = ChunkPos>) {
+        for chunk in chunks {
+            if let Some(seeds) = self.parked_seeds.remove(&chunk) {
+                self.pending.extend(seeds);
+            }
+        }
     }
 
     pub fn step(
@@ -269,6 +278,7 @@ impl DebrisWorld {
         let mut seeds = std::mem::take(&mut self.pending);
         seeds.sort_unstable_by_key(|pos| (pos.y, pos.x));
         seeds.dedup();
+        let mut scanned = rustc_hash::FxHashSet::default();
         for seed in seeds {
             let mut candidates = vec![seed];
             candidates.extend(
@@ -277,18 +287,28 @@ impl DebrisWorld {
                     .map(|&(dx, dy)| seed.translated(dx, dy)),
             );
             for candidate in candidates {
-                if world.get_cell(candidate).is_none() {
-                    self.pending.push(candidate);
+                if scanned.contains(&candidate) {
                     continue;
                 }
-                let Some(island) = island::detect_detached_island(world, candidate) else {
+                if world.get_cell(candidate).is_none() {
+                    self.parked_seeds
+                        .entry(candidate.chunk())
+                        .or_default()
+                        .push(candidate);
+                    continue;
+                }
+                let Some(island) = island::detect_detached_island(world, candidate, &mut scanned)
+                else {
                     continue;
                 };
-                if island_simulated(world, simulated, &island) {
-                    let id = allocate();
-                    self.bodies.push(capture(world, id, island));
-                } else {
-                    self.pending.push(candidate);
+                match island_blocker(world, simulated, &island) {
+                    None => {
+                        let id = allocate();
+                        self.bodies.push(capture(world, id, island));
+                    }
+                    Some(chunk) => {
+                        self.parked_seeds.entry(chunk).or_default().push(candidate);
+                    }
                 }
             }
         }
@@ -435,11 +455,11 @@ fn settle_body(world: &mut CellWorld, debris: &Debris) {
     }
 }
 
-fn island_simulated(
+fn island_blocker(
     world: &CellWorld,
     simulated: &dyn Fn(ChunkPos) -> bool,
     island: &[CellPos],
-) -> bool {
+) -> Option<ChunkPos> {
     let min_x = island.iter().map(|pos| pos.x).min().unwrap();
     let max_x = island.iter().map(|pos| pos.x).max().unwrap();
     let min_y = island.iter().map(|pos| pos.y).min().unwrap();
@@ -450,9 +470,9 @@ fn island_simulated(
         for x in min.x..=max.x {
             let pos = ChunkPos::new(x, y);
             if world.chunk(pos).is_none() || !simulated(pos) {
-                return false;
+                return Some(pos);
             }
         }
     }
-    true
+    None
 }

@@ -34,6 +34,7 @@ pub struct ChunkTickets {
     pub active: FxHashSet<ChunkPos>,
     pub border: FxHashSet<ChunkPos>,
     pub random_tick: FxHashSet<ChunkPos>,
+    pub newly_simulated: Vec<ChunkPos>,
 }
 
 impl ChunkTickets {
@@ -47,6 +48,7 @@ impl ChunkTickets {
 }
 
 pub fn compute_tickets(tickets: &mut ChunkTickets, players: &Players) {
+    let previous: FxHashSet<ChunkPos> = tickets.active.union(&tickets.border).copied().collect();
     tickets.active.clear();
     tickets.border.clear();
     tickets.random_tick.clear();
@@ -57,6 +59,16 @@ pub fn compute_tickets(tickets: &mut ChunkTickets, players: &Players) {
         }
     }
     tickets.border.retain(|pos| !tickets.active.contains(pos));
+    tickets.newly_simulated = tickets
+        .active
+        .iter()
+        .chain(tickets.border.iter())
+        .filter(|pos| !previous.contains(pos))
+        .copied()
+        .collect();
+    tickets
+        .newly_simulated
+        .sort_unstable_by_key(|pos| (pos.y, pos.x));
 }
 
 fn add_view(tickets: &mut ChunkTickets, center: ChunkPos) {
@@ -169,6 +181,7 @@ pub fn manage_regions(
         let load = ready.result?;
         regions.requested.remove(&ready.pos);
         insert_region(sim, ready.pos, load.region);
+        debris.wake_chunks(ready.pos.chunk_positions().map(|(_, pos)| pos));
         regions
             .states
             .insert(ready.pos, RegionState { last_wanted: tick });

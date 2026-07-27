@@ -82,6 +82,7 @@ Everything solid a contact touches is a peer with a mass.
   A slab rests on a grounded player's head while a sideways wedge still shoves them; an anvil on a plank's cantilevered tip still tips it.
 - **Powder** — a finite-mass peer at its density, holding like terrain below its authored repose resistance and yielding above it as cell velocity; matter yields by moving, never by rule.
 - **Liquid** — yields; relocation pairs it into vacated cells, and drag emerges from the momentum spent moving them.
+  Displacement is an inelastic exchange at the meeting point's effective mass — translation and rotation combined — so the displaced cell accelerates toward the body, the body slows or unspins by the same momentum, and energy only ever dissipates: heavy water can stop a light body but never launch or spin it up.
 
 ### Materials
 
@@ -125,6 +126,7 @@ It never rotates and never settles; players and mobs are the same kind, differin
 
 Debris is a transient motion event over the substrate: detached rigid matter that falls, tumbles, collides, and settles back to terrain.
 Persistent state per debris is exactly slots, pose, velocity, spin — nothing else survives a tick.
+Body speed caps at a terminal fall well below the cell speed limit, so debris never outruns what the eye or the rounds can follow.
 
 ### Structure
 
@@ -136,13 +138,14 @@ Persistent state per debris is exactly slots, pose, velocity, spin — nothing e
 - **Membership follows writes** — a transmutation product that is no longer bondable releases with its momentum share (`v + ω×r`); a departing cell takes exactly its own share of momentum and angular momentum.
   The bond matrix splits survivors into parts.
 - **Detachment is local** — a grid write unseats its rigid neighbourhood; discovery flood-fills from unseated cells and flags a detached island atomically, waiting while its margin is unsimulated.
+  Each structure floods at most once per pass, and a waiting seed parks under its blocking chunk and wakes only when that chunk begins simulating — discovery never polls.
   Id-bearing cells are flood boundaries, never candidates — splitting a live body is exclusively its own bond recheck.
 - **Anchoring is adhesion** — an island holds while any member touches a foreign structural solid on any side, or rests on powder from below; only matter cut fully free falls.
   Weak matter below a minimal hardness never anchors, so a canopy cannot hold a felled trunk, while built wood glues to walls and ceilings.
 
 ### Rotation
 
-Rotation is quantized to 64 orientations as nearest quarter-turn refined by shears — an exact lattice bijection, so mass conservation is structural.
+Rotation is quantized to 256 orientations as nearest quarter-turn refined by shears — an exact lattice bijection, so mass conservation is structural.
 Continuous spin is only the accumulator between orientation steps.
 A turn quantum on a wide shape probes every cell its slots cross, so a felled tree cannot sweep through a wall.
 

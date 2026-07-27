@@ -107,10 +107,8 @@ fn relax(window: &mut SimWindow, pos: CellPos, cell: Cell, tick: u64, rng: &mut 
         } else {
             1
         };
-        target = [row_side, -row_side]
-            .into_iter()
-            .map(|dx| pos.translated(dx, 0))
-            .find(|&target| supported_interface(window, cell, target));
+        let side = pos.translated(row_side, 0);
+        target = supported_interface(window, cell, side).then_some(side);
     }
     let Some(target) = target else {
         return;
