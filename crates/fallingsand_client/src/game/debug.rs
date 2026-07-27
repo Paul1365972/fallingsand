@@ -1,5 +1,5 @@
 use fallingsand_core::{ChunkPos, DirtyRect};
-use fallingsand_protocol::TickFrame;
+use fallingsand_protocol::{DebugBody, DebugMotion, TickFrame};
 
 pub struct RectFlash {
     pub pos: ChunkPos,
@@ -11,11 +11,15 @@ pub struct RectFlash {
 pub struct DebugState {
     pub subscribed: bool,
     pub rects: Vec<RectFlash>,
+    pub bodies: Vec<DebugBody>,
+    pub motion: Vec<DebugMotion>,
 }
 
 impl DebugState {
     pub(super) fn update(&mut self, tick: &TickFrame, enabled: bool) {
         self.rects.clear();
+        self.bodies.clear();
+        self.motion.clear();
         if !enabled {
             return;
         }
@@ -31,5 +35,7 @@ impl DebugState {
                 });
             }
         }
+        self.bodies.clone_from(&tick.debug_bodies);
+        self.motion.clone_from(&tick.debug_motion);
     }
 }

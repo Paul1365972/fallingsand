@@ -377,6 +377,7 @@ impl ServerState {
                     &mut s.sessions,
                     &s.players,
                     &s.sim,
+                    &s.debris,
                     &s.clock,
                     &s.regions,
                     &s.generator,

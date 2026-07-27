@@ -38,6 +38,12 @@ impl DebrisWorld {
         self.bodies.len()
     }
 
+    pub fn rasters(&self) -> impl Iterator<Item = (u32, &[CellPos])> {
+        self.bodies
+            .iter()
+            .map(|body| (body.id, body.raster.as_slice()))
+    }
+
     pub fn unseat(&mut self, seeds: impl IntoIterator<Item = CellPos>) {
         self.pending.extend(seeds);
     }

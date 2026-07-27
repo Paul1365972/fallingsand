@@ -160,6 +160,59 @@ pub(super) fn update_debug_primitives(
         y += chunk;
     }
 
+    let velocity_scale = 60.0 / 1024.0 * 0.08;
+    for entry in &ingame.debug.motion {
+        let center = Vec2::new(entry.pos.x as f32 + 0.5, entry.pos.y as f32 + 0.5);
+        if entry.stressed {
+            primitives.lines.push(DebugLine {
+                a: to_px(center + Vec2::new(-0.35, 0.0)),
+                b: to_px(center + Vec2::new(0.35, 0.0)),
+                color: Color::srgba(1.0, 0.5, 0.1, 0.9)
+                    .to_linear()
+                    .to_f32_array()
+                    .into(),
+            });
+        }
+        let velocity = Vec2::new(entry.vx as f32, entry.vy as f32) * velocity_scale;
+        if velocity != Vec2::ZERO {
+            let speed = (velocity.length() / 4.0).clamp(0.0, 1.0);
+            let color = Color::srgba(0.2 + 0.8 * speed, 1.0 - 0.7 * speed, 0.25, 0.85);
+            primitives.lines.push(DebugLine {
+                a: to_px(center),
+                b: to_px(center + velocity.clamp_length_max(6.0)),
+                color: color.to_linear().to_f32_array().into(),
+            });
+        }
+    }
+
+    for body in &ingame.debug.bodies {
+        let color: Vec4 = Color::srgba(1.0, 0.2, 0.9, 0.95)
+            .to_linear()
+            .to_f32_array()
+            .into();
+        let occupied: std::collections::HashSet<(i32, i32)> =
+            body.cells.iter().map(|pos| (pos.x, pos.y)).collect();
+        for pos in &body.cells {
+            let x = pos.x as f32;
+            let y = pos.y as f32;
+            let sides = [
+                ((0, -1), Vec2::new(x, y), Vec2::new(x + 1.0, y)),
+                ((0, 1), Vec2::new(x, y + 1.0), Vec2::new(x + 1.0, y + 1.0)),
+                ((-1, 0), Vec2::new(x, y), Vec2::new(x, y + 1.0)),
+                ((1, 0), Vec2::new(x + 1.0, y), Vec2::new(x + 1.0, y + 1.0)),
+            ];
+            for ((dx, dy), a, b) in sides {
+                if !occupied.contains(&(pos.x + dx, pos.y + dy)) {
+                    primitives.lines.push(DebugLine {
+                        a: to_px(a),
+                        b: to_px(b),
+                        color,
+                    });
+                }
+            }
+        }
+    }
+
     for flash in &ingame.debug.rects {
         let origin = Vec2::new(flash.pos.x as f32 * chunk, flash.pos.y as f32 * chunk);
         let corner = origin + Vec2::new(flash.rect.min_x as f32, flash.rect.min_y as f32);

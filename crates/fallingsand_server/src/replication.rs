@@ -3,13 +3,14 @@ use crate::player::{PlayerLife, Players};
 use crate::regions::RegionMap;
 use crate::session::Sessions;
 use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y};
-use fallingsand_core::{CHUNK_SIZE, Calendar, CellOffset, ChunkPos, ItemStack};
+use fallingsand_core::{CHUNK_SIZE, Calendar, CellOffset, CellPos, ChunkPos, ItemStack, Motion};
 use fallingsand_protocol::{
-    ChunkDebugRects, ChunkOp, InteractionState, InteractionStatus, ParticleSpawn,
-    PlayerAvatarState, PlayerId, PlayerState, SelfAvatarState, SelfLife, SelfState, ServerMessage,
-    TickFrame, cells_to_wire,
+    ChunkDebugRects, ChunkOp, DebugBody, DebugMotion, InteractionState, InteractionStatus,
+    ParticleSpawn, PlayerAvatarState, PlayerId, PlayerState, SelfAvatarState, SelfLife, SelfState,
+    ServerMessage, TickFrame, cells_to_wire,
 };
 use fallingsand_sim::CellWorld;
+use fallingsand_sim::debris::DebrisWorld;
 use fallingsand_worldgen::WorldGenerator;
 use rustc_hash::FxHashSet;
 use std::collections::BTreeMap;
@@ -59,6 +60,7 @@ pub fn replicate(
     sessions: &mut Sessions,
     players: &Players,
     sim: &CellWorld,
+    debris: &DebrisWorld,
     clock: &Calendar,
     regions: &RegionMap,
     generator: &WorldGenerator,
@@ -114,6 +116,11 @@ pub fn replicate(
             &interest,
             &mut debug_rects,
         );
+        let (debug_bodies, debug_motion) = if session.replication.debug {
+            debug_payload(sim, debris, &interest)
+        } else {
+            (Vec::new(), Vec::new())
+        };
         let in_interest = particles_in_interest(particles, center);
         let public_players = if session.replication.fresh {
             all_players.clone()
@@ -144,6 +151,8 @@ pub fn replicate(
             self_state,
             particles: in_interest,
             debug_rects,
+            debug_bodies,
+            debug_motion,
         })));
     }
 
@@ -240,6 +249,57 @@ fn inventory_delta(
         cursor,
         trash,
     }
+}
+
+const MAX_DEBUG_MOTION: usize = 8192;
+
+fn debug_payload(
+    sim: &CellWorld,
+    debris: &DebrisWorld,
+    interest: &FxHashSet<ChunkPos>,
+) -> (Vec<DebugBody>, Vec<DebugMotion>) {
+    let mut bodies: Vec<DebugBody> = debris
+        .rasters()
+        .filter(|(_, raster)| raster.iter().any(|pos| interest.contains(&pos.chunk())))
+        .map(|(id, raster)| DebugBody {
+            id,
+            cells: raster.to_vec(),
+        })
+        .collect();
+    bodies.sort_unstable_by_key(|body| body.id);
+
+    let mut motion = Vec::new();
+    let mut chunks: Vec<ChunkPos> = interest.iter().copied().collect();
+    chunks.sort_unstable_by_key(|pos| (pos.y, pos.x));
+    'gather: for pos in chunks {
+        let chunk = sim.chunk(pos).expect("interest chunks are loaded");
+        let rect = chunk.sim_rect();
+        if rect.is_empty() {
+            continue;
+        }
+        let base = pos.base_cell();
+        for y in rect.min_y..=rect.max_y {
+            for x in rect.min_x..=rect.max_x {
+                let cell = chunk.get(CellOffset::new(x, y));
+                let Motion::Velocity(vx, vy) = cell.motion() else {
+                    continue;
+                };
+                if (vx, vy) == (0, 0) && !cell.is_stressed() {
+                    continue;
+                }
+                motion.push(DebugMotion {
+                    pos: CellPos::new(base.x + i32::from(x), base.y + i32::from(y)),
+                    vx: vx as i16,
+                    vy: vy as i16,
+                    stressed: cell.is_stressed(),
+                });
+                if motion.len() >= MAX_DEBUG_MOTION {
+                    break 'gather;
+                }
+            }
+        }
+    }
+    (bodies, motion)
 }
 
 fn particles_in_interest(particles: &[ParticleSpawn], center: ChunkPos) -> Vec<ParticleSpawn> {

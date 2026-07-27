@@ -214,6 +214,25 @@ fn playing_lines(
         let facing = compass(aim.x as f32 - local.pos.x, aim.y as f32 - local.pos.y);
         left_lines.push(format!("facing {facing}"));
     }
+    if !ingame.debug.bodies.is_empty() || !ingame.debug.motion.is_empty() {
+        let body_cells: usize = ingame
+            .debug
+            .bodies
+            .iter()
+            .map(|body| body.cells.len())
+            .sum();
+        let stressed = ingame
+            .debug
+            .motion
+            .iter()
+            .filter(|entry| entry.stressed)
+            .count();
+        left_lines.push(format!(
+            "bodies {} ({body_cells} cells)  moving {}  stressed {stressed}",
+            ingame.debug.bodies.len(),
+            ingame.debug.motion.len() - stressed,
+        ));
+    }
 
     let minute_of_day = clock.calendar.minute_of_day();
     let eclipse = if sky.state.is_solar_eclipse() {
