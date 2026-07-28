@@ -34,6 +34,9 @@ pub enum Action {
     SubmitChat,
     HistoryPrev,
     HistoryNext,
+    CompleteCommand,
+    ScrollChatBack,
+    ScrollChatForward,
     CloseGameMenu,
     CancelConnect,
     CloseSettings,
@@ -232,6 +235,11 @@ impl Default for Bindings {
             bind(KeyCode::Escape, Action::CloseOverlay),
             bind(KeyCode::ArrowUp, Action::HistoryPrev),
             bind(KeyCode::ArrowDown, Action::HistoryNext),
+            bind(KeyCode::Tab, Action::CompleteCommand),
+            bind(KeyCode::PageUp, Action::ScrollChatBack),
+            bind(KeyCode::PageDown, Action::ScrollChatForward),
+            bind(Button::ScrollUp, Action::ScrollChatBack),
+            bind(Button::ScrollDown, Action::ScrollChatForward),
         ];
         chat.extend(zoom_chords());
 

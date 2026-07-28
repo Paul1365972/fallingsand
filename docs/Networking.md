@@ -12,6 +12,8 @@ One reliable ordered stream per connection; compact binary frames, compressed ab
 
 ## Server → client
 
+Chat is one typed entry per message — kind, optional author, text; the handshake bundle adds the recall ring and the command table. See [Chat.md](Chat.md).
+
 Roster and physical presence are separate: roster messages maintain connected names, while the tick frame carries change-gated per-subsystem state — chunk load/delta/unload from the sim's change rect (player flesh rides these deltas), optional avatar anchors for presentation, per-slot inventory diffs, a private self state whose lifecycle carries health/air/interaction exactly while alive and a camera anchor while not, and dig-spray particle spawn events (the server decides when and where; the client only integrates and fades them).
 
 A wire cell is 3 bytes — material and shade, no velocity or timing; the server re-derives them. Chunk payloads are paletted containers, smallest encoding wins.
@@ -21,6 +23,8 @@ The opt-in debug stream keeps chunk sim/change rects as separate payloads outsid
 ## Client → server
 
 One input frame per client fixed tick: the held snapshot (coalescing frames replace it wholesale) plus ordered actions. Dig and place ride the action channel as use events paced client-side: one immediate event on press — a press+release inside one flush window still lands exactly one action — then repeat mode re-emits on an interval and emits every cell traversed between aim samples along a four-connected line, so dragged strokes are gapless and diagonal-free by construction. The server validates and executes each event in order; held state drives only survival dig progress and previews.
+
+Speech and commands are separate messages, each trimmed, capped, and throttled on its own; a rejection answers with an error entry.
 
 A client transition that cancels held control (menu opened, avatar incapacitated) emits one immediate neutral frame; otherwise held input decays to neutral after half a second without frames. Sessions, handshake lifetime, frame size, drain rate, and actions per frame are bounded; the client carries excess actions into later frames and the server rejects an over-limit frame rather than silently dropping actions. The authoritative session binding rejects input from a superseded connection; takeover and lifecycle transitions clear queued work.
 

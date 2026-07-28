@@ -26,6 +26,7 @@ Each system doc states its goal, its invariants, and its vocabulary; the invaria
 - [Server.md](Server.md) — authority, tick, interest, persistence
 - [Networking.md](Networking.md) — protocol
 - [Client.md](Client.md) — rendering and UI
+- [Chat.md](Chat.md) — chat entries and the command registry
 - [Inventory.md](Inventory.md) — items, dig/place, crafting
 - [Worldgen.md](Worldgen.md) — generation
 - [Deploy.md](Deploy.md) — dedicated-server operations

@@ -120,6 +120,7 @@ pub struct PlayerControl {
     pub revive_requested: bool,
     pub last_input_tick: u64,
     pub last_chat_tick: u64,
+    pub last_command_tick: u64,
 }
 
 impl PlayerControl {
@@ -133,6 +134,7 @@ impl PlayerControl {
             revive_requested: false,
             last_input_tick: tick,
             last_chat_tick: 0,
+            last_command_tick: 0,
         }
     }
 

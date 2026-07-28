@@ -1,4 +1,4 @@
-pub(crate) mod commands;
+pub(crate) mod command;
 pub(crate) mod dig;
 pub(crate) mod hazards;
 pub(crate) mod inventory;
@@ -16,7 +16,7 @@ use fallingsand_core::Subcell;
 use fallingsand_core::{Calendar, CellPos, DAY_UNITS};
 use fallingsand_math::round_div;
 use fallingsand_net::Listener;
-use fallingsand_protocol::{ServerStats, TickProfile};
+use fallingsand_protocol::{ChatEntry, ServerStats, TickProfile};
 use fallingsand_sim::debris::DebrisWorld;
 use fallingsand_sim::{CellWorld, Simulator};
 use fallingsand_worldgen::WorldGenerator;
@@ -236,11 +236,12 @@ impl ServerState {
                     &mut s.persistence,
                 )?;
                 s.remove_disconnected_players(disconnected)?;
-                for (player, text) in commands::run_commands(&mut s.players, &mut s.clock) {
-                    s.sessions.send_to_player(
-                        player,
-                        &fallingsand_protocol::ServerMessage::System { text },
-                    );
+                let replies = command::run(&mut command::World {
+                    players: &mut s.players,
+                    clock: &mut s.clock,
+                });
+                for reply in replies {
+                    s.sessions.deliver(reply);
                 }
                 Ok::<(), persistence::StoreError>(())
             },
@@ -352,17 +353,20 @@ impl ServerState {
             "lifecycle",
             |t| &mut t.lifecycle,
             |s| {
-                lifecycle::resolve_lethal(&mut s.sim, &mut s.players, tick);
+                for name in lifecycle::resolve_lethal(&mut s.sim, &mut s.players, tick) {
+                    s.sessions
+                        .deliver(command::Reply::All(ChatEntry::announce(format!(
+                            "{name} died"
+                        ))));
+                }
                 for (player, text) in lifecycle::advance_materializations(
                     &mut s.sim,
                     &mut s.players,
                     &mut s.body_ids,
                     tick,
                 ) {
-                    s.sessions.send_to_player(
-                        player,
-                        &fallingsand_protocol::ServerMessage::System { text },
-                    );
+                    s.sessions
+                        .deliver(command::Reply::To(player, ChatEntry::error(text)));
                 }
             },
         );

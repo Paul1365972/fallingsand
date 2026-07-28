@@ -2,7 +2,7 @@ use super::{NAME_MAX_CHARS, SessionId, SessionPhase, Sessions, reject};
 use crate::persistence::{Persistence, StoreError};
 use crate::player::{Player, Players};
 use ed25519_dalek::{Signature, VerifyingKey};
-use fallingsand_protocol::{PROTOCOL_VERSION, PlayerId, PlayerUuid, ServerMessage};
+use fallingsand_protocol::{ChatEntry, PROTOCOL_VERSION, PlayerId, PlayerUuid, ServerMessage};
 
 pub(super) struct Hello {
     pub protocol_version: u16,
@@ -19,6 +19,7 @@ pub(super) struct Handshake<'a> {
     pub spawn: fallingsand_core::CellPos,
     pub tick: u64,
     pub roster_upserts: &'a mut Vec<(PlayerId, String)>,
+    pub broadcast: &'a mut Vec<ChatEntry>,
 }
 
 impl Handshake<'_> {
@@ -30,6 +31,7 @@ impl Handshake<'_> {
             spawn,
             tick,
             roster_upserts,
+            broadcast,
         } = self;
         let Hello {
             protocol_version,
@@ -110,8 +112,11 @@ impl Handshake<'_> {
             player: player_id,
             selected: player.profile.selected_slot,
         };
-        let history = ServerMessage::History {
+        let history = ServerMessage::InputHistory {
             entries: player.profile.history.clone(),
+        };
+        let table = ServerMessage::CommandTable {
+            commands: crate::command::table(),
         };
         let roster: Vec<_> = players
             .iter()
@@ -120,12 +125,16 @@ impl Handshake<'_> {
         if let Some(session) = sessions.entries.get_mut(&session_id) {
             session.send(&ack);
             session.send(&history);
+            session.send(&table);
             for (id, name) in roster {
                 session.send(&ServerMessage::RosterUpsert { player: id, name });
             }
         }
         if joined || renamed {
             roster_upserts.push((player_id, name.clone()));
+        }
+        if joined {
+            broadcast.push(ChatEntry::announce(format!("{name} joined")));
         }
         tracing::info!("{name} ({uuid}) joined as player {}", player_id.0);
         Ok(true)

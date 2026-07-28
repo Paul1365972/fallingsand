@@ -15,7 +15,7 @@ pub fn begin_revives(players: &mut Players, spawn: CellPos, tick: u64) {
     }
 }
 
-pub fn resolve_lethal(sim: &mut CellWorld, players: &mut Players, tick: u64) {
+pub fn resolve_lethal(sim: &mut CellWorld, players: &mut Players, tick: u64) -> Vec<String> {
     let dying: Vec<PlayerId> = players
         .iter()
         .filter_map(|(&id, player)| {
@@ -26,6 +26,7 @@ pub fn resolve_lethal(sim: &mut CellWorld, players: &mut Players, tick: u64) {
         })
         .collect();
 
+    let mut died = Vec::new();
     for id in dying {
         let Some(player) = players.get_mut(id) else {
             continue;
@@ -37,8 +38,10 @@ pub fn resolve_lethal(sim: &mut CellWorld, players: &mut Players, tick: u64) {
         let body_id = avatar.body_id;
         unstamp(sim, &mut avatar.stamp, body_id);
         player.die(anchor, tick);
+        died.push(player.name.clone());
         players.unregister_body(body_id);
     }
+    died
 }
 
 pub fn advance_materializations(

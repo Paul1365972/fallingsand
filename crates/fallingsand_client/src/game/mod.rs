@@ -50,7 +50,8 @@ pub struct Changes {
     pub slots: Vec<usize>,
     pub trash: bool,
     pub chat: bool,
-    pub chat_draft: bool,
+    pub draft: bool,
+    pub draft_set: bool,
     pub roster: bool,
     pub mode: bool,
     pub worlds: bool,
@@ -189,7 +190,7 @@ impl InGame {
         debug_assert!(self.active_panel.is_none());
         self.active_panel = Some(panel);
         if panel == GamePanel::Chat {
-            self.chat.begin_history();
+            self.chat.open();
         }
         if panel == GamePanel::GameMenu {
             self.net.set_embedded_paused(true);
@@ -319,6 +320,11 @@ impl ClientGame {
 
     pub fn update(&mut self, io: &mut IoFrame) {
         self.changes.clear();
+        if let Some(text) = &io.chat_text
+            && let Flow::InGame(ingame) = &mut self.flow
+        {
+            self.changes.draft = ingame.chat.composer.observe(text);
+        }
         for event in std::mem::take(&mut io.ui_events) {
             self.apply_ui_event(event, io);
         }

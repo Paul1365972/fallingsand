@@ -1,3 +1,5 @@
+use crate::chat::ChatEntry;
+use crate::command::CommandInfo;
 use fallingsand_core::{CellPos, ChunkPos, DirtyRect, ItemId, ItemStack, MaterialId};
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -283,6 +285,9 @@ pub enum ClientMessage {
     Chat {
         text: String,
     },
+    Command {
+        line: String,
+    },
     SetDebug {
         enabled: bool,
     },
@@ -308,15 +313,11 @@ pub enum ServerMessage {
     RosterRemove {
         player: PlayerId,
     },
-    Chat {
-        player: PlayerId,
-        name: String,
-        text: String,
+    Chat(ChatEntry),
+    CommandTable {
+        commands: Vec<CommandInfo>,
     },
-    System {
-        text: String,
-    },
-    History {
+    InputHistory {
         entries: Vec<String>,
     },
     TickFrame(Box<TickFrame>),

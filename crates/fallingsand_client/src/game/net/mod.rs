@@ -277,6 +277,7 @@ fn drain(
     debug_borders: bool,
 ) {
     let embedded_paused = ingame.net.is_embedded() && ingame.game_menu_open();
+    let chat_open = ingame.chat_open();
     let Some(session) = ingame.net.session.as_mut() else {
         return;
     };
@@ -343,16 +344,15 @@ fn drain(
                 ingame.players.avatars.remove(&player);
                 changes.roster = true;
             }
-            Ok(ServerMessage::Chat { name, text, .. }) => {
-                ingame.chat.push(format!("{name}: {text}"), io.now);
+            Ok(ServerMessage::Chat(entry)) => {
+                ingame.chat.log.push(entry, io.now, chat_open);
                 changes.chat = true;
             }
-            Ok(ServerMessage::System { text }) => {
-                ingame.chat.push(text, io.now);
-                changes.chat = true;
+            Ok(ServerMessage::CommandTable { commands }) => {
+                ingame.chat.composer.commands = commands;
             }
-            Ok(ServerMessage::History { entries }) => {
-                ingame.chat.history = entries;
+            Ok(ServerMessage::InputHistory { entries }) => {
+                ingame.chat.composer.set_history(entries);
             }
             Err(err) => error!("bad message: {err}"),
         }

@@ -1,23 +1,22 @@
 mod auth;
 
+use crate::command::Reply;
 use crate::persistence::{Persistence, StoreError};
 use crate::player::{Player, PlayerLife, Players};
 use crate::replication::SessionReplication;
 use fallingsand_core::HOTBAR_SLOTS;
 use fallingsand_net::{Connection, ConnectionStatus, Listener};
 use fallingsand_protocol::{
-    ClientMessage, GameMode, InputAction, InputState, MAX_INPUT_ACTIONS_PER_FRAME, PlayerId,
-    ServerMessage, decode_message, encode_message,
+    ChatEntry, ClientMessage, GameMode, InputAction, InputState, MAX_INPUT_ACTIONS_PER_FRAME,
+    PlayerId, ServerMessage, clamp_line, decode_message, encode_message, push_history,
 };
 use rustc_hash::FxHashMap;
 use std::collections::BTreeMap;
 
-const CHAT_MAX_CHARS: usize = 240;
 const CHAT_RATE_SECS: f32 = 0.25;
 const CHAT_RATE_TICKS: u64 = fallingsand_core::ticks_from_secs(CHAT_RATE_SECS);
 const INPUT_HOLD_SECS: f32 = 0.5;
 const INPUT_HOLD_TICKS: u64 = fallingsand_core::ticks_from_secs(INPUT_HOLD_SECS);
-const HISTORY_CAP: usize = 100;
 const NAME_MAX_CHARS: usize = 24;
 const HELLO_FRAME_LIMIT: usize = 512;
 const ACTIVE_FRAME_LIMIT: usize = 16 * 1024;
@@ -110,6 +109,19 @@ impl Sessions {
         }
     }
 
+    pub fn broadcast(&mut self, message: &ServerMessage) {
+        for session in self.active_iter_mut() {
+            session.send(message);
+        }
+    }
+
+    pub fn deliver(&mut self, reply: Reply) {
+        match reply {
+            Reply::To(player, entry) => self.send_to_player(player, &ServerMessage::Chat(entry)),
+            Reply::All(entry) => self.broadcast(&ServerMessage::Chat(entry)),
+        }
+    }
+
     pub fn active_iter_mut(&mut self) -> impl Iterator<Item = &mut Session> {
         let current = &self.player_to_session;
         self.entries.values_mut().filter(move |session| {
@@ -147,7 +159,8 @@ pub fn drain_network(
 
     let ids: Vec<_> = sessions.entries.keys().copied().collect();
     let mut roster_upserts = Vec::new();
-    let mut chats = Vec::new();
+    let mut broadcast: Vec<ChatEntry> = Vec::new();
+    let mut direct: Vec<(PlayerId, ChatEntry)> = Vec::new();
 
     for id in ids {
         let messages = poll_messages(sessions, id);
@@ -167,6 +180,7 @@ pub fn drain_network(
                         spawn,
                         tick,
                         roster_upserts: &mut roster_upserts,
+                        broadcast: &mut broadcast,
                     };
                     let hello = auth::Hello {
                         protocol_version,
@@ -201,34 +215,34 @@ pub fn drain_network(
                     }
                 }
                 ClientMessage::Chat { text } => {
-                    let Some(player_id) = sessions.active_player(id) else {
+                    let Some((player_id, player)) = accept(sessions, players, id) else {
                         continue;
                     };
-                    let Some(player) = players.get_mut(player_id) else {
-                        continue;
-                    };
-                    if player.control.last_chat_tick != 0
-                        && tick.saturating_sub(player.control.last_chat_tick) < CHAT_RATE_TICKS
-                    {
-                        continue;
-                    }
-                    let text: String = text.trim().chars().take(CHAT_MAX_CHARS).collect();
+                    let text = clamp_line(&text);
                     if text.is_empty() {
                         continue;
                     }
-                    player.control.last_chat_tick = tick;
-                    if player.profile.history.last() != Some(&text) {
-                        player.profile.history.push(text.clone());
-                        if player.profile.history.len() > HISTORY_CAP {
-                            let excess = player.profile.history.len() - HISTORY_CAP;
-                            player.profile.history.drain(..excess);
-                        }
+                    if throttled(&mut player.control.last_chat_tick, tick) {
+                        direct.push((player_id, ChatEntry::error("sending too fast")));
+                        continue;
                     }
-                    if text.starts_with('/') {
-                        player.control.pending_commands.push(text);
-                    } else {
-                        chats.push((player_id, player.name.clone(), text));
+                    push_history(&mut player.profile.history, &text);
+                    broadcast.push(ChatEntry::say(player_id, player.name.clone(), text));
+                }
+                ClientMessage::Command { line } => {
+                    let Some((player_id, player)) = accept(sessions, players, id) else {
+                        continue;
+                    };
+                    let line = clamp_line(&line);
+                    if line.is_empty() {
+                        continue;
                     }
+                    if throttled(&mut player.control.last_command_tick, tick) {
+                        direct.push((player_id, ChatEntry::error("sending too fast")));
+                        continue;
+                    }
+                    push_history(&mut player.profile.history, &format!("/{line}"));
+                    player.control.pending_commands.push(line);
                 }
                 ClientMessage::SetDebug { enabled } => {
                     if sessions.active_player(id).is_some()
@@ -260,7 +274,7 @@ pub fn drain_network(
         }
     }
 
-    let roster_removes = remove_closed_sessions(sessions, players);
+    let roster_removes = remove_closed_sessions(sessions, players, &mut broadcast);
 
     for session in sessions.active_iter_mut() {
         for (player, name) in &roster_upserts {
@@ -272,15 +286,31 @@ pub fn drain_network(
         for player in &roster_removes {
             session.send(&ServerMessage::RosterRemove { player: *player });
         }
-        for (player, name, text) in &chats {
-            session.send(&ServerMessage::Chat {
-                player: *player,
-                name: name.clone(),
-                text: text.clone(),
-            });
+        for entry in &broadcast {
+            session.send(&ServerMessage::Chat(entry.clone()));
         }
     }
+    for (player, entry) in direct {
+        sessions.send_to_player(player, &ServerMessage::Chat(entry));
+    }
     Ok(roster_removes)
+}
+
+fn accept<'a>(
+    sessions: &Sessions,
+    players: &'a mut Players,
+    id: SessionId,
+) -> Option<(PlayerId, &'a mut Player)> {
+    let player_id = sessions.active_player(id)?;
+    Some((player_id, players.get_mut(player_id)?))
+}
+
+fn throttled(last: &mut u64, tick: u64) -> bool {
+    if *last != 0 && tick.saturating_sub(*last) < CHAT_RATE_TICKS {
+        return true;
+    }
+    *last = tick;
+    false
 }
 
 fn poll_messages(sessions: &mut Sessions, id: SessionId) -> Vec<ClientMessage> {
@@ -340,7 +370,11 @@ fn apply_input_action(player: &mut Player, action: InputAction) {
     }
 }
 
-fn remove_closed_sessions(sessions: &mut Sessions, players: &Players) -> Vec<PlayerId> {
+fn remove_closed_sessions(
+    sessions: &mut Sessions,
+    players: &Players,
+    broadcast: &mut Vec<ChatEntry>,
+) -> Vec<PlayerId> {
     let closed: Vec<_> = sessions
         .entries
         .iter()
@@ -359,6 +393,7 @@ fn remove_closed_sessions(sessions: &mut Sessions, players: &Players) -> Vec<Pla
                 .get(player_id)
                 .map_or("<unknown>", |player| player.name.as_str());
             tracing::info!("{name} (player {}) left: {reason}", player_id.0);
+            broadcast.push(ChatEntry::announce(format!("{name} left")));
             sessions.player_to_session.remove(&player_id);
             removed.push(player_id);
         } else {

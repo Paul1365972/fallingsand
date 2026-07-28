@@ -16,7 +16,7 @@ A session is one transport connection plus handshake state and replication basel
 ## Tick order
 
 1. Drain network: authenticate or take over, adopt latest held input, neutralize stale input, complete departures
-2. Apply commands, dig/place, inventory actions; begin requested revives
+2. Dispatch queued commands through the registry, dig/place, inventory actions; begin requested revives
 3. Recompute interest tickets; integrate completed region requests; request and unload regions
 4. Step the CA in four phases
 5. Step avatars in deterministic order

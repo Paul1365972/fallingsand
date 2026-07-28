@@ -1,7 +1,11 @@
+pub mod chat;
+pub mod command;
 pub mod messages;
 pub mod stats;
 pub mod wire;
 
+pub use chat::{CHAT_MAX_CHARS, ChatEntry, ChatKind, clamp_line, push_history};
+pub use command::{CommandInfo, ParamKind, ParamSpec};
 pub use messages::{
     ChunkDebugRects, ChunkOp, ClientMessage, CursorMode, DebugBody, DebugMotion, GameMode,
     InputAction, InputFrame, InputState, InteractionState, InteractionStatus, ParticleSpawn,
@@ -11,7 +15,7 @@ pub use messages::{
 pub use stats::{ServerStats, TickProfile};
 pub use wire::{WireError, cells_from_wire, cells_to_wire, decode_message, encode_message};
 
-pub const PROTOCOL_VERSION: u16 = 61;
+pub const PROTOCOL_VERSION: u16 = 62;
 pub const MAX_INPUT_ACTIONS_PER_FRAME: usize = 64;
 
 const IDENTITY_DOMAIN: &[u8] = b"fallingsand identity v1\0";

@@ -170,7 +170,7 @@ pub(super) fn resolve(game: &mut ClientGame, io: &IoFrame) {
     }
     let fired = collect(&game.bindings, &mut game.input, &io.raw, &stack, io.now);
     for action in fired {
-        apply(game, io, action);
+        apply(game, action);
     }
     game.view_prefs.zoom_index = clamp_zoom(io.zoom_base, game.view_prefs.zoom_index);
 }
@@ -295,7 +295,7 @@ fn collect(
     fired
 }
 
-fn apply(game: &mut ClientGame, io: &IoFrame, action: Action) {
+fn apply(game: &mut ClientGame, action: Action) {
     match action {
         Action::MoveLeft
         | Action::MoveRight
@@ -340,35 +340,39 @@ fn apply(game: &mut ClientGame, io: &IoFrame, action: Action) {
         }
         Action::SubmitChat => {
             if let Flow::InGame(ingame) = &mut game.flow {
-                let text = io
-                    .chat_text
-                    .as_deref()
-                    .map(str::trim)
-                    .unwrap_or_default()
-                    .to_string();
-                if !text.is_empty()
+                if let Some(message) = ingame.chat.composer.submit()
                     && let Some(session) = ingame.net.session.as_mut()
                 {
-                    ingame.chat.record(&text);
-                    session.send(&ClientMessage::Chat { text });
+                    session.send(&message);
                 }
                 ingame.close_panel(GamePanel::Chat);
             }
         }
-        Action::HistoryPrev => {
-            if let Flow::InGame(ingame) = &mut game.flow
-                && ingame
-                    .chat
-                    .previous(io.chat_text.as_deref().unwrap_or_default())
-            {
-                game.changes.chat_draft = true;
+        Action::HistoryPrev | Action::HistoryNext | Action::CompleteCommand => {
+            let Flow::InGame(ingame) = &mut game.flow else {
+                return;
+            };
+            let composer = &mut ingame.chat.composer;
+            let written = match action {
+                Action::HistoryPrev => composer.recall_prev(),
+                Action::HistoryNext => composer.recall_next(),
+                _ => composer.complete(),
+            };
+            if written {
+                game.changes.draft = true;
+                game.changes.draft_set = true;
             }
         }
-        Action::HistoryNext => {
+        Action::ScrollChatBack | Action::ScrollChatForward => {
+            let delta = if action == Action::ScrollChatBack {
+                1
+            } else {
+                -1
+            };
             if let Flow::InGame(ingame) = &mut game.flow
-                && ingame.chat.next()
+                && ingame.chat.log.scroll_by(delta)
             {
-                game.changes.chat_draft = true;
+                game.changes.chat = true;
             }
         }
         Action::CloseGameMenu => {
@@ -399,11 +403,11 @@ fn apply(game: &mut ClientGame, io: &IoFrame, action: Action) {
                 && session.player().is_some()
             {
                 let target = match ingame.you.mode {
-                    GameMode::Creative => "s",
-                    GameMode::Survival => "c",
+                    GameMode::Creative => GameMode::Survival,
+                    GameMode::Survival => GameMode::Creative,
                 };
-                session.send(&ClientMessage::Chat {
-                    text: format!("/gm {target}"),
+                session.send(&ClientMessage::Command {
+                    line: format!("gamemode {}", target.label()),
                 });
             }
         }
