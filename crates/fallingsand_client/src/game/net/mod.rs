@@ -24,6 +24,8 @@ const STALL_SECS: f32 = 2.0;
 const RETRY_DELAY: f32 = 2.0;
 const RETRY_MAX: f32 = 10.0;
 const HANDSHAKE_TIMEOUT_SECS: f32 = 10.0;
+const SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
+const SHUTDOWN_REASON: &str = "client exit";
 
 fn retry_delay(attempt: u32) -> f32 {
     (RETRY_DELAY * 2f32.powi(attempt.min(8) as i32)).min(RETRY_MAX)
@@ -192,6 +194,14 @@ impl Net {
         }
     }
 
+    pub fn shutdown(&mut self) {
+        if let Some(session) = self.session.as_mut() {
+            session.conn.close(SHUTDOWN_REASON);
+            session.conn.wait_closed(SHUTDOWN_TIMEOUT);
+        }
+        self.session = None;
+    }
+
     pub fn is_embedded(&self) -> bool {
         #[cfg(not(target_family = "wasm"))]
         {
@@ -223,6 +233,14 @@ impl Net {
         }
         #[cfg(target_family = "wasm")]
         let _ = paused;
+    }
+}
+
+impl Drop for Net {
+    fn drop(&mut self) {
+        if let Some(session) = self.session.as_mut() {
+            session.conn.close(SHUTDOWN_REASON);
+        }
     }
 }
 

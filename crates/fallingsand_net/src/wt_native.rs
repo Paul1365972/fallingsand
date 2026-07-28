@@ -5,8 +5,6 @@ use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
-const CLOSE_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
-
 enum Outgoing {
     Frame(Vec<u8>),
     Close(String),
@@ -15,6 +13,7 @@ enum Outgoing {
 pub struct WtConnection {
     tx: UnboundedSender<Outgoing>,
     rx: Mutex<Receiver<Bytes>>,
+    writer_done: Mutex<Receiver<()>>,
     closed: Arc<Closed>,
 }
 
@@ -28,14 +27,16 @@ impl WtConnection {
         let closed = Arc::new(Closed::default());
         let (out_tx, out_rx) = unbounded_channel::<Outgoing>();
         let (in_tx, in_rx) = channel::<Bytes>();
+        let (done_tx, done_rx) = channel::<()>();
 
-        runtime.spawn(writer(session.clone(), send_stream, out_rx));
+        runtime.spawn(writer(session.clone(), send_stream, out_rx, done_tx));
         runtime.spawn(reader(recv_stream, in_tx, closed.clone()));
         runtime.spawn(watch_closed(session, closed.clone()));
 
         Self {
             tx: out_tx,
             rx: Mutex::new(in_rx),
+            writer_done: Mutex::new(done_rx),
             closed,
         }
     }
@@ -45,6 +46,7 @@ async fn writer(
     session: web_transport_quinn::Session,
     mut stream: web_transport_quinn::SendStream,
     mut messages: UnboundedReceiver<Outgoing>,
+    done: Sender<()>,
 ) {
     while let Some(outgoing) = messages.recv().await {
         match outgoing {
@@ -55,8 +57,9 @@ async fn writer(
             }
             Outgoing::Close(reason) => {
                 let _ = stream.finish();
-                tokio::time::sleep(CLOSE_GRACE).await;
                 session.close(0, reason.as_bytes());
+                session.closed().await;
+                let _ = done.send(());
                 return;
             }
         }
@@ -90,11 +93,11 @@ async fn reader(
                 }
             }
             Ok(None) => {
-                closed.mark("stream closed");
+                closed.hint("stream closed");
                 return;
             }
             Err(err) => {
-                closed.mark(&err.to_string());
+                closed.hint(&err.to_string());
                 return;
             }
         }
@@ -116,7 +119,7 @@ impl Connection for WtConnection {
             Ok(message) => Some(message),
             Err(TryRecvError::Empty) => None,
             Err(TryRecvError::Disconnected) => {
-                self.closed.mark("connection closed");
+                self.closed.hint("connection closed");
                 None
             }
         }
@@ -129,6 +132,10 @@ impl Connection for WtConnection {
     fn close(&mut self, reason: &str) {
         self.closed.mark(reason);
         let _ = self.tx.send(Outgoing::Close(reason.to_string()));
+    }
+
+    fn wait_closed(&mut self, timeout: std::time::Duration) {
+        let _ = self.writer_done.lock().unwrap().recv_timeout(timeout);
     }
 }
 

@@ -286,7 +286,6 @@ pub enum ClientMessage {
     SetDebug {
         enabled: bool,
     },
-    Goodbye,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

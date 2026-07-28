@@ -137,6 +137,12 @@ pub fn collect_ui_events(
     }
 }
 
+pub fn shutdown_net_on_exit(mut game: ResMut<Game>, mut exit: MessageReader<AppExit>) {
+    if exit.read().next().is_some() {
+        game.0.shutdown_net();
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn drive_game(
     mut game: ResMut<Game>,

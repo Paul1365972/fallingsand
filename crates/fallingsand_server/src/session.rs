@@ -237,11 +237,6 @@ pub fn drain_network(
                         session.replication.debug = enabled;
                     }
                 }
-                ClientMessage::Goodbye => {
-                    if let Some(session) = sessions.entries.get_mut(&id) {
-                        session.conn.close("client goodbye");
-                    }
-                }
             }
         }
     }
@@ -265,7 +260,7 @@ pub fn drain_network(
         }
     }
 
-    let roster_removes = remove_closed_sessions(sessions);
+    let roster_removes = remove_closed_sessions(sessions, players);
 
     for session in sessions.active_iter_mut() {
         for (player, name) in &roster_upserts {
@@ -345,22 +340,29 @@ fn apply_input_action(player: &mut Player, action: InputAction) {
     }
 }
 
-fn remove_closed_sessions(sessions: &mut Sessions) -> Vec<PlayerId> {
+fn remove_closed_sessions(sessions: &mut Sessions, players: &Players) -> Vec<PlayerId> {
     let closed: Vec<_> = sessions
         .entries
         .iter()
-        .filter_map(|(&id, session)| {
-            matches!(session.conn.status(), ConnectionStatus::Closed { .. }).then_some(id)
+        .filter_map(|(&id, session)| match session.conn.status() {
+            ConnectionStatus::Closed { reason } => Some((id, reason)),
+            ConnectionStatus::Connected => None,
         })
         .collect();
     let mut removed = Vec::new();
-    for id in closed {
+    for (id, reason) in closed {
         let player_id = sessions.entries.get(&id).and_then(Session::player);
         let current = player_id.is_some_and(|player| sessions.controls(id, player));
         if current {
             let player_id = player_id.expect("current session is active");
+            let name = players
+                .get(player_id)
+                .map_or("<unknown>", |player| player.name.as_str());
+            tracing::info!("{name} (player {}) left: {reason}", player_id.0);
             sessions.player_to_session.remove(&player_id);
             removed.push(player_id);
+        } else {
+            tracing::debug!("session {} closed: {reason}", id.0);
         }
         sessions.entries.remove(&id);
     }

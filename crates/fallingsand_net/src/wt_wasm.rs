@@ -7,8 +7,6 @@ use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::sync::{Arc, Mutex};
 use wasm_bindgen_futures::spawn_local;
 
-const CLOSE_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
-
 enum Outgoing {
     Frame(Vec<u8>),
     Close(String),
@@ -29,7 +27,7 @@ pub fn connect(url: &str, cert_hash: Option<Vec<u8>>) -> WtWasmConnection {
     let task_closed = closed.clone();
     spawn_local(async move {
         if let Err(err) = run_session(url, cert_hash, out_rx, in_tx, task_closed.clone()).await {
-            task_closed.mark(&err);
+            task_closed.hint(&err);
         }
     });
 
@@ -83,11 +81,11 @@ async fn run_session(
                     }
                 }
                 Ok(None) => {
-                    reader_closed.mark("stream closed");
+                    reader_closed.hint("stream closed");
                     return;
                 }
                 Err(err) => {
-                    reader_closed.mark(&err.to_string());
+                    reader_closed.hint(&err.to_string());
                     return;
                 }
             }
@@ -110,8 +108,8 @@ async fn run_session(
             }
             Outgoing::Close(reason) => {
                 let _ = send_stream.finish();
-                gloo_timers::future::sleep(CLOSE_GRACE).await;
                 session.close(0, &reason);
+                session.closed().await;
                 return Ok(());
             }
         }

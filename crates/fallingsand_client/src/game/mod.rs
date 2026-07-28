@@ -464,12 +464,14 @@ impl ClientGame {
         self.flow = Flow::InGame(Box::new(InGame::new(net)));
     }
 
-    pub fn leave_game(&mut self) {
-        if let Flow::InGame(ingame) = &mut self.flow
-            && let Some(session) = ingame.net.session.as_mut()
-        {
-            session.send(&fallingsand_protocol::ClientMessage::Goodbye);
+    pub fn shutdown_net(&mut self) {
+        if let Flow::InGame(ingame) = &mut self.flow {
+            ingame.net.shutdown();
         }
+    }
+
+    pub fn leave_game(&mut self) {
+        self.shutdown_net();
         self.flow = Flow::Menu;
         self.menu.rescan();
         self.changes.worlds = true;

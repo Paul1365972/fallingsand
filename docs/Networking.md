@@ -8,6 +8,7 @@ One reliable ordered stream per connection; compact binary frames, compressed ab
 - **Raw input only** — the client sends a latest-wins held snapshot plus ordered one-shot actions; edge-sensitive intent always rides the action channel. A new discrete input is a new action variant, never a new message.
 - **Identity is a keypair** — each connection signs a server challenge; durable identity derives from the public key, never client-asserted. The private key stays client-side.
 - **Version-gated** — any wire change or compiled-content change bumps the protocol version; mismatch rejects at handshake.
+- **Departure is transport closure** — never an application message. The client closes the session deliberately on quit and leave, bounded by a short deadline; a browser tab or process that vanishes is the same event with a worse reason string. The server logs and completes departure identically either way.
 
 ## Server → client
 

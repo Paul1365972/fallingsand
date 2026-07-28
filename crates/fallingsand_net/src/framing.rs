@@ -38,20 +38,41 @@ impl FrameBuffer {
     }
 }
 
+struct Reason {
+    text: String,
+    authoritative: bool,
+}
+
 #[derive(Default)]
-pub(crate) struct Closed(Mutex<Option<String>>);
+pub(crate) struct Closed(Mutex<Option<Reason>>);
 
 impl Closed {
-    pub(crate) fn mark(&self, reason: &str) {
-        let mut closed = self.0.lock().unwrap();
-        if closed.is_none() {
-            *closed = Some(reason.to_string());
+    pub(crate) fn mark(&self, text: &str) {
+        self.set(text, true);
+    }
+
+    pub(crate) fn hint(&self, text: &str) {
+        self.set(text, false);
+    }
+
+    fn set(&self, text: &str, authoritative: bool) {
+        let mut slot = self.0.lock().unwrap();
+        if slot
+            .as_ref()
+            .is_none_or(|reason| authoritative && !reason.authoritative)
+        {
+            *slot = Some(Reason {
+                text: text.to_string(),
+                authoritative,
+            });
         }
     }
 
     pub(crate) fn status(&self) -> ConnectionStatus {
-        match self.0.lock().unwrap().clone() {
-            Some(reason) => ConnectionStatus::Closed { reason },
+        match self.0.lock().unwrap().as_ref() {
+            Some(reason) => ConnectionStatus::Closed {
+                reason: reason.text.clone(),
+            },
             None => ConnectionStatus::Connected,
         }
     }

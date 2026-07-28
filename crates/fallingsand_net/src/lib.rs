@@ -45,6 +45,7 @@ pub trait Connection: Send + Sync {
     fn poll(&mut self) -> Option<bytes::Bytes>;
     fn status(&self) -> ConnectionStatus;
     fn close(&mut self, reason: &str);
+    fn wait_closed(&mut self, _timeout: std::time::Duration) {}
 }
 
 pub trait Listener: Send + Sync {

@@ -26,6 +26,10 @@ impl Plugin for ViewPlugin {
             )
             .add_systems(Update, (io::collect_ui_events, io::drive_game).chain())
             .add_systems(
+                Last,
+                io::shutdown_net_on_exit.after(bevy::window::ExitSystems),
+            )
+            .add_systems(
                 Update,
                 players::sync_nametags.after(render::GameplayRenderSet::Camera),
             )

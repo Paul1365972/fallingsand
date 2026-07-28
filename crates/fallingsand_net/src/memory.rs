@@ -1,33 +1,29 @@
+use crate::framing::Closed;
 use crate::{Connection, ConnectionStatus, Listener};
 use bytes::Bytes;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::sync::{Arc, Mutex};
 
-#[derive(Default)]
-struct Shared {
-    closed: Mutex<Option<String>>,
-}
-
 pub(crate) struct MemoryConnection {
     tx: Sender<Bytes>,
     rx: Mutex<Receiver<Bytes>>,
-    shared: Arc<Shared>,
+    closed: Arc<Closed>,
 }
 
 pub(crate) fn memory_pair() -> (MemoryConnection, MemoryConnection) {
     let (ab_tx, ab_rx) = channel();
     let (ba_tx, ba_rx) = channel();
-    let shared = Arc::new(Shared::default());
+    let closed = Arc::new(Closed::default());
     (
         MemoryConnection {
             tx: ab_tx,
             rx: Mutex::new(ba_rx),
-            shared: shared.clone(),
+            closed: closed.clone(),
         },
         MemoryConnection {
             tx: ba_tx,
             rx: Mutex::new(ab_rx),
-            shared,
+            closed,
         },
     )
 }
@@ -42,27 +38,18 @@ impl Connection for MemoryConnection {
             Ok(message) => Some(message),
             Err(TryRecvError::Empty) => None,
             Err(TryRecvError::Disconnected) => {
-                let mut closed = self.shared.closed.lock().unwrap();
-                if closed.is_none() {
-                    *closed = Some("peer dropped".into());
-                }
+                self.closed.hint("peer dropped");
                 None
             }
         }
     }
 
     fn status(&self) -> ConnectionStatus {
-        match self.shared.closed.lock().unwrap().clone() {
-            Some(reason) => ConnectionStatus::Closed { reason },
-            None => ConnectionStatus::Connected,
-        }
+        self.closed.status()
     }
 
     fn close(&mut self, reason: &str) {
-        let mut closed = self.shared.closed.lock().unwrap();
-        if closed.is_none() {
-            *closed = Some(reason.to_string());
-        }
+        self.closed.mark(reason);
     }
 }
 
