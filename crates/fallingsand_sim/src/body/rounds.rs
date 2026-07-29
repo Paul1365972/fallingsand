@@ -1,6 +1,6 @@
 use super::contact::{CellState, Contact, Peer, Resolver};
 use super::rotation::{ANGLE_STEPS, ORIENTATION_UNITS, Spin};
-use super::state::{Body, CELL, Freedoms, cell_mass, rasterize, rotated_mean};
+use super::state::{Body, CELL, Freedoms, cell_mass};
 use crate::motion::{GRAVITY_DV, MAX_SPEED_CELLS, SETTLE};
 use crate::world::CellWorld;
 use fallingsand_core::{
@@ -443,7 +443,7 @@ fn build_proposal(
         }
         Freedom::Turn => {
             new_step = (body.step as i32 + sign).rem_euclid(ANGLE_STEPS as i32) as u32;
-            rasterize(&body.slots, body.anchor, new_step, &mut candidate);
+            body.rasterize(new_step, &mut candidate);
             let mut seen = FxHashSet::default();
             for (slot, &to) in body.raster.iter().zip(&candidate) {
                 walk_line(*slot, to, |at, from| {
@@ -1196,8 +1196,8 @@ fn apply_commit(body: &mut Body, proposal: &Proposal, candidate: Vec<CellPos>) {
             body.acc_y -= i64::from(proposal.sign) * CELL;
         }
         Freedom::Turn => {
-            let before = rotated_mean(&body.slots, body.mass, body.step);
-            let after = rotated_mean(&body.slots, body.mass, proposal.new_step);
+            let before = body.rotated_mean(body.step);
+            let after = body.rotated_mean(proposal.new_step);
             body.step = proposal.new_step;
             body.acc_turn -= i64::from(proposal.sign) * ORIENTATION_UNITS;
             body.acc_x -= after.0 - before.0;

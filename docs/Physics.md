@@ -144,7 +144,7 @@ The ball is debris that never settles — that is the whole of its species, and 
   A region load is a detachment event: every exposed bonded cell reseeds discovery, so matter settled by an unload resumes as a body when its region returns.
 - **The moving-island envelope is explicit** — detachment admits at most 2,048 cells inside a 48-cell extent; a larger connected island remains terrain until damage separates an admissible part. This is a deliberate simulation budget, not a physical approximation hidden in the solver.
 - **Anchoring is adhesion** — an island holds while any member touches a foreign structural solid, or rests on powder from below; weak matter below a minimal hardness never anchors.
-- **Rotation** is quantized to 256 orientations as nearest quarter-turn refined by shears — an exact lattice bijection. A turn quantum probes every cell its slots cross, so a felled tree cannot sweep through a wall.
+- **Rotation** uses 256 orientations: an exact quarter-turn plus three bijective shears phased around the quarter-turned mass-weighted subcell centre. A turn quantum probes every crossed cell, so a felled tree cannot sweep through a wall.
 - Body translation shares the free-cell 31-cell/tick safety limit, and rotation is limited to one full turn per tick; both still traverse every quantum rather than skipping collision checks.
 - Species flesh saves as air while alive; a settled corpse is ordinary matter and persists as terrain.
 

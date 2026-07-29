@@ -320,7 +320,7 @@ impl Bodies {
             world.set(pos, next);
             slot.material = material;
         }
-        body.refresh_inertia();
+        body.rebase_reference_pose();
     }
 
     pub fn die(&mut self, id: u32) {
@@ -685,6 +685,7 @@ fn derive_part(
         acc_y: if id == source.id { source.acc_y } else { 0 },
         acc_turn: if id == source.id { source.acc_turn } else { 0 },
         mass: 0,
+        local_com: (0, 0),
         moment: 0,
         radius: 0,
         restitution: Q16::from_raw(0),
@@ -695,7 +696,7 @@ fn derive_part(
         assists: source.assists,
         parked: false,
     };
-    body.refresh_inertia();
+    body.rebase_reference_pose();
     let part_com = body.com();
     body.vx = source.vx - source.spin.speed_at(part_com.1 - com.1);
     body.vy = source.vy + source.spin.speed_at(part_com.0 - com.0);

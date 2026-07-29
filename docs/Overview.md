@@ -32,3 +32,4 @@ Each system doc states its goal, its invariants, and its vocabulary; the invaria
 - [Deploy.md](Deploy.md) — dedicated-server operations
 - [References.md](References.md) — prior art
 - [skysim.html](skysim.html) — browser sky/calendar simulator
+- [rotation.html](rotation.html) — browser lattice-rotation visualizer

@@ -82,6 +82,7 @@ pub(super) struct Body {
     pub acc_y: i64,
     pub acc_turn: i64,
     pub mass: i64,
+    pub local_com: (i64, i64),
     pub moment: i128,
     pub radius: i64,
     pub restitution: Q16,
@@ -95,6 +96,7 @@ pub(super) struct Body {
 
 pub(super) struct Inertia {
     pub mass: i64,
+    pub local_com: (i64, i64),
     pub moment: i128,
     pub radius: i64,
     pub restitution: Q16,
@@ -117,21 +119,22 @@ pub(super) fn inertia(slots: &[Slot]) -> Inertia {
         }
         friction = friction.min(content::friction(slot.material));
     }
-    let center = (
-        round_div(weighted.0 * i128::from(CELL), mass),
-        round_div(weighted.1 * i128::from(CELL), mass),
+    let local_com = (
+        round_div(weighted.0 * i128::from(CELL), mass) as i64,
+        round_div(weighted.1 * i128::from(CELL), mass) as i64,
     );
     let mut moment = 0i128;
     let mut reach = 0i128;
     for slot in slots {
-        let dx = i128::from(slot.local.0) * i128::from(CELL) - center.0;
-        let dy = i128::from(slot.local.1) * i128::from(CELL) - center.1;
+        let dx = i128::from(slot.local.0) * i128::from(CELL) - i128::from(local_com.0);
+        let dy = i128::from(slot.local.1) * i128::from(CELL) - i128::from(local_com.1);
         let arm = dx * dx + dy * dy;
         moment += i128::from(cell_mass(slot.material)) * arm.max(i128::from(CELL * CELL) / 6);
         reach = reach.max(arm);
     }
     Inertia {
         mass: mass as i64,
+        local_com,
         moment,
         radius: reach.isqrt() as i64 / CELL + 1,
         restitution,
@@ -139,32 +142,51 @@ pub(super) fn inertia(slots: &[Slot]) -> Inertia {
     }
 }
 
-pub(super) fn rotated_mean(slots: &[Slot], mass: i64, step: u32) -> (i64, i64) {
+fn reference_pose(slots: &mut [Slot], raster: &[CellPos]) -> CellPos {
+    let mut mass = 0i128;
     let mut weighted = (0i128, 0i128);
-    for slot in slots {
-        let (dx, dy) = rotate_offset(step, slot.local.0, slot.local.1);
+    for (slot, &pos) in slots.iter().zip(raster) {
         let cell = i128::from(cell_mass(slot.material));
-        weighted.0 += cell * i128::from(dx);
-        weighted.1 += cell * i128::from(dy);
+        mass += cell;
+        weighted.0 += cell * i128::from(pos.x);
+        weighted.1 += cell * i128::from(pos.y);
     }
-    let mass = i128::from(mass);
-    (
-        round_div(weighted.0 * i128::from(CELL), mass) as i64,
-        round_div(weighted.1 * i128::from(CELL), mass) as i64,
-    )
-}
-
-pub(super) fn rasterize(slots: &[Slot], anchor: CellPos, step: u32, out: &mut Vec<CellPos>) {
-    out.clear();
-    out.extend(slots.iter().map(|slot| {
-        let (dx, dy) = rotate_offset(step, slot.local.0, slot.local.1);
-        anchor.translated(dx, dy)
-    }));
+    let anchor = CellPos::new(
+        round_div(weighted.0, mass) as i32,
+        round_div(weighted.1, mass) as i32,
+    );
+    for (slot, &pos) in slots.iter_mut().zip(raster) {
+        slot.local = (pos.x - anchor.x, pos.y - anchor.y);
+    }
+    anchor
 }
 
 impl Body {
+    pub(super) fn rotated_mean(&self, step: u32) -> (i64, i64) {
+        let mut weighted = (0i128, 0i128);
+        for slot in &self.slots {
+            let (dx, dy) = rotate_offset(step, self.local_com, slot.local.0, slot.local.1);
+            let cell = i128::from(cell_mass(slot.material));
+            weighted.0 += cell * i128::from(dx);
+            weighted.1 += cell * i128::from(dy);
+        }
+        let mass = i128::from(self.mass);
+        (
+            round_div(weighted.0 * i128::from(CELL), mass) as i64,
+            round_div(weighted.1 * i128::from(CELL), mass) as i64,
+        )
+    }
+
+    pub(super) fn rasterize(&self, step: u32, out: &mut Vec<CellPos>) {
+        out.clear();
+        out.extend(self.slots.iter().map(|slot| {
+            let (dx, dy) = rotate_offset(step, self.local_com, slot.local.0, slot.local.1);
+            self.anchor.translated(dx, dy)
+        }));
+    }
+
     pub(super) fn com(&self) -> (i64, i64) {
-        let mean = rotated_mean(&self.slots, self.mass, self.step);
+        let mean = self.rotated_mean(self.step);
         (
             cell_center(self.anchor.x) + mean.0,
             cell_center(self.anchor.y) + mean.1,
@@ -204,34 +226,29 @@ impl Body {
     pub(super) fn refresh_inertia(&mut self) {
         let inertia = inertia(&self.slots);
         self.mass = inertia.mass;
+        self.local_com = inertia.local_com;
         self.moment = inertia.moment;
         self.radius = inertia.radius;
         self.restitution = inertia.restitution;
         self.friction = inertia.friction;
     }
+
+    pub(super) fn rebase_reference_pose(&mut self) {
+        self.anchor = reference_pose(&mut self.slots, &self.raster);
+        self.step = 0;
+        self.refresh_inertia();
+    }
 }
 
 pub(super) fn capture(world: &mut CellWorld, id: u32, cells: Vec<CellPos>) -> Body {
-    let mut mass = 0i128;
-    let mut weighted = (0i128, 0i128);
-    for &pos in &cells {
-        let material = world.get_cell(pos).expect("island is loaded").material;
-        let cell = i128::from(cell_mass(material));
-        mass += cell;
-        weighted.0 += cell * i128::from(pos.x);
-        weighted.1 += cell * i128::from(pos.y);
-    }
-    let anchor = CellPos::new(
-        round_div(weighted.0, mass) as i32,
-        round_div(weighted.1, mass) as i32,
-    );
-    let slots: Vec<Slot> = cells
+    let mut slots: Vec<Slot> = cells
         .iter()
         .map(|&pos| Slot {
-            local: (pos.x - anchor.x, pos.y - anchor.y),
+            local: (0, 0),
             material: world.get_cell(pos).expect("island is loaded").material,
         })
         .collect();
+    let anchor = reference_pose(&mut slots, &cells);
     for &pos in &cells {
         let mut cell = world.get_cell(pos).expect("island is loaded");
         cell.set_body(id);
@@ -250,6 +267,7 @@ pub(super) fn capture(world: &mut CellWorld, id: u32, cells: Vec<CellPos>) -> Bo
         acc_y: 0,
         acc_turn: 0,
         mass: 0,
+        local_com: (0, 0),
         moment: 0,
         radius: 0,
         restitution: Q16::from_raw(0),

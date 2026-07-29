@@ -1,6 +1,7 @@
 const SHEAR_BITS: u32 = 16;
 const SHEAR_SCALE: i64 = 1 << SHEAR_BITS;
 const SHEAR_CENTER: i32 = 32;
+const CELL: i64 = fallingsand_math::SUBCELL_UNITS_PER_CELL as i64;
 const SHEARS: [(i64, i64); 65] = [
     (-27146, -46341),
     (-26208, -45190),
@@ -143,8 +144,11 @@ fn residual_shears(residual_steps: i32) -> (i64, i64) {
     SHEARS[(residual_steps + SHEAR_CENTER) as usize]
 }
 
-fn round_shift(numer: i64) -> i64 {
-    round_div_i128(i128::from(numer), i128::from(SHEAR_SCALE)) as i64
+fn round_shear(coefficient: i64, coordinate: i64, center: i64) -> i64 {
+    round_div_i128(
+        i128::from(coefficient) * (i128::from(coordinate) * i128::from(CELL) - i128::from(center)),
+        i128::from(SHEAR_SCALE) * i128::from(CELL),
+    ) as i64
 }
 
 fn round_div_i128(numer: i128, denominator: i128) -> i128 {
@@ -156,19 +160,17 @@ fn round_div_i128(numer: i128, denominator: i128) -> i128 {
     }
 }
 
-pub(super) fn rotate_vector(step: u32, mut x: i64, mut y: i64) -> (i64, i64) {
+pub(super) fn rotate_offset(step: u32, local_com: (i64, i64), dx: i32, dy: i32) -> (i32, i32) {
     let (quarters, residual_steps) = decompose(step);
+    let (mut x, mut y) = (i64::from(dx), i64::from(dy));
+    let (mut center_x, mut center_y) = local_com;
     for _ in 0..quarters {
         (x, y) = (-y, x);
+        (center_x, center_y) = (-center_y, center_x);
     }
     let (t, s) = residual_shears(residual_steps);
-    x -= round_shift(t * y);
-    y += round_shift(s * x);
-    x -= round_shift(t * y);
-    (x, y)
-}
-
-pub(super) fn rotate_offset(step: u32, dx: i32, dy: i32) -> (i32, i32) {
-    let (x, y) = rotate_vector(step, i64::from(dx), i64::from(dy));
+    x -= round_shear(t, y, center_y);
+    y += round_shear(s, x, center_x);
+    x -= round_shear(t, y, center_y);
     (x as i32, y as i32)
 }

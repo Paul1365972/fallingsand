@@ -1,0 +1,1049 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rotation Raster Lab</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #edf4ee;
+      --muted: #91a498;
+      --line: #2c3932;
+      --panel: #151d19;
+      --panel-2: #101713;
+      --lime: #b7ee63;
+      --cyan: #6ddfd1;
+      --orange: #ffad5c;
+      --red: #ff7369;
+      --cell: 34px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      background:
+        radial-gradient(circle at 20% 0%, rgba(109, 223, 209, 0.08), transparent 34rem),
+        #0b100d;
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    button {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #1b2520;
+      color: var(--ink);
+      cursor: pointer;
+    }
+
+    button:hover {
+      border-color: #506258;
+      background: #222e28;
+    }
+
+    button:focus-visible,
+    input:focus-visible,
+    canvas:focus-visible {
+      outline: 2px solid var(--cyan);
+      outline-offset: 2px;
+    }
+
+    .app {
+      width: min(1180px, calc(100% - 28px));
+      margin: 0 auto;
+      padding: 32px 0 40px;
+    }
+
+    header {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 18px;
+    }
+
+    .eyebrow {
+      margin: 0 0 6px;
+      color: var(--lime);
+      font: 700 11px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(25px, 3vw, 39px);
+      font-weight: 720;
+      letter-spacing: -0.04em;
+    }
+
+    .intro {
+      max-width: 570px;
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .algorithm {
+      flex: 0 0 auto;
+      padding: 8px 11px;
+      border: 1px solid #31443a;
+      border-radius: 999px;
+      background: rgba(183, 238, 99, 0.06);
+      color: #cceaa8;
+      font: 600 11px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+      white-space: nowrap;
+    }
+
+    .toolbar {
+      display: grid;
+      grid-template-columns: auto minmax(220px, 1fr) auto;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 14px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(21, 29, 25, 0.92);
+      box-shadow: 0 14px 40px rgba(0, 0, 0, 0.2);
+    }
+
+    .transport,
+    .actions,
+    .mode-switch {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .transport button,
+    .actions button {
+      min-width: 36px;
+      height: 34px;
+      padding: 0 10px;
+    }
+
+    #play {
+      min-width: 68px;
+    }
+
+    .angle-control {
+      display: grid;
+      grid-template-columns: auto minmax(120px, 1fr) 88px;
+      align-items: center;
+      gap: 11px;
+    }
+
+    .angle-label {
+      min-width: 122px;
+    }
+
+    .angle-label strong {
+      display: block;
+      font: 700 13px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+
+    .angle-label span {
+      color: var(--muted);
+      font: 11px/1.3 ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--lime);
+    }
+
+    input[type="number"] {
+      width: 88px;
+      height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #0e1511;
+      color: var(--ink);
+      padding: 0 9px;
+      font: 650 13px ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+
+    .stage {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+
+    .panel {
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel);
+      box-shadow: 0 18px 50px rgba(0, 0, 0, 0.24);
+    }
+
+    .panel-head {
+      min-height: 66px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .panel-title {
+      margin: 0;
+      font-size: 13px;
+      letter-spacing: 0.01em;
+    }
+
+    .panel-note {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .mode-switch {
+      padding: 3px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #0e1511;
+    }
+
+    .mode-switch button {
+      height: 27px;
+      padding: 0 9px;
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .mode-switch button.active {
+      background: #2d3d34;
+      color: var(--ink);
+    }
+
+    .canvas-wrap {
+      position: relative;
+      aspect-ratio: 1.2;
+      min-height: 350px;
+      background: var(--panel-2);
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+    }
+
+    .canvas-help {
+      position: absolute;
+      right: 10px;
+      bottom: 9px;
+      padding: 5px 7px;
+      border: 1px solid rgba(87, 108, 96, 0.35);
+      border-radius: 6px;
+      background: rgba(11, 16, 13, 0.84);
+      color: #819388;
+      font: 10px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
+      pointer-events: none;
+    }
+
+    .readout {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      border-top: 1px solid var(--line);
+    }
+
+    .metric {
+      min-width: 0;
+      padding: 11px 12px;
+      border-right: 1px solid var(--line);
+    }
+
+    .metric:last-child {
+      border-right: 0;
+    }
+
+    .metric dt {
+      margin: 0 0 4px;
+      color: var(--muted);
+      font: 10px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .metric dd {
+      overflow: hidden;
+      margin: 0;
+      font: 700 12px/1.3 ui-monospace, SFMono-Regular, Consolas, monospace;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .legend {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+      color: var(--muted);
+      font-size: 10px;
+      white-space: nowrap;
+    }
+
+    .legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .swatch {
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+    }
+
+    .swatch.ideal {
+      border: 1px dashed var(--cyan);
+      background: rgba(109, 223, 209, 0.1);
+    }
+
+    .swatch.final {
+      border: 1px solid var(--lime);
+      background: rgba(183, 238, 99, 0.35);
+    }
+
+    .footer-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 12px;
+      color: var(--muted);
+      font: 11px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+
+    .footer-bar kbd {
+      padding: 2px 5px;
+      border: 1px solid var(--line);
+      border-bottom-color: #4d5e54;
+      border-radius: 4px;
+      background: var(--panel);
+      color: #bccbc2;
+      font: inherit;
+    }
+
+    #status {
+      color: #b9cabf;
+      text-align: right;
+    }
+
+    @media (max-width: 840px) {
+      header {
+        align-items: start;
+        flex-direction: column;
+      }
+
+      .toolbar {
+        grid-template-columns: 1fr;
+      }
+
+      .actions {
+        justify-content: space-between;
+      }
+
+      .stage {
+        grid-template-columns: 1fr;
+      }
+
+      .canvas-wrap {
+        min-height: 330px;
+      }
+    }
+
+    @media (max-width: 520px) {
+      .app {
+        width: min(100% - 16px, 1180px);
+        padding-top: 18px;
+      }
+
+      .angle-control {
+        grid-template-columns: 1fr 76px;
+      }
+
+      .angle-label {
+        grid-column: 1 / -1;
+      }
+
+      .actions {
+        flex-wrap: wrap;
+      }
+
+      .panel-head {
+        align-items: start;
+        flex-direction: column;
+      }
+
+      .readout {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .metric:nth-child(2) {
+        border-right: 0;
+      }
+
+      .metric:nth-child(-n + 2) {
+        border-bottom: 1px solid var(--line);
+      }
+
+      .footer-bar {
+        align-items: start;
+        flex-direction: column;
+      }
+
+      #status {
+        text-align: left;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header>
+      <div>
+        <p class="eyebrow">fallingsand / physics debug</p>
+        <h1>Rotation Raster Lab</h1>
+        <p class="intro">Paint a body, place its center of mass, then inspect the ideal turn against the exact lattice cells committed by the simulation.</p>
+      </div>
+      <div class="algorithm">256 steps · COM-phased 3 shears</div>
+    </header>
+
+    <section class="toolbar" aria-label="Rotation controls">
+      <div class="transport">
+        <button id="previous" type="button" aria-label="Previous orientation">−1</button>
+        <button id="play" type="button">Play</button>
+        <button id="next" type="button" aria-label="Next orientation">+1</button>
+      </div>
+
+      <label class="angle-control">
+        <span class="angle-label">
+          <strong id="stepLabel">step 0 / 255</strong>
+          <span id="degreeLabel">0.000°</span>
+        </span>
+        <input id="stepRange" type="range" min="0" max="255" step="1" value="0">
+        <input id="stepNumber" type="number" min="0" max="255" step="1" value="0" aria-label="Orientation step">
+      </label>
+
+      <div class="actions">
+        <button id="quarter" type="button">+90°</button>
+        <button id="autoCom" type="button">Auto COM</button>
+        <button id="example" type="button">Example</button>
+        <button id="clear" type="button">Clear</button>
+      </div>
+    </section>
+
+    <section class="stage">
+      <article class="panel">
+        <div class="panel-head">
+          <div>
+            <h2 class="panel-title">Source cells</h2>
+            <p class="panel-note">Cell coordinates are relative to the green origin.</p>
+          </div>
+          <div class="mode-switch" role="group" aria-label="Source interaction mode">
+            <button id="cellsMode" class="active" type="button">Mark cells</button>
+            <button id="comMode" type="button">Move COM</button>
+          </div>
+        </div>
+        <div class="canvas-wrap">
+          <canvas id="sourceCanvas" tabindex="0" aria-label="Editable source cell grid"></canvas>
+          <div class="canvas-help" id="sourceHelp">click or drag to mark</div>
+        </div>
+        <dl class="readout">
+          <div class="metric">
+            <dt>Cells</dt>
+            <dd id="cellCount">0</dd>
+          </div>
+          <div class="metric">
+            <dt>COM anchor</dt>
+            <dd id="comValue">0, 0</dd>
+          </div>
+          <div class="metric">
+            <dt>Bounds</dt>
+            <dd id="boundsValue">—</dd>
+          </div>
+          <div class="metric">
+            <dt>Mode</dt>
+            <dd id="modeValue">mark</dd>
+          </div>
+        </dl>
+      </article>
+
+      <article class="panel">
+        <div class="panel-head">
+          <div>
+            <h2 class="panel-title">Rotated result</h2>
+            <p class="panel-note">Lines connect the ideal centers to their lattice destinations.</p>
+          </div>
+          <div class="legend" aria-label="Result legend">
+            <span><i class="swatch ideal"></i> ideal</span>
+            <span><i class="swatch final"></i> lattice</span>
+          </div>
+        </div>
+        <div class="canvas-wrap">
+          <canvas id="resultCanvas" tabindex="0" aria-label="Rotated result grid"></canvas>
+          <div class="canvas-help">exact rotate_offset output</div>
+        </div>
+        <dl class="readout">
+          <div class="metric">
+            <dt>Quarter turns</dt>
+            <dd id="quartersValue">0</dd>
+          </div>
+          <div class="metric">
+            <dt>Residual</dt>
+            <dd id="residualValue">0 steps</dd>
+          </div>
+          <div class="metric">
+            <dt>Max snap</dt>
+            <dd id="errorValue">0.000 cell</dd>
+          </div>
+          <div class="metric">
+            <dt>Bijection</dt>
+            <dd id="bijectionValue">yes</dd>
+          </div>
+        </dl>
+      </article>
+    </section>
+
+    <div class="footer-bar">
+      <div><kbd>←</kbd> <kbd>→</kbd> step · <kbd>space</kbd> play · COM snaps to quarter cells</div>
+      <div id="status" role="status">Ready</div>
+    </div>
+  </main>
+
+  <script>
+    const SHEARS = [
+      [-27146, -46341], [-26208, -45190], [-25280, -44011], [-24360, -42806],
+      [-23449, -41576], [-22546, -40320], [-21650, -39040], [-20762, -37736],
+      [-19880, -36410], [-19005, -35062], [-18136, -33692], [-17273, -32303],
+      [-16416, -30893], [-15564, -29466], [-14717, -28020], [-13874, -26558],
+      [-13036, -25080], [-12202, -23586], [-11372, -22078], [-10545, -20557],
+      [-9721, -19024], [-8901, -17479], [-8083, -15924], [-7268, -14359],
+      [-6455, -12785], [-5644, -11204], [-4834, -9616], [-4026, -8022],
+      [-3220, -6424], [-2414, -4821], [-1609, -3216], [-804, -1608],
+      [0, 0],
+      [804, 1608], [1609, 3216], [2414, 4821], [3220, 6424],
+      [4026, 8022], [4834, 9616], [5644, 11204], [6455, 12785],
+      [7268, 14359], [8083, 15924], [8901, 17479], [9721, 19024],
+      [10545, 20557], [11372, 22078], [12202, 23586], [13036, 25080],
+      [13874, 26558], [14717, 28020], [15564, 29466], [16416, 30893],
+      [17273, 32303], [18136, 33692], [19005, 35062], [19880, 36410],
+      [20762, 37736], [21650, 39040], [22546, 40320], [23449, 41576],
+      [24360, 42806], [25280, 44011], [26208, 45190], [27146, 46341]
+    ];
+
+    const ANGLE_STEPS = 256;
+    const SHEAR_SCALE = 65536;
+    const CELL_UNITS = 1024;
+    const GRID_RADIUS = 8;
+    const PALETTE = [
+      "#b7ee63", "#6ddfd1", "#ffad5c", "#db8df2", "#73a9ff", "#ff7f88",
+      "#f3d768", "#88e69b", "#c5a2ff", "#72d0ff", "#ff9e76", "#c6d48c"
+    ];
+
+    const sourceCanvas = document.getElementById("sourceCanvas");
+    const resultCanvas = document.getElementById("resultCanvas");
+    const stepRange = document.getElementById("stepRange");
+    const stepNumber = document.getElementById("stepNumber");
+    const cells = new Map();
+    let nextId = 1;
+    let step = 0;
+    let center = { x: 0, y: 0 };
+    let mode = "cells";
+    let pointerAction = null;
+    let pointerId = null;
+    let playing = false;
+    let lastAdvance = 0;
+
+    const mod = (value, divisor) => ((value % divisor) + divisor) % divisor;
+
+    function rustRoundDiv(numerator, denominator) {
+      const half = Math.trunc(denominator / 2);
+      return Math.trunc((numerator + (numerator >= 0 ? half : -half)) / denominator);
+    }
+
+    function decompose(orientation) {
+      const quarters = Math.floor((orientation * 4 + ANGLE_STEPS / 2) / ANGLE_STEPS);
+      return {
+        quarters: mod(quarters, 4),
+        residual: orientation - quarters * (ANGLE_STEPS / 4)
+      };
+    }
+
+    function rotateOffset(orientation, localCom, dx, dy) {
+      const decomposition = decompose(orientation);
+      let x = dx;
+      let y = dy;
+      let centerX = localCom.x;
+      let centerY = localCom.y;
+      for (let index = 0; index < decomposition.quarters; index += 1) {
+        [x, y] = [-y, x];
+        [centerX, centerY] = [-centerY, centerX];
+      }
+      const [t, s] = SHEARS[decomposition.residual + 32];
+      x -= rustRoundDiv(t * (y * CELL_UNITS - centerY), SHEAR_SCALE * CELL_UNITS);
+      y += rustRoundDiv(s * (x * CELL_UNITS - centerX), SHEAR_SCALE * CELL_UNITS);
+      x -= rustRoundDiv(t * (y * CELL_UNITS - centerY), SHEAR_SCALE * CELL_UNITS);
+      return { x, y };
+    }
+
+    function quarteredCenter(orientation, localCom) {
+      const decomposition = decompose(orientation);
+      let x = localCom.x;
+      let y = localCom.y;
+      for (let index = 0; index < decomposition.quarters; index += 1) {
+        [x, y] = [-y, x];
+      }
+      return { x: x / CELL_UNITS, y: y / CELL_UNITS };
+    }
+
+    function idealOffset(orientation, localCom, dx, dy) {
+      const decomposition = decompose(orientation);
+      let x = dx;
+      let y = dy;
+      let centerX = localCom.x / CELL_UNITS;
+      let centerY = localCom.y / CELL_UNITS;
+      for (let index = 0; index < decomposition.quarters; index += 1) {
+        [x, y] = [-y, x];
+        [centerX, centerY] = [-centerY, centerX];
+      }
+      const angle = decomposition.residual * Math.PI * 2 / ANGLE_STEPS;
+      const relativeX = x - centerX;
+      const relativeY = y - centerY;
+      return {
+        x: centerX + Math.cos(angle) * relativeX - Math.sin(angle) * relativeY,
+        y: centerY + Math.sin(angle) * relativeX + Math.cos(angle) * relativeY
+      };
+    }
+
+    function key(x, y) {
+      return `${x},${y}`;
+    }
+
+    function loadExample() {
+      cells.clear();
+      nextId = 1;
+      [
+        [-3, -1], [-2, -1], [-1, -1], [0, -1], [1, -1], [2, -1],
+        [-3, 0], [0, 0], [2, 0],
+        [-3, 1], [-2, 1], [0, 1],
+        [-3, 2], [0, 2]
+      ].forEach(([x, y]) => {
+        cells.set(key(x, y), { x, y, id: nextId });
+        nextId += 1;
+      });
+      setAutomaticCenter();
+      setStep(0);
+      setStatus("Example restored");
+    }
+
+    function setAutomaticCenter() {
+      if (!cells.size) {
+        center = { x: 0, y: 0 };
+      } else {
+        const total = [...cells.values()].reduce(
+          (sum, cell) => ({ x: sum.x + cell.x, y: sum.y + cell.y }),
+          { x: 0, y: 0 }
+        );
+        center = {
+          x: rustRoundDiv(total.x * CELL_UNITS, cells.size),
+          y: rustRoundDiv(total.y * CELL_UNITS, cells.size)
+        };
+      }
+      render();
+    }
+
+    function setMode(nextMode) {
+      mode = nextMode;
+      document.getElementById("cellsMode").classList.toggle("active", mode === "cells");
+      document.getElementById("comMode").classList.toggle("active", mode === "com");
+      document.getElementById("sourceHelp").textContent =
+        mode === "cells" ? "click or drag to mark" : "click or drag the COM";
+      sourceCanvas.style.cursor = mode === "cells" ? "crosshair" : "move";
+      render();
+    }
+
+    function setStep(value) {
+      step = mod(Math.round(Number(value) || 0), ANGLE_STEPS);
+      stepRange.value = String(step);
+      stepNumber.value = String(step);
+      render();
+    }
+
+    function setStatus(message) {
+      document.getElementById("status").textContent = message;
+    }
+
+    function fitCanvas(canvas) {
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const width = Math.max(1, Math.round(rect.width * dpr));
+      const height = Math.max(1, Math.round(rect.height * dpr));
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+      }
+      const context = canvas.getContext("2d");
+      context.setTransform(dpr, 0, 0, dpr, 0, 0);
+      return { context, width: rect.width, height: rect.height };
+    }
+
+    function gridLayout(width, height) {
+      const cellSize = Math.min(width, height) / (GRID_RADIUS * 2 + 1.8);
+      return {
+        cellSize,
+        originX: width / 2,
+        originY: height / 2
+      };
+    }
+
+    function worldToScreen(layout, x, y) {
+      return {
+        x: layout.originX + x * layout.cellSize,
+        y: layout.originY - y * layout.cellSize
+      };
+    }
+
+    function eventCell(canvas, event) {
+      const rect = canvas.getBoundingClientRect();
+      const layout = gridLayout(rect.width, rect.height);
+      return {
+        x: Math.round((event.clientX - rect.left - layout.originX) / layout.cellSize),
+        y: Math.round((layout.originY - (event.clientY - rect.top)) / layout.cellSize)
+      };
+    }
+
+    function eventCenter(canvas, event) {
+      const rect = canvas.getBoundingClientRect();
+      const layout = gridLayout(rect.width, rect.height);
+      const x = (event.clientX - rect.left - layout.originX) / layout.cellSize;
+      const y = (layout.originY - (event.clientY - rect.top)) / layout.cellSize;
+      return {
+        x: Math.round(x * 4) * CELL_UNITS / 4,
+        y: Math.round(y * 4) * CELL_UNITS / 4
+      };
+    }
+
+    function drawGrid(context, width, height, layout) {
+      context.clearRect(0, 0, width, height);
+      context.fillStyle = "#101713";
+      context.fillRect(0, 0, width, height);
+      context.lineWidth = 1;
+      for (let coordinate = -GRID_RADIUS; coordinate <= GRID_RADIUS; coordinate += 1) {
+        const vertical = worldToScreen(layout, coordinate - 0.5, 0).x;
+        const horizontal = worldToScreen(layout, 0, coordinate - 0.5).y;
+        context.strokeStyle = coordinate === 0 || coordinate === 1 ? "#31443a" : "#202b25";
+        context.beginPath();
+        context.moveTo(vertical, 0);
+        context.lineTo(vertical, height);
+        context.stroke();
+        context.beginPath();
+        context.moveTo(0, horizontal);
+        context.lineTo(width, horizontal);
+        context.stroke();
+      }
+      const origin = worldToScreen(layout, 0, 0);
+      context.fillStyle = "#87ad76";
+      context.fillRect(origin.x - 2, origin.y - 2, 4, 4);
+      context.font = "10px ui-monospace, SFMono-Regular, Consolas, monospace";
+      context.fillText("0,0", origin.x + 6, origin.y + 13);
+    }
+
+    function cellColor(id) {
+      return PALETTE[(id - 1) % PALETTE.length];
+    }
+
+    function drawCell(context, layout, x, y, id, options = {}) {
+      const position = worldToScreen(layout, x, y);
+      const size = layout.cellSize - 3;
+      const left = position.x - size / 2;
+      const top = position.y - size / 2;
+      const color = cellColor(id);
+      context.globalAlpha = options.alpha ?? 1;
+      context.fillStyle = color;
+      context.fillRect(left, top, size, size);
+      context.strokeStyle = options.stroke ?? "rgba(255,255,255,0.45)";
+      context.lineWidth = options.lineWidth ?? 1;
+      context.strokeRect(left + 0.5, top + 0.5, size - 1, size - 1);
+      context.fillStyle = "#0b100d";
+      context.font = `700 ${Math.max(9, layout.cellSize * 0.28)}px ui-monospace, SFMono-Regular, Consolas, monospace`;
+      context.textAlign = "center";
+      context.textBaseline = "middle";
+      context.fillText(String(id), position.x, position.y + 0.5);
+      context.globalAlpha = 1;
+      context.textAlign = "start";
+      context.textBaseline = "alphabetic";
+    }
+
+    function drawIdealCell(context, layout, x, y, id) {
+      const position = worldToScreen(layout, x, y);
+      const size = layout.cellSize - 6;
+      context.save();
+      context.translate(position.x, position.y);
+      context.rotate(-step * Math.PI * 2 / ANGLE_STEPS);
+      context.setLineDash([4, 3]);
+      context.strokeStyle = cellColor(id);
+      context.globalAlpha = 0.8;
+      context.lineWidth = 1.5;
+      context.strokeRect(-size / 2, -size / 2, size, size);
+      context.restore();
+    }
+
+    function drawCenter(context, layout, point, label) {
+      const position = worldToScreen(layout, point.x, point.y);
+      context.strokeStyle = "#ffad5c";
+      context.fillStyle = "#ffad5c";
+      context.lineWidth = 1.5;
+      context.beginPath();
+      context.arc(position.x, position.y, 8, 0, Math.PI * 2);
+      context.stroke();
+      context.beginPath();
+      context.moveTo(position.x - 13, position.y);
+      context.lineTo(position.x + 13, position.y);
+      context.moveTo(position.x, position.y - 13);
+      context.lineTo(position.x, position.y + 13);
+      context.stroke();
+      context.font = "700 9px ui-monospace, SFMono-Regular, Consolas, monospace";
+      context.fillText(label, position.x + 10, position.y - 9);
+    }
+
+    function sourceCells() {
+      return [...cells.values()].sort((left, right) => left.id - right.id);
+    }
+
+    function resultCells() {
+      return sourceCells().map(cell => {
+        const offset = rotateOffset(step, center, cell.x, cell.y);
+        const ideal = idealOffset(step, center, cell.x, cell.y);
+        return {
+          ...cell,
+          finalX: offset.x,
+          finalY: offset.y,
+          idealX: ideal.x,
+          idealY: ideal.y,
+          error: Math.hypot(offset.x - ideal.x, offset.y - ideal.y)
+        };
+      });
+    }
+
+    function renderSource() {
+      const { context, width, height } = fitCanvas(sourceCanvas);
+      const layout = gridLayout(width, height);
+      drawGrid(context, width, height, layout);
+      for (const cell of sourceCells()) {
+        drawCell(context, layout, cell.x, cell.y, cell.id);
+      }
+      drawCenter(
+        context,
+        layout,
+        { x: center.x / CELL_UNITS, y: center.y / CELL_UNITS },
+        "COM"
+      );
+    }
+
+    function renderResult(results) {
+      const { context, width, height } = fitCanvas(resultCanvas);
+      const layout = gridLayout(width, height);
+      drawGrid(context, width, height, layout);
+      for (const cell of results) {
+        const ideal = worldToScreen(layout, cell.idealX, cell.idealY);
+        const final = worldToScreen(layout, cell.finalX, cell.finalY);
+        context.strokeStyle = "rgba(109, 223, 209, 0.42)";
+        context.lineWidth = 1;
+        context.beginPath();
+        context.moveTo(ideal.x, ideal.y);
+        context.lineTo(final.x, final.y);
+        context.stroke();
+      }
+      for (const cell of results) {
+        drawIdealCell(context, layout, cell.idealX, cell.idealY, cell.id);
+      }
+      for (const cell of results) {
+        drawCell(context, layout, cell.finalX, cell.finalY, cell.id, {
+          alpha: 0.82,
+          stroke: "#d9f6a5",
+          lineWidth: 1.5
+        });
+      }
+      drawCenter(context, layout, quarteredCenter(step, center), "COM");
+    }
+
+    function renderReadout(results) {
+      const decomposition = decompose(step);
+      const unique = new Set(results.map(cell => key(cell.finalX, cell.finalY)));
+      const maxError = results.reduce((maximum, cell) => Math.max(maximum, cell.error), 0);
+      const values = sourceCells();
+      let bounds = "—";
+      if (values.length) {
+        const xs = values.map(cell => cell.x);
+        const ys = values.map(cell => cell.y);
+        bounds = `${Math.max(...xs) - Math.min(...xs) + 1} × ${Math.max(...ys) - Math.min(...ys) + 1}`;
+      }
+      document.getElementById("stepLabel").textContent = `step ${step} / 255`;
+      document.getElementById("degreeLabel").textContent = `${(step * 360 / ANGLE_STEPS).toFixed(3)}°`;
+      document.getElementById("cellCount").textContent = String(cells.size);
+      document.getElementById("comValue").textContent =
+        `${(center.x / CELL_UNITS).toFixed(2)}, ${(center.y / CELL_UNITS).toFixed(2)}`;
+      document.getElementById("boundsValue").textContent = bounds;
+      document.getElementById("modeValue").textContent = mode === "cells" ? "mark" : "move COM";
+      document.getElementById("quartersValue").textContent = String(decomposition.quarters);
+      document.getElementById("residualValue").textContent =
+        `${decomposition.residual >= 0 ? "+" : ""}${decomposition.residual} steps`;
+      document.getElementById("errorValue").textContent = `${maxError.toFixed(3)} cell`;
+      const bijective = unique.size === results.length;
+      const bijection = document.getElementById("bijectionValue");
+      bijection.textContent = bijective ? "yes" : "collision";
+      bijection.style.color = bijective ? "var(--lime)" : "var(--red)";
+    }
+
+    function render() {
+      const results = resultCells();
+      renderSource();
+      renderResult(results);
+      renderReadout(results);
+    }
+
+    function applyPointer(event) {
+      if (mode === "com") {
+        const point = eventCenter(sourceCanvas, event);
+        if (
+          Math.abs(point.x / CELL_UNITS) > GRID_RADIUS ||
+          Math.abs(point.y / CELL_UNITS) > GRID_RADIUS
+        ) {
+          return;
+        }
+        center = point;
+        setStatus(
+          `COM moved to ${(center.x / CELL_UNITS).toFixed(2)}, ` +
+          `${(center.y / CELL_UNITS).toFixed(2)}`
+        );
+        render();
+        return;
+      }
+      const cell = eventCell(sourceCanvas, event);
+      if (Math.abs(cell.x) > GRID_RADIUS || Math.abs(cell.y) > GRID_RADIUS) {
+        return;
+      }
+      const cellKey = key(cell.x, cell.y);
+      if (pointerAction === "add" && !cells.has(cellKey)) {
+        cells.set(cellKey, { ...cell, id: nextId });
+        nextId += 1;
+        render();
+      } else if (pointerAction === "remove" && cells.has(cellKey)) {
+        cells.delete(cellKey);
+        render();
+      }
+    }
+
+    sourceCanvas.addEventListener("pointerdown", event => {
+      sourceCanvas.setPointerCapture(event.pointerId);
+      pointerId = event.pointerId;
+      if (mode === "cells") {
+        const cell = eventCell(sourceCanvas, event);
+        pointerAction = cells.has(key(cell.x, cell.y)) ? "remove" : "add";
+      } else {
+        pointerAction = "move";
+      }
+      applyPointer(event);
+    });
+
+    sourceCanvas.addEventListener("pointermove", event => {
+      if (event.pointerId === pointerId && pointerAction) {
+        applyPointer(event);
+      }
+    });
+
+    sourceCanvas.addEventListener("pointerup", event => {
+      if (event.pointerId === pointerId) {
+        pointerId = null;
+        pointerAction = null;
+      }
+    });
+
+    sourceCanvas.addEventListener("pointercancel", () => {
+      pointerId = null;
+      pointerAction = null;
+    });
+
+    stepRange.addEventListener("input", event => {
+      setStep(event.target.value);
+      setStatus(`Orientation step ${step}`);
+    });
+
+    stepNumber.addEventListener("change", event => {
+      setStep(event.target.value);
+      setStatus(`Orientation step ${step}`);
+    });
+
+    document.getElementById("previous").addEventListener("click", () => setStep(step - 1));
+    document.getElementById("next").addEventListener("click", () => setStep(step + 1));
+    document.getElementById("quarter").addEventListener("click", () => setStep(step + 64));
+    document.getElementById("autoCom").addEventListener("click", () => {
+      setAutomaticCenter();
+      setStatus("COM derived from equal cell masses");
+    });
+    document.getElementById("example").addEventListener("click", loadExample);
+    document.getElementById("clear").addEventListener("click", () => {
+      cells.clear();
+      nextId = 1;
+      center = { x: 0, y: 0 };
+      render();
+      setStatus("Grid cleared");
+    });
+    document.getElementById("cellsMode").addEventListener("click", () => setMode("cells"));
+    document.getElementById("comMode").addEventListener("click", () => setMode("com"));
+    document.getElementById("play").addEventListener("click", () => {
+      playing = !playing;
+      document.getElementById("play").textContent = playing ? "Pause" : "Play";
+      setStatus(playing ? "Stepping through orientations" : `Paused at step ${step}`);
+    });
+
+    window.addEventListener("keydown", event => {
+      if (event.target.matches("input")) {
+        return;
+      }
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        setStep(step - 1);
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        setStep(step + 1);
+      } else if (event.key === " ") {
+        event.preventDefault();
+        document.getElementById("play").click();
+      }
+    });
+
+    function animate(timestamp) {
+      if (playing && timestamp - lastAdvance >= 75) {
+        setStep(step + 1);
+        lastAdvance = timestamp;
+      }
+      requestAnimationFrame(animate);
+    }
+
+    new ResizeObserver(render).observe(document.querySelector(".stage"));
+    loadExample();
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>
