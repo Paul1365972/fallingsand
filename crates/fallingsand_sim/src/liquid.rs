@@ -1,17 +1,16 @@
 use crate::{
     motion::{
-        Entry, GRAVITY_DV, SETTLE, TraverseControl, prefer_side, strike_body, swap_through_liquid,
+        Entry, GRAVITY_DV, TraverseControl, prefer_side, strike_body, swap_through_liquid,
         traverse, vector_length, write_velocity,
     },
     window::SimWindow,
 };
 use fallingsand_core::{Cell, CellPos, LiquidDynamics, Phase, Q16, content};
-use fallingsand_math::{Hash, Rng};
+use fallingsand_math::{Hash, Rng, SUBCELL_UNITS_PER_CELL};
 
 const MOVEMENT_SALT: Hash = Hash::label("simulation.movement");
-const SURFACE_DIRECTION_SALT: Hash = Hash::label("simulation.liquid_surface_direction");
 const QUADRATIC_DRAG_Q16: i64 = 918;
-const WAVE_LAUNCH: i32 = 6 * SETTLE;
+const DOWNHILL_LAUNCH: i32 = (2 * GRAVITY_DV * SUBCELL_UNITS_PER_CELL).isqrt();
 
 pub(crate) fn apply_effects(
     window: &mut SimWindow,
@@ -32,7 +31,7 @@ pub(crate) fn apply_effects(
             .is_some_and(|support| content::phase(support.material) == Phase::Liquid);
     if gliding {
         let ahead = pos.translated(vx.signum(), 0);
-        if vx != 0 && !window.get(ahead).is_some_and(|blocker| blocker.is_air()) {
+        if vx != 0 && !window.get(ahead).is_some_and(dynamic) {
             vx = 0;
         } else {
             vx = dynamics.glide_keep.apply(vx);
@@ -114,14 +113,7 @@ fn relax(window: &mut SimWindow, pos: CellPos, cell: Cell, tick: u64, rng: &mut 
             can_exchange_downhill_into(window, cell, target).then_some(target)
         });
     let Some(target) = target else {
-        if exposed(window, pos, cell) {
-            let side = row_direction(cell, pos);
-            if supported_interface(window, cell, pos.translated(side, 0)) {
-                let mut written = cell;
-                written.set_vel(side * WAVE_LAUNCH, 0);
-                window.set(pos, written);
-            }
-        }
+        relax_interface(window, pos, cell, rng);
         return;
     };
     match entry(window, target) {
@@ -133,6 +125,11 @@ fn relax(window: &mut SimWindow, pos: CellPos, cell: Cell, tick: u64, rng: &mut 
                 swap_through_liquid(window, pos, target, tick);
             } else {
                 window.swap(pos, target);
+                if target.x != pos.x {
+                    let mut moved = cell;
+                    moved.set_vel((target.x - pos.x) * DOWNHILL_LAUNCH, 0);
+                    window.set(target, moved);
+                }
             }
         }
         Entry::Open | Entry::Busy => window.mark(pos),
@@ -140,15 +137,29 @@ fn relax(window: &mut SimWindow, pos: CellPos, cell: Cell, tick: u64, rng: &mut 
     }
 }
 
-fn row_direction(cell: Cell, pos: CellPos) -> i32 {
-    if Hash::seed(u64::from(cell.material.0))
-        .salt(SURFACE_DIRECTION_SALT)
-        .pos(0, pos.y)
-        .bit()
-    {
-        -1
-    } else {
+fn relax_interface(window: &mut SimWindow, pos: CellPos, cell: Cell, rng: &mut Rng) {
+    if !exposed(window, pos, cell) {
+        return;
+    }
+    let side = interface_direction(cell, pos);
+    let target = pos.translated(side, 0);
+    if !supported_interface(window, cell, target) {
+        return;
+    }
+    match entry(window, target) {
+        Entry::Open if rng.draw().below(passive_threshold(window, cell, target)) => {
+            window.swap(pos, target);
+        }
+        Entry::Open | Entry::Busy => window.mark(pos),
+        Entry::Blocked => {}
+    }
+}
+
+fn interface_direction(cell: Cell, pos: CellPos) -> i32 {
+    if (pos.y ^ i32::from(cell.material.0)) & 1 == 0 {
         1
+    } else {
+        -1
     }
 }
 

@@ -4,7 +4,7 @@ use crate::species::{DriveCtx, Mind, Species};
 use fallingsand_core::{CellPos, RegionPos};
 use fallingsand_math::Hash;
 use fallingsand_sim::CellWorld;
-use fallingsand_sim::body::Bodies;
+use fallingsand_sim::body::{Bodies, Fracture};
 use std::collections::BTreeMap;
 
 pub const MAX_MOBS: usize = 64;
@@ -65,6 +65,23 @@ impl Mobs {
         bodies.die(body_id);
         if let Some(life) = &mob.species.life {
             bodies.recast(sim, body_id, life.corpse);
+        }
+    }
+
+    pub fn resolve_fracture(
+        &mut self,
+        sim: &mut CellWorld,
+        bodies: &mut Bodies,
+        fracture: &Fracture,
+    ) {
+        let Some(mob) = self.by_body.remove(&fracture.source) else {
+            return;
+        };
+        if let Some(life) = &mob.species.life {
+            for &part in &fracture.parts {
+                bodies.die(part);
+                bodies.recast(sim, part, life.corpse);
+            }
         }
     }
 

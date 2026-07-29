@@ -10,11 +10,10 @@ use fallingsand_math::round_div;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 const GRAVITY: i64 = GRAVITY_DV as i64;
-const MAX_BODY_SPEED_CELLS: i64 = 6;
+const MAX_BODY_SPEED_CELLS: i64 = MAX_SPEED_CELLS as i64;
 const MAX_SPEED: i64 = MAX_BODY_SPEED_CELLS * CELL;
-const _: () = assert!(MAX_BODY_SPEED_CELLS <= MAX_SPEED_CELLS as i64);
-const MAX_TURN_QUANTA: i64 = 32;
-const DRAG_DIVISOR: i64 = 4;
+const MAX_TURN_QUANTA: i64 = ANGLE_STEPS as i64;
+const FLUID_DRAG_DIVISOR: i64 = 4;
 const SNAP: i64 = 16;
 const SETTLE_EPSILON: i64 = 4;
 
@@ -91,6 +90,7 @@ struct Proposal {
     body: usize,
     freedom: Freedom,
     sign: i32,
+    translation: (i32, i32),
     probe: bool,
     new_step: u32,
     candidate: Vec<CellPos>,
@@ -102,65 +102,133 @@ struct Proposal {
     contacts: Vec<Contact>,
 }
 
-pub(super) fn integrate_forces(world: &CellWorld, body: &mut Body) {
+pub(super) fn integrate_forces(world: &mut CellWorld, body: &mut Body) {
     let com = body.com();
     let displaced = displaced_medium(world, body);
-    let mut impulse = (0i128, 0i128);
-    let mut torque = 0i128;
-    let mut wetted: Vec<(CellPos, i64, i64, i64)> = Vec::new();
+    let mut gravity = 0i128;
+    let mut gravity_torque = 0i128;
+    let mut fluid = FxHashSet::default();
     for (slot, &pos) in body.slots.iter().zip(&body.raster) {
         for (dx, dy) in CARDINAL_NEIGHBORS {
             let near = pos.translated(dx, dy);
             let Some(cell) = world.get_cell(near) else {
                 continue;
             };
-            if cell.body_id().is_some() {
-                continue;
-            }
-            if matches!(
-                content::phase(cell.material),
-                Phase::Liquid | Phase::Gas | Phase::Empty
-            ) {
-                let density = i64::from(content::density_milli(cell.material).max(1));
-                let (cvx, cvy) = cell.vel();
-                let point = body.point_velocity(com, pos);
-                wetted.push((
-                    pos,
-                    i64::from(cvx) - point.0,
-                    i64::from(cvy) - point.1,
-                    density,
-                ));
+            if cell.body_id().is_none() && content::phase(cell.material) == Phase::Liquid {
+                fluid.insert(near);
             }
         }
         let weight = cell_weight(slot.material, &displaced, pos);
-        impulse.1 += weight;
-        torque += i128::from(super::state::cell_center(pos.x) - com.0) * weight;
+        gravity += weight;
+        gravity_torque += i128::from(super::state::cell_center(pos.x) - com.0) * weight;
     }
-    if at_waterline(body, &displaced, impulse.1) {
-        impulse.1 = 0;
+    let waterline = body.settles && at_waterline(body, &displaced, gravity);
+    if waterline {
+        gravity = 0;
     }
-    body.weight = round_div(impulse.1, i128::from(body.mass)) as i64;
-    let touch_share = body.mass / i64::try_from(wetted.len().max(1)).expect("touch count fits");
-    for (pos, rel_x, rel_y, density) in wetted {
-        let coupled = density.min(touch_share);
-        let jx = i128::from(rel_x) * i128::from(coupled) / i128::from(DRAG_DIVISOR);
-        let jy = i128::from(rel_y) * i128::from(coupled) / i128::from(DRAG_DIVISOR);
-        impulse.0 += jx;
-        impulse.1 += jy;
-        let rx = i128::from(super::state::cell_center(pos.x) - com.0);
-        let ry = i128::from(super::state::cell_center(pos.y) - com.1);
-        torque += rx * jy - ry * jx;
-    }
-    body.vx += round_div(impulse.0, i128::from(body.mass)) as i64;
-    body.vy += round_div(impulse.1, i128::from(body.mass)) as i64;
+    body.weight = (gravity / i128::from(body.mass)) as i64;
+    body.vy += body.weight;
     if body.freedoms.holds(Freedoms::TURN) {
-        body.spin += Spin::from_angular_impulse(torque, body.moment);
+        body.spin += Spin::from_angular_impulse(gravity_torque, body.moment);
+    }
+    apply_fluid_drag(world, body, fluid);
+    if waterline {
+        if body.vx.abs() < i64::from(SETTLE) {
+            body.vx = 0;
+        }
+        if body.vy.abs() < i64::from(SETTLE) {
+            body.vy = 0;
+        }
+        let spin_floor = Spin::for_speed_at(i64::from(SETTLE), body.radius.max(1) * CELL);
+        if body.spin.clamped(spin_floor) == body.spin {
+            body.spin = Spin::ZERO;
+        }
     }
     body.vx = body.vx.clamp(-MAX_SPEED, MAX_SPEED);
     body.vy = body.vy.clamp(-MAX_SPEED, MAX_SPEED);
     let turn_cap = Spin::for_speed_at(MAX_SPEED, body.radius.max(1) * CELL)
         .clamped(Spin::from_raw(MAX_TURN_QUANTA * ORIENTATION_UNITS));
     body.spin = body.spin.clamped(turn_cap);
+}
+
+fn apply_fluid_drag(world: &mut CellWorld, body: &mut Body, positions: FxHashSet<CellPos>) {
+    let cells: Vec<_> = positions
+        .into_iter()
+        .filter_map(|pos| {
+            let cell = world.get_cell(pos)?;
+            let mass = i64::from(content::density_milli(cell.material).max(1));
+            Some((pos, cell, mass))
+        })
+        .collect();
+    let fluid_mass: i64 = cells.iter().map(|(_, _, mass)| mass).sum();
+    if fluid_mass == 0 {
+        return;
+    }
+    let momentum = cells.iter().fold((0i128, 0i128), |sum, (_, cell, mass)| {
+        let (vx, vy) = cell.vel();
+        (
+            sum.0 + i128::from(vx) * i128::from(*mass),
+            sum.1 + i128::from(vy) * i128::from(*mass),
+        )
+    });
+    let mean = (
+        (momentum.0 / i128::from(fluid_mass)) as i64,
+        (momentum.1 / i128::from(fluid_mass)) as i64,
+    );
+    let reduced =
+        i128::from(body.mass) * i128::from(fluid_mass) / i128::from(body.mass + fluid_mass);
+    let impulse = (
+        i128::from(mean.0 - body.vx) * reduced / i128::from(FLUID_DRAG_DIVISOR),
+        i128::from(mean.1 - body.vy) * reduced / i128::from(FLUID_DRAG_DIVISOR),
+    );
+    if impulse == (0, 0) {
+        return;
+    }
+    let fluid_delta = (
+        (-impulse.0 / i128::from(fluid_mass)) as i64,
+        (-impulse.1 / i128::from(fluid_mass)) as i64,
+    );
+    let next_body = (
+        body.vx + (impulse.0 / i128::from(body.mass)) as i64,
+        body.vy + (impulse.1 / i128::from(body.mass)) as i64,
+    );
+    let kinetic = |mass: i64, vx: i64, vy: i64| {
+        i128::from(mass) * (i128::from(vx) * i128::from(vx) + i128::from(vy) * i128::from(vy))
+    };
+    let before = cells.iter().fold(
+        kinetic(body.mass, body.vx, body.vy),
+        |energy, (_, cell, mass)| {
+            let (vx, vy) = cell.vel();
+            energy + kinetic(*mass, i64::from(vx), i64::from(vy))
+        },
+    );
+    let after = cells.iter().fold(
+        kinetic(body.mass, next_body.0, next_body.1),
+        |energy, (_, cell, mass)| {
+            let (vx, vy) = cell.vel();
+            energy
+                + kinetic(
+                    *mass,
+                    i64::from(vx) + fluid_delta.0,
+                    i64::from(vy) + fluid_delta.1,
+                )
+        },
+    );
+    if after > before {
+        return;
+    }
+    (body.vx, body.vy) = next_body;
+    if fluid_delta == (0, 0) {
+        return;
+    }
+    for (pos, mut cell, _) in cells {
+        let (vx, vy) = cell.vel();
+        cell.set_vel(
+            (i64::from(vx) + fluid_delta.0) as i32,
+            (i64::from(vy) + fluid_delta.1) as i32,
+        );
+        world.set(pos, cell);
+    }
 }
 
 pub(super) struct Displaced {
@@ -217,16 +285,14 @@ fn cell_weight(material: MaterialId, displaced: &Displaced, pos: CellPos) -> i12
 }
 
 fn at_waterline(body: &Body, displaced: &Displaced, lift: i128) -> bool {
-    if lift <= 0 {
-        return false;
-    }
-    let raised: i128 = body
-        .slots
-        .iter()
-        .zip(&body.raster)
-        .map(|(slot, &pos)| cell_weight(slot.material, displaced, pos.translated(0, 1)))
-        .sum();
-    raised <= 0
+    lift > 0
+        && body
+            .slots
+            .iter()
+            .zip(&body.raster)
+            .map(|(slot, &pos)| cell_weight(slot.material, displaced, pos.translated(0, 1)))
+            .sum::<i128>()
+            <= 0
 }
 
 pub(super) fn net_lift(world: &CellWorld, body: &Body) -> i128 {
@@ -247,12 +313,12 @@ pub(super) fn run_rounds<S>(
 ) where
     S: Fn(ChunkPos) -> bool,
 {
-    let floor = i64::from(SETTLE);
     let mut movers = vec![Mover::default(); bodies.len()];
     for body in bodies.iter_mut() {
         if body.parked {
             continue;
         }
+        let floor = if body.settles { i64::from(SETTLE) } else { 1 };
         body.acc_x = if body.vx.abs() >= floor {
             (body.acc_x + body.vx).clamp(-MAX_SPEED, MAX_SPEED)
         } else {
@@ -290,6 +356,7 @@ pub(super) fn run_rounds<S>(
             &mut proposals,
             &mut newly_parked,
         );
+        apply_assists(world, bodies, simulated, &mut proposals);
         for index in newly_parked {
             bodies[index].parked = true;
         }
@@ -353,6 +420,7 @@ fn build_proposal(
     let mut candidate = Vec::new();
     let mut entered = Vec::new();
     let mut new_step = body.step;
+    let mut translation = (0, 0);
     let not_mine = |pos: CellPos| {
         world
             .get_cell(pos)
@@ -365,6 +433,7 @@ fn build_proposal(
             } else {
                 (0, sign)
             };
+            translation = (dx, dy);
             candidate.extend(body.raster.iter().map(|pos| pos.translated(dx, dy)));
             for &pos in &candidate {
                 if not_mine(pos) {
@@ -389,8 +458,57 @@ fn build_proposal(
         body: index,
         freedom,
         sign,
+        translation,
         probe,
         new_step,
+        candidate,
+        entered,
+        refused: false,
+        committed: false,
+        canceled: false,
+        deps: Vec::new(),
+        contacts: Vec::new(),
+    }
+}
+
+fn build_step_proposal(
+    world: &CellWorld,
+    bodies: &[Body],
+    index: usize,
+    sign: i32,
+    rise: i32,
+) -> Proposal {
+    let body = &bodies[index];
+    let mut candidate = Vec::with_capacity(body.raster.len());
+    let mut entered = Vec::new();
+    let mut seen = FxHashSet::default();
+    let not_mine = |pos: CellPos| {
+        world
+            .get_cell(pos)
+            .is_none_or(|cell| cell.body_id() != Some(body.id))
+    };
+    candidate.extend(body.raster.iter().map(|pos| pos.translated(sign, rise)));
+    for &pos in &body.raster {
+        let mut from = pos;
+        for dy in 1..=rise {
+            let at = pos.translated(0, dy);
+            if not_mine(at) && seen.insert(at) {
+                entered.push((at, from));
+            }
+            from = at;
+        }
+        let at = pos.translated(sign, rise);
+        if not_mine(at) && seen.insert(at) {
+            entered.push((at, from));
+        }
+    }
+    Proposal {
+        body: index,
+        freedom: Freedom::X,
+        sign,
+        translation: (sign, rise),
+        probe: false,
+        new_step: body.step,
         candidate,
         entered,
         refused: false,
@@ -541,6 +659,45 @@ fn classify<S>(
     }
 }
 
+fn apply_assists<S>(world: &CellWorld, bodies: &[Body], simulated: &S, proposals: &mut [Proposal])
+where
+    S: Fn(ChunkPos) -> bool,
+{
+    for proposal in proposals {
+        if proposal.probe
+            || proposal.freedom != Freedom::X
+            || !proposal.refused
+            || !bodies[proposal.body].assists
+            || !body_grounded(world, &bodies[proposal.body])
+        {
+            continue;
+        }
+        let replacement = (1..=STEP_CELLS)
+            .map(|rise| build_step_proposal(world, bodies, proposal.body, proposal.sign, rise))
+            .find(|candidate| assist_path_clear(world, simulated, candidate));
+        if let Some(replacement) = replacement {
+            *proposal = replacement;
+        }
+    }
+}
+
+fn assist_path_clear<S>(world: &CellWorld, simulated: &S, proposal: &Proposal) -> bool
+where
+    S: Fn(ChunkPos) -> bool,
+{
+    proposal.entered.iter().all(|&(at, _)| {
+        simulated(at.chunk())
+            && world.get_cell(at).is_some_and(|cell| {
+                cell.body_id().is_none()
+                    && matches!(
+                        content::phase(cell.material),
+                        Phase::Empty | Phase::Liquid | Phase::Gas
+                    )
+                    && (cell.is_air() || !cell.is_moved())
+            })
+    })
+}
+
 fn bodies_parked(movers: &mut [Mover], proposals: &mut [Proposal], body: usize) {
     for state in &mut movers[body].freedoms {
         state.parked = true;
@@ -583,7 +740,8 @@ fn powder_peer(
         i128::from(point.0) * i128::from(-normal.0) + i128::from(point.1) * i128::from(-normal.1);
     let resistance =
         i128::from(content::repose_layers(cell.material)) * i128::from(GRAVITY) * i128::from(mass);
-    let needed = closing.max(0) * i128::from(body.mass.min(mass * 64));
+    let effective = i128::from(body.mass) * i128::from(mass) / i128::from(body.mass + mass);
+    let needed = closing.max(0) * effective;
     if needed / i128::from(normal.0 * normal.0 + normal.1 * normal.1).max(1) <= resistance {
         return Peer::Terrain;
     }
@@ -984,10 +1142,7 @@ fn commit_group(
             };
             let jx = exchange(entrained.0 - i64::from(cvx), (1, 0));
             let jy = exchange(entrained.1 - i64::from(cvy), (0, 1));
-            cell.set_vel(
-                cvx + round_div(jx, mass) as i32,
-                cvy + round_div(jy, mass) as i32,
-            );
+            cell.set_vel(cvx + (jx / mass) as i32, cvy + (jy / mass) as i32);
             bodies[owner].apply_impulse(com, pos, -(jx as i64), -(jy as i64));
         }
         displaced.push(cell);
@@ -1029,11 +1184,15 @@ fn entraining_body(
 fn apply_commit(body: &mut Body, proposal: &Proposal, candidate: Vec<CellPos>) {
     match proposal.freedom {
         Freedom::X => {
-            body.anchor = body.anchor.translated(proposal.sign, 0);
+            body.anchor = body
+                .anchor
+                .translated(proposal.translation.0, proposal.translation.1);
             body.acc_x -= i64::from(proposal.sign) * CELL;
         }
         Freedom::Y => {
-            body.anchor = body.anchor.translated(0, proposal.sign);
+            body.anchor = body
+                .anchor
+                .translated(proposal.translation.0, proposal.translation.1);
             body.acc_y -= i64::from(proposal.sign) * CELL;
         }
         Freedom::Turn => {
@@ -1055,20 +1214,6 @@ fn finish_round(
     proposals: &mut [Proposal],
     cells: &mut FxHashMap<CellPos, CellState>,
 ) {
-    for proposal in proposals.iter_mut() {
-        if !proposal.refused || proposal.probe || proposal.freedom != Freedom::X {
-            continue;
-        }
-        if !bodies[proposal.body].assists {
-            continue;
-        }
-        if step_up(world, bodies, proposal.body, proposal.sign) {
-            proposal.refused = false;
-            proposal.canceled = true;
-            proposal.contacts.clear();
-        }
-    }
-
     let mut contacts: Vec<Contact> = Vec::new();
     let mut closing_any: FxHashMap<usize, (bool, i64)> = FxHashMap::default();
     {
@@ -1130,13 +1275,19 @@ fn finish_round(
             state.probed = true;
             continue;
         }
+        if proposal.canceled {
+            let body = &mut bodies[proposal.body];
+            *proposal.freedom.accumulator_mut(body) %= proposal.freedom.threshold();
+            continue;
+        }
         if proposal.refused {
             let (closes, approach) = closing_any.get(&p).copied().unwrap_or((false, 0));
+            let body = &mut bodies[proposal.body];
             if closes {
-                let body = &mut bodies[proposal.body];
+                *proposal.freedom.accumulator_mut(body) -=
+                    i64::from(proposal.sign) * proposal.freedom.threshold();
                 let rebound = proposal.freedom.velocity(body);
                 let accumulator = proposal.freedom.accumulator_mut(body);
-                *accumulator -= i64::from(proposal.sign) * proposal.freedom.threshold();
                 if rebound.signum() as i32 != proposal.sign {
                     let remaining = round_div(
                         i128::from(-*accumulator) * i128::from(rebound.abs()),
@@ -1145,6 +1296,7 @@ fn finish_round(
                     *accumulator = remaining.clamp(-MAX_SPEED, MAX_SPEED);
                 }
             } else {
+                *proposal.freedom.accumulator_mut(body) %= proposal.freedom.threshold();
                 state.parked = true;
             }
         }
@@ -1160,103 +1312,6 @@ fn peer_rank(bodies: &[Body], peer: &Peer) -> (u8, u64) {
 }
 
 const STEP_CELLS: i32 = 3;
-
-fn blocked_at(world: &CellWorld, body: &Body, dx: i32, dy: i32) -> bool {
-    body.raster.iter().any(|&pos| {
-        let at = pos.translated(dx, dy);
-        world.get_cell(at).is_none_or(|cell| {
-            cell.body_id() != Some(body.id)
-                && matches!(content::phase(cell.material), Phase::Solid | Phase::Powder)
-        })
-    })
-}
-
-pub(super) fn shift(world: &mut CellWorld, body: &mut Body, dx: i32, dy: i32) -> bool {
-    if blocked_at(world, body, dx, dy) {
-        return false;
-    }
-    let cells: Vec<Cell> = body
-        .raster
-        .iter()
-        .map(|&pos| world.get_cell(pos).expect("body raster is loaded"))
-        .collect();
-    let moved: Vec<CellPos> = body.raster.iter().map(|p| p.translated(dx, dy)).collect();
-    let claimed: FxHashSet<CellPos> = moved.iter().copied().collect();
-    let mut displaced: Vec<Cell> = Vec::new();
-    for &pos in &moved {
-        let cell = world.get_cell(pos).expect("target is loaded");
-        if cell.body_id() != Some(body.id) && !cell.is_air() {
-            displaced.push(cell);
-        }
-    }
-    let mut vacated: Vec<CellPos> = body
-        .raster
-        .iter()
-        .copied()
-        .filter(|pos| !claimed.contains(pos))
-        .collect();
-    vacated.sort_unstable_by_key(|pos| (pos.y, pos.x));
-    if displaced.len() > vacated.len() {
-        return false;
-    }
-    for (&pos, &cell) in vacated.iter().zip(&displaced) {
-        world.set(pos, cell);
-    }
-    for &pos in vacated.iter().skip(displaced.len()) {
-        world.set(pos, Cell::AIR);
-    }
-    for (&pos, &cell) in moved.iter().zip(&cells) {
-        world.set(pos, cell);
-    }
-    body.anchor = body.anchor.translated(dx, dy);
-    body.raster = moved;
-    true
-}
-
-fn step_up(world: &mut CellWorld, bodies: &mut [Body], index: usize, sign: i32) -> bool {
-    let floor = bodies[index]
-        .raster
-        .iter()
-        .map(|pos| pos.y)
-        .min()
-        .unwrap_or(0);
-    for rise in 1..=STEP_CELLS {
-        let body = &bodies[index];
-        let clears = body.raster.iter().all(|&pos| {
-            if pos.y >= floor + rise {
-                return true;
-            }
-            let at = pos.translated(sign, rise);
-            world.get_cell(at).is_some_and(|cell| {
-                cell.body_id() == Some(body.id)
-                    || !matches!(content::phase(cell.material), Phase::Solid | Phase::Powder)
-            })
-        });
-        if !clears {
-            continue;
-        }
-        if shift(world, &mut bodies[index], 0, rise) {
-            return true;
-        }
-    }
-    false
-}
-
-pub(super) fn snap_down(world: &mut CellWorld, body: &mut Body) -> bool {
-    if body.vy > 0 {
-        return false;
-    }
-    for _ in 1..=STEP_CELLS {
-        if !shift(world, body, 0, -1) {
-            return false;
-        }
-        if body_grounded(world, body) {
-            body.acc_y = 0;
-            return true;
-        }
-    }
-    false
-}
 
 pub(super) fn body_grounded(world: &CellWorld, body: &Body) -> bool {
     body.raster.iter().any(|&pos| {

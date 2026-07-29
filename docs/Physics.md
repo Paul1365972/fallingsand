@@ -12,10 +12,10 @@ Y is up everywhere.
   Cell→body is O(1); there are no sidecar structures and no separate collision geometry, nothing is an AABB.
 - **Id lifecycle is guarded** — ids are session-monotonic and never reused; every clear writes only cells still bearing the writer's id; saves scrub ids on encode and decode.
 - **Owned cells are terrain to the grid** — they run reactions, combustion, decay, digging and material writes exactly as terrain; ownership suspends only independent cell movement.
-- **Conservation** — cells never appear or disappear; resolution never creates energy; motion a body cannot realize is never silently destroyed.
+- **Conservation** — cells never appear or disappear; resolution never creates energy or directed momentum. Integer quantization truncates toward zero, so it may dissipate an unrepresentable remainder but can never amplify one; motion a body cannot realize is otherwise retained.
 - **Integer anchor, quantized motion** — position is the raster; fractions are per-freedom accumulators read by nothing but stepping.
-  A quantum crosses at most one cell or orientation step, interleaved Bresenham-style, so no intermediate raster goes untested; a blocked quantum consumes its budget slot.
-  Sub-floor velocity accrues no quanta and its accumulator drains, so equilibrium jitter never writes the world.
+  A quantum crosses at most one cell or orientation step, interleaved Bresenham-style, so no intermediate raster goes untested; an unavailable axis discards its remaining whole-cell budget for the tick, so blocked travel can never become future position.
+  Settling bodies drain sub-floor accumulators so equilibrium jitter never writes the world; bodies that remain live retain fractional motion, so small density differences eventually move them.
 - **One pass, one law** — whether a body should move, whether it can, how contact redirects it and when it rests are the same logic; there are no separate settle, lean or wake paths.
 - **One law, two schedulers** — a free cell is the degenerate one-cell body under the same quantum, entry and contact semantics; detachment is writing an id, settling is clearing it.
 - **Forces derive from parts** — each tick the effects kernel applies the same per-cell forces a lone cell gets — weight minus displaced medium, drag, updraft — as impulse and torque on the body id.
@@ -23,8 +23,9 @@ Y is up everywhere.
 - **Displacement is volume, drag is surface** — buoyancy is the weight of the medium a body displaces and scales with cell count; only drag scales with the touched boundary.
   Getting this backwards makes buoyancy a surface-area law: thin planks float and thick ones sink.
 - **Displaced medium is per cell** — every cell is buoyed by the medium at its own height, sampled body-locally; interior cells inherit their row. Read through one accessor, so refining the sample never touches force integration.
-- **The waterline falls between rows** — a body whose lift would reverse one row higher carries no vertical force at all, and rests within a cell of its draught. Without that fixed point buoyancy is bang-bang: floaters jackhammer and pump waves.
+- **Passive waterline equilibrium** — settling debris whose lift changes sign across one row carries no vertical force there and snaps sub-settle translation and spin to zero. Live actors retain their density-derived force, so this rest state cannot suspend players.
 - **Touch exchanges momentum both ways** — every touching pair trades per-tick impulses, cells into bodies and bodies into cells, bounded by the pair's friction.
+  Body–liquid drag couples once against the mass-weighted mean of the unique touching liquid cells and returns one equal, uniform reaction to them; no face order can feed a body's own wake back as a boost.
   Carriage is friction, not membership: sand rides an accelerating cart by grip and slips when inertia beats it.
 - **Weight is momentum flux** — a resting cell on live support transfers its blocked gravity momentum into that support instead of settling.
   Stress rides in the velocity bytes under its own tag, so load can never be impersonated by impact momentum; it propagates one cell per tick and saturates at the grain's repose-derived strength, so a confined shaft silos instead of pressing without bound.
@@ -60,7 +61,7 @@ A contact is an adjacent cell pair — face or corner — with its normal the pa
   Reflecting against an assumed infinite mass and refunding a share is not Galilean: it creates energy for any pair closing at less than one side's speed, worst of all for a matched-speed convoy.
 - Restitution and friction are per contact from the two materials: restitution pairs by the bouncier, friction multiplies so ice slides on everything.
 - Separation targets are fixed once per resolve from closing speed; accumulated impulses push toward them and never past, so a wedged body decays instead of pumping.
-  All normals resolve before any friction. Effective mass is exact integer arithmetic combining harmonically, including angular response.
+  All normals resolve before any friction. Effective mass uses fixed-point harmonic combination, including angular response; every quantized impulse is accepted only when total kinetic energy does not increase.
 - A refused quantum whose resolve finds nothing closing is deferred: the freedom parks, velocity intact.
 
 ### Peers
@@ -69,9 +70,10 @@ A contact is an adjacent cell pair — face or corner — with its normal the pa
 - **A body** — equal and opposite impulse, live velocities, angular response where it holds the turn freedom.
   There is no separate creature peer: an ogre shoving a player, a player kicking a crate and two boulders colliding are one path.
 - **Derived support** — a peer whose own opposing contact rests on terrain is immovable along that support normal only; each impulse decomposes, evaluated fresh, depth one, no flag.
-- **Powder** — a finite-mass peer at its density, holding like terrain below its authored repose resistance and yielding above it; matter yields by moving, never by rule.
+- **Powder** — a finite-mass peer at its density, holding like terrain below its authored repose resistance and yielding above it. Impact demand uses the body's and grain's reduced mass, so ordinary supported weight does not apply the whole body's momentum to one grain; matter yields by moving, never by rule.
 - **Liquid** — yields; relocation pairs it into vacated cells and drag emerges from the momentum spent.
-  Surface leveling is momentum along each row's hashed drain direction; a parked cell's drain side is the matter that stopped it, so it can never relaunch backward.
+  A downhill diagonal converts at most its released one-cell potential into horizontal momentum. Existing momentum travels through the same liquid instead of stopping at its first neighbour.
+  The lattice-only remainder is a zero-velocity neutral swap whose direction alternates by material and row, so consecutive one-cell terraces cannot both park uphill while a valid two-row surface compacts and sleeps.
   Displacement is an inelastic exchange at the meeting point's effective mass, so energy only ever dissipates.
 
 ### Materials
@@ -117,7 +119,7 @@ An id, its owned cells, a pose, a velocity, inertia derived from its materials, 
 | debris | yes | yes | — |
 | ball | yes | **no** | — |
 | mob | no | no | — |
-| player | no | no | step-up, snap-down |
+| player | no | no | step-up |
 | corpse | yes | yes | — |
 
 There is no form distinction: a body's cells are exactly the cells bearing its id, and an authored cell-set swap is available to any body.
@@ -131,20 +133,24 @@ The ball is debris that never settles — that is the whole of its species, and 
   Locomotion tuning lives with the species; world physics never does. A species may scale the world's own weight, never invent a second gravity.
 - **Controllers are not physics** — a controller reads support, contact, weight and submersion state and writes drives; it never moves the raster.
   Drives land between force integration and the rounds, so what a controller writes is what moves. Physics owns bodies, gameplay owns minds.
+  Swimming approaches the same submersion-scaled speed on both axes only while that axis is held; releasing input coasts into physical liquid drag instead of controller braking.
 - **Death is a transition** — `die` adds turn and sets settles, dropping the assists and the controller.
   Id and motion stay continuous, so a frog shot mid-hop tumbles from the velocity it had. It is a field write, not a respawn, because bodies are indexed positionally inside a round and death arrives from contact impulses mid-round.
   Every death recasts flesh into the species' corpse matter — it decays to smoke and salvages to nothing, so no corpse outlives its interest; a player respawns as a new body.
 - **Membership follows the grid** — a body's cells are exactly the cells bearing its id, reconciled every tick; it re-derives from bonds and splits into parts. Its matter digs, burns and reacts as that material does in terrain, and losing coherence that way is the same `die`.
-- **Bonds decide structure** — rigid materials author bond groups; a symmetric matrix flood-fills an island. Unbondable matter releases as free cells with its momentum share; newly adjacent cells are never added, so live bodies cannot weld.
+- **Products are not passengers** — a reaction keeps ownership until reconciliation is atomic. Any unbondable smoke, ash, liquid or empty product then releases with zero inherited body velocity, preferring an adjacent empty or gaseous outlet so residue does not occupy the body's hole.
+- **Bonds decide structure** — rigid materials author bond groups; a symmetric matrix flood-fills an island. Unbondable reaction products release independently and coherent rigid parts inherit their source's point velocity; newly adjacent cells are never added, so live bodies cannot weld.
 - **Detachment is local** — a grid write unseats its rigid neighbourhood; discovery flood-fills and flags an island atomically, parking under an unsimulated chunk and waking with it. Id-bearing cells are flood boundaries, never candidates.
   A region load is a detachment event: every exposed bonded cell reseeds discovery, so matter settled by an unload resumes as a body when its region returns.
+- **The moving-island envelope is explicit** — detachment admits at most 2,048 cells inside a 48-cell extent; a larger connected island remains terrain until damage separates an admissible part. This is a deliberate simulation budget, not a physical approximation hidden in the solver.
 - **Anchoring is adhesion** — an island holds while any member touches a foreign structural solid, or rests on powder from below; weak matter below a minimal hardness never anchors.
 - **Rotation** is quantized to 256 orientations as nearest quarter-turn refined by shears — an exact lattice bijection. A turn quantum probes every cell its slots cross, so a felled tree cannot sweep through a wall.
+- Body translation shares the free-cell 31-cell/tick safety limit, and rotation is limited to one full turn per tick; both still traverse every quantum rather than skipping collision checks.
 - Species flesh saves as air while alive; a settled corpse is ordinary matter and persists as terrain.
 
 ### Settle
 
-Rest is the fixed point of the pass, decided in isolation: no external impulse, post-snap velocity and spin zero, ambient force resolving to zero realizable motion — then terrain the same tick. Only bodies whose `settles` is set are candidates.
+Rest is the fixed point of the pass, decided in isolation: no external impulse, thresholded velocity and spin zero, ambient force resolving to zero realizable motion — then terrain the same tick. Only bodies whose `settles` is set are candidates.
 Support lies in the direction the net ambient force presses, so a buoyant body settles against a ceiling exactly as a heavy one settles onto a floor.
 
 - The snap threshold is rounding-scale, not gravity-scale, or every tipping plank freezes on tick one.
@@ -190,7 +196,7 @@ Playtest criteria; human feel decides.
 | Species | One registry entry: name, frame art, policy, and for the living hit points, corpse matter, mind driver |
 | Frame | One authored art grid of a species; each mark paints a material and shade, the raster is collision and sprite |
 | Mind | The per-mob state a species driver reads and writes |
-| Supported | Solid or powder under any cell, own cells excluded — another body counts; only terrain arms snap-down and derived support |
+| Supported | Solid or powder under any cell, own cells excluded — another body counts for contacts while only terrain is grounded footing |
 | Controller | The mind driving a body; never moves the raster |
 | Drive | A controller's per-tick velocity intent, written after forces and before the rounds |
 | Weight | The per-tick velocity change gravity and buoyancy give a body; a controller reads it, never recomputes it |

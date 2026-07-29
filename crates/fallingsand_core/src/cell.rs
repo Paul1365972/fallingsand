@@ -12,7 +12,6 @@ pub struct Cell {
     motion: [u8; 4],
     pub shade: u8,
     flags: u8,
-    pub aux: u8,
 }
 
 impl Cell {
@@ -25,7 +24,6 @@ impl Cell {
         motion: [0; 4],
         shade: 0,
         flags: 0,
-        aux: 0,
     };
 
     pub const fn new(material: MaterialId, shade: u8) -> Self {
@@ -34,7 +32,6 @@ impl Cell {
             motion: [0; 4],
             shade: shade & 0x0F,
             flags: 0,
-            aux: 0,
         }
     }
 

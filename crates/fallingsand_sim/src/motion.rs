@@ -344,10 +344,12 @@ pub(crate) fn entry(window: &SimWindow, mover: MaterialId, dy: i32, target: Cell
 }
 
 fn admits(mover: MaterialId, dy: i32, target: Cell) -> bool {
-    if !matches!(
-        content::phase(target.material),
-        Phase::Empty | Phase::Liquid | Phase::Gas
-    ) {
+    if target.body_id().is_some()
+        || !matches!(
+            content::phase(target.material),
+            Phase::Empty | Phase::Liquid | Phase::Gas
+        )
+    {
         return false;
     }
     let mover_density = content::density_milli(mover);

@@ -10,7 +10,6 @@ struct CellRecord {
     vx: i16,
     vy: i16,
     shade: u8,
-    aux: u8,
 }
 
 impl From<Cell> for CellRecord {
@@ -28,7 +27,6 @@ impl From<Cell> for CellRecord {
             vx: vx as i16,
             vy: vy as i16,
             shade: cell.shade,
-            aux: cell.aux,
         }
     }
 }
@@ -43,7 +41,6 @@ impl CellRecord {
         }
         let mut cell = Cell::new(MaterialId(self.material), 0);
         cell.shade = self.shade;
-        cell.aux = self.aux;
         cell.set_vel(self.vx as i32, self.vy as i32);
         Ok(cell)
     }

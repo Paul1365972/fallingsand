@@ -73,9 +73,9 @@ pub(super) const ANGLE_STEPS: u32 = 256;
 pub(super) const TURN_UNITS: i64 = 1 << 20;
 pub(super) const ORIENTATION_UNITS: i64 = TURN_UNITS / ANGLE_STEPS as i64;
 
-const TAU_NUMERATOR: i128 = 710;
+pub(super) const TAU_NUMERATOR: i128 = 710;
 const TAU_DENOMINATOR: i128 = 113;
-const RADIANS_PER_TURN: i128 = TURN_UNITS as i128 * TAU_DENOMINATOR;
+pub(super) const RADIANS_PER_TURN: i128 = TURN_UNITS as i128 * TAU_DENOMINATOR;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, PartialOrd, Ord)]
 pub(super) struct Spin(i64);
@@ -109,7 +109,7 @@ impl Spin {
         if moment == 0 {
             return Self::ZERO;
         }
-        Self(round_div_i128(impulse * RADIANS_PER_TURN, moment * TAU_NUMERATOR) as i64)
+        Self((impulse * RADIANS_PER_TURN / (moment * TAU_NUMERATOR)) as i64)
     }
 
     pub(super) fn clamped(self, limit: Self) -> Self {

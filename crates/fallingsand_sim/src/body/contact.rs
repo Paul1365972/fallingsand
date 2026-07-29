@@ -1,9 +1,9 @@
 use super::state::{Body, Freedoms, cell_center};
 use fallingsand_core::{CellPos, Q16};
-use fallingsand_math::round_div;
 use rustc_hash::FxHashMap;
 
 const ITERATIONS: u32 = 8;
+const MASS_UNITS: i128 = 1 << 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Peer {
@@ -79,7 +79,7 @@ impl Side {
         if denominator == 0 {
             return None;
         }
-        Some((numerator / denominator).max(1))
+        Some((numerator * MASS_UNITS / denominator).max(1))
     }
 }
 
@@ -142,10 +142,32 @@ impl Resolver<'_> {
         }
     }
 
-    fn apply(&mut self, contact: &Contact, direction: (i32, i32), magnitude: i128) {
+    fn apply(
+        &mut self,
+        contact: &Contact,
+        direction: (i32, i32),
+        magnitude: i128,
+        energy: &mut i128,
+    ) -> i128 {
         if magnitude == 0 {
-            return;
+            return 0;
         }
+        let mine = {
+            let body = &self.bodies[contact.body];
+            (body.vx, body.vy, body.spin)
+        };
+        let peer_body = match contact.peer {
+            Peer::Body(index) => {
+                let body = &self.bodies[index];
+                Some((index, body.vx, body.vy, body.spin))
+            }
+            _ => None,
+        };
+        let peer_cell = match contact.peer {
+            Peer::Cell { pos, .. } => self.cells.get(&pos).copied().map(|state| (pos, state)),
+            _ => None,
+        };
+        let before = self.contact_energy(contact);
         let point = contact.point();
         let jx = (magnitude * i128::from(direction.0)) as i64;
         let jy = (magnitude * i128::from(direction.1)) as i64;
@@ -163,13 +185,46 @@ impl Resolver<'_> {
             }
             Peer::Cell { pos, .. } => {
                 let state = self.cells.get_mut(&pos).expect("cell state exists");
-                state.vx += round_div(i128::from(-jx), i128::from(state.mass)) as i64;
-                state.vy += round_div(i128::from(-jy), i128::from(state.mass)) as i64;
+                state.vx += i128::from(-jx) as i64 / state.mass;
+                state.vy += i128::from(-jy) as i64 / state.mass;
             }
         }
+        let after = self.contact_energy(contact);
+        let candidate = energy.saturating_sub(before).saturating_add(after);
+        if candidate <= *energy {
+            *energy = candidate;
+            return magnitude;
+        }
+        let body = &mut self.bodies[contact.body];
+        (body.vx, body.vy, body.spin) = mine;
+        if let Some((index, vx, vy, spin)) = peer_body {
+            let body = &mut self.bodies[index];
+            (body.vx, body.vy, body.spin) = (vx, vy, spin);
+        }
+        if let Some((pos, state)) = peer_cell {
+            self.cells.insert(pos, state);
+        }
+        0
+    }
+
+    fn kinetic_energy(&self) -> i128 {
+        let bodies = self.bodies.iter().map(body_energy);
+        let cells = self.cells.values().map(cell_energy);
+        bodies.chain(cells).fold(0i128, i128::saturating_add)
+    }
+
+    fn contact_energy(&self, contact: &Contact) -> i128 {
+        let mine = body_energy(&self.bodies[contact.body]);
+        let peer = match contact.peer {
+            Peer::Terrain => 0,
+            Peer::Body(index) => body_energy(&self.bodies[index]),
+            Peer::Cell { pos, .. } => cell_energy(&self.cells[&pos]),
+        };
+        mine.saturating_add(peer)
     }
 
     pub(super) fn resolve(&mut self, contacts: &mut [Contact]) {
+        let mut energy = self.kinetic_energy();
         for contact in contacts.iter_mut() {
             let closing = self.closing(contact, contact.normal);
             contact.target = if closing < 0 {
@@ -186,11 +241,10 @@ impl Resolver<'_> {
                 let normal = contact.normal;
                 let closing = self.closing(contact, normal);
                 let mass = self.pair_mass(contact, normal);
-                let wanted = (contact.target - closing) * mass;
+                let wanted = (contact.target - closing) * mass / MASS_UNITS;
                 let total = (contact.push + wanted).max(0);
                 let delta = total - contact.push;
-                self.apply(contact, normal, delta);
-                contact.push = total;
+                contact.push += self.apply(contact, normal, delta, &mut energy);
             }
         }
 
@@ -200,14 +254,40 @@ impl Resolver<'_> {
                 let closing = self.closing(contact, tangent);
                 let mass = self.pair_mass(contact, tangent);
                 let limit = (i128::from(contact.friction.raw()) * contact.push) >> 16;
-                let wanted = -closing * mass;
+                let wanted = -closing * mass / MASS_UNITS;
                 let total = (contact.drag + wanted).clamp(-limit, limit);
                 let delta = total - contact.drag;
-                self.apply(contact, tangent, delta);
-                contact.drag = total;
+                contact.drag += self.apply(contact, tangent, delta, &mut energy);
             }
         }
     }
+}
+
+fn body_energy(body: &Body) -> i128 {
+    let velocity = i128::from(body.vx)
+        .saturating_mul(i128::from(body.vx))
+        .saturating_add(i128::from(body.vy).saturating_mul(i128::from(body.vy)));
+    let radians = super::rotation::RADIANS_PER_TURN;
+    let translation = i128::from(body.mass)
+        .saturating_mul(velocity)
+        .saturating_mul(radians.saturating_mul(radians));
+    let angular = i128::from(body.spin.raw()).saturating_mul(super::rotation::TAU_NUMERATOR);
+    let rotation = body.moment.saturating_mul(angular.saturating_mul(angular));
+    translation.saturating_add(rotation)
+}
+
+fn cell_energy(cell: &CellState) -> i128 {
+    particle_energy(cell.mass, cell.vx, cell.vy)
+}
+
+fn particle_energy(mass: i64, vx: i64, vy: i64) -> i128 {
+    let energy = i128::from(mass).saturating_mul(
+        i128::from(vx)
+            .saturating_mul(i128::from(vx))
+            .saturating_add(i128::from(vy).saturating_mul(i128::from(vy))),
+    );
+    let radians = super::rotation::RADIANS_PER_TURN;
+    energy.saturating_mul(radians.saturating_mul(radians))
 }
 
 pub(super) fn body_point_mass(
@@ -218,6 +298,7 @@ pub(super) fn body_point_mass(
 ) -> i128 {
     body_side(body, com, point, normal, false)
         .effective_mass(normal)
+        .map(|mass| (mass / MASS_UNITS).max(1))
         .unwrap_or(i128::MAX / 2)
 }
 
@@ -253,8 +334,8 @@ fn apply_to_body(
     jy: i64,
     pressing: bool,
 ) {
-    let dvx = round_div(i128::from(jx), i128::from(body.mass)) as i64;
-    let mut dvy = round_div(i128::from(jy), i128::from(body.mass)) as i64;
+    let dvx = jx / body.mass;
+    let mut dvy = jy / body.mass;
     if pressing && dvy < 0 {
         dvy = 0;
     }

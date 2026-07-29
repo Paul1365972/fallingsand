@@ -24,6 +24,14 @@ pub struct Bodies {
     by_id: FxHashMap<u32, usize>,
     pending: Vec<CellPos>,
     parked_seeds: FxHashMap<ChunkPos, Vec<CellPos>>,
+    fractures: Vec<Fracture>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fracture {
+    pub source: u32,
+    pub anchor: CellPos,
+    pub parts: Vec<u32>,
 }
 
 impl Bodies {
@@ -37,6 +45,10 @@ impl Bodies {
         self.pending.extend(seeds);
     }
 
+    pub fn drain_fractures(&mut self) -> Vec<Fracture> {
+        std::mem::take(&mut self.fractures)
+    }
+
     pub fn spawn(
         &mut self,
         world: &mut CellWorld,
@@ -44,9 +56,15 @@ impl Bodies {
         cells: &[(CellPos, MaterialId, u8)],
         policy: Policy,
     ) -> bool {
-        if !cells
-            .iter()
-            .all(|&(pos, _, _)| world.get_cell(pos).is_some_and(|cell| cell.is_air()))
+        let positions: rustc_hash::FxHashSet<CellPos> =
+            cells.iter().map(|&(pos, _, _)| pos).collect();
+        if cells.is_empty()
+            || self.by_id.contains_key(&id)
+            || positions.len() != cells.len()
+            || cells.iter().any(|&(_, material, _)| !bondable(material))
+            || !cells
+                .iter()
+                .all(|&(pos, _, _)| world.get_cell(pos).is_some_and(|cell| cell.is_air()))
         {
             return false;
         }
@@ -198,6 +216,12 @@ impl Bodies {
         };
         let claimed: rustc_hash::FxHashSet<CellPos> =
             cells.iter().map(|&(pos, _, _)| pos).collect();
+        if cells.is_empty()
+            || claimed.len() != cells.len()
+            || cells.iter().any(|&(_, material, _)| !bondable(material))
+        {
+            return false;
+        }
         let held: rustc_hash::FxHashSet<CellPos> =
             self.bodies[index].raster.iter().copied().collect();
         let mut evicted = Vec::new();
@@ -266,7 +290,6 @@ impl Bodies {
         next.freedoms = body.freedoms;
         next.settles = body.settles;
         next.assists = body.assists;
-        next.was_grounded = body.was_grounded;
         next.parked = body.parked;
         next.weight = body.weight;
         next.vx = body.vx;
@@ -419,14 +442,6 @@ impl Bodies {
         for body in &mut self.bodies {
             rounds::carriage(world, body);
         }
-        for index in 0..self.bodies.len() {
-            let grounded = rounds::body_grounded(world, &self.bodies[index]);
-            if self.bodies[index].assists && self.bodies[index].was_grounded && !grounded {
-                rounds::snap_down(world, &mut self.bodies[index]);
-            }
-            self.bodies[index].was_grounded = rounds::body_grounded(world, &self.bodies[index]);
-        }
-
         let mut index = 0;
         while index < self.bodies.len() {
             if rounds::try_settle(world, &mut self.bodies[index]) {
@@ -473,10 +488,21 @@ impl Bodies {
                     index += 1;
                 }
                 Reconciled::Gone => {
+                    let body = &self.bodies[index];
+                    self.fractures.push(Fracture {
+                        source: body.id,
+                        anchor: body.anchor,
+                        parts: Vec::new(),
+                    });
                     self.bodies.remove(index);
                 }
                 Reconciled::Parts(mut parts) => {
                     let retained = self.bodies[index].id;
+                    self.fractures.push(Fracture {
+                        source: retained,
+                        anchor: self.bodies[index].anchor,
+                        parts: parts.iter().map(|part| part.id).collect(),
+                    });
                     self.bodies.remove(index);
                     let mut offset = 0;
                     for part in parts.drain(..) {
@@ -559,7 +585,6 @@ fn reconcile_body(
     body: &Body,
     allocate: &mut dyn FnMut() -> u32,
 ) -> Reconciled {
-    let com = body.com();
     let mut changed = false;
     let mut survivors: Vec<Slot> = Vec::with_capacity(body.slots.len());
     let mut positions: Vec<CellPos> = Vec::with_capacity(body.raster.len());
@@ -572,7 +597,7 @@ fn reconcile_body(
             continue;
         }
         if !bondable(cell.material) {
-            release(world, body, com, pos);
+            release(world, body, pos);
             changed = true;
             continue;
         }
@@ -635,7 +660,7 @@ fn reconcile_body(
             }
         }
         let id = if part == 0 { body.id } else { allocate() };
-        out.push(derive_part(body, com, id, slots, raster));
+        out.push(derive_part(body, body.com(), id, slots, raster));
     }
     Reconciled::Parts(out)
 }
@@ -668,7 +693,6 @@ fn derive_part(
         freedoms: source.freedoms,
         settles: source.settles,
         assists: source.assists,
-        was_grounded: false,
         parked: false,
     };
     body.refresh_inertia();

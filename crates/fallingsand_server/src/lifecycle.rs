@@ -5,7 +5,7 @@ use fallingsand_core::content::material;
 use fallingsand_core::{CHUNK_SIZE, CellPos, CellRect, ChunkPos};
 use fallingsand_protocol::PlayerId;
 use fallingsand_sim::CellWorld;
-use fallingsand_sim::body::{Bodies, Policy};
+use fallingsand_sim::body::{Bodies, Fracture, Policy};
 
 const SEARCH_ATTEMPTS_PER_TICK: usize = CHUNK_SIZE;
 
@@ -47,6 +47,37 @@ pub fn resolve_lethal(
         bodies.die(body_id);
         bodies.recast(sim, body_id, material::CORPSE);
         player.die(anchor, tick);
+        died.push(player.name.clone());
+    }
+    died
+}
+
+pub fn resolve_fractures(
+    sim: &mut CellWorld,
+    bodies: &mut Bodies,
+    players: &mut Players,
+    fractures: &[Fracture],
+    tick: u64,
+) -> Vec<String> {
+    let mut died = Vec::new();
+    for fracture in fractures {
+        let player_id = players.iter().find_map(|(&id, player)| {
+            player
+                .avatar()
+                .is_some_and(|avatar| avatar.body_id == fracture.source)
+                .then_some(id)
+        });
+        let Some(player_id) = player_id else {
+            continue;
+        };
+        for &part in &fracture.parts {
+            bodies.die(part);
+            bodies.recast(sim, part, material::CORPSE);
+        }
+        let player = players
+            .get_mut(player_id)
+            .expect("fractured player remains present");
+        player.die(fracture.anchor, tick);
         died.push(player.name.clone());
     }
     died

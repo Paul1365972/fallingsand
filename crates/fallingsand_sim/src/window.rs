@@ -98,8 +98,8 @@ impl<'a> SimWindow<'a> {
         };
         let old = chunk.get(pos.offset());
         match old.body_id() {
-            Some(id) if obstructs(cell.material) => cell.set_body(id),
-            _ => cell.clear_body(),
+            Some(id) => cell.set_body(id),
+            None => cell.clear_body(),
         }
         chunk.set(pos.offset(), cell);
         self.mark_sim_border(pos);

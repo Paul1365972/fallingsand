@@ -90,7 +90,6 @@ pub(super) struct Body {
     pub freedoms: Freedoms,
     pub settles: bool,
     pub assists: bool,
-    pub was_grounded: bool,
     pub parked: bool,
 }
 
@@ -184,8 +183,8 @@ impl Body {
     pub(super) fn apply_impulse(&mut self, com: (i64, i64), pos: CellPos, jx: i64, jy: i64) {
         let rx = i128::from(cell_center(pos.x) - com.0);
         let ry = i128::from(cell_center(pos.y) - com.1);
-        self.vx += round_div(i128::from(jx), i128::from(self.mass)) as i64;
-        self.vy += round_div(i128::from(jy), i128::from(self.mass)) as i64;
+        self.vx += jx / self.mass;
+        self.vy += jy / self.mass;
         if self.freedoms.holds(Freedoms::TURN) {
             let torque = rx * i128::from(jy) - ry * i128::from(jx);
             self.spin += Spin::from_angular_impulse(torque, self.moment);
@@ -259,22 +258,40 @@ pub(super) fn capture(world: &mut CellWorld, id: u32, cells: Vec<CellPos>) -> Bo
         freedoms: Freedoms::ALL,
         settles: true,
         assists: false,
-        was_grounded: false,
         parked: false,
     };
     body.refresh_inertia();
     body
 }
 
-pub(super) fn release(world: &mut CellWorld, body: &Body, com: (i64, i64), pos: CellPos) {
+pub(super) fn release(world: &mut CellWorld, body: &Body, pos: CellPos) {
     let Some(mut cell) = world.get_cell(pos) else {
         return;
     };
     if cell.body_id() != Some(body.id) {
         return;
     }
-    let (vx, vy) = body.point_velocity(com, pos);
     cell.clear_body();
-    cell.set_vel(vx as i32, vy as i32);
+    cell.set_vel(0, 0);
     world.set(pos, cell);
+    if cell.is_air() {
+        return;
+    }
+    let outlet = [(0, 1), (-1, 0), (1, 0), (0, -1)]
+        .into_iter()
+        .map(|(dx, dy)| pos.translated(dx, dy))
+        .find(|&target| {
+            world.get_cell(target).is_some_and(|near| {
+                near.body_id().is_none()
+                    && matches!(
+                        content::phase(near.material),
+                        fallingsand_core::Phase::Empty | fallingsand_core::Phase::Gas
+                    )
+            })
+        });
+    if let Some(outlet) = outlet {
+        let displaced = world.get_cell(outlet).expect("release outlet is loaded");
+        world.set(pos, displaced);
+        world.set(outlet, cell);
+    }
 }

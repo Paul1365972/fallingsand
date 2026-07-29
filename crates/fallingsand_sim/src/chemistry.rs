@@ -77,7 +77,6 @@ fn ignite(window: &mut SimWindow, pos: CellPos, ignition: Ignition, rng: &mut Rn
             return true;
         };
         cell.material = ignition.into;
-        cell.aux = 0;
         window.transform(pos, cell);
         return true;
     }
@@ -106,7 +105,6 @@ fn burn(window: &mut SimWindow, pos: CellPos, burning: Burning, rng: &mut Rng) -
                     return true;
                 };
                 cell.material = material;
-                cell.aux = 0;
                 window.transform(pos, cell);
                 return true;
             }

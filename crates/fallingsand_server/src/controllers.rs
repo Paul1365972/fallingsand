@@ -42,6 +42,7 @@ pub struct PlayerParams {
     pub fast_max_accel: Subcell,
     pub jump_speed: Subcell,
     pub jump_h_boost: Subcell,
+    pub swim_speed: Subcell,
     pub swim_thrust: Subcell,
     pub wade_run_mult: f32,
     pub fly_max: Subcell,
@@ -65,6 +66,7 @@ impl Default for PlayerParams {
             fast_max_accel: Subcell::from_cells_per_second_squared(300),
             jump_speed: Subcell::from_cells_per_second(105.0),
             jump_h_boost: Subcell::from_cells_per_second(40.0),
+            swim_speed: Subcell::from_cells_per_second(70.0),
             swim_thrust: Subcell::from_cells_per_second_squared(1200),
             wade_run_mult: 0.5,
             fly_max: Subcell::from_cells_per_second(160.0),
@@ -162,31 +164,40 @@ pub fn drive_player(
         return;
     }
 
-    let traction = if grounded {
-        bodies
-            .support_traction(sim, id)
-            .map_or(1.0, |grip| grip.clamp(MIN_TRACTION, 1.0))
+    if swimming {
+        if move_x != 0 {
+            vx = vx.approach(
+                params.swim_speed.scaled_by(submersion).times(move_x),
+                params.swim_thrust.scaled_by(submersion),
+            );
+        }
     } else {
-        1.0
-    };
-    if grounded && ctrl.rows < STAND_ROWS {
-        let target = params.max_run.scaled_by(params.duck_run_mult).times(move_x);
-        let rate = if move_x == 0 {
-            params.duck_friction
+        let traction = if grounded {
+            bodies
+                .support_traction(sim, id)
+                .map_or(1.0, |grip| grip.clamp(MIN_TRACTION, 1.0))
         } else {
-            params.run_accel
+            1.0
         };
-        vx = vx.approach(target, rate.scaled_by(traction));
-    } else {
-        let mult = if grounded { traction } else { params.air_mult };
-        let wade = 1.0 - (1.0 - params.wade_run_mult) * submersion;
-        let max_run = params.max_run.scaled_by(wade);
-        let rate = if same_direction(vx, move_x) && vx.abs() > max_run {
-            params.run_reduce
+        if grounded && ctrl.rows < STAND_ROWS {
+            let target = params.max_run.scaled_by(params.duck_run_mult).times(move_x);
+            let rate = if move_x == 0 {
+                params.duck_friction
+            } else {
+                params.run_accel
+            };
+            vx = vx.approach(target, rate.scaled_by(traction));
         } else {
-            params.run_accel
-        };
-        vx = vx.approach(max_run.times(move_x), rate.scaled_by(mult));
+            let mult = if grounded { traction } else { params.air_mult };
+            let wade = 1.0 - (1.0 - params.wade_run_mult) * submersion;
+            let max_run = params.max_run.scaled_by(wade);
+            let rate = if same_direction(vx, move_x) && vx.abs() > max_run {
+                params.run_reduce
+            } else {
+                params.run_accel
+            };
+            vx = vx.approach(max_run.times(move_x), rate.scaled_by(mult));
+        }
     }
 
     ctrl.max_fall = ctrl.max_fall.max(params.max_fall);
@@ -205,8 +216,11 @@ pub fn drive_player(
         vy += weight.scaled_by(params.gravity_scale * hang - 1.0);
         vy = vy.max(-ctrl.max_fall);
         let move_y = i32::from(input.jump) - i32::from(input.down);
-        if move_y != 0 && submersion > 0.0 {
-            vy += params.swim_thrust.scaled_by(submersion).times(move_y);
+        if move_y != 0 && swimming {
+            vy = vy.approach(
+                params.swim_speed.scaled_by(submersion).times(move_y),
+                params.swim_thrust.scaled_by(submersion),
+            );
         }
     }
 

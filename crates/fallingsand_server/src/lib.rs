@@ -302,6 +302,7 @@ impl ServerState {
                     mobs,
                     body_ids,
                     tickets,
+                    sessions,
                     ..
                 } = s;
                 let simulated = |chunk| tickets.simulates(chunk);
@@ -309,6 +310,17 @@ impl ServerState {
                 bodies.integrate(sim, &effects.impulses, &simulated, &mut || {
                     body_ids.allocate()
                 });
+                let fractures = bodies.drain_fractures();
+                let tick = sim.tick();
+                for fracture in &fractures {
+                    mobs.resolve_fracture(sim, bodies, fracture);
+                }
+                for name in lifecycle::resolve_fractures(sim, bodies, players, &fractures, tick) {
+                    tracing::info!(player = %name, "player body fractured");
+                    sessions.deliver(command::Reply::All(ChatEntry::announce(format!(
+                        "{name} died"
+                    ))));
+                }
                 controllers::run(sim, players, bodies);
                 mobs::drive_mobs(sim, players, mobs, bodies, tickets);
                 bodies.advance(sim, &simulated);
