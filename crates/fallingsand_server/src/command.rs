@@ -1,6 +1,10 @@
-use crate::player::Players;
+use crate::mobs::Mobs;
+use crate::player::{BodyIds, Players};
+use crate::species;
 use fallingsand_core::{Calendar, DAY_UNITS};
 use fallingsand_protocol::{ChatEntry, CommandInfo, GameMode, ParamKind, ParamSpec, PlayerId};
+use fallingsand_sim::CellWorld;
+use fallingsand_sim::body::Bodies;
 use std::sync::LazyLock;
 
 pub enum Reply {
@@ -11,6 +15,10 @@ pub enum Reply {
 pub struct World<'a> {
     pub players: &'a mut Players,
     pub clock: &'a mut Calendar,
+    pub sim: &'a mut CellWorld,
+    pub mobs: &'a mut Mobs,
+    pub bodies: &'a mut Bodies,
+    pub body_ids: &'a mut BodyIds,
 }
 
 pub struct Ctx<'a, 'w> {
@@ -98,6 +106,10 @@ fn command(name: &str, summary: &str, params: Vec<ParamSpec>, run: Run) -> Comma
 }
 
 static COMMANDS: LazyLock<Vec<Command>> = LazyLock::new(|| {
+    let summons: Vec<&str> = species::SPECIES
+        .iter()
+        .map(|species| species.name)
+        .collect();
     vec![
         command(
             "help",
@@ -127,6 +139,12 @@ static COMMANDS: LazyLock<Vec<Command>> = LazyLock::new(|| {
             )],
             time,
         ),
+        command(
+            "summon",
+            "spawn a creature or prop beside you",
+            vec![ParamSpec::new("what", ParamKind::Choice, &summons)],
+            summon,
+        ),
     ]
 });
 
@@ -146,7 +164,7 @@ pub fn run(world: &mut World) -> Vec<Reply> {
         .players
         .iter_mut()
         .flat_map(|(&id, player)| {
-            std::mem::take(&mut player.control.pending_commands)
+            std::mem::take(&mut player.inbox.pending_commands)
                 .into_iter()
                 .map(move |line| (id, line))
         })
@@ -257,5 +275,34 @@ fn time(ctx: &mut Ctx, mut args: Args) -> Result<(), Error> {
         minute / 60,
         minute % 60
     ));
+    Ok(())
+}
+
+fn summon(ctx: &mut Ctx, mut args: Args) -> Result<(), Error> {
+    let what = species::find(args.next()?).ok_or(Error::Usage)?;
+    args.end()?;
+    let caller = ctx.caller;
+    let avatar = ctx
+        .world
+        .players
+        .get(caller)
+        .and_then(|player| player.avatar())
+        .ok_or("player not in world")?;
+    let anchor = ctx
+        .world
+        .bodies
+        .cell(avatar.body_id)
+        .ok_or("player not in world")?;
+    let facing = if avatar.controller.facing_left { -1 } else { 1 };
+    species::summon(
+        ctx.world.sim,
+        ctx.world.bodies,
+        ctx.world.mobs,
+        ctx.world.body_ids,
+        what,
+        anchor,
+        facing,
+    )?;
+    ctx.reply(format!("summoned a {}", what.name));
     Ok(())
 }

@@ -16,7 +16,7 @@ struct CellRecord {
 impl From<Cell> for CellRecord {
     fn from(mut cell: Cell) -> Self {
         if cell.body_id().is_some() {
-            if content::tags(cell.material).contains(Tag::Player) {
+            if content::tags(cell.material).contains(Tag::Body) {
                 cell = Cell::AIR;
             } else {
                 cell.clear_body();

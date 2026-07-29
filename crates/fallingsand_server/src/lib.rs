@@ -1,25 +1,26 @@
 pub(crate) mod command;
+pub(crate) mod controllers;
 pub(crate) mod dig;
 pub(crate) mod hazards;
 pub(crate) mod inventory;
 pub(crate) mod lifecycle;
+pub(crate) mod mobs;
 pub(crate) mod particles;
 pub(crate) mod persistence;
-pub(crate) mod physics;
 pub(crate) mod player;
 pub(crate) mod regions;
 pub(crate) mod replication;
 pub(crate) mod session;
 pub(crate) mod sim;
+pub(crate) mod species;
 
-use fallingsand_core::Subcell;
 use fallingsand_core::{Calendar, CellPos, DAY_UNITS};
-use fallingsand_math::round_div;
 use fallingsand_net::Listener;
 use fallingsand_protocol::{ChatEntry, ServerStats, TickProfile};
-use fallingsand_sim::debris::DebrisWorld;
+use fallingsand_sim::body::Bodies;
 use fallingsand_sim::{CellWorld, Simulator};
 use fallingsand_worldgen::WorldGenerator;
+use mobs::Mobs;
 use persistence::{Persistence, WorldMeta};
 use player::{BodyIds, Players};
 use regions::{ChunkTickets, RegionMap};
@@ -57,8 +58,9 @@ struct ServerState {
     listener: Box<dyn Listener>,
     sim: CellWorld,
     simulator: Simulator,
-    debris: DebrisWorld,
+    bodies: Bodies,
     players: Players,
+    mobs: Mobs,
     body_ids: BodyIds,
     sessions: Sessions,
     generator: WorldGenerator,
@@ -144,8 +146,9 @@ impl Server {
                 listener: config.listener,
                 sim,
                 simulator: Simulator::new(),
-                debris: DebrisWorld::default(),
+                bodies: Bodies::default(),
                 players: Players::default(),
+                mobs: Mobs::default(),
                 body_ids: BodyIds::default(),
                 sessions: Sessions::default(),
                 generator,
@@ -239,6 +242,10 @@ impl ServerState {
                 let replies = command::run(&mut command::World {
                     players: &mut s.players,
                     clock: &mut s.clock,
+                    sim: &mut s.sim,
+                    mobs: &mut s.mobs,
+                    bodies: &mut s.bodies,
+                    body_ids: &mut s.body_ids,
                 });
                 for reply in replies {
                     s.sessions.deliver(reply);
@@ -251,7 +258,7 @@ impl ServerState {
             "player_input",
             |t| &mut t.player_input,
             |s| {
-                dig::apply_player_inputs(&mut s.sim, &mut s.players);
+                dig::apply_player_inputs(&mut s.sim, &s.bodies, &mut s.players);
                 inventory::apply_slot_actions(&mut s.players);
                 lifecycle::begin_revives(&mut s.players, s.spawn, s.sim.tick());
             },
@@ -261,13 +268,14 @@ impl ServerState {
             "regions",
             |t| &mut t.regions,
             |s| {
-                regions::compute_tickets(&mut s.tickets, &s.players);
+                regions::compute_tickets(&mut s.tickets, &s.players, &s.bodies);
                 regions::manage_regions(
                     &mut s.sim,
                     &mut s.regions,
                     &mut s.persistence,
                     &s.tickets,
-                    &mut s.debris,
+                    &mut s.bodies,
+                    &mut s.mobs,
                 )
             },
         )?;
@@ -286,57 +294,24 @@ impl ServerState {
             move |s| {
                 let mut seeds = s.sim.drain_unseated();
                 seeds.extend(effects.unseated.iter().copied());
-                s.debris.unseat(seeds);
-                let mut debris_impulses = Vec::with_capacity(effects.impulses.len());
-                let mut creature_impulses: std::collections::BTreeMap<u32, (i128, i128)> =
-                    std::collections::BTreeMap::new();
-                for impulse in &effects.impulses {
-                    if s.players.player_for_body(impulse.id).is_some() {
-                        let sum = creature_impulses.entry(impulse.id).or_insert((0, 0));
-                        sum.0 += i128::from(impulse.jx);
-                        sum.1 += i128::from(impulse.jy);
-                    } else {
-                        debris_impulses.push(*impulse);
-                    }
-                }
-                for (body, (jx, jy)) in creature_impulses {
-                    let Some(avatar) = s
-                        .players
-                        .player_for_body(body)
-                        .and_then(|player| s.players.get_mut(player))
-                        .and_then(|player| player.avatar_mut())
-                    else {
-                        continue;
-                    };
-                    let mass = i128::from(physics::creature_mass(&avatar.creature));
-                    avatar.creature.vx += Subcell::from_raw(round_div(jx, mass) as i64);
-                    avatar.creature.vy += Subcell::from_raw(round_div(jy, mass) as i64);
-                }
+                s.bodies.unseat(seeds);
                 let ServerState {
                     sim,
-                    debris,
+                    bodies,
                     players,
+                    mobs,
                     body_ids,
                     tickets,
                     ..
                 } = s;
-                debris.wake_chunks(tickets.newly_simulated.iter().copied());
-                let shoves = debris.step(
-                    sim,
-                    &debris_impulses,
-                    &|chunk| tickets.simulates(chunk),
-                    &|id| physics::creature_peer(players, id),
-                    &mut || body_ids.allocate(),
-                );
-                for shove in shoves {
-                    if let Some(player) = players.player_for_body(shove.body)
-                        && let Some(avatar) = players.get_mut(player).and_then(|p| p.avatar_mut())
-                    {
-                        avatar.creature.vx += shove.dvx;
-                        avatar.creature.vy += shove.dvy;
-                    }
-                }
-                physics::step_physics(sim, players, debris);
+                let simulated = |chunk| tickets.simulates(chunk);
+                bodies.wake_chunks(tickets.newly_simulated.iter().copied());
+                bodies.integrate(sim, &effects.impulses, &simulated, &mut || {
+                    body_ids.allocate()
+                });
+                controllers::run(sim, players, bodies);
+                mobs::drive_mobs(sim, players, mobs, bodies, tickets);
+                bodies.advance(sim, &simulated);
             },
         );
 
@@ -345,7 +320,10 @@ impl ServerState {
             "hazards",
             |t| &mut t.hazards,
             |s| {
-                hazards::apply_hazards(&s.sim, &mut s.players);
+                hazards::apply_hazards(&s.sim, &s.bodies, &mut s.players);
+                for body_id in hazards::apply_mob_hazards(&s.sim, &s.bodies, &mut s.mobs) {
+                    s.mobs.kill(&mut s.sim, &mut s.bodies, body_id);
+                }
             },
         );
 
@@ -353,7 +331,9 @@ impl ServerState {
             "lifecycle",
             |t| &mut t.lifecycle,
             |s| {
-                for name in lifecycle::resolve_lethal(&mut s.sim, &mut s.players, tick) {
+                for name in
+                    lifecycle::resolve_lethal(&mut s.sim, &mut s.bodies, &mut s.players, tick)
+                {
                     s.sessions
                         .deliver(command::Reply::All(ChatEntry::announce(format!(
                             "{name} died"
@@ -361,6 +341,7 @@ impl ServerState {
                 }
                 for (player, text) in lifecycle::advance_materializations(
                     &mut s.sim,
+                    &mut s.bodies,
                     &mut s.players,
                     &mut s.body_ids,
                     tick,
@@ -382,7 +363,7 @@ impl ServerState {
                     &mut s.sessions,
                     &s.players,
                     &s.sim,
-                    &s.debris,
+                    &s.bodies,
                     &s.clock,
                     &s.regions,
                     &s.generator,
@@ -404,6 +385,7 @@ impl ServerState {
             |s| {
                 persistence::autosave(
                     &s.sim,
+                    &s.bodies,
                     &s.regions,
                     &s.world,
                     &s.clock,
@@ -421,6 +403,7 @@ impl ServerState {
     fn shutdown_persistence(&mut self) -> Result<(), persistence::StoreError> {
         persistence::shutdown_world(
             &self.sim,
+            &self.bodies,
             &self.regions,
             &self.world,
             &self.clock,
@@ -433,15 +416,16 @@ impl ServerState {
         &mut self,
         disconnected: Vec<fallingsand_protocol::PlayerId>,
     ) -> Result<(), persistence::StoreError> {
-        self.persistence
-            .stage_players(disconnected.iter().filter_map(|&id| self.players.get(id)))?;
+        self.persistence.stage_players(
+            &self.bodies,
+            disconnected.iter().filter_map(|&id| self.players.get(id)),
+        )?;
         for id in disconnected {
-            let Some(mut player) = self.players.remove(id) else {
+            let Some(player) = self.players.remove(id) else {
                 continue;
             };
-            if let Some(avatar) = player.avatar_mut() {
-                let body_id = avatar.body_id;
-                physics::unstamp(&mut self.sim, &mut avatar.stamp, body_id);
+            if let Some(avatar) = player.avatar() {
+                self.bodies.despawn(&mut self.sim, avatar.body_id);
             }
         }
         Ok(())

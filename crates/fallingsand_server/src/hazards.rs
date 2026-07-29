@@ -1,11 +1,11 @@
+use crate::mobs::Mobs;
 use crate::player::{PlayerLife, Players};
 use crate::{MAX_AIR_SECONDS, MAX_HEALTH};
 use fallingsand_core::content;
-use fallingsand_core::{CellPos, Phase, TICK_DT, Tag};
+use fallingsand_core::{CellPos, CellRect, Phase, TICK_DT, Tag};
 use fallingsand_protocol::GameMode;
 use fallingsand_sim::CellWorld;
-use fallingsand_sim::creature::Creature;
-use fallingsand_sim::shape::CellSource;
+use fallingsand_sim::body::Bodies;
 
 pub const BURN_SECS: f32 = 4.0;
 pub const BURN_DPS: f32 = 6.0;
@@ -23,11 +23,10 @@ pub struct HazardSample {
     pub head_submerged: bool,
 }
 
-pub fn sample_hazards<W: CellSource>(world: &W, body: &Creature) -> HazardSample {
+pub fn sample_hazards(world: &CellWorld, rect: CellRect) -> HazardSample {
     let mut sample = HazardSample::default();
-    let fp = body.footprint();
     let mut probe = |pos: CellPos| {
-        let Some(cell) = world.cell_at(pos) else {
+        let Some(cell) = world.get_cell(pos) else {
             return;
         };
         let hot = content::tags(cell.material).contains(Tag::Hot);
@@ -37,23 +36,23 @@ pub fn sample_hazards<W: CellSource>(world: &W, body: &Creature) -> HazardSample
         sample.hot |= hot;
         sample.extinguish |= content::phase(cell.material) == Phase::Liquid && !hot;
     };
-    for y in fp.y0 - 1..=fp.y1 + 1 {
-        probe(CellPos::new(fp.x0 - 1, y));
-        probe(CellPos::new(fp.x1 + 1, y));
+    for y in rect.grown(1).rows() {
+        probe(CellPos::new(rect.min.x - 1, y));
+        probe(CellPos::new(rect.max.x + 1, y));
     }
-    for x in fp.x0..=fp.x1 {
-        probe(CellPos::new(x, fp.y0 - 1));
-        probe(CellPos::new(x, fp.y1 + 1));
+    for x in rect.columns() {
+        probe(CellPos::new(x, rect.min.y - 1));
+        probe(CellPos::new(x, rect.max.y + 1));
     }
-    let head = CellPos::new(body.x.floor_cell(), fp.y1 + 1);
+    let head = CellPos::new((rect.min.x + rect.max.x) / 2, rect.max.y + 1);
     sample.head_submerged = matches!(
-        world.cell_at(head),
+        world.get_cell(head),
         Some(cell) if content::phase(cell.material) == Phase::Liquid
     );
     sample
 }
 
-pub fn apply_hazards(sim: &CellWorld, players: &mut Players) {
+pub fn apply_hazards(sim: &CellWorld, bodies: &Bodies, players: &mut Players) {
     for (_, player) in players.iter_mut() {
         let survival = player.profile.mode == GameMode::Survival;
         let PlayerLife::Alive(avatar) = &mut player.life else {
@@ -64,7 +63,10 @@ pub fn apply_hazards(sim: &CellWorld, players: &mut Players) {
             avatar.burning_secs = 0.0;
             continue;
         }
-        let sample = sample_hazards(sim, &avatar.creature);
+        let bounds = bodies
+            .bounds(avatar.body_id)
+            .expect("an alive avatar owns its body");
+        let sample = sample_hazards(sim, bounds);
         let mut damage = sample.contact_dps * TICK_DT;
         if sample.hot {
             avatar.burning_secs = BURN_SECS;
@@ -93,4 +95,30 @@ pub fn apply_hazards(sim: &CellWorld, players: &mut Players) {
             avatar.health.hp = (avatar.health.hp + REGEN_RATE * TICK_DT).min(MAX_HEALTH);
         }
     }
+}
+
+pub fn apply_mob_hazards(sim: &CellWorld, bodies: &Bodies, mobs: &mut Mobs) -> Vec<u32> {
+    let mut dead = Vec::new();
+    for (&body_id, mob) in mobs.iter_mut() {
+        let Some(bounds) = bodies.bounds(body_id) else {
+            continue;
+        };
+        let sample = sample_hazards(sim, bounds);
+        let mut damage = sample.contact_dps * TICK_DT;
+        if sample.hot {
+            mob.burning_secs = BURN_SECS;
+        }
+        if sample.extinguish {
+            mob.burning_secs = 0.0;
+        }
+        if mob.burning_secs > 0.0 {
+            damage += BURN_DPS * TICK_DT;
+            mob.burning_secs = (mob.burning_secs - TICK_DT).max(0.0);
+        }
+        mob.hp -= damage;
+        if mob.hp <= 0.0 {
+            dead.push(body_id);
+        }
+    }
+    dead
 }

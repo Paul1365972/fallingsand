@@ -2,11 +2,11 @@ use super::StoreError;
 use crate::inventory::Inventory;
 use crate::player::{AvatarSnapshot, Player, PlayerLife, RestoredPlayer, ResumeSnapshot};
 use fallingsand_core::{
-    HOTBAR_SLOTS, Inventory as CoreInventory, ItemId, ItemStack, MAX_AIR_SECONDS, MAX_HEALTH,
-    PLAYER_SLOTS, Subcell, content,
+    CellPos, HOTBAR_SLOTS, Inventory as CoreInventory, ItemId, ItemStack, MAX_AIR_SECONDS,
+    MAX_HEALTH, PLAYER_SLOTS, Subcell, content,
 };
-use fallingsand_math::SUBCELL_UNITS_PER_CELL;
 use fallingsand_protocol::GameMode;
+use fallingsand_sim::body::Bodies;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -31,15 +31,12 @@ pub(super) struct PlayerRecord {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 enum ResumeState {
     Alive(AvatarRecord),
-    Dead {
-        view_anchor: fallingsand_core::CellPos,
-    },
+    Dead { view_anchor: CellPos },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct AvatarRecord {
-    x: Subcell,
-    y: Subcell,
+    anchor: CellPos,
     vx: Subcell,
     vy: Subcell,
     hp: f32,
@@ -49,17 +46,7 @@ struct AvatarRecord {
     flying: bool,
 }
 
-fn subcell_position_fits(value: Subcell) -> bool {
-    let cell = value.raw().div_euclid(i64::from(SUBCELL_UNITS_PER_CELL));
-    i32::try_from(cell).is_ok()
-}
-
 fn validate_avatar_record(record: &AvatarRecord) -> Result<(), StoreError> {
-    if !subcell_position_fits(record.x) || !subcell_position_fits(record.y) {
-        return Err(StoreError::CorruptPlayer(
-            "avatar position is outside the cell coordinate range".into(),
-        ));
-    }
     if !record.hp.is_finite() || !(0.0..=MAX_HEALTH).contains(&record.hp) {
         return Err(StoreError::CorruptPlayer(format!(
             "invalid avatar health {}",
@@ -84,8 +71,7 @@ fn validate_avatar_record(record: &AvatarRecord) -> Result<(), StoreError> {
 impl From<AvatarRecord> for AvatarSnapshot {
     fn from(record: AvatarRecord) -> Self {
         Self {
-            x: record.x,
-            y: record.y,
+            anchor: record.anchor,
             vx: record.vx,
             vy: record.vy,
             hp: record.hp,
@@ -100,8 +86,7 @@ impl From<AvatarRecord> for AvatarSnapshot {
 impl From<&AvatarSnapshot> for AvatarRecord {
     fn from(snapshot: &AvatarSnapshot) -> Self {
         Self {
-            x: snapshot.x,
-            y: snapshot.y,
+            anchor: snapshot.anchor,
             vx: snapshot.vx,
             vy: snapshot.vy,
             hp: snapshot.hp,
@@ -212,13 +197,16 @@ pub(super) fn restore_player(record: PlayerRecord) -> Result<RestoredPlayer, Sto
     })
 }
 
-pub(super) fn snapshot_player(player: &Player) -> Result<PlayerRecord, StoreError> {
+pub(super) fn snapshot_player(
+    player: &Player,
+    bodies: &Bodies,
+) -> Result<PlayerRecord, StoreError> {
     let resume = match &player.life {
         PlayerLife::Entering(entering) => {
             ResumeState::Alive(AvatarRecord::from(&entering.materialization.template))
         }
         PlayerLife::Alive(avatar) => {
-            let snapshot = AvatarSnapshot::from_avatar(avatar);
+            let snapshot = AvatarSnapshot::from_avatar(avatar, bodies);
             ResumeState::Alive(AvatarRecord::from(&snapshot))
         }
         PlayerLife::Dead(dead) => ResumeState::Dead {

@@ -256,9 +256,7 @@ fn status_color(status: InteractionStatus, progress: f32) -> Option<Color> {
         InteractionStatus::OutOfReach | InteractionStatus::NoTarget => {
             Color::srgba(0.55, 0.55, 0.6, 0.32)
         }
-        InteractionStatus::Occupied | InteractionStatus::Undiggable => {
-            Color::srgba(1.0, 0.25, 0.2, 0.45)
-        }
+        InteractionStatus::Occupied => Color::srgba(1.0, 0.25, 0.2, 0.45),
         InteractionStatus::WrongTool | InteractionStatus::NotPlaceable => {
             Color::srgba(1.0, 0.55, 0.12, 0.48)
         }

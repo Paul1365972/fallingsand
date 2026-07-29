@@ -204,12 +204,12 @@ pub fn drain_network(
                     let Some(player) = players.get_mut(player_id) else {
                         continue;
                     };
-                    player.control.input = if player.is_alive() {
+                    player.inbox.input = if player.is_alive() {
                         frame.state
                     } else {
                         InputState::default()
                     };
-                    player.control.last_input_tick = tick;
+                    player.inbox.last_input_tick = tick;
                     for action in frame.actions {
                         apply_input_action(player, action);
                     }
@@ -222,7 +222,7 @@ pub fn drain_network(
                     if text.is_empty() {
                         continue;
                     }
-                    if throttled(&mut player.control.last_chat_tick, tick) {
+                    if throttled(&mut player.inbox.last_chat_tick, tick) {
                         direct.push((player_id, ChatEntry::error("sending too fast")));
                         continue;
                     }
@@ -237,12 +237,12 @@ pub fn drain_network(
                     if line.is_empty() {
                         continue;
                     }
-                    if throttled(&mut player.control.last_command_tick, tick) {
+                    if throttled(&mut player.inbox.last_command_tick, tick) {
                         direct.push((player_id, ChatEntry::error("sending too fast")));
                         continue;
                     }
                     push_history(&mut player.profile.history, &format!("/{line}"));
-                    player.control.pending_commands.push(line);
+                    player.inbox.pending_commands.push(line);
                 }
                 ClientMessage::SetDebug { enabled } => {
                     if sessions.active_player(id).is_some()
@@ -256,10 +256,10 @@ pub fn drain_network(
     }
 
     for (_, player) in players.iter_mut() {
-        if tick.saturating_sub(player.control.last_input_tick) > INPUT_HOLD_TICKS {
-            player.control.input = InputState {
-                aim: player.control.input.aim,
-                cursor_mode: player.control.input.cursor_mode,
+        if tick.saturating_sub(player.inbox.last_input_tick) > INPUT_HOLD_TICKS {
+            player.inbox.input = InputState {
+                aim: player.inbox.input.aim,
+                cursor_mode: player.inbox.input.cursor_mode,
                 ..Default::default()
             };
         }
@@ -346,12 +346,12 @@ fn poll_messages(sessions: &mut Sessions, id: SessionId) -> Vec<ClientMessage> {
 fn apply_input_action(player: &mut Player, action: InputAction) {
     if !player.is_alive() {
         if matches!(player.life, PlayerLife::Dead(_)) && matches!(action, InputAction::Revive) {
-            player.control.revive_requested = true;
+            player.inbox.revive_requested = true;
         }
         return;
     }
     match action {
-        InputAction::Jump => player.control.jump_pressed = true,
+        InputAction::Jump => player.inbox.jump_pressed = true,
         InputAction::Revive => {}
         InputAction::ToggleFlight => {
             if player.profile.mode == GameMode::Creative
@@ -365,8 +365,8 @@ fn apply_input_action(player: &mut Player, action: InputAction) {
                 player.profile.selected_slot = slot;
             }
         }
-        InputAction::Slot(action) => player.control.pending_slot_actions.push(action),
-        InputAction::Use { button, cell } => player.control.pending_uses.push((button, cell)),
+        InputAction::Slot(action) => player.inbox.pending_slot_actions.push(action),
+        InputAction::Use { button, cell } => player.inbox.pending_uses.push((button, cell)),
     }
 }
 

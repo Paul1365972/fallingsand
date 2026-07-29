@@ -1,10 +1,14 @@
 use crate::inventory::Inventory;
 use crate::player::{PlayerLife, Players};
+use crate::species::flesh;
 use fallingsand_core::content;
-use fallingsand_core::{CellPos, ItemId, ItemStack, MaterialId, Phase, TICK_DT, Tag, ray_cells};
+use fallingsand_core::{
+    CellPos, CellRect, ItemId, ItemStack, MaterialId, Phase, TICK_DT, Tag, ray_cells,
+};
 use fallingsand_protocol::{
     CursorMode, GameMode, InputState, InteractionState, InteractionStatus, UseButton,
 };
+use fallingsand_sim::body::Bodies;
 
 const BARE_HAND_SPEED: f32 = 0.55;
 const CREATIVE_REACH: f32 = 100.0;
@@ -35,7 +39,18 @@ impl DigState {
     }
 }
 
-type Creature = fallingsand_sim::creature::Creature;
+#[derive(Clone, Copy)]
+struct Stance {
+    anchor: CellPos,
+    rect: CellRect,
+}
+
+impl Stance {
+    fn center(self) -> (f32, f32) {
+        (self.anchor.x as f32 + 0.5, self.anchor.y as f32 + 0.5)
+    }
+}
+
 type World = fallingsand_sim::CellWorld;
 
 #[derive(Clone, Copy)]
@@ -55,13 +70,20 @@ impl InteractionContext {
     }
 }
 
-pub fn apply_player_inputs(sim: &mut World, players: &mut Players) {
+pub fn apply_player_inputs(sim: &mut World, bodies: &Bodies, players: &mut Players) {
     for (_, player) in players.iter_mut() {
-        let input = player.control.input;
-        let uses = std::mem::take(&mut player.control.pending_uses);
+        let input = player.inbox.input;
+        let uses = std::mem::take(&mut player.inbox.pending_uses);
         let survival = player.profile.mode == GameMode::Survival;
         let PlayerLife::Alive(avatar) = &mut player.life else {
             continue;
+        };
+        let anchor = bodies
+            .cell(avatar.body_id)
+            .expect("an alive avatar owns its body");
+        let body = Stance {
+            anchor,
+            rect: flesh::rect(anchor, avatar.controller.rows),
         };
         let context = InteractionContext {
             input,
@@ -73,7 +95,6 @@ pub fn apply_player_inputs(sim: &mut World, players: &mut Players) {
                 CREATIVE_REACH
             },
         };
-        let body = &avatar.creature;
         let dig = &mut avatar.dig;
         let inventory = &mut player.profile.inventory;
 
@@ -106,7 +127,7 @@ pub fn apply_player_inputs(sim: &mut World, players: &mut Players) {
 fn active_dig(
     world: &mut World,
     context: &InteractionContext,
-    body: &Creature,
+    body: Stance,
     dig: &mut DigState,
     inventory: &mut Inventory,
 ) {
@@ -158,7 +179,7 @@ fn active_dig(
         return;
     }
 
-    if context.survival {
+    if context.survival && plan.item != ItemId::NONE {
         let leftover = inventory
             .inner
             .insert_first_fit(ItemStack::new(plan.item, 1));
@@ -175,7 +196,7 @@ fn active_dig(
 fn active_place(
     world: &mut World,
     context: &InteractionContext,
-    body: &Creature,
+    body: Stance,
     dig: &mut DigState,
     inventory: &mut Inventory,
 ) {
@@ -221,7 +242,7 @@ fn active_place(
 fn idle_preview(
     world: &World,
     context: &InteractionContext,
-    body: &Creature,
+    body: Stance,
     inventory: &Inventory,
 ) -> Option<InteractionState> {
     let slot = context.selected_slot as usize;
@@ -263,9 +284,6 @@ fn classify_dig(
         return Err(InteractionStatus::Occupied);
     }
     let item = content::item_for_material(material);
-    if context.survival && item == ItemId::NONE {
-        return Err(InteractionStatus::Undiggable);
-    }
     let slot = context.selected_slot as usize;
     let held = inventory.inner.get(slot);
     let (method, speed, tier) = match held.and_then(|stack| {
@@ -278,7 +296,7 @@ fn classify_dig(
         if tier < content::material(material).mining_tier {
             return Err(InteractionStatus::WrongTool);
         }
-        if !inventory.inner.can_insert(ItemStack::new(item, 1)) {
+        if item != ItemId::NONE && !inventory.inner.can_insert(ItemStack::new(item, 1)) {
             return Err(InteractionStatus::InventoryFull);
         }
     }
@@ -293,7 +311,7 @@ fn classify_dig(
 fn select_dig(
     world: &World,
     input: &InputState,
-    body: &Creature,
+    body: Stance,
     reach: f32,
     survival: bool,
 ) -> Option<CellPos> {
@@ -308,14 +326,15 @@ fn select_dig(
 
 fn smart_dig_target(
     world: &World,
-    body: &Creature,
+    body: Stance,
     aim: CellPos,
     reach: f32,
     survival: bool,
 ) -> Option<CellPos> {
-    let footprint = body.footprint();
-    let aim_offset_x = aim.x as f32 + 0.5 - body.x.to_cells();
-    let aim_offset_y = aim.y as f32 + 0.5 - body.y.to_cells();
+    let rect = body.rect;
+    let (cx, cy) = body.center();
+    let aim_offset_x = aim.x as f32 + 0.5 - cx;
+    let aim_offset_y = aim.y as f32 + 0.5 - cy;
     let max_distance = reach.ceil() as i32 + 1;
     let sweep_horizontally = aim_offset_x.abs() >= aim_offset_y.abs();
     let positive_direction = (if sweep_horizontally {
@@ -327,21 +346,21 @@ fn smart_dig_target(
     for distance in 1..=max_distance {
         let nearest_target = if sweep_horizontally {
             let x = if positive_direction {
-                footprint.x1 + distance
+                rect.max.x + distance
             } else {
-                footprint.x0 - distance
+                rect.min.x - distance
             };
-            (footprint.y0..=footprint.y1)
+            rect.rows()
                 .map(|y| CellPos::new(x, y))
                 .filter(|&pos| diggable(world, pos, survival) && in_reach(pos))
                 .min_by_key(|pos| (pos.y - aim.y).abs())
         } else {
             let y = if positive_direction {
-                footprint.y1 + distance
+                rect.max.y + distance
             } else {
-                footprint.y0 - distance
+                rect.min.y - distance
             };
-            (footprint.x0..=footprint.x1)
+            rect.columns()
                 .map(|x| CellPos::new(x, y))
                 .filter(|&pos| diggable(world, pos, survival) && in_reach(pos))
                 .min_by_key(|pos| (pos.x - aim.x).abs())
@@ -353,7 +372,7 @@ fn smart_dig_target(
     None
 }
 
-fn select_place(world: &World, input: &InputState, body: &Creature, reach: f32) -> Option<CellPos> {
+fn select_place(world: &World, input: &InputState, body: Stance, reach: f32) -> Option<CellPos> {
     let aim = input.aim;
     let target = match input.cursor_mode {
         CursorMode::Precise => world
@@ -361,7 +380,7 @@ fn select_place(world: &World, input: &InputState, body: &Creature, reach: f32) 
             .filter(|cell| cell.is_air())
             .map(|_| aim)?,
         CursorMode::Smart => {
-            let start = body.cell();
+            let start = body.anchor;
             let end = clamp_to_reach(body, aim, reach);
             last_air_before_obstruction(world, start, end)?
         }
@@ -369,7 +388,7 @@ fn select_place(world: &World, input: &InputState, body: &Creature, reach: f32) 
     (cell_distance_sq(body, target) <= reach * reach).then_some(target)
 }
 
-fn miss_reason(body: &Creature, input: &InputState, reach: f32) -> InteractionStatus {
+fn miss_reason(body: Stance, input: &InputState, reach: f32) -> InteractionStatus {
     if cell_distance_sq(body, input.aim) <= reach * reach {
         InteractionStatus::NoTarget
     } else {
@@ -377,9 +396,8 @@ fn miss_reason(body: &Creature, input: &InputState, reach: f32) -> InteractionSt
     }
 }
 
-fn clamp_to_reach(body: &Creature, aim: CellPos, reach: f32) -> CellPos {
-    let cx = body.x.to_cells();
-    let cy = body.y.to_cells();
+fn clamp_to_reach(body: Stance, aim: CellPos, reach: f32) -> CellPos {
+    let (cx, cy) = body.center();
     let dx = aim.x as f32 + 0.5 - cx;
     let dy = aim.y as f32 + 0.5 - cy;
     let dist = (dx * dx + dy * dy).sqrt();
@@ -401,7 +419,7 @@ fn last_air_before_obstruction(world: &World, start: CellPos, end: CellPos) -> O
         };
         if cell.is_air() {
             last = Some(pos);
-        } else if !content::tags(cell.material).contains(Tag::Player) {
+        } else if !content::tags(cell.material).contains(Tag::Body) {
             break;
         }
     }
@@ -409,7 +427,7 @@ fn last_air_before_obstruction(world: &World, start: CellPos, end: CellPos) -> O
 }
 
 fn destructible(material: MaterialId, survival: bool) -> bool {
-    if content::tags(material).contains(Tag::Player) {
+    if content::tags(material).contains(Tag::Body) {
         return false;
     }
     match content::phase(material) {
@@ -425,9 +443,10 @@ fn diggable(world: &World, pos: CellPos, survival: bool) -> bool {
         .is_some_and(|cell| destructible(cell.material, survival))
 }
 
-fn cell_distance_sq(body: &Creature, pos: CellPos) -> f32 {
-    let dx = pos.x as f32 + 0.5 - body.x.to_cells();
-    let dy = pos.y as f32 + 0.5 - body.y.to_cells();
+fn cell_distance_sq(body: Stance, pos: CellPos) -> f32 {
+    let (cx, cy) = body.center();
+    let dx = pos.x as f32 + 0.5 - cx;
+    let dy = pos.y as f32 + 0.5 - cy;
     dx * dx + dy * dy
 }
 

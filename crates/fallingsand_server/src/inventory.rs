@@ -26,7 +26,7 @@ impl Default for Inventory {
 
 pub fn apply_slot_actions(players: &mut Players) {
     for (_, player) in players.iter_mut() {
-        let actions = std::mem::take(&mut player.control.pending_slot_actions);
+        let actions = std::mem::take(&mut player.inbox.pending_slot_actions);
         if !player.is_alive() || actions.is_empty() {
             continue;
         }

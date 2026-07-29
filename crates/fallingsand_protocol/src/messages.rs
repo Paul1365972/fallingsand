@@ -162,7 +162,7 @@ pub enum InteractionStatus {
     NoTarget,
     Occupied,
     WrongTool,
-    Undiggable,
+
     InventoryFull,
     NotPlaceable,
 }

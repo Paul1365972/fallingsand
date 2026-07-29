@@ -10,7 +10,7 @@ use fallingsand_protocol::{
     ServerMessage, TickFrame, cells_to_wire,
 };
 use fallingsand_sim::CellWorld;
-use fallingsand_sim::debris::DebrisWorld;
+use fallingsand_sim::body::Bodies;
 use fallingsand_worldgen::WorldGenerator;
 use rustc_hash::FxHashSet;
 use std::collections::BTreeMap;
@@ -60,7 +60,7 @@ pub fn replicate(
     sessions: &mut Sessions,
     players: &Players,
     sim: &CellWorld,
-    debris: &DebrisWorld,
+    bodies: &Bodies,
     clock: &Calendar,
     regions: &RegionMap,
     generator: &WorldGenerator,
@@ -72,11 +72,16 @@ pub fn replicate(
         .iter()
         .map(|(&id, player)| PlayerState {
             player: id,
-            avatar: player.avatar().map(|avatar| PlayerAvatarState {
-                cx: avatar.creature.x.floor_cell(),
-                cy: avatar.creature.y.floor_cell(),
-                height: avatar.creature.rows() as u8,
-                burning: avatar.burning_secs > 0.0,
+            avatar: player.avatar().map(|avatar| {
+                let anchor = bodies
+                    .cell(avatar.body_id)
+                    .expect("an alive avatar owns its body");
+                PlayerAvatarState {
+                    cx: anchor.x,
+                    cy: anchor.y,
+                    height: avatar.controller.rows as u8,
+                    burning: avatar.burning_secs > 0.0,
+                }
             }),
         })
         .collect();
@@ -97,7 +102,7 @@ pub fn replicate(
         let Some(player) = players.get(player_id) else {
             continue;
         };
-        let center = player.view_anchor().chunk();
+        let center = player.view_anchor(bodies).chunk();
         let mut interest = FxHashSet::default();
         for dy in -INTEREST_RADIUS_Y..=INTEREST_RADIUS_Y {
             for dx in -INTEREST_RADIUS_X..=INTEREST_RADIUS_X {
@@ -117,7 +122,7 @@ pub fn replicate(
             &mut debug_rects,
         );
         let (debug_bodies, debug_motion) = if session.replication.debug {
-            debug_payload(sim, debris, &interest)
+            debug_payload(sim, bodies, &interest)
         } else {
             (Vec::new(), Vec::new())
         };
@@ -129,9 +134,9 @@ pub fn replicate(
         };
         let fresh = session.replication.fresh;
         let inventory = inventory_delta(&mut session.replication, &player.profile.inventory, fresh);
-        let anchor = player.view_anchor();
+        let anchor = player.view_anchor(bodies);
         let (biome, band) = generator.location_names(anchor.x, anchor.y);
-        let current_self = self_state(player, biome, band);
+        let current_self = self_state(player, bodies, anchor, biome, band);
         let self_state = if session.replication.last_self.as_ref() != Some(&current_self) {
             session.replication.last_self = Some(current_self.clone());
             Some(current_self)
@@ -175,12 +180,18 @@ pub fn replicate(
     }
 }
 
-fn self_state(player: &crate::player::Player, biome: &str, band: &str) -> SelfState {
+fn self_state(
+    player: &crate::player::Player,
+    bodies: &Bodies,
+    anchor: CellPos,
+    biome: &str,
+    band: &str,
+) -> SelfState {
     let life = match &player.life {
         PlayerLife::Entering(_) => SelfLife::Entering,
         PlayerLife::Alive(avatar) => {
             let interaction = avatar.dig.interaction.unwrap_or(InteractionState {
-                target: avatar.creature.cell(),
+                target: anchor,
                 status: InteractionStatus::None,
                 progress: 0.0,
                 dig_material: None,
@@ -196,7 +207,7 @@ fn self_state(player: &crate::player::Player, biome: &str, band: &str) -> SelfSt
     };
     SelfState {
         life,
-        anchor: (!player.is_alive()).then(|| player.view_anchor()),
+        anchor: (!player.is_alive()).then(|| player.view_anchor(bodies)),
         mode: player.profile.mode,
         biome: biome.into(),
         band: band.into(),
@@ -255,10 +266,10 @@ const MAX_DEBUG_MOTION: usize = 8192;
 
 fn debug_payload(
     sim: &CellWorld,
-    debris: &DebrisWorld,
+    bodies: &Bodies,
     interest: &FxHashSet<ChunkPos>,
 ) -> (Vec<DebugBody>, Vec<DebugMotion>) {
-    let mut bodies: Vec<DebugBody> = debris
+    let mut debug_bodies: Vec<DebugBody> = bodies
         .rasters()
         .filter(|(_, raster)| raster.iter().any(|pos| interest.contains(&pos.chunk())))
         .map(|(id, raster)| DebugBody {
@@ -266,7 +277,7 @@ fn debug_payload(
             cells: raster.to_vec(),
         })
         .collect();
-    bodies.sort_unstable_by_key(|body| body.id);
+    debug_bodies.sort_unstable_by_key(|body| body.id);
 
     let mut motion = Vec::new();
     let mut chunks: Vec<ChunkPos> = interest.iter().copied().collect();
@@ -299,7 +310,7 @@ fn debug_payload(
             }
         }
     }
-    (bodies, motion)
+    (debug_bodies, motion)
 }
 
 fn particles_in_interest(particles: &[ParticleSpawn], center: ChunkPos) -> Vec<ParticleSpawn> {

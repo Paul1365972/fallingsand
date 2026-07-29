@@ -4,6 +4,7 @@ pub mod fluids;
 pub mod ores;
 pub mod special;
 pub mod terrain;
+pub mod toys;
 
 use crate::Catalog;
 
@@ -14,4 +15,5 @@ pub fn define(catalog: &mut Catalog) {
     fluids::define(catalog);
     flora::define(catalog);
     fire::define(catalog);
+    toys::define(catalog);
 }

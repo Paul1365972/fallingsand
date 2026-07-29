@@ -9,6 +9,7 @@ use crate::regions::{RegionMap, snapshot_regions};
 use fallingsand_core::{Calendar, Region, RegionPos};
 use fallingsand_protocol::PlayerUuid;
 use fallingsand_sim::CellWorld;
+use fallingsand_sim::body::Bodies;
 use player_record::{PlayerRecord, restore_player, snapshot_player};
 use redb::TableDefinition;
 use serde::{Deserialize, Serialize};
@@ -18,8 +19,8 @@ use std::sync::Arc;
 use store::WorldStore;
 use worker::{PersistenceWorker, WorkerCompletion};
 
-pub const REGION_FORMAT_VERSION: u8 = 24;
-pub const WORLD_FORMAT_VERSION: u16 = 24;
+pub const REGION_FORMAT_VERSION: u8 = 26;
+pub const WORLD_FORMAT_VERSION: u16 = 26;
 const AUTOSAVE_INTERVAL_TICKS: u64 = fallingsand_core::ticks_from_secs(10.0);
 
 const REGIONS: TableDefinition<u64, &[u8]> = TableDefinition::new("regions");
@@ -217,11 +218,12 @@ impl Persistence {
 
     pub fn stage_players<'a>(
         &mut self,
+        bodies: &Bodies,
         players: impl IntoIterator<Item = &'a Player>,
     ) -> Result<(), StoreError> {
         let records = players
             .into_iter()
-            .map(|player| Ok((player.uuid, snapshot_player(player)?)))
+            .map(|player| Ok((player.uuid, snapshot_player(player, bodies)?)))
             .collect::<Result<Vec<_>, StoreError>>()?;
         self.pending_players.extend(records);
         Ok(())
@@ -343,6 +345,7 @@ impl Persistence {
 
 pub fn autosave(
     sim: &CellWorld,
+    bodies: &Bodies,
     regions: &RegionMap,
     info: &WorldInfo,
     clock: &Calendar,
@@ -354,12 +357,13 @@ pub fn autosave(
         return Ok(());
     }
 
-    stage_world_snapshot(sim, regions, info, clock, players, persistence)?;
+    stage_world_snapshot(sim, bodies, regions, info, clock, players, persistence)?;
     persistence.start_save()
 }
 
 pub fn shutdown_world(
     sim: &CellWorld,
+    bodies: &Bodies,
     regions: &RegionMap,
     info: &WorldInfo,
     clock: &Calendar,
@@ -367,7 +371,7 @@ pub fn shutdown_world(
     persistence: &mut Persistence,
 ) -> Result<(), StoreError> {
     let snapshot_result = if persistence.store.is_some() {
-        stage_world_snapshot(sim, regions, info, clock, players, persistence)
+        stage_world_snapshot(sim, bodies, regions, info, clock, players, persistence)
     } else {
         Ok(())
     };
@@ -377,13 +381,14 @@ pub fn shutdown_world(
 
 fn stage_world_snapshot(
     sim: &CellWorld,
+    bodies: &Bodies,
     regions: &RegionMap,
     info: &WorldInfo,
     clock: &Calendar,
     players: &Players,
     persistence: &mut Persistence,
 ) -> Result<(), StoreError> {
-    persistence.stage_players(players.iter().map(|(_, player)| player))?;
+    persistence.stage_players(bodies, players.iter().map(|(_, player)| player))?;
     persistence.stage_regions(snapshot_regions(sim, regions));
     persistence.stage_meta(world_meta(info, clock, sim.tick()));
     Ok(())

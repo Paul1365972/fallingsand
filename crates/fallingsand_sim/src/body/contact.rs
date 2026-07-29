@@ -1,4 +1,4 @@
-use super::body::{Debris, cell_center};
+use super::state::{Body, Freedoms, cell_center};
 use fallingsand_core::{CellPos, Q16};
 use fallingsand_math::round_div;
 use rustc_hash::FxHashMap;
@@ -8,8 +8,7 @@ const ITERATIONS: u32 = 8;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Peer {
     Terrain,
-    Debris(usize),
-    Creature(u32),
+    Body(usize),
     Cell { pos: CellPos, mass: i64 },
 }
 
@@ -37,16 +36,6 @@ impl Contact {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(super) struct CreatureState {
-    pub mass: i64,
-    pub vx: i64,
-    pub vy: i64,
-    pub start_vx: i64,
-    pub start_vy: i64,
-    pub grounded: bool,
-}
-
-#[derive(Debug, Clone, Copy)]
 pub(super) struct CellState {
     pub mass: i64,
     pub vx: i64,
@@ -56,10 +45,9 @@ pub(super) struct CellState {
 }
 
 pub(super) struct Resolver<'a> {
-    pub bodies: &'a mut [Debris],
+    pub bodies: &'a mut [Body],
     pub coms: &'a [(i64, i64)],
     pub grounded: &'a [bool],
-    pub creatures: &'a mut FxHashMap<u32, CreatureState>,
     pub cells: &'a mut FxHashMap<CellPos, CellState>,
 }
 
@@ -101,31 +89,18 @@ impl Resolver<'_> {
         if mine {
             let body = &self.bodies[contact.body];
             let com = self.coms[contact.body];
-            return debris_side(body, com, point, direction, false);
+            return body_side(body, com, point, direction, false);
         }
         match contact.peer {
             Peer::Terrain => Side {
                 velocity: (0, 0),
                 inverse: None,
             },
-            Peer::Debris(index) => {
+            Peer::Body(index) => {
                 let body = &self.bodies[index];
                 let com = self.coms[index];
                 let pressing = self.grounded[index] && direction.1 < 0;
-                debris_side(body, com, point, direction, pressing)
-            }
-            Peer::Creature(id) => {
-                let state = self.creatures[&id];
-                let pressing = state.grounded && direction.1 < 0;
-                Side {
-                    velocity: (state.vx, state.vy),
-                    inverse: Some(Inverse {
-                        mass: state.mass,
-                        moment: 1,
-                        lever: 0,
-                        rigid_y: pressing,
-                    }),
-                }
+                body_side(body, com, point, direction, pressing)
             }
             Peer::Cell { pos, mass } => {
                 let state = self.cells[&pos];
@@ -177,24 +152,14 @@ impl Resolver<'_> {
         {
             let com = self.coms[contact.body];
             let body = &mut self.bodies[contact.body];
-            apply_debris(body, com, point, jx, jy, false);
+            apply_to_body(body, com, point, jx, jy, false);
         }
         match contact.peer {
             Peer::Terrain => {}
-            Peer::Debris(index) => {
+            Peer::Body(index) => {
                 let pressing = self.grounded[index] && -direction.1 < 0;
                 let com = self.coms[index];
-                apply_debris(&mut self.bodies[index], com, point, -jx, -jy, pressing);
-            }
-            Peer::Creature(id) => {
-                let state = self.creatures.get_mut(&id).expect("creature state exists");
-                let dvx = round_div(i128::from(-jx), i128::from(state.mass)) as i64;
-                let mut dvy = round_div(i128::from(-jy), i128::from(state.mass)) as i64;
-                if state.grounded && dvy < 0 {
-                    dvy = 0;
-                }
-                state.vx += dvx;
-                state.vy += dvy;
+                apply_to_body(&mut self.bodies[index], com, point, -jx, -jy, pressing);
             }
             Peer::Cell { pos, .. } => {
                 let state = self.cells.get_mut(&pos).expect("cell state exists");
@@ -245,19 +210,19 @@ impl Resolver<'_> {
     }
 }
 
-pub(super) fn debris_point_mass(
-    body: &Debris,
+pub(super) fn body_point_mass(
+    body: &Body,
     com: (i64, i64),
     point: (i64, i64),
     normal: (i32, i32),
 ) -> i128 {
-    debris_side(body, com, point, normal, false)
+    body_side(body, com, point, normal, false)
         .effective_mass(normal)
         .unwrap_or(i128::MAX / 2)
 }
 
-fn debris_side(
-    body: &Debris,
+fn body_side(
+    body: &Body,
     com: (i64, i64),
     point: (i64, i64),
     direction: (i32, i32),
@@ -280,8 +245,8 @@ fn debris_side(
     }
 }
 
-fn apply_debris(
-    body: &mut Debris,
+fn apply_to_body(
+    body: &mut Body,
     com: (i64, i64),
     point: (i64, i64),
     jx: i64,
@@ -298,5 +263,7 @@ fn apply_debris(
     let rx = i128::from(point.0 - com.0);
     let ry = i128::from(point.1 - com.1);
     let torque = rx * i128::from(jy) - ry * i128::from(jx);
-    body.spin += super::rotation::Spin::from_angular_impulse(torque, body.moment);
+    if body.freedoms.holds(Freedoms::TURN) {
+        body.spin += super::rotation::Spin::from_angular_impulse(torque, body.moment);
+    }
 }

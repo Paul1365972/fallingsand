@@ -126,8 +126,7 @@ pub fn emit(content: &Content) -> TokenStream {
             let colors = colors_tokens(&mat.colors);
             let hardness = Literal::f32_suffixed(mat.hardness);
             let mining_tier = Literal::u8_suffixed(mining_tier_from_hardness(mat.hardness));
-            let entity_grip = Literal::f32_suffixed(mat.entity_grip);
-            let entity_bounce = Literal::f32_suffixed(mat.entity_bounce);
+            let traction = Literal::f32_suffixed(mat.traction);
             let contact_damage = Literal::f32_suffixed(mat.contact_damage);
             let [er, eg, eb] = mat.emission;
             let emission_r = Literal::f32_suffixed(er);
@@ -140,8 +139,7 @@ pub fn emit(content: &Content) -> TokenStream {
                     colors: #colors,
                     hardness: #hardness,
                     mining_tier: #mining_tier,
-                    entity_grip: #entity_grip,
-                    entity_bounce: #entity_bounce,
+                    traction: #traction,
                     contact_damage: #contact_damage,
                     emission: [#emission_r, #emission_g, #emission_b],
                     flicker: #flicker,
@@ -190,11 +188,11 @@ pub fn emit(content: &Content) -> TokenStream {
             bond_group(a) != u8::MAX && bond_group(a) == bond_group(b)
         }
 
-        const LIQUID_EXCHANGE_THRESHOLDS: [u64; MATERIAL_COUNT * MATERIAL_COUNT] =
+        static LIQUID_EXCHANGE_THRESHOLDS: [u64; MATERIAL_COUNT * MATERIAL_COUNT] =
             [#(#liquid_exchange_thresholds),*];
 
         #[inline]
-        pub const fn liquid_exchange_threshold(
+        pub fn liquid_exchange_threshold(
             a: crate::material::MaterialId,
             b: crate::material::MaterialId,
         ) -> u64 {

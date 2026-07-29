@@ -37,7 +37,7 @@ pub(super) fn build_items(
 
     let mut material_item = vec![0u16; materials.len()];
     for (index, mat) in materials.iter().enumerate().skip(1) {
-        if mat.tags.contains(Tag::Player) {
+        if mat.tags.contains(Tag::Body) || mat.tags.contains(Tag::Worthless) {
             continue;
         }
         let id = items.len() as u16;

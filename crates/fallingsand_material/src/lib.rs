@@ -21,7 +21,8 @@ pub enum Phase {
 pub enum Tag {
     Dissolvable,
     Hot,
-    Player,
+    Body,
+    Worthless,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -111,6 +112,10 @@ impl Q16 {
         self.0
     }
 
+    pub fn to_f32(self) -> f32 {
+        self.0 as f32 / 65536.0
+    }
+
     pub const fn apply(self, v: i32) -> i32 {
         let product = v as i64 * self.0 as i64;
         let half = 1i64 << 15;
@@ -170,8 +175,7 @@ pub struct MaterialInfo {
     pub colors: &'static [[u8; 4]],
     pub hardness: f32,
     pub mining_tier: u8,
-    pub entity_grip: f32,
-    pub entity_bounce: f32,
+    pub traction: f32,
     pub contact_damage: f32,
     pub emission: [f32; 3],
     pub flicker: f32,

@@ -42,6 +42,12 @@ pub struct CellPos {
     pub y: i32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CellRect {
+    pub min: CellPos,
+    pub max: CellPos,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ChunkPos {
     pub x: i32,
@@ -94,6 +100,51 @@ impl CellPos {
 
     pub const fn region(self) -> RegionPos {
         self.chunk().region()
+    }
+}
+
+impl CellRect {
+    pub const fn new(min: CellPos, max: CellPos) -> Self {
+        Self { min, max }
+    }
+
+    pub const fn spanning(origin: CellPos, width: i32, height: i32) -> Self {
+        Self {
+            min: origin,
+            max: CellPos::new(origin.x + width - 1, origin.y + height - 1),
+        }
+    }
+
+    pub const fn around(center: CellPos, size: i32) -> Self {
+        let low = size / 2;
+        Self {
+            min: CellPos::new(center.x - low, center.y - low),
+            max: CellPos::new(center.x + size - low - 1, center.y + size - low - 1),
+        }
+    }
+
+    pub const fn grown(self, by: i32) -> Self {
+        Self {
+            min: CellPos::new(self.min.x - by, self.min.y - by),
+            max: CellPos::new(self.max.x + by, self.max.y + by),
+        }
+    }
+
+    pub const fn contains(self, pos: CellPos) -> bool {
+        pos.x >= self.min.x && pos.x <= self.max.x && pos.y >= self.min.y && pos.y <= self.max.y
+    }
+
+    pub fn columns(self) -> std::ops::RangeInclusive<i32> {
+        self.min.x..=self.max.x
+    }
+
+    pub fn rows(self) -> std::ops::RangeInclusive<i32> {
+        self.min.y..=self.max.y
+    }
+
+    pub fn cells(self) -> impl Iterator<Item = CellPos> {
+        self.rows()
+            .flat_map(move |y| self.columns().map(move |x| CellPos::new(x, y)))
     }
 }
 

@@ -11,7 +11,7 @@ One global channel of typed entries, and a command registry that is the single s
 
 ## Model
 
-**Server** — the registry pairs a `CommandInfo` with a handler taking one context that packs the mutable world and the caller. Argument accessors fail into `Usage`, rendered from the entry's own parameters, so no handler authors a usage string; replies target the caller or broadcast. Commands run in tick step 2 for a living caller only, throttled apart from chat.
+**Server** — the registry pairs a `CommandInfo` with a handler taking one context that packs the mutable world and the caller. Argument accessors fail into `Usage`, rendered from the entry's own parameters, so no handler authors a usage string; replies target the caller or broadcast. Commands run in tick step 2 for a living caller only, throttled apart from chat. What can be summoned is the species registry itself.
 
 **Client** — a 100-entry ring plus a composer owning draft, recall, and completion. Recall and completion write the draft through the field's live editor, never by replacing it; typing flows back and invalidates completion. Both sides append to the recall ring through one shared function, so the optimistic and persisted copies agree.
 

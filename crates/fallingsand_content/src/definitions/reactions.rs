@@ -1,6 +1,6 @@
 use super::materials::fire::SMOKE;
 use super::materials::fluids::{ACID, LAVA, STEAM, WATER};
-use super::materials::special::AIR;
+use super::materials::special::{AIR, CORPSE};
 use super::materials::terrain::{ICE, SNOW, STONE};
 use crate::{Catalog, Tag, reaction, same, tagged};
 
@@ -26,4 +26,5 @@ pub fn define(catalog: &mut Catalog) {
 
     catalog.decay(STEAM, WATER, 0.1);
     catalog.decay(SMOKE, AIR, 0.36);
+    catalog.decay(CORPSE, SMOKE, 0.15);
 }

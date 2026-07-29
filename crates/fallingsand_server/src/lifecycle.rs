@@ -1,21 +1,29 @@
-use crate::physics::{try_materialize, unstamp};
-use crate::player::{AvatarSnapshot, BodyIds, PlayerLife, Players, SearchWindow, SpawnSearch};
-use fallingsand_core::{CHUNK_SIZE, CellPos};
+use crate::controllers::Controller;
+use crate::player::{Avatar, AvatarSnapshot, BodyIds, Health, PlayerLife, Players, SpawnSearch};
+use crate::species::flesh::{self, DUCK_ROWS, STAND_ROWS};
+use fallingsand_core::content::material;
+use fallingsand_core::{CHUNK_SIZE, CellPos, CellRect, ChunkPos};
 use fallingsand_protocol::PlayerId;
 use fallingsand_sim::CellWorld;
+use fallingsand_sim::body::{Bodies, Policy};
 
 const SEARCH_ATTEMPTS_PER_TICK: usize = CHUNK_SIZE;
 
 pub fn begin_revives(players: &mut Players, spawn: CellPos, tick: u64) {
     for (_, player) in players.iter_mut() {
-        if !std::mem::take(&mut player.control.revive_requested) {
+        if !std::mem::take(&mut player.inbox.revive_requested) {
             continue;
         }
         player.begin_revive(spawn, tick);
     }
 }
 
-pub fn resolve_lethal(sim: &mut CellWorld, players: &mut Players, tick: u64) -> Vec<String> {
+pub fn resolve_lethal(
+    sim: &mut CellWorld,
+    bodies: &mut Bodies,
+    players: &mut Players,
+    tick: u64,
+) -> Vec<String> {
     let dying: Vec<PlayerId> = players
         .iter()
         .filter_map(|(&id, player)| {
@@ -31,21 +39,22 @@ pub fn resolve_lethal(sim: &mut CellWorld, players: &mut Players, tick: u64) -> 
         let Some(player) = players.get_mut(id) else {
             continue;
         };
-        let anchor = player.view_anchor();
+        let anchor = player.view_anchor(bodies);
         let PlayerLife::Alive(avatar) = &mut player.life else {
             continue;
         };
         let body_id = avatar.body_id;
-        unstamp(sim, &mut avatar.stamp, body_id);
+        bodies.die(body_id);
+        bodies.recast(sim, body_id, material::CORPSE);
         player.die(anchor, tick);
         died.push(player.name.clone());
-        players.unregister_body(body_id);
     }
     died
 }
 
 pub fn advance_materializations(
     sim: &mut CellWorld,
+    bodies: &mut Bodies,
     players: &mut Players,
     body_ids: &mut BodyIds,
     tick: u64,
@@ -61,19 +70,16 @@ pub fn advance_materializations(
         };
         let result = advance_search(
             sim,
+            bodies,
             body_ids,
             &materialization.template,
             &mut materialization.search,
         );
         match result {
             SearchResult::Waiting => {}
-            SearchResult::Found(avatar) => {
-                let body_id = avatar.body_id;
-                player.finish_materialization(*avatar, tick);
-                players.register_body(body_id, id);
-            }
+            SearchResult::Found(avatar) => player.finish_materialization(*avatar, tick),
             SearchResult::Exhausted => {
-                let anchor = player.view_anchor();
+                let anchor = player.view_anchor(bodies);
                 player.die(anchor, tick);
                 failures.push((id, "no representable spawn position remains".into()));
             }
@@ -90,6 +96,7 @@ enum SearchResult {
 
 fn advance_search(
     sim: &mut CellWorld,
+    bodies: &mut Bodies,
     body_ids: &mut BodyIds,
     template: &AvatarSnapshot,
     search: &mut SpawnSearch,
@@ -102,11 +109,12 @@ fn advance_search(
         let Some(candidate) = search.candidate() else {
             return SearchResult::Exhausted;
         };
-        if !footprint_inside_window(candidate, window) {
+        let rect = flesh::rect(candidate, STAND_ROWS);
+        if !window.contains(rect.min) || !window.contains(rect.max) {
             search.center_window(candidate);
             return SearchResult::Waiting;
         }
-        if let Some(avatar) = try_materialize(sim, body_ids, template, candidate) {
+        if let Some(avatar) = try_materialize(sim, bodies, body_ids, template, candidate) {
             return SearchResult::Found(Box::new(avatar));
         }
         if !search.advance() {
@@ -116,23 +124,53 @@ fn advance_search(
     SearchResult::Waiting
 }
 
-fn footprint_inside_window(candidate: CellPos, window: SearchWindow) -> bool {
-    let fp = fallingsand_sim::player::player_shape(fallingsand_sim::player::STAND_ROWS).footprint(
-        fallingsand_core::Subcell::from_cell(candidate.x),
-        fallingsand_core::Subcell::from_cell(candidate.y),
-    );
-    window.contains(CellPos::new(fp.x0, fp.y0)) && window.contains(CellPos::new(fp.x1, fp.y1))
-}
-
-fn window_loaded(sim: &CellWorld, window: SearchWindow) -> bool {
+fn window_loaded(sim: &CellWorld, window: CellRect) -> bool {
     let min = window.min.chunk();
     let max = window.max.chunk();
     for y in min.y..=max.y {
         for x in min.x..=max.x {
-            if sim.chunk(fallingsand_core::ChunkPos::new(x, y)).is_none() {
+            if sim.chunk(ChunkPos::new(x, y)).is_none() {
                 return false;
             }
         }
     }
     true
+}
+
+pub fn rect_loaded(sim: &CellWorld, rect: CellRect) -> bool {
+    rect.cells().all(|pos| sim.get_cell(pos).is_some())
+}
+
+pub fn try_materialize(
+    sim: &mut CellWorld,
+    bodies: &mut Bodies,
+    body_ids: &mut BodyIds,
+    template: &AvatarSnapshot,
+    candidate: CellPos,
+) -> Option<Avatar> {
+    if !rect_loaded(sim, flesh::rect(candidate, STAND_ROWS)) {
+        return None;
+    }
+    let feet = flesh::feet(candidate, STAND_ROWS);
+    let body_id = body_ids.allocate();
+    for rows in (DUCK_ROWS..=STAND_ROWS).rev() {
+        let cells = flesh::cells(flesh::anchor(candidate.x, feet, rows), rows, false);
+        if !bodies.spawn(sim, body_id, &cells, Policy::PLAYER) {
+            continue;
+        }
+        bodies.drive(body_id, template.vx, template.vy);
+        return Some(Avatar {
+            body_id,
+            controller: Controller::new(rows),
+            health: Health {
+                hp: template.hp.clamp(0.0, crate::MAX_HEALTH),
+                regen_delay_ticks: template.regen_delay_ticks,
+            },
+            air: template.air.clamp(0.0, crate::MAX_AIR_SECONDS),
+            burning_secs: template.burning.max(0.0),
+            flying: template.flying,
+            dig: Default::default(),
+        });
+    }
+    None
 }

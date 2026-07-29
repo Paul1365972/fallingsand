@@ -98,6 +98,14 @@ impl CellWorld {
     }
 
     pub fn set_material(&mut self, pos: CellPos, material: MaterialId) -> bool {
+        let shade = Hash::seed(self.tick)
+            .salt(CELL_SHADE_SALT)
+            .pos(pos.x, pos.y)
+            .bits(4) as u8;
+        self.place(pos, material, shade)
+    }
+
+    pub fn place(&mut self, pos: CellPos, material: MaterialId, shade: u8) -> bool {
         let Some(old) = self.get_cell(pos) else {
             return false;
         };
@@ -111,10 +119,6 @@ impl CellWorld {
         let cell = if material == MaterialId::AIR {
             Cell::AIR
         } else {
-            let shade = Hash::seed(self.tick)
-                .salt(CELL_SHADE_SALT)
-                .pos(pos.x, pos.y)
-                .bits(4) as u8;
             Cell::new(material, shade)
         };
         self.set(pos, cell);

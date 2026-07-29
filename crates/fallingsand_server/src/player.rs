@@ -1,10 +1,11 @@
+use crate::controllers::Controller;
 use crate::dig::DigState;
 use crate::inventory::Inventory;
+use crate::species::flesh::{self, STAND_ROWS};
 use crate::{MAX_AIR_SECONDS, MAX_HEALTH};
-use fallingsand_core::{CellPos, Subcell};
+use fallingsand_core::{CHUNK_SIZE, CellPos, CellRect, Subcell};
 use fallingsand_protocol::{GameMode, InputState, PlayerId, PlayerUuid, SlotAction, UseButton};
-use fallingsand_sim::PlayerStamp;
-use fallingsand_sim::creature::{Controller, Creature};
+use fallingsand_sim::body::Bodies;
 use rustc_hash::FxHashMap;
 use std::collections::BTreeMap;
 
@@ -30,7 +31,6 @@ impl BodyIds {
 pub struct Players {
     by_id: BTreeMap<PlayerId, Player>,
     by_uuid: FxHashMap<PlayerUuid, PlayerId>,
-    body_owner: FxHashMap<u32, PlayerId>,
     next_id: u32,
 }
 
@@ -51,23 +51,7 @@ impl Players {
     pub fn remove(&mut self, id: PlayerId) -> Option<Player> {
         let player = self.by_id.remove(&id)?;
         self.by_uuid.remove(&player.uuid);
-        if let Some(avatar) = player.avatar() {
-            self.body_owner.remove(&avatar.body_id);
-        }
         Some(player)
-    }
-
-    pub fn register_body(&mut self, body_id: u32, player: PlayerId) {
-        let old = self.body_owner.insert(body_id, player);
-        debug_assert!(old.is_none());
-    }
-
-    pub fn unregister_body(&mut self, body_id: u32) {
-        self.body_owner.remove(&body_id);
-    }
-
-    pub fn player_for_body(&self, body_id: u32) -> Option<PlayerId> {
-        self.body_owner.get(&body_id).copied()
     }
 
     pub fn id_for_uuid(&self, uuid: PlayerUuid) -> Option<PlayerId> {
@@ -100,7 +84,7 @@ pub struct Player {
     pub uuid: PlayerUuid,
     pub name: String,
     pub profile: PlayerProfile,
-    pub control: PlayerControl,
+    pub inbox: PlayerInbox,
     pub life: PlayerLife,
 }
 
@@ -111,7 +95,7 @@ pub struct PlayerProfile {
     pub history: Vec<String>,
 }
 
-pub struct PlayerControl {
+pub struct PlayerInbox {
     pub input: InputState,
     pub jump_pressed: bool,
     pub pending_commands: Vec<String>,
@@ -123,7 +107,7 @@ pub struct PlayerControl {
     pub last_command_tick: u64,
 }
 
-impl PlayerControl {
+impl PlayerInbox {
     pub fn new(tick: u64) -> Self {
         Self {
             input: InputState::default(),
@@ -138,7 +122,7 @@ impl PlayerControl {
         }
     }
 
-    pub fn reset_transient(&mut self, tick: u64) {
+    pub fn reset(&mut self, tick: u64) {
         self.input = InputState::default();
         self.jump_pressed = false;
         self.pending_commands.clear();
@@ -177,7 +161,7 @@ pub struct Materialization {
 
 impl Materialization {
     fn new(template: AvatarSnapshot) -> Self {
-        let search = SpawnSearch::new(template.cell());
+        let search = SpawnSearch::new(template.anchor);
         Self { template, search }
     }
 
@@ -205,8 +189,6 @@ impl PlayerLife {
 }
 
 pub struct Avatar {
-    pub creature: Creature,
-    pub stamp: PlayerStamp,
     pub body_id: u32,
     pub controller: Controller,
     pub health: Health,
@@ -236,8 +218,7 @@ pub enum ResumeSnapshot {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AvatarSnapshot {
-    pub x: Subcell,
-    pub y: Subcell,
+    pub anchor: CellPos,
     pub vx: Subcell,
     pub vy: Subcell,
     pub hp: f32,
@@ -256,23 +237,17 @@ impl Default for Health {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct SearchWindow {
-    pub min: CellPos,
-    pub max: CellPos,
-}
-
 pub struct SpawnSearch {
     pub origin: CellPos,
     radius: i32,
     dy: i32,
     right: bool,
-    window: SearchWindow,
+    window: CellRect,
 }
 
 impl SpawnSearch {
     pub fn new(origin: CellPos) -> Self {
-        let window = SearchWindow::around(origin);
+        let window = CellRect::around(origin, CHUNK_SIZE as i32);
         Self {
             origin,
             radius: 0,
@@ -291,7 +266,7 @@ impl SpawnSearch {
         ))
     }
 
-    pub fn window(&self) -> SearchWindow {
+    pub fn window(&self) -> CellRect {
         self.window
     }
 
@@ -317,24 +292,7 @@ impl SpawnSearch {
     }
 
     pub fn center_window(&mut self, center: CellPos) {
-        self.window = SearchWindow::around(center);
-    }
-}
-
-impl SearchWindow {
-    const SIZE: i32 = fallingsand_core::CHUNK_SIZE as i32;
-
-    fn around(center: CellPos) -> Self {
-        let low = Self::SIZE / 2;
-        let high = Self::SIZE - low - 1;
-        Self {
-            min: CellPos::new(center.x.saturating_sub(low), center.y.saturating_sub(low)),
-            max: CellPos::new(center.x.saturating_add(high), center.y.saturating_add(high)),
-        }
-    }
-
-    pub fn contains(self, pos: CellPos) -> bool {
-        pos.x >= self.min.x && pos.x <= self.max.x && pos.y >= self.min.y && pos.y <= self.max.y
+        self.window = CellRect::around(center, CHUNK_SIZE as i32);
     }
 }
 
@@ -383,7 +341,7 @@ impl Player {
             uuid,
             name,
             profile,
-            control: PlayerControl::new(tick),
+            inbox: PlayerInbox::new(tick),
             life,
         }
     }
@@ -406,10 +364,12 @@ impl Player {
         }
     }
 
-    pub fn view_anchor(&self) -> CellPos {
+    pub fn view_anchor(&self, bodies: &Bodies) -> CellPos {
         match &self.life {
             PlayerLife::Entering(entering) => entering.materialization.search.origin,
-            PlayerLife::Alive(avatar) => avatar.creature.cell(),
+            PlayerLife::Alive(avatar) => bodies
+                .cell(avatar.body_id)
+                .expect("an alive avatar owns its body"),
             PlayerLife::Dead(dead) => dead.view_anchor,
             PlayerLife::Reviving(reviving) => reviving.death.view_anchor,
         }
@@ -440,15 +400,14 @@ impl Player {
 
     fn transition_life(&mut self, life: PlayerLife, tick: u64) {
         self.life = life;
-        self.control.reset_transient(tick);
+        self.inbox.reset(tick);
     }
 }
 
 impl AvatarSnapshot {
     pub fn fresh(spawn: CellPos) -> Self {
         Self {
-            x: Subcell::from_cell(spawn.x),
-            y: Subcell::from_cell(spawn.y),
+            anchor: spawn,
             vx: Subcell::ZERO,
             vy: Subcell::ZERO,
             hp: MAX_HEALTH,
@@ -459,20 +418,21 @@ impl AvatarSnapshot {
         }
     }
 
-    pub fn cell(&self) -> CellPos {
-        CellPos::new(self.x.floor_cell(), self.y.floor_cell())
-    }
-
-    pub fn from_avatar(avatar: &Avatar) -> Self {
+    pub fn from_avatar(avatar: &Avatar, bodies: &Bodies) -> Self {
+        let anchor = bodies
+            .cell(avatar.body_id)
+            .expect("an alive avatar owns its body");
+        let (vx, vy) = bodies
+            .velocity(avatar.body_id)
+            .expect("an alive avatar owns its body");
         Self {
-            x: avatar.creature.x,
-            y: avatar.creature.y
-                + Subcell::from_cells(
-                    (fallingsand_sim::player::STAND_ROWS as i32 / 2 - avatar.creature.rows() / 2)
-                        as f32,
-                ),
-            vx: avatar.creature.vx,
-            vy: avatar.creature.vy,
+            anchor: flesh::anchor(
+                anchor.x,
+                flesh::feet(anchor, avatar.controller.rows),
+                STAND_ROWS,
+            ),
+            vx,
+            vy,
             hp: avatar.health.hp,
             regen_delay_ticks: avatar.health.regen_delay_ticks,
             air: avatar.air,

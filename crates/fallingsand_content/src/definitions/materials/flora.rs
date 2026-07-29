@@ -112,8 +112,7 @@ pub fn define(catalog: &mut Catalog) {
                 [192, 182, 164, 255],
             ])
             .hardness(0.1)
-            .restitution(0.3)
-            .entity_bounce(0.6),
+            .restitution(0.6),
     );
     catalog.add(
         GLOWSHROOM,

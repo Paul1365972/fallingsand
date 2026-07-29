@@ -72,7 +72,7 @@ impl Handshake<'_> {
                 let player = players.get_mut(player_id).expect("uuid index is valid");
                 let renamed = player.name != name;
                 player.name = name.clone();
-                player.control.reset_transient(tick);
+                player.inbox.reset(tick);
                 (player_id, false, renamed)
             }
             None => {

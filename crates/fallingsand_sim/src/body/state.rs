@@ -23,8 +23,53 @@ pub(super) struct Slot {
     pub material: MaterialId,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Policy {
+    pub turns: bool,
+    pub settles: bool,
+    pub assists: bool,
+}
+
+impl Policy {
+    pub const DEBRIS: Self = Self {
+        turns: true,
+        settles: true,
+        assists: false,
+    };
+    pub const BALL: Self = Self {
+        turns: true,
+        settles: false,
+        assists: false,
+    };
+    pub const MOB: Self = Self {
+        turns: false,
+        settles: false,
+        assists: false,
+    };
+    pub const PLAYER: Self = Self {
+        turns: false,
+        settles: false,
+        assists: true,
+    };
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Freedoms(u8);
+
+impl Freedoms {
+    pub(super) const TURN: u8 = 1 << 0;
+    pub(super) const X: u8 = 1 << 1;
+    pub(super) const Y: u8 = 1 << 2;
+    pub(super) const TRANSLATION: Self = Self(Self::X | Self::Y);
+    pub(super) const ALL: Self = Self(Self::TURN | Self::X | Self::Y);
+
+    pub(super) fn holds(self, bit: u8) -> bool {
+        self.0 & bit != 0
+    }
+}
+
 #[derive(Debug)]
-pub(super) struct Debris {
+pub(super) struct Body {
     pub id: u32,
     pub slots: Vec<Slot>,
     pub raster: Vec<CellPos>,
@@ -41,6 +86,11 @@ pub(super) struct Debris {
     pub radius: i64,
     pub restitution: Q16,
     pub friction: Q16,
+    pub weight: i64,
+    pub freedoms: Freedoms,
+    pub settles: bool,
+    pub assists: bool,
+    pub was_grounded: bool,
     pub parked: bool,
 }
 
@@ -113,7 +163,7 @@ pub(super) fn rasterize(slots: &[Slot], anchor: CellPos, step: u32, out: &mut Ve
     }));
 }
 
-impl Debris {
+impl Body {
     pub(super) fn com(&self) -> (i64, i64) {
         let mean = rotated_mean(&self.slots, self.mass, self.step);
         (
@@ -136,8 +186,20 @@ impl Debris {
         let ry = i128::from(cell_center(pos.y) - com.1);
         self.vx += round_div(i128::from(jx), i128::from(self.mass)) as i64;
         self.vy += round_div(i128::from(jy), i128::from(self.mass)) as i64;
-        let torque = rx * i128::from(jy) - ry * i128::from(jx);
-        self.spin += Spin::from_angular_impulse(torque, self.moment);
+        if self.freedoms.holds(Freedoms::TURN) {
+            let torque = rx * i128::from(jy) - ry * i128::from(jx);
+            self.spin += Spin::from_angular_impulse(torque, self.moment);
+        }
+    }
+
+    pub(super) fn apply(&mut self, policy: Policy) {
+        self.freedoms = if policy.turns {
+            Freedoms::ALL
+        } else {
+            Freedoms::TRANSLATION
+        };
+        self.settles = policy.settles;
+        self.assists = policy.assists;
     }
 
     pub(super) fn refresh_inertia(&mut self) {
@@ -150,7 +212,7 @@ impl Debris {
     }
 }
 
-pub(super) fn capture(world: &mut CellWorld, id: u32, cells: Vec<CellPos>) -> Debris {
+pub(super) fn capture(world: &mut CellWorld, id: u32, cells: Vec<CellPos>) -> Body {
     let mut mass = 0i128;
     let mut weighted = (0i128, 0i128);
     for &pos in &cells {
@@ -176,7 +238,7 @@ pub(super) fn capture(world: &mut CellWorld, id: u32, cells: Vec<CellPos>) -> De
         cell.set_body(id);
         world.set(pos, cell);
     }
-    let mut debris = Debris {
+    let mut body = Body {
         id,
         slots,
         raster: cells,
@@ -193,20 +255,25 @@ pub(super) fn capture(world: &mut CellWorld, id: u32, cells: Vec<CellPos>) -> De
         radius: 0,
         restitution: Q16::from_raw(0),
         friction: Q16::from_raw(0),
+        weight: 0,
+        freedoms: Freedoms::ALL,
+        settles: true,
+        assists: false,
+        was_grounded: false,
         parked: false,
     };
-    debris.refresh_inertia();
-    debris
+    body.refresh_inertia();
+    body
 }
 
-pub(super) fn release(world: &mut CellWorld, debris: &Debris, com: (i64, i64), pos: CellPos) {
+pub(super) fn release(world: &mut CellWorld, body: &Body, com: (i64, i64), pos: CellPos) {
     let Some(mut cell) = world.get_cell(pos) else {
         return;
     };
-    if cell.body_id() != Some(debris.id) {
+    if cell.body_id() != Some(body.id) {
         return;
     }
-    let (vx, vy) = debris.point_velocity(com, pos);
+    let (vx, vy) = body.point_velocity(com, pos);
     cell.clear_body();
     cell.set_vel(vx as i32, vy as i32);
     world.set(pos, cell);

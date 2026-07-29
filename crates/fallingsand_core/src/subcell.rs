@@ -84,6 +84,14 @@ impl Subcell {
     pub fn add_cells_per_second(self, velocity: f32) -> Self {
         self + Self::from_cells_per_second(velocity)
     }
+
+    pub fn approach(self, target: Self, delta: Self) -> Self {
+        if self < target {
+            (self + delta).min(target)
+        } else {
+            (self - delta).max(target)
+        }
+    }
 }
 
 impl std::ops::Add for Subcell {

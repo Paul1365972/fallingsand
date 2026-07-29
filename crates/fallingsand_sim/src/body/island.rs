@@ -1,4 +1,4 @@
-use super::body::bondable;
+use super::state::bondable;
 use crate::world::CellWorld;
 use fallingsand_core::{CARDINAL_NEIGHBORS, Cell, CellPos, MaterialId, Phase, content};
 use rustc_hash::FxHashSet;

@@ -17,7 +17,7 @@ pub use celestial::{CelestialState, smoothstep};
 pub use cell::{Cell, Motion};
 pub use chunk::{CHUNK_AREA, CHUNK_SIZE, Chunk, DirtyRect};
 pub use coords::{
-    CARDINAL_NEIGHBORS, CellOffset, CellPos, ChunkOffset, ChunkPos, RegionPos, ray_cells,
+    CARDINAL_NEIGHBORS, CellOffset, CellPos, CellRect, ChunkOffset, ChunkPos, RegionPos, ray_cells,
 };
 pub use item::{
     HOTBAR_SLOTS, Inventory, ItemId, ItemInfo, ItemStack, MAIN_SLOTS, PLAYER_SLOTS, Recipe,

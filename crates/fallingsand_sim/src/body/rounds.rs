@@ -1,9 +1,12 @@
-use super::body::{CELL, Debris, cell_mass, rasterize, rotated_mean};
-use super::contact::{CellState, Contact, CreatureState, Peer, Resolver};
+use super::contact::{CellState, Contact, Peer, Resolver};
 use super::rotation::{ANGLE_STEPS, ORIENTATION_UNITS, Spin};
+use super::state::{Body, CELL, Freedoms, cell_mass, rasterize, rotated_mean};
 use crate::motion::{GRAVITY_DV, MAX_SPEED_CELLS, SETTLE};
 use crate::world::CellWorld;
-use fallingsand_core::{Cell, CellPos, ChunkPos, MaterialId, Phase, Q16, content};
+use fallingsand_core::{
+    CARDINAL_NEIGHBORS, Cell, CellPos, ChunkPos, MaterialId, Phase, Q16, content,
+};
+use fallingsand_math::round_div;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 const GRAVITY: i64 = GRAVITY_DV as i64;
@@ -14,8 +17,6 @@ const MAX_TURN_QUANTA: i64 = 32;
 const DRAG_DIVISOR: i64 = 4;
 const SNAP: i64 = 16;
 const SETTLE_EPSILON: i64 = 4;
-
-pub(super) type CreatureLookup<'a> = &'a dyn Fn(u32) -> Option<super::CreaturePeer>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Freedom {
@@ -35,6 +36,10 @@ impl Freedom {
         }
     }
 
+    fn bit(self) -> u8 {
+        1 << self.index()
+    }
+
     fn threshold(self) -> i64 {
         match self {
             Self::Turn => ORIENTATION_UNITS,
@@ -42,7 +47,7 @@ impl Freedom {
         }
     }
 
-    fn accumulator(self, body: &Debris) -> i64 {
+    fn accumulator(self, body: &Body) -> i64 {
         match self {
             Self::Turn => body.acc_turn,
             Self::X => body.acc_x,
@@ -50,7 +55,7 @@ impl Freedom {
         }
     }
 
-    fn accumulator_mut(self, body: &mut Debris) -> &mut i64 {
+    fn accumulator_mut(self, body: &mut Body) -> &mut i64 {
         match self {
             Self::Turn => &mut body.acc_turn,
             Self::X => &mut body.acc_x,
@@ -58,7 +63,7 @@ impl Freedom {
         }
     }
 
-    fn velocity(self, body: &Debris) -> i64 {
+    fn velocity(self, body: &Body) -> i64 {
         match self {
             Self::Turn => body.spin.raw(),
             Self::X => body.vx,
@@ -66,7 +71,7 @@ impl Freedom {
         }
     }
 
-    fn pending(self, body: &Debris) -> i64 {
+    fn pending(self, body: &Body) -> i64 {
         self.accumulator(body).abs() / self.threshold()
     }
 }
@@ -97,59 +102,44 @@ struct Proposal {
     contacts: Vec<Contact>,
 }
 
-pub(super) fn integrate_forces(world: &CellWorld, body: &mut Debris) {
+pub(super) fn integrate_forces(world: &CellWorld, body: &mut Body) {
     let com = body.com();
-    let own = body.id;
+    let displaced = displaced_medium(world, body);
     let mut impulse = (0i128, 0i128);
     let mut torque = 0i128;
     let mut wetted: Vec<(CellPos, i64, i64, i64)> = Vec::new();
-    let mut weights: Vec<(CellPos, i128)> = Vec::with_capacity(body.slots.len());
-    let mut lift = 0i128;
-    let mut lift_above = 0i128;
     for (slot, &pos) in body.slots.iter().zip(&body.raster) {
-        let mass = cell_mass(slot.material);
-        let mut ambient = 0i64;
-        for (dx, dy) in fallingsand_core::CARDINAL_NEIGHBORS {
+        for (dx, dy) in CARDINAL_NEIGHBORS {
             let near = pos.translated(dx, dy);
             let Some(cell) = world.get_cell(near) else {
                 continue;
             };
-            if cell.body_id() == Some(own) {
+            if cell.body_id().is_some() {
                 continue;
             }
-            match content::phase(cell.material) {
-                Phase::Liquid | Phase::Gas | Phase::Empty => {
-                    let density = i64::from(content::density_milli(cell.material).max(1));
-                    ambient = ambient.max(density);
-                    if content::phase(cell.material) == Phase::Liquid {
-                        let (cvx, cvy) = cell.vel();
-                        let point = body.point_velocity(com, pos);
-                        wetted.push((
-                            pos,
-                            i64::from(cvx) - point.0,
-                            i64::from(cvy) - point.1,
-                            density,
-                        ));
-                    }
-                }
-                _ => {}
+            if matches!(
+                content::phase(cell.material),
+                Phase::Liquid | Phase::Gas | Phase::Empty
+            ) {
+                let density = i64::from(content::density_milli(cell.material).max(1));
+                let (cvx, cvy) = cell.vel();
+                let point = body.point_velocity(com, pos);
+                wetted.push((
+                    pos,
+                    i64::from(cvx) - point.0,
+                    i64::from(cvy) - point.1,
+                    density,
+                ));
             }
         }
-        let weight = i128::from(-GRAVITY * (mass - ambient));
-        weights.push((pos, weight));
-        lift += weight;
-        lift_above += i128::from(-GRAVITY * (mass - ambient_at(world, own, pos.translated(0, 1))));
+        let weight = cell_weight(slot.material, &displaced, pos);
+        impulse.1 += weight;
+        torque += i128::from(super::state::cell_center(pos.x) - com.0) * weight;
     }
-    let floating = !wetted.is_empty() && lift > 0 && lift_above <= 0;
-    if floating {
-        body.vy /= 2;
-    } else {
-        for (pos, weight) in weights {
-            impulse.1 += weight;
-            let rx = i128::from(super::body::cell_center(pos.x) - com.0);
-            torque += rx * weight;
-        }
+    if at_waterline(body, &displaced, impulse.1) {
+        impulse.1 = 0;
     }
+    body.weight = round_div(impulse.1, i128::from(body.mass)) as i64;
     let touch_share = body.mass / i64::try_from(wetted.len().max(1)).expect("touch count fits");
     for (pos, rel_x, rel_y, density) in wetted {
         let coupled = density.min(touch_share);
@@ -157,13 +147,15 @@ pub(super) fn integrate_forces(world: &CellWorld, body: &mut Debris) {
         let jy = i128::from(rel_y) * i128::from(coupled) / i128::from(DRAG_DIVISOR);
         impulse.0 += jx;
         impulse.1 += jy;
-        let rx = i128::from(super::body::cell_center(pos.x) - com.0);
-        let ry = i128::from(super::body::cell_center(pos.y) - com.1);
+        let rx = i128::from(super::state::cell_center(pos.x) - com.0);
+        let ry = i128::from(super::state::cell_center(pos.y) - com.1);
         torque += rx * jy - ry * jx;
     }
-    body.vx += fallingsand_math::round_div(impulse.0, i128::from(body.mass)) as i64;
-    body.vy += fallingsand_math::round_div(impulse.1, i128::from(body.mass)) as i64;
-    body.spin += Spin::from_angular_impulse(torque, body.moment);
+    body.vx += round_div(impulse.0, i128::from(body.mass)) as i64;
+    body.vy += round_div(impulse.1, i128::from(body.mass)) as i64;
+    if body.freedoms.holds(Freedoms::TURN) {
+        body.spin += Spin::from_angular_impulse(torque, body.moment);
+    }
     body.vx = body.vx.clamp(-MAX_SPEED, MAX_SPEED);
     body.vy = body.vy.clamp(-MAX_SPEED, MAX_SPEED);
     let turn_cap = Spin::for_speed_at(MAX_SPEED, body.radius.max(1) * CELL)
@@ -171,33 +163,86 @@ pub(super) fn integrate_forces(world: &CellWorld, body: &mut Debris) {
     body.spin = body.spin.clamped(turn_cap);
 }
 
-fn ambient_at(world: &CellWorld, own: u32, pos: CellPos) -> i64 {
-    let mut ambient = 0i64;
-    for (dx, dy) in fallingsand_core::CARDINAL_NEIGHBORS {
-        let near = pos.translated(dx, dy);
-        let Some(cell) = world.get_cell(near) else {
-            continue;
-        };
-        if cell.body_id() == Some(own) {
-            continue;
-        }
-        if matches!(
-            content::phase(cell.material),
-            Phase::Liquid | Phase::Gas | Phase::Empty
-        ) {
-            ambient = ambient.max(i64::from(content::density_milli(cell.material).max(1)));
+pub(super) struct Displaced {
+    rows: FxHashMap<i32, (i128, i128)>,
+    mean: i64,
+}
+
+impl Displaced {
+    fn at(&self, y: i32) -> i64 {
+        match self.rows.get(&y) {
+            Some(&(total, faces)) => round_div(total, faces) as i64,
+            None => self.mean,
         }
     }
-    ambient
+}
+
+pub(super) fn displaced_medium(world: &CellWorld, body: &Body) -> Displaced {
+    let mut rows: FxHashMap<i32, (i128, i128)> = FxHashMap::default();
+    let mut total = 0i128;
+    let mut faces = 0i128;
+    for &pos in &body.raster {
+        for (dx, dy) in CARDINAL_NEIGHBORS {
+            let near = pos.translated(dx, dy);
+            let Some(cell) = world.get_cell(near) else {
+                continue;
+            };
+            if cell.body_id().is_some() {
+                continue;
+            }
+            if !matches!(
+                content::phase(cell.material),
+                Phase::Liquid | Phase::Gas | Phase::Empty
+            ) {
+                continue;
+            }
+            let density = i128::from(content::density_milli(cell.material).max(1));
+            let row = rows.entry(near.y).or_insert((0, 0));
+            row.0 += density;
+            row.1 += 1;
+            total += density;
+            faces += 1;
+        }
+    }
+    let mean = if faces == 0 {
+        0
+    } else {
+        round_div(total, faces) as i64
+    };
+    Displaced { rows, mean }
+}
+
+fn cell_weight(material: MaterialId, displaced: &Displaced, pos: CellPos) -> i128 {
+    i128::from(-GRAVITY) * i128::from(cell_mass(material) - displaced.at(pos.y))
+}
+
+fn at_waterline(body: &Body, displaced: &Displaced, lift: i128) -> bool {
+    if lift <= 0 {
+        return false;
+    }
+    let raised: i128 = body
+        .slots
+        .iter()
+        .zip(&body.raster)
+        .map(|(slot, &pos)| cell_weight(slot.material, displaced, pos.translated(0, 1)))
+        .sum();
+    raised <= 0
+}
+
+pub(super) fn net_lift(world: &CellWorld, body: &Body) -> i128 {
+    let displaced = displaced_medium(world, body);
+    body.slots
+        .iter()
+        .zip(&body.raster)
+        .map(|(slot, &pos)| cell_weight(slot.material, &displaced, pos))
+        .sum()
 }
 
 pub(super) fn run_rounds<S>(
     world: &mut CellWorld,
-    bodies: &mut [Debris],
+    bodies: &mut [Body],
     by_id: &FxHashMap<u32, usize>,
     simulated: &S,
-    creature: CreatureLookup,
-    creatures: &mut FxHashMap<u32, CreatureState>,
     cells: &mut FxHashMap<CellPos, CellState>,
 ) where
     S: Fn(ChunkPos) -> bool,
@@ -205,6 +250,9 @@ pub(super) fn run_rounds<S>(
     let floor = i64::from(SETTLE);
     let mut movers = vec![Mover::default(); bodies.len()];
     for body in bodies.iter_mut() {
+        if body.parked {
+            continue;
+        }
         body.acc_x = if body.vx.abs() >= floor {
             (body.acc_x + body.vx).clamp(-MAX_SPEED, MAX_SPEED)
         } else {
@@ -237,8 +285,6 @@ pub(super) fn run_rounds<S>(
             bodies,
             by_id,
             simulated,
-            creature,
-            creatures,
             cells,
             &mut movers,
             &mut proposals,
@@ -249,12 +295,12 @@ pub(super) fn run_rounds<S>(
         }
         resolve_ties(bodies, &mut proposals);
         cascade(bodies, &mut proposals);
-        commit(world, bodies, &mut proposals, by_id, creatures, cells);
-        finish_round(world, bodies, &mut movers, &mut proposals, creatures, cells);
+        commit(world, bodies, &mut proposals, by_id, cells);
+        finish_round(world, bodies, &mut movers, &mut proposals, cells);
     }
 }
 
-fn collect_proposals(world: &CellWorld, bodies: &[Debris], movers: &mut [Mover]) -> Vec<Proposal> {
+fn collect_proposals(world: &CellWorld, bodies: &[Body], movers: &mut [Mover]) -> Vec<Proposal> {
     let mut proposals = Vec::new();
     for (index, body) in bodies.iter().enumerate() {
         if body.parked {
@@ -263,7 +309,10 @@ fn collect_proposals(world: &CellWorld, bodies: &[Debris], movers: &mut [Mover])
         let mover = &movers[index];
         let mut best: Option<Freedom> = None;
         for freedom in Freedom::ALL {
-            if mover.freedoms[freedom.index()].parked || freedom.pending(body) == 0 {
+            if !body.freedoms.holds(freedom.bit())
+                || mover.freedoms[freedom.index()].parked
+                || freedom.pending(body) == 0
+            {
                 continue;
             }
             best = match best {
@@ -278,7 +327,11 @@ fn collect_proposals(world: &CellWorld, bodies: &[Debris], movers: &mut [Mover])
         }
         for freedom in Freedom::ALL {
             let state = mover.freedoms[freedom.index()];
-            if state.parked || state.probed || freedom.velocity(body) == 0 {
+            if !body.freedoms.holds(freedom.bit())
+                || state.parked
+                || state.probed
+                || freedom.velocity(body) == 0
+            {
                 continue;
             }
             let sign = freedom.velocity(body).signum() as i32;
@@ -290,7 +343,7 @@ fn collect_proposals(world: &CellWorld, bodies: &[Debris], movers: &mut [Mover])
 
 fn build_proposal(
     world: &CellWorld,
-    bodies: &[Debris],
+    bodies: &[Body],
     index: usize,
     freedom: Freedom,
     sign: i32,
@@ -372,11 +425,9 @@ fn walk_line(from: CellPos, to: CellPos, mut visit: impl FnMut(CellPos, CellPos)
 #[allow(clippy::too_many_arguments)]
 fn classify<S>(
     world: &CellWorld,
-    bodies: &[Debris],
+    bodies: &[Body],
     by_id: &FxHashMap<u32, usize>,
     simulated: &S,
-    creature: CreatureLookup,
-    creatures: &mut FxHashMap<u32, CreatureState>,
     cells: &mut FxHashMap<CellPos, CellState>,
     movers: &mut [Mover],
     proposals: &mut [Proposal],
@@ -425,29 +476,11 @@ fn classify<S>(
                                 body_index,
                                 at,
                                 from,
-                                Peer::Debris(peer_index),
-                                pair_restitution(my, Some(peer), cell.material),
+                                Peer::Body(peer_index),
+                                pair_restitution(my, Some(peer), Some(cell.material)),
                                 my.friction.mul(peer.friction),
                             );
                         }
-                    } else if let Some(peer) = creature(id) {
-                        creatures.entry(id).or_insert(CreatureState {
-                            mass: peer.mass_milli,
-                            vx: peer.vx.raw(),
-                            vy: peer.vy.raw(),
-                            start_vx: peer.vx.raw(),
-                            start_vy: peer.vy.raw(),
-                            grounded: peer.grounded,
-                        });
-                        push_contact(
-                            &mut proposals[p],
-                            body_index,
-                            at,
-                            from,
-                            Peer::Creature(id),
-                            pair_restitution(my, None, cell.material),
-                            my.friction.mul(content::friction(cell.material)),
-                        );
                     } else {
                         push_contact(
                             &mut proposals[p],
@@ -455,7 +488,7 @@ fn classify<S>(
                             at,
                             from,
                             Peer::Terrain,
-                            pair_restitution(my, None, cell.material),
+                            pair_restitution(my, None, Some(cell.material)),
                             my.friction.mul(content::friction(cell.material)),
                         );
                     }
@@ -468,7 +501,7 @@ fn classify<S>(
                             at,
                             from,
                             Peer::Terrain,
-                            pair_restitution(my, None, cell.material),
+                            pair_restitution(my, None, Some(cell.material)),
                             my.friction.mul(content::friction(cell.material)),
                         );
                     }
@@ -480,7 +513,7 @@ fn classify<S>(
                             at,
                             from,
                             peer,
-                            pair_restitution(my, None, cell.material),
+                            pair_restitution(my, None, Some(cell.material)),
                             my.friction.mul(content::friction(cell.material)),
                         );
                     }
@@ -519,11 +552,13 @@ fn bodies_parked(movers: &mut [Mover], proposals: &mut [Proposal], body: usize) 
     }
 }
 
-fn pair_restitution(body: &Debris, peer: Option<&Debris>, material: MaterialId) -> Q16 {
+fn pair_restitution(body: &Body, peer: Option<&Body>, material: Option<MaterialId>) -> Q16 {
     let mut restitution = body.restitution;
-    let material_restitution = content::restitution(material);
-    if material_restitution.raw() > restitution.raw() {
-        restitution = material_restitution;
+    if let Some(material) = material {
+        let material_restitution = content::restitution(material);
+        if material_restitution.raw() > restitution.raw() {
+            restitution = material_restitution;
+        }
     }
     if let Some(peer) = peer
         && peer.restitution.raw() > restitution.raw()
@@ -534,7 +569,7 @@ fn pair_restitution(body: &Debris, peer: Option<&Debris>, material: MaterialId) 
 }
 
 fn powder_peer(
-    body: &Debris,
+    body: &Body,
     cell: Cell,
     at: CellPos,
     from: CellPos,
@@ -592,7 +627,7 @@ fn push_contact(
     });
 }
 
-fn resolve_ties(bodies: &[Debris], proposals: &mut [Proposal]) {
+fn resolve_ties(bodies: &[Body], proposals: &mut [Proposal]) {
     let mut claims: FxHashMap<CellPos, Vec<usize>> = FxHashMap::default();
     for (p, proposal) in proposals.iter().enumerate() {
         if proposal.probe || proposal.canceled || proposal.refused {
@@ -650,15 +685,15 @@ fn resolve_ties(bodies: &[Debris], proposals: &mut [Proposal]) {
             body_index,
             at,
             from,
-            Peer::Debris(winner_body),
-            pair_restitution(my, Some(peer), my.slots[0].material),
+            Peer::Body(winner_body),
+            pair_restitution(my, Some(peer), None),
             my.friction.mul(peer.friction),
         );
         proposals[p].refused = true;
     }
 }
 
-fn cascade(bodies: &[Debris], proposals: &mut [Proposal]) {
+fn cascade(bodies: &[Body], proposals: &mut [Proposal]) {
     loop {
         let mut changed = false;
         for p in 0..proposals.len() {
@@ -685,8 +720,8 @@ fn cascade(bodies: &[Debris], proposals: &mut [Proposal]) {
                     body_index,
                     at,
                     from,
-                    Peer::Debris(peer_body),
-                    pair_restitution(my, Some(peer), my.slots[0].material),
+                    Peer::Body(peer_body),
+                    pair_restitution(my, Some(peer), None),
                     my.friction.mul(peer.friction),
                 );
             }
@@ -701,10 +736,9 @@ fn cascade(bodies: &[Debris], proposals: &mut [Proposal]) {
 
 fn commit(
     world: &mut CellWorld,
-    bodies: &mut [Debris],
+    bodies: &mut [Body],
     proposals: &mut [Proposal],
     by_id: &FxHashMap<u32, usize>,
-    creatures: &mut FxHashMap<u32, CreatureState>,
     cells: &mut FxHashMap<CellPos, CellState>,
 ) {
     loop {
@@ -728,7 +762,7 @@ fn commit(
                 commit_group(world, bodies, &[p], proposals);
                 proposals[p].committed = true;
             } else {
-                refuse_after_commit(world, bodies, by_id, creatures, cells, proposals, p);
+                refuse_after_commit(world, bodies, by_id, cells, proposals, p);
             }
             progress = true;
         }
@@ -765,13 +799,13 @@ fn commit(
             }
         } else {
             for &p in &group {
-                refuse_after_commit(world, bodies, by_id, creatures, cells, proposals, p);
+                refuse_after_commit(world, bodies, by_id, cells, proposals, p);
             }
         }
     }
 }
 
-fn revalidate(world: &CellWorld, bodies: &[Debris], proposal: &Proposal) -> bool {
+fn revalidate(world: &CellWorld, bodies: &[Body], proposal: &Proposal) -> bool {
     let my = &bodies[proposal.body];
     proposal.entered.iter().all(|&(at, _)| {
         world.get_cell(at).is_some_and(|cell| {
@@ -787,7 +821,7 @@ fn revalidate(world: &CellWorld, bodies: &[Debris], proposal: &Proposal) -> bool
 
 fn joint_valid(
     world: &CellWorld,
-    bodies: &[Debris],
+    bodies: &[Body],
     proposals: &[Proposal],
     group: &[usize],
 ) -> bool {
@@ -833,9 +867,8 @@ fn joint_valid(
 
 fn refuse_after_commit(
     world: &CellWorld,
-    bodies: &[Debris],
+    bodies: &[Body],
     by_id: &FxHashMap<u32, usize>,
-    creatures: &mut FxHashMap<u32, CreatureState>,
     cells: &mut FxHashMap<CellPos, CellState>,
     proposals: &mut [Proposal],
     p: usize,
@@ -864,19 +897,9 @@ fn refuse_after_commit(
                         body_index,
                         at,
                         from,
-                        Peer::Debris(peer_index),
-                        pair_restitution(my, Some(peer), cell.material),
+                        Peer::Body(peer_index),
+                        pair_restitution(my, Some(peer), Some(cell.material)),
                         my.friction.mul(peer.friction),
-                    );
-                } else if creatures.contains_key(&id) {
-                    push_contact(
-                        &mut proposals[p],
-                        body_index,
-                        at,
-                        from,
-                        Peer::Creature(id),
-                        pair_restitution(my, None, cell.material),
-                        my.friction.mul(content::friction(cell.material)),
                     );
                 } else {
                     push_contact(
@@ -885,7 +908,7 @@ fn refuse_after_commit(
                         at,
                         from,
                         Peer::Terrain,
-                        pair_restitution(my, None, cell.material),
+                        pair_restitution(my, None, Some(cell.material)),
                         my.friction.mul(content::friction(cell.material)),
                     );
                 }
@@ -902,7 +925,7 @@ fn refuse_after_commit(
                     at,
                     from,
                     peer,
-                    pair_restitution(my, None, cell.material),
+                    pair_restitution(my, None, Some(cell.material)),
                     my.friction.mul(content::friction(cell.material)),
                 );
             }
@@ -913,7 +936,7 @@ fn refuse_after_commit(
 
 fn commit_group(
     world: &mut CellWorld,
-    bodies: &mut [Debris],
+    bodies: &mut [Body],
     group: &[usize],
     proposals: &mut [Proposal],
 ) {
@@ -950,20 +973,20 @@ fn commit_group(
             let mass = i128::from(cell_mass(cell.material));
             let com = bodies[owner].com();
             let center = (
-                super::body::cell_center(pos.x),
-                super::body::cell_center(pos.y),
+                super::state::cell_center(pos.x),
+                super::state::cell_center(pos.y),
             );
             let (cvx, cvy) = cell.vel();
             let exchange = |rel: i64, normal: (i32, i32)| {
-                let point = super::contact::debris_point_mass(&bodies[owner], com, center, normal);
+                let point = super::contact::body_point_mass(&bodies[owner], com, center, normal);
                 let pair = (mass * point / (mass + point)).max(1);
                 i128::from(rel) * pair
             };
             let jx = exchange(entrained.0 - i64::from(cvx), (1, 0));
             let jy = exchange(entrained.1 - i64::from(cvy), (0, 1));
             cell.set_vel(
-                cvx + fallingsand_math::round_div(jx, mass) as i32,
-                cvy + fallingsand_math::round_div(jy, mass) as i32,
+                cvx + round_div(jx, mass) as i32,
+                cvy + round_div(jy, mass) as i32,
             );
             bodies[owner].apply_impulse(com, pos, -(jx as i64), -(jy as i64));
         }
@@ -987,7 +1010,7 @@ fn commit_group(
 }
 
 fn entraining_body(
-    bodies: &[Debris],
+    bodies: &[Body],
     proposals: &[Proposal],
     group: &[usize],
     pos: CellPos,
@@ -1003,7 +1026,7 @@ fn entraining_body(
     (body, (bodies[body].vx, bodies[body].vy))
 }
 
-fn apply_commit(body: &mut Debris, proposal: &Proposal, candidate: Vec<CellPos>) {
+fn apply_commit(body: &mut Body, proposal: &Proposal, candidate: Vec<CellPos>) {
     match proposal.freedom {
         Freedom::X => {
             body.anchor = body.anchor.translated(proposal.sign, 0);
@@ -1027,16 +1050,29 @@ fn apply_commit(body: &mut Debris, proposal: &Proposal, candidate: Vec<CellPos>)
 
 fn finish_round(
     world: &mut CellWorld,
-    bodies: &mut [Debris],
+    bodies: &mut [Body],
     movers: &mut [Mover],
     proposals: &mut [Proposal],
-    creatures: &mut FxHashMap<u32, CreatureState>,
     cells: &mut FxHashMap<CellPos, CellState>,
 ) {
+    for proposal in proposals.iter_mut() {
+        if !proposal.refused || proposal.probe || proposal.freedom != Freedom::X {
+            continue;
+        }
+        if !bodies[proposal.body].assists {
+            continue;
+        }
+        if step_up(world, bodies, proposal.body, proposal.sign) {
+            proposal.refused = false;
+            proposal.canceled = true;
+            proposal.contacts.clear();
+        }
+    }
+
     let mut contacts: Vec<Contact> = Vec::new();
     let mut closing_any: FxHashMap<usize, (bool, i64)> = FxHashMap::default();
     {
-        let coms: Vec<(i64, i64)> = bodies.iter().map(Debris::com).collect();
+        let coms: Vec<(i64, i64)> = bodies.iter().map(Body::com).collect();
         let grounded: Vec<bool> = bodies
             .iter()
             .map(|body| body_grounded(world, body))
@@ -1083,7 +1119,6 @@ fn finish_round(
             bodies,
             coms: &coms,
             grounded: &grounded,
-            creatures,
             cells,
         };
         resolver.resolve(&mut contacts);
@@ -1103,7 +1138,7 @@ fn finish_round(
                 let accumulator = proposal.freedom.accumulator_mut(body);
                 *accumulator -= i64::from(proposal.sign) * proposal.freedom.threshold();
                 if rebound.signum() as i32 != proposal.sign {
-                    let remaining = fallingsand_math::round_div(
+                    let remaining = round_div(
                         i128::from(-*accumulator) * i128::from(rebound.abs()),
                         i128::from(approach.abs().max(1)),
                     ) as i64;
@@ -1116,16 +1151,114 @@ fn finish_round(
     }
 }
 
-fn peer_rank(bodies: &[Debris], peer: &Peer) -> (u8, u64) {
+fn peer_rank(bodies: &[Body], peer: &Peer) -> (u8, u64) {
     match peer {
         Peer::Terrain => (0, 0),
-        Peer::Debris(index) => (1, u64::from(bodies[*index].id)),
-        Peer::Creature(id) => (2, u64::from(*id)),
-        Peer::Cell { pos, .. } => (3, ((pos.y as u32 as u64) << 32) | pos.x as u32 as u64),
+        Peer::Body(index) => (1, u64::from(bodies[*index].id)),
+        Peer::Cell { pos, .. } => (2, ((pos.y as u32 as u64) << 32) | pos.x as u32 as u64),
     }
 }
 
-pub(super) fn body_grounded(world: &CellWorld, body: &Debris) -> bool {
+const STEP_CELLS: i32 = 3;
+
+fn blocked_at(world: &CellWorld, body: &Body, dx: i32, dy: i32) -> bool {
+    body.raster.iter().any(|&pos| {
+        let at = pos.translated(dx, dy);
+        world.get_cell(at).is_none_or(|cell| {
+            cell.body_id() != Some(body.id)
+                && matches!(content::phase(cell.material), Phase::Solid | Phase::Powder)
+        })
+    })
+}
+
+pub(super) fn shift(world: &mut CellWorld, body: &mut Body, dx: i32, dy: i32) -> bool {
+    if blocked_at(world, body, dx, dy) {
+        return false;
+    }
+    let cells: Vec<Cell> = body
+        .raster
+        .iter()
+        .map(|&pos| world.get_cell(pos).expect("body raster is loaded"))
+        .collect();
+    let moved: Vec<CellPos> = body.raster.iter().map(|p| p.translated(dx, dy)).collect();
+    let claimed: FxHashSet<CellPos> = moved.iter().copied().collect();
+    let mut displaced: Vec<Cell> = Vec::new();
+    for &pos in &moved {
+        let cell = world.get_cell(pos).expect("target is loaded");
+        if cell.body_id() != Some(body.id) && !cell.is_air() {
+            displaced.push(cell);
+        }
+    }
+    let mut vacated: Vec<CellPos> = body
+        .raster
+        .iter()
+        .copied()
+        .filter(|pos| !claimed.contains(pos))
+        .collect();
+    vacated.sort_unstable_by_key(|pos| (pos.y, pos.x));
+    if displaced.len() > vacated.len() {
+        return false;
+    }
+    for (&pos, &cell) in vacated.iter().zip(&displaced) {
+        world.set(pos, cell);
+    }
+    for &pos in vacated.iter().skip(displaced.len()) {
+        world.set(pos, Cell::AIR);
+    }
+    for (&pos, &cell) in moved.iter().zip(&cells) {
+        world.set(pos, cell);
+    }
+    body.anchor = body.anchor.translated(dx, dy);
+    body.raster = moved;
+    true
+}
+
+fn step_up(world: &mut CellWorld, bodies: &mut [Body], index: usize, sign: i32) -> bool {
+    let floor = bodies[index]
+        .raster
+        .iter()
+        .map(|pos| pos.y)
+        .min()
+        .unwrap_or(0);
+    for rise in 1..=STEP_CELLS {
+        let body = &bodies[index];
+        let clears = body.raster.iter().all(|&pos| {
+            if pos.y >= floor + rise {
+                return true;
+            }
+            let at = pos.translated(sign, rise);
+            world.get_cell(at).is_some_and(|cell| {
+                cell.body_id() == Some(body.id)
+                    || !matches!(content::phase(cell.material), Phase::Solid | Phase::Powder)
+            })
+        });
+        if !clears {
+            continue;
+        }
+        if shift(world, &mut bodies[index], 0, rise) {
+            return true;
+        }
+    }
+    false
+}
+
+pub(super) fn snap_down(world: &mut CellWorld, body: &mut Body) -> bool {
+    if body.vy > 0 {
+        return false;
+    }
+    for _ in 1..=STEP_CELLS {
+        if !shift(world, body, 0, -1) {
+            return false;
+        }
+        if body_grounded(world, body) {
+            body.acc_y = 0;
+            return true;
+        }
+    }
+    false
+}
+
+pub(super) fn body_grounded(world: &CellWorld, body: &Body) -> bool {
     body.raster.iter().any(|&pos| {
         let below = pos.translated(0, -1);
         world.get_cell(below).is_some_and(|cell| {
@@ -1135,7 +1268,7 @@ pub(super) fn body_grounded(world: &CellWorld, body: &Debris) -> bool {
     })
 }
 
-pub(super) fn carriage(world: &mut CellWorld, body: &mut Debris) {
+pub(super) fn carriage(world: &mut CellWorld, body: &mut Body) {
     let com = body.com();
     let mut exchanges: Vec<(CellPos, Cell, i64)> = Vec::new();
     for &pos in &body.raster {
@@ -1156,12 +1289,12 @@ pub(super) fn carriage(world: &mut CellWorld, body: &mut Debris) {
         let pair = body.friction.mul(content::friction(cell.material));
         let load = GRAVITY + i64::from((-cvy).max(0));
         let limit = ((i128::from(pair.raw()) * i128::from(load) * i128::from(mass)) >> 16) as i64;
-        let effective = super::contact::debris_point_mass(
+        let effective = super::contact::body_point_mass(
             body,
             com,
             (
-                super::body::cell_center(above.x),
-                super::body::cell_center(above.y),
+                super::state::cell_center(above.x),
+                super::state::cell_center(above.y),
             ),
             (1, 0),
         );
@@ -1183,8 +1316,8 @@ pub(super) fn carriage(world: &mut CellWorld, body: &mut Debris) {
     }
 }
 
-pub(super) fn try_settle(world: &CellWorld, body: &mut Debris) -> bool {
-    if body.parked {
+pub(super) fn try_settle(world: &CellWorld, body: &mut Body) -> bool {
+    if body.parked || !body.settles {
         return false;
     }
     if body.vx.abs() > SNAP || body.vy.abs() > SNAP {
@@ -1194,10 +1327,11 @@ pub(super) fn try_settle(world: &CellWorld, body: &mut Debris) -> bool {
     if body.spin.clamped(spin_snap) != body.spin {
         return false;
     }
+    let pressing = if net_lift(world, body) > 0 { 1 } else { -1 };
     let mut supports: Vec<(CellPos, CellPos)> = Vec::new();
     for &pos in &body.raster {
-        let below = pos.translated(0, -1);
-        let Some(cell) = world.get_cell(below) else {
+        let ahead = pos.translated(0, pressing);
+        let Some(cell) = world.get_cell(ahead) else {
             return false;
         };
         if cell.body_id() == Some(body.id) {
@@ -1207,7 +1341,7 @@ pub(super) fn try_settle(world: &CellWorld, body: &mut Debris) -> bool {
             return false;
         }
         match content::phase(cell.material) {
-            Phase::Solid => supports.push((below, pos)),
+            Phase::Solid => supports.push((ahead, pos)),
             Phase::Powder => return false,
             _ => {}
         }
@@ -1218,7 +1352,11 @@ pub(super) fn try_settle(world: &CellWorld, body: &mut Debris) -> bool {
 
     let saved = (body.vx, body.vy, body.spin);
     body.vx = 0;
-    body.vy = saved.1.min(0) - GRAVITY;
+    body.vy = if pressing > 0 {
+        saved.1.max(0) + GRAVITY
+    } else {
+        saved.1.min(0) - GRAVITY
+    };
     body.spin = saved.2;
     let com = body.com();
     let coms = [com];
@@ -1229,7 +1367,7 @@ pub(super) fn try_settle(world: &CellWorld, body: &mut Debris) -> bool {
             body: 0,
             from,
             at,
-            normal: (0, 1),
+            normal: (0, -pressing),
             peer: Peer::Terrain,
             restitution: Q16::from_raw(0),
             friction: body.friction,
@@ -1238,7 +1376,6 @@ pub(super) fn try_settle(world: &CellWorld, body: &mut Debris) -> bool {
             drag: 0,
         })
         .collect();
-    let mut creatures = FxHashMap::default();
     let mut cells = FxHashMap::default();
     {
         let slice = std::slice::from_mut(body);
@@ -1246,7 +1383,6 @@ pub(super) fn try_settle(world: &CellWorld, body: &mut Debris) -> bool {
             bodies: slice,
             coms: &coms,
             grounded: &grounded,
-            creatures: &mut creatures,
             cells: &mut cells,
         };
         resolver.resolve(&mut contacts);

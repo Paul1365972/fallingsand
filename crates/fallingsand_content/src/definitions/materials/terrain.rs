@@ -148,7 +148,7 @@ pub fn define(catalog: &mut Catalog) {
             .restitution(0.1)
             .friction(0.05)
             .bond_group("ice")
-            .entity_grip(0.05)
+            .traction(0.05)
             .tag(Tag::Dissolvable),
     );
     catalog.add(

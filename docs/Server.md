@@ -11,7 +11,7 @@ The server is authoritative for every gameplay rule; clients send raw input and 
 
 ## Players
 
-A session is one transport connection plus handshake state and replication baselines. A player is one authenticated person currently present: durable identity derives from their key; the runtime id is stable through connection takeover, death, and revive, and retired on completed departure. Profile state (game mode, inventory, history) survives avatars; control state (accepted input, queued intents) resets on every incarnation boundary. Takeover rebinds player→session before closing the old session, so cleanup of the superseded connection cannot remove the player; a true departure snapshots the player and unstamps its raster before gameplay advances.
+A session is one transport connection plus handshake state and replication baselines. A player is one authenticated person currently present: durable identity derives from their key; the runtime id is stable through connection takeover, death, and revive, and retired on completed departure. Profile state (game mode, inventory, history) survives avatars; inbox state (accepted input, queued intents) resets on every incarnation boundary. Takeover rebinds player→session before closing the old session, so cleanup of the superseded connection cannot remove the player; a true departure snapshots the player and despawns its body before gameplay advances.
 
 ## Tick order
 
@@ -19,7 +19,7 @@ A session is one transport connection plus handshake state and replication basel
 2. Dispatch queued commands through the registry, dig/place, inventory actions; begin requested revives
 3. Recompute interest tickets; integrate completed region requests; request and unload regions
 4. Step the CA in four phases
-5. Step avatars in deterministic order
+5. Integrate body forces, run every controller in deterministic order, then advance the bodies
 6. Apply hazards, resolve lethal transitions, advance materialization searches
 7. Advance the calendar and emit one frame per active session
 8. Enqueue the ten-second world snapshot when due
@@ -30,7 +30,7 @@ Budget ~16 ms/tick, sim ≤8 ms; sleeping keeps the active-chunk set inside it.
 
 Each view projects onto chunks as active (simulate + replicate) or border (simulate only, so edges behave), loaded through their containing region; simulation extends one margin beyond replication. Random ticks run only on each player's active chunks. Zero-ticket regions unload after a grace period; frozen chunks retain their pending rects until re-entered.
 
-Entering and revive share one deterministic ring search advancing over ticks, examining only loaded windows, becoming alive only after one complete transactional stamp — terrain and other players are never overwritten. Dead players keep camera interest at the death location while revive searches around spawn.
+Entering and revive share one deterministic ring search advancing over ticks, examining only loaded windows, becoming alive only once a whole avatar body spawns into free cells — terrain and other players are never overwritten. A saved avatar is an anchor cell plus velocity and vitals; its body is re-authored around that. Dead players keep camera interest at the death location while revive searches around spawn.
 
 ## Persistence
 
@@ -43,7 +43,7 @@ The worker owns reads, confirmed-missing generation, encoding, compression, and 
 | Term | Meaning |
 |------|---------|
 | Session | one connection: handshake state and replication baselines |
-| Player | one authenticated person present: identity, profile, control, one life state |
+| Player | one authenticated person present: identity, profile, inbox, one life state |
 | SessionId / PlayerId / PlayerUuid | connection id / runtime presence id / durable key-derived identity |
 | Avatar | owned only by the alive state; every physical and deferred-physical value |
 | Ticket | a chunk's reason to be loaded, simulated, or replicated |

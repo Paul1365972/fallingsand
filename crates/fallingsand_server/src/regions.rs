@@ -1,9 +1,10 @@
+use crate::mobs::Mobs;
 use crate::persistence::{Persistence, RegionReady, StoreError};
-use crate::player::{Players, SearchWindow};
+use crate::player::Players;
 use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y};
-use fallingsand_core::{Chunk, ChunkPos, Region, RegionPos};
+use fallingsand_core::{CellRect, Chunk, ChunkPos, Region, RegionPos};
 use fallingsand_sim::CellWorld;
-use fallingsand_sim::debris::DebrisWorld;
+use fallingsand_sim::body::Bodies;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 pub const BORDER_MARGIN: i32 = 3;
@@ -42,18 +43,32 @@ impl ChunkTickets {
         self.active.contains(&pos) || self.border.contains(&pos)
     }
 
+    pub fn simulates_rect(&self, rect: CellRect) -> bool {
+        let grown = rect.grown(1);
+        let min = grown.min.chunk();
+        let max = grown.max.chunk();
+        for y in min.y..=max.y {
+            for x in min.x..=max.x {
+                if !self.simulates(ChunkPos::new(x, y)) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
     pub fn random_ticks(&self, pos: ChunkPos) -> bool {
         self.random_tick.contains(&pos)
     }
 }
 
-pub fn compute_tickets(tickets: &mut ChunkTickets, players: &Players) {
+pub fn compute_tickets(tickets: &mut ChunkTickets, players: &Players, bodies: &Bodies) {
     let previous: FxHashSet<ChunkPos> = tickets.active.union(&tickets.border).copied().collect();
     tickets.active.clear();
     tickets.border.clear();
     tickets.random_tick.clear();
     for (_, player) in players.iter() {
-        add_view(tickets, player.view_anchor().chunk());
+        add_view(tickets, player.view_anchor(bodies).chunk());
         if let Some(materialization) = player.life.materialization() {
             add_search_window(tickets, materialization.search.window());
         }
@@ -85,7 +100,7 @@ fn add_view(tickets: &mut ChunkTickets, center: ChunkPos) {
     }
 }
 
-fn add_search_window(tickets: &mut ChunkTickets, window: SearchWindow) {
+fn add_search_window(tickets: &mut ChunkTickets, window: CellRect) {
     let min = window.min.chunk();
     let max = window.max.chunk();
     for y in min.y..=max.y {
@@ -149,7 +164,8 @@ pub fn manage_regions(
     regions: &mut RegionMap,
     persistence: &mut Persistence,
     tickets: &ChunkTickets,
-    debris: &mut DebrisWorld,
+    bodies: &mut Bodies,
+    mobs: &mut Mobs,
 ) -> Result<(), StoreError> {
     let tick = sim.tick();
     let wanted = wanted_regions(tickets);
@@ -181,7 +197,8 @@ pub fn manage_regions(
         let load = ready.result?;
         regions.requested.remove(&ready.pos);
         insert_region(sim, ready.pos, load.region);
-        debris.wake_chunks(ready.pos.chunk_positions().map(|(_, pos)| pos));
+        bodies.wake_chunks(ready.pos.chunk_positions().map(|(_, pos)| pos));
+        bodies.unseat_exposed(sim, ready.pos.chunk_positions().map(|(_, pos)| pos));
         regions
             .states
             .insert(ready.pos, RegionState { last_wanted: tick });
@@ -223,7 +240,8 @@ pub fn manage_regions(
         .map(|(&pos, _)| pos)
         .collect();
     expired.sort_unstable_by_key(|pos| (pos.y, pos.x));
-    debris.settle_regions(sim, &expired);
+    mobs.despawn_regions(sim, bodies, &expired);
+    bodies.settle_regions(sim, &expired);
 
     for pos in expired {
         regions.states.remove(&pos).expect("state exists");
