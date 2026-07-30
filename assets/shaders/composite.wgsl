@@ -4,9 +4,20 @@
 const TAU: f32 = 6.2831853;
 const LIGHT_FIELD_DOWNSCALE: f32 = 4.0;
 const CAVE_DARK: vec3<f32> = vec3<f32>(0.01, 0.012, 0.03);
-const MEMORY_LEVEL: f32 = 0.22;
+const MEMORY_LEVEL: f32 = 0.30;
+const MEMORY_DARK_LUMA: f32 = 0.06;
 const MEMORY_SATURATION: f32 = 0.55;
 const MEMORY_TINT: vec3<f32> = vec3<f32>(0.82, 0.90, 1.15);
+const WALL_STEPS: f32 = 6.0;
+const WALL_DIM: f32 = 0.55;
+const WALL_BRIGHT: f32 = 1.6;
+const WALL_COOL: vec3<f32> = vec3<f32>(0.86, 0.92, 1.12);
+const WALL_WARM: vec3<f32> = vec3<f32>(1.14, 1.00, 0.84);
+const WALL_FOLD: f32 = 9.0;
+const WALL_CRACK_LEVEL: f32 = 0.34;
+const WALL_CRACK_WIDTH: f32 = 0.035;
+const WALL_CRACK_DEPTH: f32 = 0.45;
+const WALL_DAYLIGHT_DEPTH: f32 = 160.0;
 const FOG_DITHER: f32 = 0.14;
 const FOG_EDGE_LOW: f32 = 0.04;
 const FOG_EDGE_HIGH: f32 = 0.40;
@@ -354,15 +365,27 @@ fn fog_seen(pixel: vec2<f32>) -> f32 {
     return smoothstep(FOG_EDGE_LOW, FOG_EDGE_HIGH, raw + grain);
 }
 
+fn wall_strata(cell: vec2<f32>) -> f32 {
+    let fold = (vnoise(cell * vec2<f32>(0.017, 0.006)) - 0.5) * WALL_FOLD;
+    let p = cell + vec2<f32>(0.0, fold);
+    return vnoise(p * vec2<f32>(0.030, 0.130)) * 0.52
+        + vnoise(p * vec2<f32>(0.061, 0.274) + vec2<f32>(13.7, 41.3)) * 0.31
+        + vnoise(p * vec2<f32>(0.140, 0.560) + vec2<f32>(71.9, 7.5)) * 0.17;
+}
+
 fn wall_layer_premultiplied(uv: vec2<f32>, seen: f32) -> vec4<f32> {
     let cell = layer_cell(layer_texel(uv), frame.world.wall_snapped);
     let world = cell + frame.world.wall.world_offset;
-    let n = vnoise(cell * 0.11) * 0.55
-        + vnoise(cell * 0.2233 + vec2<f32>(13.7, 41.3)) * 0.3
-        + vnoise(cell * 0.4411 + vec2<f32>(71.9, 7.5)) * 0.15;
-    let step_value = min(u32(n * 4.0), 3u);
-    var rgb = frame.world.wall.base_color.rgb * (0.7 + 0.15 * f32(step_value));
-    rgb = mix(rgb, CAVE_DARK, clamp(frame.world.lighting.darkness * (1.0 - point_glow(world)), 0.0, 1.0));
+    let n = wall_strata(cell);
+    let tone = floor(min(n * WALL_STEPS, WALL_STEPS - 1.0)) / (WALL_STEPS - 1.0);
+    var rgb = frame.world.wall.base_color.rgb
+        * mix(WALL_COOL, WALL_WARM, tone)
+        * mix(WALL_DIM, WALL_BRIGHT, tone);
+    let crack = smoothstep(WALL_CRACK_WIDTH, 0.0, abs(n - WALL_CRACK_LEVEL));
+    rgb *= 1.0 - crack * WALL_CRACK_DEPTH;
+    let daylight = smoothstep(-WALL_DAYLIGHT_DEPTH, 0.0, world.y);
+    let night = frame.world.lighting.darkness * daylight * (1.0 - point_glow(world));
+    rgb = mix(rgb, CAVE_DARK, clamp(night, 0.0, 1.0));
     rgb = mix(CAVE_DARK, rgb, seen);
     let alpha = (1.0 - smoothstep(-24.0, 8.0, world.y)) * frame.world.wall.base_color.a;
     return vec4<f32>(rgb * alpha, alpha);
@@ -379,9 +402,11 @@ fn backdrop_color(pixel: vec2<f32>, seen: f32) -> vec3<f32> {
     return composite_over_opaque(color, wall_layer_premultiplied(layer_uv(pixel, frame.backdrop.wall_offset), seen));
 }
 
-fn memory_color(rgb: vec3<f32>) -> vec3<f32> {
+fn memory_color(premultiplied: vec3<f32>, alpha: f32) -> vec3<f32> {
+    let rgb = premultiplied / max(alpha, 0.001);
     let luma = dot(rgb, vec3<f32>(0.30, 0.59, 0.11));
-    return mix(vec3<f32>(luma), rgb, MEMORY_SATURATION) * MEMORY_TINT * MEMORY_LEVEL;
+    let dim = mix(1.0, MEMORY_LEVEL, smoothstep(0.0, MEMORY_DARK_LUMA, luma));
+    return mix(vec3<f32>(luma), rgb, MEMORY_SATURATION) * MEMORY_TINT * dim * alpha;
 }
 
 fn lit_world_premultiplied(pixel: vec2<f32>, seen: f32) -> vec4<f32> {
@@ -398,7 +423,7 @@ fn lit_world_premultiplied(pixel: vec2<f32>, seen: f32) -> vec4<f32> {
     let lit = max(point_glow(cell), max(halo.r, max(halo.g, halo.b)) * 0.1);
     let ambient = clamp(field.a * 10.0, 0.0, 1.0) * (1.0 - frame.world.lighting.darkness);
     let incident = clamp(ambient + lit, 0.0, 1.0) * seen;
-    let unlit = mix(CAVE_DARK * world.a, memory_color(world.rgb), seen);
+    let unlit = mix(CAVE_DARK * world.a, memory_color(world.rgb, world.a), seen);
     var rgb = mix(unlit, world.rgb, incident);
     rgb += halo * (world.a * 0.03) + core * (world.a * 3.0);
     return vec4<f32>(rgb, world.a);

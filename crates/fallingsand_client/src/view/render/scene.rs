@@ -11,7 +11,7 @@ use bevy::render::render_resource::ShaderType;
 const FAR_RATIO: Vec2 = Vec2::new(0.88, 0.92);
 const NEAR_RATIO: Vec2 = Vec2::new(0.72, 0.80);
 const WALL_RATIO: Vec2 = Vec2::splat(0.15);
-const WALL_COLOR: Vec3 = Vec3::new(0.060, 0.052, 0.048);
+const WALL_COLOR: Vec3 = Vec3::new(0.085, 0.076, 0.070);
 const FAR_HAZE: f32 = 0.6;
 const NEAR_HAZE: f32 = 0.35;
 const FAR_BASE: f32 = 14.0;
