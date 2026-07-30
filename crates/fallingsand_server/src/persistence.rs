@@ -76,8 +76,10 @@ pub enum StoreError {
     },
     #[error("persistence worker disconnected")]
     WorkerDisconnected,
-    #[error("persistence worker panicked")]
-    WorkerPanicked,
+    #[error("persistence worker panicked: {0}")]
+    WorkerPanicked(String),
+    #[error("persistence completion arrived with no batch in flight")]
+    SaveDesync,
     #[error("failed to start persistence worker: {0}")]
     WorkerStart(String),
 }
@@ -177,7 +179,7 @@ impl Persistence {
             ));
         }
         self.worker
-            .as_ref()
+            .as_mut()
             .ok_or(StoreError::WorkerDisconnected)?
             .request_region(request, pos)?;
         Ok((request, None))
@@ -234,10 +236,10 @@ impl Persistence {
             return Ok(());
         }
         let batch = Arc::new(self.take_batch());
-        let worker = self.worker.as_ref().ok_or(StoreError::WorkerDisconnected)?;
-        if worker.save(Arc::clone(&batch)).is_err() {
+        let worker = self.worker.as_mut().ok_or(StoreError::WorkerDisconnected)?;
+        if let Err(error) = worker.save(Arc::clone(&batch)) {
             self.restore_batch(batch);
-            return Err(StoreError::WorkerDisconnected);
+            return Err(error);
         }
         self.in_flight = Some(batch);
         Ok(())
@@ -247,7 +249,7 @@ impl Persistence {
         let mut regions = Vec::new();
         let messages = self
             .worker
-            .as_ref()
+            .as_mut()
             .ok_or(StoreError::WorkerDisconnected)?
             .drain_completions()?;
         for message in messages {
@@ -274,7 +276,7 @@ impl Persistence {
         while self.in_flight.is_some() {
             let message = self
                 .worker
-                .as_ref()
+                .as_mut()
                 .ok_or(StoreError::WorkerDisconnected)?
                 .recv_completion()?;
             let _ = self.apply_completion(message, true)?;
@@ -332,7 +334,7 @@ impl Persistence {
     }
 
     fn take_in_flight(&mut self) -> Result<Arc<SaveBatch>, StoreError> {
-        self.in_flight.take().ok_or(StoreError::WorkerDisconnected)
+        self.in_flight.take().ok_or(StoreError::SaveDesync)
     }
 
     fn shutdown_worker(&mut self) -> Result<(), StoreError> {

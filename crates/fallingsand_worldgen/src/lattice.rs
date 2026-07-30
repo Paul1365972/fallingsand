@@ -206,7 +206,7 @@ impl Lattice {
         let min_u = ((min_x as f32 - wave(WANDER) - wave(CURL)) / span).floor() as i32 - 1;
         let max_u = ((max_x as f32 + wave(WANDER) + wave(CURL)) / span).floor() as i32 + 1;
         let min_v = row_of((min_above - slack).max(0.0)).floor() as i32 - 1;
-        let max_v = row_of(max_above + slack).floor() as i32 + 1;
+        let max_v = row_of((max_above + slack).max(0.0)).floor() as i32 + 1;
         let width = max_u - min_u + 1;
         let height = max_v - min_v + 1;
         let mut anchors = Vec::with_capacity((width * height) as usize);

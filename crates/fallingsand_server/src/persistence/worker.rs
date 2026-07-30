@@ -21,7 +21,7 @@ pub(super) enum WorkerCompletion {
 pub(super) struct PersistenceWorker {
     commands: Sender<WorkerCommand>,
     completions: Receiver<WorkerCompletion>,
-    thread: JoinHandle<()>,
+    thread: Option<JoinHandle<()>>,
 }
 
 impl PersistenceWorker {
@@ -35,45 +35,75 @@ impl PersistenceWorker {
         Ok(Self {
             commands: command_tx,
             completions: completion_rx,
-            thread,
+            thread: Some(thread),
         })
     }
 
-    pub(super) fn request_region(&self, request: u64, pos: RegionPos) -> Result<(), StoreError> {
-        self.commands
-            .send(WorkerCommand::LoadRegion { request, pos })
-            .map_err(|_| StoreError::WorkerDisconnected)
+    pub(super) fn request_region(
+        &mut self,
+        request: u64,
+        pos: RegionPos,
+    ) -> Result<(), StoreError> {
+        self.dispatch(WorkerCommand::LoadRegion { request, pos })
     }
 
-    pub(super) fn save(&self, batch: Arc<SaveBatch>) -> Result<(), StoreError> {
-        self.commands
-            .send(WorkerCommand::SaveBatch(batch))
-            .map_err(|_| StoreError::WorkerDisconnected)
+    pub(super) fn save(&mut self, batch: Arc<SaveBatch>) -> Result<(), StoreError> {
+        self.dispatch(WorkerCommand::SaveBatch(batch))
     }
 
-    pub(super) fn drain_completions(&self) -> Result<Vec<WorkerCompletion>, StoreError> {
+    fn dispatch(&mut self, command: WorkerCommand) -> Result<(), StoreError> {
+        match self.commands.send(command) {
+            Ok(()) => Ok(()),
+            Err(_) => Err(self.died()),
+        }
+    }
+
+    pub(super) fn drain_completions(&mut self) -> Result<Vec<WorkerCompletion>, StoreError> {
         let mut messages = Vec::new();
         loop {
             match self.completions.try_recv() {
                 Ok(message) => messages.push(message),
                 Err(TryRecvError::Empty) => return Ok(messages),
-                Err(TryRecvError::Disconnected) => return Err(StoreError::WorkerDisconnected),
+                Err(TryRecvError::Disconnected) => return Err(self.died()),
             }
         }
     }
 
-    pub(super) fn recv_completion(&self) -> Result<WorkerCompletion, StoreError> {
-        self.completions
-            .recv()
-            .map_err(|_| StoreError::WorkerDisconnected)
+    pub(super) fn recv_completion(&mut self) -> Result<WorkerCompletion, StoreError> {
+        match self.completions.recv() {
+            Ok(message) => Ok(message),
+            Err(_) => Err(self.died()),
+        }
     }
 
     pub(super) fn shutdown(self) -> Result<(), StoreError> {
-        drop(self.completions);
-        let _ = self.commands.send(WorkerCommand::Shutdown);
-        drop(self.commands);
-        self.thread.join().map_err(|_| StoreError::WorkerPanicked)
+        let Self {
+            commands,
+            completions,
+            thread,
+        } = self;
+        drop(completions);
+        let _ = commands.send(WorkerCommand::Shutdown);
+        drop(commands);
+        match join(thread) {
+            Some(message) => Err(StoreError::WorkerPanicked(message)),
+            None => Ok(()),
+        }
     }
+
+    fn died(&mut self) -> StoreError {
+        match join(self.thread.take()) {
+            Some(message) => StoreError::WorkerPanicked(message),
+            None => StoreError::WorkerDisconnected,
+        }
+    }
+}
+
+fn join(thread: Option<JoinHandle<()>>) -> Option<String> {
+    thread?
+        .join()
+        .err()
+        .map(fallingsand_core::diagnostics::panic_message)
 }
 
 fn worker_main(

@@ -37,6 +37,7 @@ fn init_tracing() {
 }
 
 fn main() -> anyhow::Result<()> {
+    fallingsand_core::install_panic_hook();
     let _ = dotenvy::dotenv();
     init_tracing();
     let started = Instant::now();

@@ -22,6 +22,7 @@ fn render_error_policy(
 }
 
 fn main() {
+    fallingsand_core::install_panic_hook();
     let mut client = ClientGame::new();
     if let Some(world) = game::platform::cli_world_name() {
         client.start_game_local(world);

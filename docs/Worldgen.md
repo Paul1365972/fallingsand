@@ -60,6 +60,8 @@ Biomes are either **daylight** or **buried**, and both come from the same **jitt
 
 **There is no separate per-column path for the surface, and there must never be one.** A lookup keyed on x alone makes every biome boundary a perfectly vertical cut through the whole soil column, and no amount of dithering or fringe noise hides it — it only turns one clean cut into several. The skin is a row of the lattice like any other, so its boundaries are warped and ragged for the same reason every other boundary is. `PROBE=1` reports how many sub-biome seams run straight for 40+ cells; that number is the guard, and it belongs near zero.
 
+**The lattice domain is `above >= 0`.** `Lattice::coords` clamps every query to the surface, so open sky resolves to the skin row of the column beneath it and a region of pure air is generated from the same rows as the ground below. Anything that gives the sky a place of its own extends the row space to negative rows — `row_of` and `above_of` are already inverses there — rather than adding a second lookup beside the lattice.
+
 Sub-biomes are picked from their biome's members on a finer lattice, so one biome breaks into patches instead of being uniform. A sub-biome is indivisible within its cell: a boundary is a single clean transition and a sub-biome can never flicker back and forth across one.
 
 Selection is a single scored match: squared distance to each declared window, summed, `depth` and `rock` weighted above the rest. Nothing can fall through — the nearest biome wins when no window matches. Three rules keep the roster honest:

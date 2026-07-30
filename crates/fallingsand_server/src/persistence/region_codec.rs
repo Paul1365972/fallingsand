@@ -4,6 +4,8 @@ use fallingsand_core::{
 };
 use serde::{Deserialize, Serialize};
 
+const MAX_RAW_REGION_BYTES: usize = 64 * 1024 * 1024;
+
 #[derive(Serialize, Deserialize)]
 struct CellRecord {
     material: u16,
@@ -88,7 +90,14 @@ pub(super) fn decode_region(blob: &[u8]) -> Result<Region, StoreError> {
     if version != REGION_FORMAT_VERSION {
         return Err(StoreError::UnsupportedRegion(version));
     }
-    let raw = lz4_flex::decompress_size_prepended(compressed)
+    let (raw_len, body) = lz4_flex::block::uncompressed_size(compressed)
+        .map_err(|err| StoreError::CorruptRegion(err.to_string()))?;
+    if raw_len > MAX_RAW_REGION_BYTES {
+        return Err(StoreError::CorruptRegion(format!(
+            "decompressed size {raw_len} exceeds {MAX_RAW_REGION_BYTES}"
+        )));
+    }
+    let raw = lz4_flex::decompress(body, raw_len)
         .map_err(|err| StoreError::CorruptRegion(err.to_string()))?;
     let record: RegionRecord = postcard::from_bytes(&raw)?;
     if record.chunks.len() != REGION_AREA_CHUNKS {
