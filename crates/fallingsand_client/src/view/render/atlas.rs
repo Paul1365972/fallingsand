@@ -126,7 +126,7 @@ fn pack_rect(cells: &[Cell; CHUNK_AREA], rect: DirtyRect) -> Vec<u8> {
 
 enum UploadPlan {
     Full,
-    Rects(Vec<DirtyRect>),
+    Rect(DirtyRect),
 }
 
 pub(super) fn sync_chunk_atlas(mut game: ResMut<Game>, mut state: ResMut<ChunkAtlasState>) {
@@ -163,9 +163,9 @@ pub(super) fn sync_chunk_atlas(mut game: ResMut<Game>, mut state: ResMut<ChunkAt
             }
             ChunkChange::Delta(pos, rect) => match plans.get_mut(&pos) {
                 Some(UploadPlan::Full) => {}
-                Some(UploadPlan::Rects(rects)) => rects.push(rect),
+                Some(UploadPlan::Rect(merged)) => *merged = merged.union(rect),
                 None => {
-                    plans.insert(pos, UploadPlan::Rects(vec![rect]));
+                    plans.insert(pos, UploadPlan::Rect(rect));
                 }
             },
         }
@@ -209,16 +209,17 @@ pub(super) fn sync_chunk_atlas(mut game: ResMut<Game>, mut state: ResMut<ChunkAt
         let Some(&slot) = state.slots.get(&pos) else {
             continue;
         };
-        let rects = match plan {
-            UploadPlan::Full => vec![DirtyRect::FULL],
-            UploadPlan::Rects(rects) => rects,
+        let rect = match plan {
+            UploadPlan::Full => DirtyRect::FULL,
+            UploadPlan::Rect(rect) => rect,
         };
-        for rect in rects {
-            let data = pack_rect(&chunk.cells, rect);
-            state.uploads += 1;
-            state.upload_bytes += data.len();
-            state.pending.push(ChunkUpload { slot, rect, data });
+        if rect.is_empty() {
+            continue;
         }
+        let data = pack_rect(&chunk.cells, rect);
+        state.uploads += 1;
+        state.upload_bytes += data.len();
+        state.pending.push(ChunkUpload { slot, rect, data });
     }
 }
 

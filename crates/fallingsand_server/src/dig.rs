@@ -13,6 +13,7 @@ use fallingsand_sim::body::Bodies;
 const BARE_HAND_SPEED: f32 = 0.55;
 const CREATIVE_REACH: f32 = 100.0;
 const SURVIVAL_REACH: f32 = 20.0;
+const CREATIVE_RATE: usize = 12;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MiningMethod {
@@ -101,23 +102,20 @@ pub fn apply_player_inputs(sim: &mut World, bodies: &Bodies, players: &mut Playe
         let mut tapped_dig = None;
         for (button, cell) in uses {
             match button {
-                UseButton::Primary if survival => tapped_dig = Some(cell),
-                UseButton::Primary => {
-                    active_dig(sim, &context.with_aim(cell), body, dig, inventory)
-                }
+                UseButton::Primary => tapped_dig = Some(cell),
                 UseButton::Secondary => {
                     active_place(sim, &context.with_aim(cell), body, dig, inventory)
                 }
             }
         }
 
-        if survival && input.primary {
+        if input.primary {
             active_dig(sim, &context, body, dig, inventory);
         } else if let Some(cell) = tapped_dig {
             active_dig(sim, &context.with_aim(cell), body, dig, inventory);
         } else {
             dig.clear_progress();
-            if !input.primary && !input.secondary {
+            if !input.secondary {
                 dig.interaction = idle_preview(sim, &context, body, inventory);
             }
         }
@@ -131,6 +129,29 @@ fn active_dig(
     dig: &mut DigState,
     inventory: &mut Inventory,
 ) {
+    if !context.survival {
+        dig.clear_progress();
+        let mut cleared = None;
+        for _ in 0..CREATIVE_RATE {
+            let Some(target) = select_dig(world, &context.input, body, context.reach, false) else {
+                break;
+            };
+            let Some(present) = world.get_cell(target) else {
+                break;
+            };
+            world.set_material(target, MaterialId::AIR);
+            cleared = Some((target, present.material));
+        }
+        dig.interaction = Some(match cleared {
+            Some((target, material)) => dig_interaction(target, 1.0, material),
+            None => interaction(
+                context.input.aim,
+                miss_reason(body, &context.input, context.reach),
+                0.0,
+            ),
+        });
+        return;
+    }
     let Some(target) = select_dig(world, &context.input, body, context.reach, context.survival)
     else {
         dig.clear_progress();

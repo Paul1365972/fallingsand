@@ -60,7 +60,7 @@ impl DirtyRect {
         self.max_y = self.max_y.max(min_u8(offset.y + 1, last));
     }
 
-    fn union(self, other: Self) -> Self {
+    pub fn union(self, other: Self) -> Self {
         if self.is_empty() {
             return other;
         }
