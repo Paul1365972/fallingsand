@@ -1,7 +1,7 @@
 use crate::controllers::Controller;
 use crate::dig::DigState;
 use crate::inventory::Inventory;
-use crate::species::flesh::{self, STAND_ROWS};
+use crate::species::flesh;
 use crate::{MAX_AIR_SECONDS, MAX_HEALTH};
 use fallingsand_core::{CHUNK_SIZE, CellPos, CellRect, Subcell};
 use fallingsand_protocol::{GameMode, InputState, PlayerId, PlayerUuid, SlotAction, UseButton};
@@ -419,18 +419,14 @@ impl AvatarSnapshot {
     }
 
     pub fn from_avatar(avatar: &Avatar, bodies: &Bodies) -> Self {
-        let anchor = bodies
-            .cell(avatar.body_id)
+        let corner = bodies
+            .footing(avatar.body_id)
             .expect("an alive avatar owns its body");
         let (vx, vy) = bodies
             .velocity(avatar.body_id)
             .expect("an alive avatar owns its body");
         Self {
-            anchor: flesh::anchor(
-                anchor.x,
-                flesh::feet(anchor, avatar.controller.rows),
-                STAND_ROWS,
-            ),
+            anchor: flesh::standing(corner),
             vx,
             vy,
             hp: avatar.health.hp,

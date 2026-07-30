@@ -82,9 +82,12 @@ pub fn apply_player_inputs(sim: &mut World, bodies: &Bodies, players: &mut Playe
         let anchor = bodies
             .cell(avatar.body_id)
             .expect("an alive avatar owns its body");
+        let corner = bodies
+            .footing(avatar.body_id)
+            .expect("an alive avatar owns its body");
         let body = Stance {
             anchor,
-            rect: flesh::rect(anchor, avatar.controller.rows),
+            rect: flesh::rect(corner, avatar.controller.rows),
         };
         let context = InteractionContext {
             input,

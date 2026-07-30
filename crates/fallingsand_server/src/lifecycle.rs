@@ -140,7 +140,7 @@ fn advance_search(
         let Some(candidate) = search.candidate() else {
             return SearchResult::Exhausted;
         };
-        let rect = flesh::rect(candidate, STAND_ROWS);
+        let rect = flesh::rect(flesh::corner(candidate), STAND_ROWS);
         if !window.contains(rect.min) || !window.contains(rect.max) {
             search.center_window(candidate);
             return SearchResult::Waiting;
@@ -179,13 +179,13 @@ pub fn try_materialize(
     template: &AvatarSnapshot,
     candidate: CellPos,
 ) -> Option<Avatar> {
-    if !rect_loaded(sim, flesh::rect(candidate, STAND_ROWS)) {
+    if !rect_loaded(sim, flesh::rect(flesh::corner(candidate), STAND_ROWS)) {
         return None;
     }
-    let feet = flesh::feet(candidate, STAND_ROWS);
+    let feet = flesh::corner(candidate);
     let body_id = body_ids.allocate();
     for rows in (DUCK_ROWS..=STAND_ROWS).rev() {
-        let cells = flesh::cells(flesh::anchor(candidate.x, feet, rows), rows, false);
+        let cells = flesh::cells(feet, rows, false);
         if !bodies.spawn(sim, body_id, &cells, Policy::PLAYER) {
             continue;
         }

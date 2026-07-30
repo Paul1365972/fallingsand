@@ -82,6 +82,14 @@ impl Bodies {
         self.by_id.get(&id).map(|&index| self.bodies[index].anchor)
     }
 
+    pub fn footing(&self, id: u32) -> Option<CellPos> {
+        let &index = self.by_id.get(&id)?;
+        let raster = &self.bodies[index].raster;
+        let min_x = raster.iter().map(|pos| pos.x).min()?;
+        let min_y = raster.iter().map(|pos| pos.y).min()?;
+        Some(CellPos::new(min_x, min_y))
+    }
+
     pub fn velocity(&self, id: u32) -> Option<(Subcell, Subcell)> {
         let &index = self.by_id.get(&id)?;
         let body = &self.bodies[index];

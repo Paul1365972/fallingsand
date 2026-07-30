@@ -90,22 +90,18 @@ pub fn frame(rows: i32) -> &'static Frame {
     }
 }
 
-pub fn rect(anchor: CellPos, rows: i32) -> CellRect {
-    CellRect::spanning(
-        CellPos::new(anchor.x - COLS / 2, anchor.y - rows / 2),
-        COLS,
-        rows,
-    )
+pub fn corner(stand: CellPos) -> CellPos {
+    CellPos::new(stand.x - COLS / 2, stand.y)
 }
 
-pub fn feet(anchor: CellPos, rows: i32) -> i32 {
-    anchor.y - rows / 2
+pub fn standing(corner: CellPos) -> CellPos {
+    CellPos::new(corner.x + COLS / 2, corner.y)
 }
 
-pub fn anchor(x: i32, feet: i32, rows: i32) -> CellPos {
-    CellPos::new(x, feet + rows / 2)
+pub fn rect(corner: CellPos, rows: i32) -> CellRect {
+    CellRect::spanning(corner, COLS, rows)
 }
 
-pub fn cells(anchor: CellPos, rows: i32, facing_left: bool) -> Vec<(CellPos, MaterialId, u8)> {
-    frame(rows).cells(rect(anchor, rows).min, facing_left)
+pub fn cells(corner: CellPos, rows: i32, facing_left: bool) -> Vec<(CellPos, MaterialId, u8)> {
+    frame(rows).cells(corner, facing_left)
 }

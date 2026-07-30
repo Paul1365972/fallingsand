@@ -116,9 +116,10 @@ pub fn define(catalog: &mut Catalog) {
             ),
     );
 
-    for (key, density, hardness, colors) in [
+    for (key, bond, density, hardness, colors) in [
         (
             LEAVES,
+            Some("wood"),
             350.0,
             0.03,
             [
@@ -130,6 +131,7 @@ pub fn define(catalog: &mut Catalog) {
         ),
         (
             NEEDLES,
+            Some("wood"),
             330.0,
             0.03,
             [
@@ -141,6 +143,7 @@ pub fn define(catalog: &mut Catalog) {
         ),
         (
             VINE,
+            None,
             400.0,
             0.05,
             [
@@ -152,6 +155,7 @@ pub fn define(catalog: &mut Catalog) {
         ),
         (
             REED,
+            None,
             300.0,
             0.04,
             [
@@ -163,6 +167,7 @@ pub fn define(catalog: &mut Catalog) {
         ),
         (
             KELP,
+            None,
             420.0,
             0.04,
             [
@@ -174,6 +179,7 @@ pub fn define(catalog: &mut Catalog) {
         ),
         (
             GRASS_BLADE,
+            None,
             280.0,
             0.02,
             [
@@ -185,6 +191,7 @@ pub fn define(catalog: &mut Catalog) {
         ),
         (
             WILDFLOWER,
+            None,
             280.0,
             0.02,
             [
@@ -195,24 +202,25 @@ pub fn define(catalog: &mut Catalog) {
             ],
         ),
     ] {
-        catalog.add(
-            key,
-            material(solid())
-                .density(density)
-                .colors(colors)
-                .hardness(hardness)
-                .friction(0.7)
-                .tag(Tag::Dissolvable)
-                .flammable(
-                    flammable()
-                        .ignite(3.0)
-                        .rate(2.2)
-                        .emit(12.0)
-                        .residue(ASH, 0.25)
-                        .burnout(SMOKE)
-                        .damage(7.0),
-                ),
-        );
+        let mut definition = material(solid())
+            .density(density)
+            .colors(colors)
+            .hardness(hardness)
+            .friction(0.7)
+            .tag(Tag::Dissolvable)
+            .flammable(
+                flammable()
+                    .ignite(3.0)
+                    .rate(2.2)
+                    .emit(12.0)
+                    .residue(ASH, 0.25)
+                    .burnout(SMOKE)
+                    .damage(7.0),
+            );
+        if let Some(group) = bond {
+            definition = definition.bond_group(group);
+        }
+        catalog.add(key, definition);
     }
 
     for (key, density, colors) in [

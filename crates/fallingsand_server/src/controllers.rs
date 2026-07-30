@@ -269,14 +269,10 @@ fn step_posture(bodies: &mut Bodies, sim: &mut CellWorld, avatar: &mut Avatar, t
     } else {
         rows - 1
     };
-    let Some(anchor) = bodies.cell(avatar.body_id) else {
+    let Some(corner) = bodies.footing(avatar.body_id) else {
         return;
     };
-    let cells = flesh::cells(
-        flesh::anchor(anchor.x, flesh::feet(anchor, rows), next),
-        next,
-        avatar.controller.facing_left,
-    );
+    let cells = flesh::cells(corner, next, avatar.controller.facing_left);
     if bodies.reshape(sim, avatar.body_id, &cells) {
         avatar.controller.rows = next;
         avatar.controller.posture_step += POSTURE_STEP_SECS;
@@ -300,10 +296,10 @@ fn face(bodies: &mut Bodies, sim: &mut CellWorld, avatar: &mut Avatar, move_x: i
 }
 
 fn bank_ahead(sim: &CellWorld, bodies: &Bodies, avatar: &Avatar, move_x: i32) -> bool {
-    let Some(anchor) = bodies.cell(avatar.body_id) else {
+    let Some(corner) = bodies.footing(avatar.body_id) else {
         return false;
     };
-    let rect = flesh::rect(anchor, avatar.controller.rows);
+    let rect = flesh::rect(corner, avatar.controller.rows);
     let dirs: &[i32] = match move_x {
         1 => &[1],
         -1 => &[-1],
