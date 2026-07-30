@@ -3,9 +3,13 @@ use crate::view::Game;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::render::render_resource::ShaderType;
-use fallingsand_core::{CHUNK_AREA, CHUNK_SIZE, Cell, CellOffset, ChunkPos, DirtyRect};
+use fallingsand_core::{
+    CHUNK_AREA, CHUNK_SIZE, Cell, CellOffset, ChunkPos, DirtyRect, FOG_CHUNK_SIDE,
+    FOG_CHUNK_TEXELS, FogMask,
+};
 
 pub(super) const INITIAL_ATLAS_SIDE: u32 = 16;
+const FOG_FADE_SECS: f32 = 0.18;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct AtlasSlot {
@@ -19,9 +23,52 @@ pub(super) struct ChunkUpload {
     pub data: Vec<u8>,
 }
 
+pub(super) struct FogUpload {
+    pub slot: AtlasSlot,
+    pub data: Vec<u8>,
+}
+
+struct ChunkEntry {
+    slot: AtlasSlot,
+    fade: Box<[u8; FOG_CHUNK_TEXELS]>,
+    fading: bool,
+}
+
+impl ChunkEntry {
+    fn new(slot: AtlasSlot) -> Self {
+        Self {
+            slot,
+            fade: Box::new([0; FOG_CHUNK_TEXELS]),
+            fading: false,
+        }
+    }
+
+    fn snap(&mut self, fog: &FogMask) {
+        for (index, value) in self.fade.iter_mut().enumerate() {
+            *value = if fog.get(index) { u8::MAX } else { 0 };
+        }
+        self.fading = false;
+    }
+
+    fn advance(&mut self, fog: &FogMask, step: u8) -> bool {
+        let mut moved = false;
+        let mut pending = false;
+        for (index, value) in self.fade.iter_mut().enumerate() {
+            if !fog.get(index) || *value == u8::MAX {
+                continue;
+            }
+            *value = value.saturating_add(step);
+            moved = true;
+            pending |= *value < u8::MAX;
+        }
+        self.fading = pending;
+        moved
+    }
+}
+
 #[derive(Resource)]
 pub(crate) struct ChunkAtlasState {
-    slots: HashMap<ChunkPos, AtlasSlot>,
+    slots: HashMap<ChunkPos, ChunkEntry>,
     uploads: usize,
     upload_bytes: usize,
     atlas_side: u32,
@@ -29,6 +76,7 @@ pub(crate) struct ChunkAtlasState {
     instance_generation: u64,
     free: Vec<AtlasSlot>,
     pending: Vec<ChunkUpload>,
+    fog_pending: Vec<FogUpload>,
 }
 
 impl Default for ChunkAtlasState {
@@ -42,6 +90,7 @@ impl Default for ChunkAtlasState {
             instance_generation: 0,
             free: Vec::new(),
             pending: Vec::new(),
+            fog_pending: Vec::new(),
         };
         state.add_slots(0, INITIAL_ATLAS_SIDE);
         state
@@ -85,6 +134,7 @@ impl ChunkAtlasState {
     fn clear(&mut self) {
         self.slots.clear();
         self.pending.clear();
+        self.fog_pending.clear();
         self.free.clear();
         self.atlas_side = INITIAL_ATLAS_SIDE;
         self.add_slots(0, INITIAL_ATLAS_SIDE);
@@ -98,12 +148,13 @@ impl ChunkAtlasState {
         } else {
             self.slots
                 .iter()
-                .map(|(&pos, &slot)| ChunkInstance::new(pos, slot))
+                .map(|(&pos, entry)| ChunkInstance::new(pos, entry.slot))
                 .collect()
         };
         AtlasSnapshot {
             chunks,
             uploads: std::mem::take(&mut self.pending),
+            fog_uploads: std::mem::take(&mut self.fog_pending),
             side: self.atlas_side,
             atlas_generation: self.atlas_generation,
             instance_generation: self.instance_generation,
@@ -129,7 +180,11 @@ enum UploadPlan {
     Rect(DirtyRect),
 }
 
-pub(super) fn sync_chunk_atlas(mut game: ResMut<Game>, mut state: ResMut<ChunkAtlasState>) {
+pub(super) fn sync_chunk_atlas(
+    mut game: ResMut<Game>,
+    mut state: ResMut<ChunkAtlasState>,
+    time: Res<Time>,
+) {
     state.uploads = 0;
     state.upload_bytes = 0;
 
@@ -139,25 +194,23 @@ pub(super) fn sync_chunk_atlas(mut game: ResMut<Game>, mut state: ResMut<ChunkAt
         }
         return;
     };
-    let changes = ingame.world.take_changes();
-    if changes.is_empty() {
-        return;
-    }
 
     let mut plans: HashMap<ChunkPos, UploadPlan> = HashMap::default();
-    for change in changes {
+    let mut revealed: Vec<ChunkPos> = Vec::new();
+    for change in ingame.world.take_changes() {
         match change {
             ChunkChange::Cleared => {
                 state.clear();
                 plans.clear();
+                revealed.clear();
             }
             ChunkChange::Loaded(pos) => {
                 plans.insert(pos, UploadPlan::Full);
             }
             ChunkChange::Unloaded(pos) => {
                 plans.remove(&pos);
-                if let Some(slot) = state.slots.remove(&pos) {
-                    state.free.push(slot);
+                if let Some(entry) = state.slots.remove(&pos) {
+                    state.free.push(entry.slot);
                     state.instance_generation = state.instance_generation.wrapping_add(1);
                 }
             }
@@ -168,6 +221,7 @@ pub(super) fn sync_chunk_atlas(mut game: ResMut<Game>, mut state: ResMut<ChunkAt
                     plans.insert(pos, UploadPlan::Rect(rect));
                 }
             },
+            ChunkChange::Revealed(pos) => revealed.push(pos),
         }
     }
 
@@ -175,42 +229,36 @@ pub(super) fn sync_chunk_atlas(mut game: ResMut<Game>, mut state: ResMut<ChunkAt
     for (&pos, plan) in &plans {
         if matches!(plan, UploadPlan::Full) && !state.slots.contains_key(&pos) {
             let slot = state.allocate();
-            state.slots.insert(pos, slot);
+            state.slots.insert(pos, ChunkEntry::new(slot));
             state.instance_generation = state.instance_generation.wrapping_add(1);
         }
     }
 
-    if state.atlas_generation != old_generation {
+    let grown = state.atlas_generation != old_generation;
+    if grown {
         state.pending.clear();
-        let live: Vec<_> = state
-            .slots
-            .iter()
-            .map(|(&pos, &slot)| (pos, slot))
-            .collect();
-        for (pos, slot) in live {
-            if let Some(chunk) = ingame.world.chunks.get(&pos) {
-                let data = pack_rect(&chunk.cells, DirtyRect::FULL);
-                state.uploads += 1;
-                state.upload_bytes += data.len();
-                state.pending.push(ChunkUpload {
-                    slot,
-                    rect: DirtyRect::FULL,
-                    data,
-                });
-            }
+        state.fog_pending.clear();
+        plans.clear();
+        for &pos in ingame.world.chunks.keys() {
+            plans.insert(pos, UploadPlan::Full);
         }
-        return;
     }
 
     for (pos, plan) in plans {
         let Some(chunk) = ingame.world.chunks.get(&pos) else {
             continue;
         };
-        let Some(&slot) = state.slots.get(&pos) else {
+        let Some(entry) = state.slots.get_mut(&pos) else {
             continue;
         };
+        let slot = entry.slot;
         let rect = match plan {
-            UploadPlan::Full => DirtyRect::FULL,
+            UploadPlan::Full => {
+                entry.snap(&chunk.fog);
+                let data = entry.fade.to_vec();
+                state.fog_pending.push(FogUpload { slot, data });
+                DirtyRect::FULL
+            }
             UploadPlan::Rect(rect) => rect,
         };
         if rect.is_empty() {
@@ -220,6 +268,34 @@ pub(super) fn sync_chunk_atlas(mut game: ResMut<Game>, mut state: ResMut<ChunkAt
         state.uploads += 1;
         state.upload_bytes += data.len();
         state.pending.push(ChunkUpload { slot, rect, data });
+    }
+
+    for pos in revealed {
+        if let Some(entry) = state.slots.get_mut(&pos) {
+            entry.fading = true;
+        }
+    }
+
+    let step = (u8::MAX as f32 * time.delta_secs() / FOG_FADE_SECS).ceil() as u8;
+    let fading: Vec<ChunkPos> = state
+        .slots
+        .iter()
+        .filter(|(_, entry)| entry.fading)
+        .map(|(&pos, _)| pos)
+        .collect();
+    for pos in fading {
+        let Some(chunk) = ingame.world.chunks.get(&pos) else {
+            continue;
+        };
+        let Some(entry) = state.slots.get_mut(&pos) else {
+            continue;
+        };
+        if !entry.advance(&chunk.fog, step.max(1)) {
+            continue;
+        }
+        let data = entry.fade.to_vec();
+        let slot = entry.slot;
+        state.fog_pending.push(FogUpload { slot, data });
     }
 }
 
@@ -241,9 +317,14 @@ impl ChunkInstance {
     }
 }
 
+pub(super) const fn fog_atlas_dimension(side: u32) -> u32 {
+    side * FOG_CHUNK_SIDE as u32
+}
+
 pub(super) struct AtlasSnapshot {
     pub chunks: Vec<ChunkInstance>,
     pub uploads: Vec<ChunkUpload>,
+    pub fog_uploads: Vec<FogUpload>,
     pub side: u32,
     pub atlas_generation: u64,
     pub instance_generation: u64,

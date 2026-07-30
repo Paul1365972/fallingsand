@@ -19,7 +19,7 @@ use std::sync::Arc;
 use store::WorldStore;
 use worker::{PersistenceWorker, WorkerCompletion};
 
-pub const REGION_FORMAT_VERSION: u8 = 27;
+pub const REGION_FORMAT_VERSION: u8 = 28;
 pub const WORLD_FORMAT_VERSION: u16 = 31;
 const AUTOSAVE_INTERVAL_TICKS: u64 = fallingsand_core::ticks_from_secs(10.0);
 

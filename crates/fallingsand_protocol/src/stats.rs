@@ -10,6 +10,7 @@ pub struct TickProfile {
     pub physics: u32,
     pub hazards: u32,
     pub lifecycle: u32,
+    pub fog: u32,
     pub replicate: u32,
     pub persistence: u32,
     pub total: u32,
@@ -18,22 +19,11 @@ pub struct TickProfile {
 }
 
 impl TickProfile {
-    pub const PHASE_GROUPS: [usize; 4] = [3, 2, 3, 2];
-    pub const PHASE_COUNT: usize = {
-        let mut count = 0;
-        let mut i = 0;
-        while i < Self::PHASE_GROUPS.len() {
-            count += Self::PHASE_GROUPS[i];
-            i += 1;
-        }
-        count
-    };
-
     pub fn sim(&self) -> u32 {
         self.sim_simulate + self.sim_random_tick
     }
 
-    pub fn phases(&self) -> [(&'static str, u32); Self::PHASE_COUNT] {
+    pub fn phases(&self) -> [(&'static str, u32); 11] {
         [
             ("network", self.network),
             ("input", self.player_input),
@@ -43,6 +33,7 @@ impl TickProfile {
             ("physics", self.physics),
             ("hazards", self.hazards),
             ("lifecycle", self.lifecycle),
+            ("fog", self.fog),
             ("replicate", self.replicate),
             ("persist", self.persistence),
         ]

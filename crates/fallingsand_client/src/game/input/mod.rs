@@ -392,6 +392,7 @@ fn apply(game: &mut ClientGame, action: Action) {
         Action::ToggleDebugBorders => {
             game.view_prefs.debug_borders = !game.view_prefs.debug_borders;
         }
+        Action::ToggleFog => game.view_prefs.fog = !game.view_prefs.fog,
         Action::ToggleCursorMode => {
             game.settings.cycle_cursor_mode();
             super::settings::save(&game.settings);

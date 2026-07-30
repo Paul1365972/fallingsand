@@ -1,6 +1,7 @@
 use super::{REGION_FORMAT_VERSION, StoreError};
 use fallingsand_core::{
-    CHUNK_AREA, Cell, DirtyRect, MaterialId, REGION_AREA_CHUNKS, Region, Tag, content,
+    CHUNK_AREA, Cell, DirtyRect, FOG_CHUNK_BYTES, FogMask, MaterialId, REGION_AREA_CHUNKS, Region,
+    Tag, content,
 };
 use serde::{Deserialize, Serialize};
 
@@ -51,6 +52,7 @@ impl CellRecord {
 #[derive(Serialize, Deserialize)]
 struct ChunkRecord {
     cells: Vec<CellRecord>,
+    fog: Vec<u8>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -72,7 +74,10 @@ pub(super) fn encode_region(region: &Region) -> Result<Vec<u8>, StoreError> {
                     )));
                 }
             }
-            Ok(ChunkRecord { cells })
+            Ok(ChunkRecord {
+                cells,
+                fog: chunk.fog().bytes().to_vec(),
+            })
         })
         .collect::<Result<Vec<_>, StoreError>>()?;
     let record = RegionRecord { chunks };
@@ -117,6 +122,13 @@ pub(super) fn decode_region(blob: &[u8]) -> Result<Region, StoreError> {
         for (cell, stored_cell) in chunk.cells_mut().iter_mut().zip(&stored.cells) {
             *cell = stored_cell.restore()?;
         }
+        let fog: [u8; FOG_CHUNK_BYTES] = stored.fog.as_slice().try_into().map_err(|_| {
+            StoreError::CorruptRegion(format!(
+                "expected {FOG_CHUNK_BYTES} fog bytes per chunk, got {}",
+                stored.fog.len()
+            ))
+        })?;
+        chunk.restore_fog(FogMask::from_bytes(fog));
         chunk.sim = DirtyRect::FULL;
     }
     Ok(region)

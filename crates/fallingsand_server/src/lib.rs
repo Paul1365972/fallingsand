@@ -1,6 +1,7 @@
 pub(crate) mod command;
 pub(crate) mod controllers;
 pub(crate) mod dig;
+pub(crate) mod fog;
 pub(crate) mod hazards;
 pub(crate) mod inventory;
 pub(crate) mod lifecycle;
@@ -66,6 +67,7 @@ struct ServerState {
     generator: WorldGenerator,
     regions: RegionMap,
     tickets: ChunkTickets,
+    fog: fog::FogState,
     persistence: Persistence,
     replication: ReplicationState,
     emitter: particles::ParticleEmitter,
@@ -154,6 +156,7 @@ impl Server {
                 generator,
                 regions: RegionMap::default(),
                 tickets: ChunkTickets::default(),
+                fog: fog::FogState::new(),
                 persistence,
                 replication: ReplicationState::default(),
                 emitter: particles::ParticleEmitter::default(),
@@ -362,6 +365,12 @@ impl ServerState {
                         .deliver(command::Reply::To(player, ChatEntry::error(text)));
                 }
             },
+        );
+
+        self.timed(
+            "fog",
+            |t| &mut t.fog,
+            |s| fog::reveal(&mut s.sim, &s.bodies, &s.players, &mut s.fog),
         );
 
         self.clock.advance();

@@ -1,7 +1,7 @@
 use super::extract::CompositeExtract;
 use super::scene::{LineInstance, PointLight, SceneFrame};
 use super::targets::RenderTargets;
-use super::{color_attachment, pipeline, populated, queue_pipeline};
+use super::{HDR_FORMAT, color_attachment, pipeline, populated, queue_pipeline};
 use bevy::core_pipeline::FullscreenShader;
 use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssets;
@@ -66,6 +66,7 @@ impl CompositePass {
                     sampler(SamplerBindingType::Filtering),
                     texture_2d(TextureSampleType::Float { filterable: true }),
                     sampler(SamplerBindingType::Filtering),
+                    texture_2d(TextureSampleType::Float { filterable: false }),
                 ),
             ),
         );
@@ -88,7 +89,7 @@ impl CompositePass {
             fullscreen.to_vertex_state(),
             composite_shader,
             "composite_fragment",
-            None,
+            &[(HDR_FORMAT, None)],
         );
         let overlay_pipeline = queue_pipeline(
             cache,
@@ -101,7 +102,7 @@ impl CompositePass {
             },
             overlay_shader,
             "line_fragment",
-            Some(BlendState::ALPHA_BLENDING),
+            &[(HDR_FORMAT, Some(BlendState::ALPHA_BLENDING))],
         );
         let mut scene_frame = UniformBuffer::from(SceneFrame::default());
         scene_frame.set_label(Some("game_scene_frame"));
@@ -208,6 +209,7 @@ impl CompositePass {
                     &self.linear_sampler,
                     &star_view,
                     &star_sampler,
+                    &targets.fog.view,
                 )),
             ));
             self.target_revision = targets.revision;

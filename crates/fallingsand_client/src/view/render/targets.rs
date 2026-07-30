@@ -10,7 +10,7 @@ pub(super) struct Target {
 }
 
 impl Target {
-    fn new(device: &RenderDevice, label: &'static str, size: UVec2) -> Self {
+    fn new(device: &RenderDevice, label: &'static str, size: UVec2, format: TextureFormat) -> Self {
         let texture = device.create_texture(&TextureDescriptor {
             label: Some(label),
             size: Extent3d {
@@ -21,7 +21,7 @@ impl Target {
             mip_level_count: 1,
             sample_count: 1,
             dimension: TextureDimension::D2,
-            format: HDR_FORMAT,
+            format,
             usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
@@ -33,6 +33,8 @@ impl Target {
     }
 }
 
+pub(super) const FOG_FORMAT: TextureFormat = TextureFormat::R8Unorm;
+
 pub(super) struct RenderTargets {
     pub native: UVec2,
     pub revision: u64,
@@ -41,6 +43,9 @@ pub(super) struct RenderTargets {
     pub quarter: Target,
     pub blur_temp: Target,
     pub light: Target,
+    pub fog_source: Target,
+    pub fog_temp: Target,
+    pub fog: Target,
 }
 
 impl RenderTargets {
@@ -50,11 +55,14 @@ impl RenderTargets {
         Self {
             native,
             revision,
-            world: Target::new(device, "game_world", native),
-            emission: Target::new(device, "game_emission", extended),
-            quarter: Target::new(device, "game_light_source", quarter),
-            blur_temp: Target::new(device, "game_light_horizontal", quarter),
-            light: Target::new(device, "game_light", quarter),
+            world: Target::new(device, "game_world", native, HDR_FORMAT),
+            emission: Target::new(device, "game_emission", extended, HDR_FORMAT),
+            quarter: Target::new(device, "game_light_source", quarter, HDR_FORMAT),
+            blur_temp: Target::new(device, "game_light_horizontal", quarter, HDR_FORMAT),
+            light: Target::new(device, "game_light", quarter, HDR_FORMAT),
+            fog_source: Target::new(device, "game_fog_source", extended, FOG_FORMAT),
+            fog_temp: Target::new(device, "game_fog_horizontal", extended, FOG_FORMAT),
+            fog: Target::new(device, "game_fog", extended, FOG_FORMAT),
         }
     }
 }

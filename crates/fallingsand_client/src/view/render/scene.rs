@@ -82,6 +82,7 @@ pub(super) struct CelestialFrame {
 struct LightingFrame {
     darkness: f32,
     light_count: u32,
+    fog_floor: f32,
     snapped_cam: Vec2,
     margin: Vec2,
 }
@@ -219,6 +220,7 @@ pub(super) fn scene_frame(
     sky: &Sky,
     clear_color: Vec4,
     light_count: usize,
+    fog_floor: f32,
 ) -> SceneFrame {
     let sky_linear = if sky.synced {
         sky.color_linear
@@ -236,6 +238,7 @@ pub(super) fn scene_frame(
             lighting: LightingFrame {
                 darkness: if sky.synced { sky.darkness() } else { 0.0 },
                 light_count: light_count as u32,
+                fog_floor,
                 snapped_cam: world_snapped.as_vec2(),
                 margin: light_field::margin(state.native),
             },

@@ -4,6 +4,12 @@
 const TAU: f32 = 6.2831853;
 const LIGHT_FIELD_DOWNSCALE: f32 = 4.0;
 const CAVE_DARK: vec3<f32> = vec3<f32>(0.01, 0.012, 0.03);
+const MEMORY_LEVEL: f32 = 0.22;
+const MEMORY_SATURATION: f32 = 0.55;
+const MEMORY_TINT: vec3<f32> = vec3<f32>(0.82, 0.90, 1.15);
+const FOG_DITHER: f32 = 0.14;
+const FOG_EDGE_LOW: f32 = 0.04;
+const FOG_EDGE_HIGH: f32 = 0.40;
 
 struct SunFrame {
     redness: f32,
@@ -58,6 +64,7 @@ struct CelestialFrame {
 struct LightingFrame {
     darkness: f32,
     light_count: u32,
+    fog_floor: f32,
     snapped_cam: vec2<f32>,
     margin: vec2<f32>,
 }
@@ -115,6 +122,7 @@ struct PointLight {
 @group(0) @binding(5) var linear_sampler: sampler;
 @group(0) @binding(6) var star_tex: texture_2d<f32>;
 @group(0) @binding(7) var star_sampler: sampler;
+@group(0) @binding(8) var fog_tex: texture_2d<f32>;
 
 fn layer_uv(pixel: vec2<f32>, offset: vec2<f32>) -> vec2<f32> {
     let screen_offset = vec2<f32>(-offset.x, offset.y);
@@ -334,7 +342,19 @@ fn point_glow(position: vec2<f32>) -> f32 {
     return result;
 }
 
-fn wall_layer_premultiplied(uv: vec2<f32>) -> vec4<f32> {
+fn fog_seen(pixel: vec2<f32>) -> f32 {
+    let texel = layer_texel(layer_uv(pixel, frame.world_offset));
+    let extended = texel + frame.world.lighting.margin;
+    let raw = max(
+        textureLoad(fog_tex, vec2<u32>(extended), 0).r,
+        frame.world.lighting.fog_floor,
+    );
+    let cell = layer_cell(texel, frame.world.lighting.snapped_cam);
+    let grain = (vnoise(cell * 0.11) - 0.5) * FOG_DITHER;
+    return smoothstep(FOG_EDGE_LOW, FOG_EDGE_HIGH, raw + grain);
+}
+
+fn wall_layer_premultiplied(uv: vec2<f32>, seen: f32) -> vec4<f32> {
     let cell = layer_cell(layer_texel(uv), frame.world.wall_snapped);
     let world = cell + frame.world.wall.world_offset;
     let n = vnoise(cell * 0.11) * 0.55
@@ -343,11 +363,12 @@ fn wall_layer_premultiplied(uv: vec2<f32>) -> vec4<f32> {
     let step_value = min(u32(n * 4.0), 3u);
     var rgb = frame.world.wall.base_color.rgb * (0.7 + 0.15 * f32(step_value));
     rgb = mix(rgb, CAVE_DARK, clamp(frame.world.lighting.darkness * (1.0 - point_glow(world)), 0.0, 1.0));
+    rgb = mix(CAVE_DARK, rgb, seen);
     let alpha = (1.0 - smoothstep(-24.0, 8.0, world.y)) * frame.world.wall.base_color.a;
     return vec4<f32>(rgb * alpha, alpha);
 }
 
-fn backdrop_color(pixel: vec2<f32>) -> vec3<f32> {
+fn backdrop_color(pixel: vec2<f32>, seen: f32) -> vec3<f32> {
     var color = frame.clear_color.rgb;
     color = composite_over_opaque(color, star_layer_premultiplied(layer_uv(pixel, frame.backdrop.star_offset)));
     color = composite_over_opaque(color, sun_layer_premultiplied(pixel));
@@ -355,10 +376,15 @@ fn backdrop_color(pixel: vec2<f32>) -> vec3<f32> {
     color = composite_over_opaque(color, atmosphere_layer_premultiplied(layer_uv(pixel, vec2<f32>(0.0))));
     color = composite_over_opaque(color, silhouette_layer_premultiplied(layer_uv(pixel, frame.backdrop.far_offset), frame.world.far));
     color = composite_over_opaque(color, silhouette_layer_premultiplied(layer_uv(pixel, frame.backdrop.near_offset), frame.world.near));
-    return composite_over_opaque(color, wall_layer_premultiplied(layer_uv(pixel, frame.backdrop.wall_offset)));
+    return composite_over_opaque(color, wall_layer_premultiplied(layer_uv(pixel, frame.backdrop.wall_offset), seen));
 }
 
-fn lit_world_premultiplied(pixel: vec2<f32>) -> vec4<f32> {
+fn memory_color(rgb: vec3<f32>) -> vec3<f32> {
+    let luma = dot(rgb, vec3<f32>(0.30, 0.59, 0.11));
+    return mix(vec3<f32>(luma), rgb, MEMORY_SATURATION) * MEMORY_TINT * MEMORY_LEVEL;
+}
+
+fn lit_world_premultiplied(pixel: vec2<f32>, seen: f32) -> vec4<f32> {
     let uv = layer_uv(pixel, frame.world_offset);
     let texel = layer_texel(uv);
     let position = vec2<u32>(texel);
@@ -371,8 +397,9 @@ fn lit_world_premultiplied(pixel: vec2<f32>) -> vec4<f32> {
     let halo = field.rgb;
     let lit = max(point_glow(cell), max(halo.r, max(halo.g, halo.b)) * 0.1);
     let ambient = clamp(field.a * 10.0, 0.0, 1.0) * (1.0 - frame.world.lighting.darkness);
-    let incident = clamp(ambient + lit, 0.0, 1.0);
-    var rgb = mix(CAVE_DARK * world.a, world.rgb, incident);
+    let incident = clamp(ambient + lit, 0.0, 1.0) * seen;
+    let unlit = mix(CAVE_DARK * world.a, memory_color(world.rgb), seen);
+    var rgb = mix(unlit, world.rgb, incident);
     rgb += halo * (world.a * 0.03) + core * (world.a * 3.0);
     return vec4<f32>(rgb, world.a);
 }
@@ -380,10 +407,11 @@ fn lit_world_premultiplied(pixel: vec2<f32>) -> vec4<f32> {
 @fragment
 fn composite_fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let pixel = in.uv * frame.viewport.window_size;
+    let seen = fog_seen(pixel);
     var backdrop = frame.clear_color.rgb;
     if frame.backdrop_ready != 0u {
-        backdrop = backdrop_color(pixel);
+        backdrop = backdrop_color(pixel, seen);
     }
-    let world = lit_world_premultiplied(pixel);
+    let world = lit_world_premultiplied(pixel, seen);
     return vec4<f32>(world.rgb + backdrop * (1.0 - world.a), 1.0);
 }

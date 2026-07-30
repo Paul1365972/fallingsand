@@ -104,6 +104,10 @@ Water is a placement input, not an afterthought. A skin declares whether its gro
 
 Canopies are shapes, not palette swaps. A broad crown is a stippled ellipse centred on the **leaning** trunk top — centring it on the trunk's base leaves the crown visibly beside the tree on any lean. A conifer is a tiered cone whose width pulses so it reads as layered branches. A mushroom is a bridged dome with glowing gills hanging from its underside, which is a different silhouette rather than the same tree drawn in fungus.
 
+## Daylight
+
+Generation writes the region's initial explored mask ([Server.md](Server.md)): every fog texel from a shallow depth below the surface upward starts revealed, measured from the lowest column the texel spans so every column shows at least the full band and a cliff face reads from the valley floor. The surface is landscape you can read on arrival, not a bubble you have to walk out; everything under that band is earned by line of sight. Nothing else is pre-revealed — caves, mineshafts and remnants stay dark however close to the surface they run.
+
 ## Standing up
 
 `body::island` walks **cardinal** neighbours only, links cells that share a `bond_group`, and calls a cell supported when a cardinal neighbour is a solid harder than `SUPPORT_MIN_HARDNESS`. Three consequences bind every generator that places bonded matter — wood, timber, rope, bone, ice, salt, shale, flesh, metal, brick, glass, shroom:

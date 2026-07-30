@@ -1,12 +1,15 @@
 #import fallingsand::common::{PixelViewport, vnoise}
 
 const CHUNK_SIZE: f32 = 64.0;
+const FOG_TEXEL_CELLS: f32 = 4.0;
+const FOG_CHUNK_SIDE: f32 = 16.0;
 
 struct RasterFrame {
     viewport: PixelViewport,
     world_snapped: vec2<f32>,
     emission_size: vec2<f32>,
     time: f32,
+    fog_floor: f32,
 }
 
 struct ChunkInstance {
@@ -26,6 +29,7 @@ struct QuadInstance {
 @group(0) @binding(3) var atlas: texture_2d<u32>;
 @group(0) @binding(4) var palette: texture_2d<f32>;
 @group(0) @binding(5) var emissive_palette: texture_2d<f32>;
+@group(0) @binding(6) var fog_atlas: texture_2d<f32>;
 
 struct RasterOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -36,6 +40,11 @@ struct RasterOutput {
 struct ColorOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) color: vec4<f32>,
+}
+
+struct EmissionOutput {
+    @location(0) light: vec4<f32>,
+    @location(1) fog: f32,
 }
 
 fn quad_corner(vertex: u32) -> vec2<f32> {
@@ -88,8 +97,27 @@ fn chunk_fragment(in: RasterOutput) -> @location(0) vec4<f32> {
     return textureLoad(palette, vec2<u32>(material, cell.b & 15u), 0);
 }
 
+fn fog_entry(position: vec2<f32>) -> f32 {
+    let slot = floor(position / CHUNK_SIZE) * FOG_CHUNK_SIDE;
+    let local = position / FOG_TEXEL_CELLS - slot - vec2<f32>(0.5);
+    let corner = floor(local);
+    let fraction = local - corner;
+    let last = vec2<f32>(FOG_CHUNK_SIDE - 1.0);
+    var value = 0.0;
+    for (var dy = 0; dy < 2; dy += 1) {
+        for (var dx = 0; dx < 2; dx += 1) {
+            let step = vec2<f32>(f32(dx), f32(dy));
+            let texel = slot + clamp(corner + step, vec2<f32>(0.0), last);
+            let weight = mix(1.0 - fraction.x, fraction.x, step.x)
+                * mix(1.0 - fraction.y, fraction.y, step.y);
+            value += textureLoad(fog_atlas, vec2<u32>(texel), 0).r * weight;
+        }
+    }
+    return max(value, frame.fog_floor);
+}
+
 @fragment
-fn emissive_fragment(in: RasterOutput) -> @location(0) vec4<f32> {
+fn emissive_fragment(in: RasterOutput) -> EmissionOutput {
     let cell = cell_entry(in.atlas_position);
     let material = cell.r | (cell.g << 8u);
     let shade = cell.b & 15u;
@@ -102,7 +130,11 @@ fn emissive_fragment(in: RasterOutput) -> @location(0) vec4<f32> {
         emission *= max(0.0, 1.0 + entry.a * n);
     }
     let air = 1.0 - textureLoad(palette, vec2<u32>(material, shade), 0).a;
-    return vec4<f32>(emission, air);
+    let fog = fog_entry(in.atlas_position);
+    var out: EmissionOutput;
+    out.light = vec4<f32>(emission * fog, air * fog);
+    out.fog = fog;
+    return out;
 }
 
 @vertex

@@ -5,6 +5,7 @@ pub mod chunk;
 pub mod content;
 pub mod coords;
 pub mod diagnostics;
+pub mod fog;
 pub mod item;
 pub mod material;
 pub mod region;
@@ -21,6 +22,10 @@ pub use coords::{
     CARDINAL_NEIGHBORS, CellOffset, CellPos, CellRect, ChunkOffset, ChunkPos, RegionPos, ray_cells,
 };
 pub use diagnostics::{install_panic_hook, panic_message};
+pub use fog::{
+    FOG_CHUNK_BYTES, FOG_CHUNK_SIDE, FOG_CHUNK_TEXELS, FOG_TEXEL_BITS, FOG_TEXEL_CELLS, FogMask,
+    FogPos,
+};
 pub use item::{
     HOTBAR_SLOTS, Inventory, ItemId, ItemInfo, ItemStack, MAIN_SLOTS, PLAYER_SLOTS, Recipe,
     ToolSpec,

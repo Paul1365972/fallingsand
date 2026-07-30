@@ -50,7 +50,7 @@ pub(crate) struct StatWindows {
     pub(super) border_chunks: StatWindow,
     pub(super) awake_chunks: StatWindow,
     pub(super) particles: StatWindow,
-    pub(super) phases: [StatWindow; TickProfile::PHASE_COUNT],
+    pub(super) phases: Vec<StatWindow>,
 }
 
 fn human_count(n: u64) -> String {
@@ -77,13 +77,12 @@ pub(super) fn human_bytes(bytes: u64) -> String {
     format!("{value:>6.1} {unit:>3}")
 }
 
-fn phase_lines(
-    timing: &TickProfile,
-    windows: &mut [StatWindow; TickProfile::PHASE_COUNT],
-    now: f32,
-) -> Vec<String> {
-    let entries: Vec<String> = timing
-        .phases()
+const PHASES_PER_LINE: usize = 3;
+
+fn phase_lines(timing: &TickProfile, windows: &mut Vec<StatWindow>, now: f32) -> Vec<String> {
+    let phases = timing.phases();
+    windows.resize_with(phases.len(), StatWindow::default);
+    let entries: Vec<String> = phases
         .iter()
         .zip(windows.iter_mut())
         .map(|((label, micros), window)| {
@@ -91,13 +90,10 @@ fn phase_lines(
             format!("{label} {ms:>5.2}")
         })
         .collect();
-    let mut lines = Vec::new();
-    let mut start = 0;
-    for len in TickProfile::PHASE_GROUPS {
-        lines.push(entries[start..start + len].join("  "));
-        start += len;
-    }
-    lines
+    entries
+        .chunks(PHASES_PER_LINE)
+        .map(|line| line.join("  "))
+        .collect()
 }
 
 pub(super) fn render_pass_line(diagnostics: &DiagnosticsStore) -> Option<String> {

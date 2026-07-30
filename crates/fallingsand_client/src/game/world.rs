@@ -1,15 +1,19 @@
 use bevy::log::error;
-use fallingsand_core::{CHUNK_AREA, CHUNK_SIZE, Cell, CellOffset, CellPos, ChunkPos, DirtyRect};
+use fallingsand_core::{
+    CHUNK_AREA, CHUNK_SIZE, Cell, CellOffset, CellPos, ChunkPos, DirtyRect, FogMask,
+};
 use fallingsand_protocol::{ChunkOp, TickFrame, cells_from_wire};
 use std::collections::HashMap;
 
 pub struct ViewChunk {
     pub cells: Box<[Cell; CHUNK_AREA]>,
+    pub fog: FogMask,
 }
 
 pub enum ChunkChange {
     Loaded(ChunkPos),
     Delta(ChunkPos, DirtyRect),
+    Revealed(ChunkPos),
     Unloaded(ChunkPos),
     Cleared,
 }
@@ -42,15 +46,27 @@ impl WorldView {
         self.server_tick = self.server_tick.max(tick.tick);
         for op in &tick.chunks {
             match op {
-                ChunkOp::Load { pos, cells } => match cells_from_wire(cells, CHUNK_AREA) {
+                ChunkOp::Load { pos, cells, fog } => match cells_from_wire(cells, CHUNK_AREA) {
                     Ok(decoded) => {
                         let mut buffer = Box::new([Cell::AIR; CHUNK_AREA]);
                         buffer.copy_from_slice(&decoded);
-                        self.chunks.insert(*pos, ViewChunk { cells: buffer });
+                        self.chunks.insert(
+                            *pos,
+                            ViewChunk {
+                                cells: buffer,
+                                fog: *fog,
+                            },
+                        );
                         self.changes.push(ChunkChange::Loaded(*pos));
                     }
                     Err(_) => error!("bad chunk load payload for {pos:?}"),
                 },
+                ChunkOp::Fog { pos, fog } => {
+                    if let Some(chunk) = self.chunks.get_mut(pos) {
+                        chunk.fog = *fog;
+                        self.changes.push(ChunkChange::Revealed(*pos));
+                    }
+                }
                 ChunkOp::Unload { pos } => {
                     if self.chunks.remove(pos).is_some() {
                         self.changes.push(ChunkChange::Unloaded(*pos));

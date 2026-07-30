@@ -46,6 +46,7 @@ pub enum Action {
     ZoomOut,
     ToggleDebugOverlay,
     ToggleDebugBorders,
+    ToggleFog,
     CycleGameMode,
     ToggleCursorMode,
 }
@@ -257,6 +258,7 @@ impl Default for Bindings {
                     KeyCode::KeyN,
                     Action::CycleGameMode,
                 ),
+                chord(Modifier::Key(KeyCode::F3), KeyCode::KeyF, Action::ToggleFog),
                 tap(KeyCode::F3, Action::ToggleDebugOverlay),
             ]),
             menu: opaque(Vec::new()),

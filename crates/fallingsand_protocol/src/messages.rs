@@ -1,6 +1,6 @@
 use crate::chat::ChatEntry;
 use crate::command::CommandInfo;
-use fallingsand_core::{CellPos, ChunkPos, DirtyRect, ItemId, ItemStack, MaterialId};
+use fallingsand_core::{CellPos, ChunkPos, DirtyRect, FogMask, ItemId, ItemStack, MaterialId};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -242,6 +242,7 @@ pub enum ChunkOp {
     Load {
         pos: ChunkPos,
         cells: Vec<u8>,
+        fog: FogMask,
     },
     Unload {
         pos: ChunkPos,
@@ -250,6 +251,10 @@ pub enum ChunkOp {
         pos: ChunkPos,
         rect: DirtyRect,
         cells: Vec<u8>,
+    },
+    Fog {
+        pos: ChunkPos,
+        fog: FogMask,
     },
 }
 

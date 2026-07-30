@@ -1,6 +1,7 @@
 pub(crate) mod atlas;
 mod composite;
 mod extract;
+mod fog;
 mod light_field;
 pub(crate) mod primitives;
 pub(crate) mod raster;
@@ -27,6 +28,7 @@ use bevy::render::{
 use bevy::shader::Shader;
 use composite::CompositePass;
 use extract::ExtractedRenderFrame;
+use fog::FogFieldPass;
 use light_field::LightFieldPass;
 use raster::RasterPass;
 use targets::GameplayTargets;
@@ -139,6 +141,13 @@ fn init_renderer(
         &fullscreen,
         &cache,
     ));
+    commands.insert_resource(FogFieldPass::new(
+        &device,
+        &queue,
+        &asset_server,
+        &fullscreen,
+        &cache,
+    ));
     commands.insert_resource(CompositePass::new(
         &device,
         &asset_server,
@@ -153,6 +162,7 @@ struct PreparePasses<'w> {
     targets: ResMut<'w, GameplayTargets>,
     raster: ResMut<'w, RasterPass>,
     light_field: ResMut<'w, LightFieldPass>,
+    fog: ResMut<'w, FogFieldPass>,
     composite: ResMut<'w, CompositePass>,
 }
 
@@ -177,6 +187,7 @@ fn prepare_renderer(
         .raster
         .prepare(&frame.raster, &device, &queue, &cache);
     passes.light_field.prepare(targets, &device, &cache);
+    passes.fog.prepare(targets, &device, &cache);
     passes
         .composite
         .prepare(&frame.composite, targets, &device, &queue, &images, &cache);
@@ -187,6 +198,7 @@ struct DrawPasses<'w> {
     targets: Res<'w, GameplayTargets>,
     raster: Res<'w, RasterPass>,
     light_field: Res<'w, LightFieldPass>,
+    fog: Res<'w, FogFieldPass>,
     composite: Res<'w, CompositePass>,
     cache: Res<'w, PipelineCache>,
 }
@@ -213,6 +225,7 @@ fn render_game(
     passes
         .light_field
         .draw(&mut context, targets, &passes.cache);
+    passes.fog.draw(&mut context, targets, &passes.cache);
     passes.composite.draw(
         &mut context,
         view.into_inner(),
@@ -228,7 +241,7 @@ pub(super) fn queue_pipeline(
     vertex: VertexState,
     shader: Handle<Shader>,
     entry: &'static str,
-    blend: Option<BlendState>,
+    outputs: &[(TextureFormat, Option<BlendState>)],
 ) -> CachedRenderPipelineId {
     cache.queue_render_pipeline(RenderPipelineDescriptor {
         label: Some(label.into()),
@@ -237,11 +250,16 @@ pub(super) fn queue_pipeline(
         fragment: Some(FragmentState {
             shader,
             entry_point: Some(entry.into()),
-            targets: vec![Some(ColorTargetState {
-                format: HDR_FORMAT,
-                blend,
-                write_mask: ColorWrites::ALL,
-            })],
+            targets: outputs
+                .iter()
+                .map(|&(format, blend)| {
+                    Some(ColorTargetState {
+                        format,
+                        blend,
+                        write_mask: ColorWrites::ALL,
+                    })
+                })
+                .collect(),
             ..default()
         }),
         primitive: PrimitiveState {

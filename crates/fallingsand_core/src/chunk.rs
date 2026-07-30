@@ -1,5 +1,6 @@
 use crate::cell::Cell;
 use crate::coords::CellOffset;
+use crate::fog::FogMask;
 use serde::{Deserialize, Serialize};
 
 pub const CHUNK_SIZE: usize = 64;
@@ -99,6 +100,10 @@ pub struct Chunk {
     pub prev_change: DirtyRect,
     pub sim: DirtyRect,
     pub prev_sim: DirtyRect,
+    fog: FogMask,
+    sight: FogMask,
+    sight_dirty: DirtyRect,
+    sight_rev: u32,
 }
 
 impl Default for Chunk {
@@ -115,6 +120,10 @@ impl Chunk {
             prev_change: DirtyRect::EMPTY,
             sim: DirtyRect::EMPTY,
             prev_sim: DirtyRect::EMPTY,
+            fog: FogMask::EMPTY,
+            sight: FogMask::EMPTY,
+            sight_dirty: DirtyRect::FULL,
+            sight_rev: 0,
         }
     }
 
@@ -133,6 +142,7 @@ impl Chunk {
         self.cells[offset.index()] = cell;
         self.change.mark(offset);
         self.sim.mark_neighbourhood(offset);
+        self.sight_dirty.mark(offset);
     }
 
     pub fn cells(&self) -> &[Cell; CHUNK_AREA] {
@@ -167,5 +177,36 @@ impl Chunk {
 
     pub fn sim_rect(&self) -> DirtyRect {
         self.sim.union(self.prev_sim)
+    }
+
+    pub fn fog(&self) -> &FogMask {
+        &self.fog
+    }
+
+    pub fn restore_fog(&mut self, fog: FogMask) {
+        self.fog = fog;
+    }
+
+    pub fn reveal(&mut self, revealed: &FogMask) {
+        self.fog.union_in_place(revealed);
+    }
+
+    pub fn sight(&self) -> &FogMask {
+        &self.sight
+    }
+
+    pub fn sight_rev(&self) -> u32 {
+        self.sight_rev
+    }
+
+    pub fn take_sight_dirty(&mut self) -> DirtyRect {
+        std::mem::replace(&mut self.sight_dirty, DirtyRect::EMPTY)
+    }
+
+    pub fn store_sight(&mut self, sight: FogMask) {
+        if self.sight != sight {
+            self.sight = sight;
+            self.sight_rev = self.sight_rev.wrapping_add(1);
+        }
     }
 }

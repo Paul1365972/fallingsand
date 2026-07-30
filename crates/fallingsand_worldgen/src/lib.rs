@@ -15,8 +15,8 @@ use biomes::{Biome, SubBiome, biomes};
 use caves::{Carve, Caves};
 use fallingsand_core::content::material;
 use fallingsand_core::{
-    CHUNK_SIZE, Cell, CellOffset, CellPos, ChunkOffset, DirtyRect, MaterialId, Phase,
-    REGION_SIZE_CELLS, REGION_SIZE_CHUNKS, Region, RegionPos, content,
+    CHUNK_SIZE, Cell, CellOffset, CellPos, ChunkOffset, DirtyRect, FOG_TEXEL_CELLS, FogMask,
+    FogPos, MaterialId, Phase, REGION_SIZE_CELLS, REGION_SIZE_CHUNKS, Region, RegionPos, content,
 };
 use fallingsand_math::Hash;
 use lattice::{Cells, Lattice, Place};
@@ -28,6 +28,7 @@ use veins::veins_for_rect;
 const CELL_SHADE: Hash = Hash::label("worldgen.cell_shade");
 
 const MARGIN: i32 = len(168);
+const SURFACE_REVEAL_DEPTH: i32 = 28;
 
 fn region_index(base_x: i32, base_y: i32, x: i32, y: i32) -> (ChunkOffset, CellOffset) {
     let local = CellPos::new(x - base_x, y - base_y);
@@ -416,6 +417,26 @@ impl WorldGenerator {
             region_set(&mut region, base.x, base.y, build.x, build.y, cell);
         }
 
+        reveal_surface(&mut region, pos, &|x| ctx.sample.surface(x));
+
         region
+    }
+}
+
+fn reveal_surface(region: &mut Region, pos: RegionPos, surface: &dyn Fn(i32) -> i32) {
+    for (offset, chunk_pos) in pos.chunk_positions() {
+        let mut fog = FogMask::EMPTY;
+        for (index, texel) in FogPos::in_chunk(chunk_pos) {
+            let base = texel.base_cell();
+            let daylight = (0..FOG_TEXEL_CELLS as i32)
+                .map(|dx| surface(base.x + dx))
+                .min()
+                .expect("a fog texel spans at least one column");
+            let deepest = daylight - SURFACE_REVEAL_DEPTH;
+            if base.y + FOG_TEXEL_CELLS as i32 > deepest {
+                fog.set(index);
+            }
+        }
+        region.chunk_mut(offset).reveal(&fog);
     }
 }

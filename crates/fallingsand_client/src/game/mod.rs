@@ -33,6 +33,7 @@ pub struct ViewPrefs {
     pub zoom_index: i32,
     pub debug_overlay: bool,
     pub debug_borders: bool,
+    pub fog: bool,
 }
 
 impl Default for ViewPrefs {
@@ -41,6 +42,7 @@ impl Default for ViewPrefs {
             zoom_index: 0,
             debug_overlay: true,
             debug_borders: false,
+            fog: true,
         }
     }
 }

@@ -44,6 +44,10 @@ impl CellWorld {
         self.chunks.get(&pos)
     }
 
+    pub fn chunk_mut(&mut self, pos: ChunkPos) -> Option<&mut Chunk> {
+        self.chunks.get_mut(&pos)
+    }
+
     pub fn chunks(&self) -> impl Iterator<Item = (ChunkPos, &Chunk)> {
         self.chunks.iter().map(|(&pos, chunk)| (pos, chunk))
     }

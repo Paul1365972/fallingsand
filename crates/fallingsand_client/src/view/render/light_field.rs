@@ -1,5 +1,5 @@
 use super::targets::RenderTargets;
-use super::{color_attachment, pipeline, queue_pipeline};
+use super::{HDR_FORMAT, color_attachment, pipeline, queue_pipeline};
 use bevy::core_pipeline::FullscreenShader;
 use bevy::prelude::*;
 use bevy::render::render_resource::binding_types::{texture_2d, uniform_buffer};
@@ -107,7 +107,7 @@ impl LightFieldPass {
             vertex.clone(),
             shader.clone(),
             "downsample_fragment",
-            None,
+            &[(HDR_FORMAT, None)],
         );
         let horizontal_pipeline = queue_pipeline(
             cache,
@@ -116,7 +116,7 @@ impl LightFieldPass {
             vertex.clone(),
             shader.clone(),
             "blur_horizontal_fragment",
-            None,
+            &[(HDR_FORMAT, None)],
         );
         let vertical_pipeline = queue_pipeline(
             cache,
@@ -125,7 +125,7 @@ impl LightFieldPass {
             vertex,
             shader,
             "blur_vertical_fragment",
-            None,
+            &[(HDR_FORMAT, None)],
         );
         let mut blur_frame = UniformBuffer::from(blur_frame());
         blur_frame.set_label(Some("game_blur_frame"));

@@ -16,7 +16,7 @@ Chat is one typed entry per message — kind, optional author, text; the handsha
 
 Roster and physical presence are separate: roster messages maintain connected names, while the tick frame carries change-gated per-subsystem state — chunk load/delta/unload from the sim's change rect (player flesh rides these deltas), optional avatar anchors for presentation, per-slot inventory diffs, a private self state whose lifecycle carries health/air/interaction exactly while alive and a camera anchor while not, and dig-spray particle spawn events (the server decides when and where; the client only integrates and fades them).
 
-A wire cell is 3 bytes — material and shade, no velocity or timing; the server re-derives them. Chunk payloads are paletted containers, smallest encoding wins.
+A wire cell is 3 bytes — material and shade, no velocity or timing; the server re-derives them. Chunk payloads are paletted containers, smallest encoding wins. A chunk load also carries its 32-byte explored mask, and a fog op resends that mask alone when it changes — monotone, so it needs no versioning.
 
 The opt-in debug stream keeps chunk sim/change rects as separate payloads outside gameplay state.
 
@@ -35,7 +35,7 @@ The client resolves one identity at startup and holds it for the session: key by
 | Term | Meaning |
 |------|---------|
 | TickFrame | the one frame per server tick: chunks, players, inventory, self, particles |
-| ChunkOp | per-chunk wire delta: load / delta / unload |
+| ChunkOp | per-chunk wire delta: load / delta / fog / unload |
 | InputFrame | per-client-tick input: held snapshot + ordered one-shot actions |
 | InputState / InputAction | latest-wins held controls / edge-sensitive intent, including use events |
 | SelfLife | private lifecycle on the wire: entering, alive, dead, reviving |

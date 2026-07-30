@@ -3,6 +3,7 @@ use crate::player::{PlayerLife, Players};
 use crate::regions::RegionMap;
 use crate::session::Sessions;
 use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y};
+use fallingsand_core::FogMask;
 use fallingsand_core::{CHUNK_SIZE, Calendar, CellOffset, CellPos, ChunkPos, ItemStack, Motion};
 use fallingsand_protocol::{
     ChunkDebugRects, ChunkOp, DebugBody, DebugMotion, InteractionState, InteractionStatus,
@@ -12,11 +13,11 @@ use fallingsand_protocol::{
 use fallingsand_sim::CellWorld;
 use fallingsand_sim::body::Bodies;
 use fallingsand_worldgen::WorldGenerator;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::BTreeMap;
 
 pub struct SessionReplication {
-    pub known_chunks: FxHashSet<ChunkPos>,
+    pub known_chunks: FxHashMap<ChunkPos, FogMask>,
     pub last_self: Option<SelfState>,
     pub last_inventory: Vec<Option<ItemStack>>,
     pub last_cursor: Option<ItemStack>,
@@ -29,7 +30,7 @@ pub struct SessionReplication {
 impl Default for SessionReplication {
     fn default() -> Self {
         Self {
-            known_chunks: FxHashSet::default(),
+            known_chunks: FxHashMap::default(),
             last_self: None,
             last_inventory: Vec::new(),
             last_cursor: None,
@@ -327,14 +328,14 @@ fn particles_in_interest(particles: &[ParticleSpawn], center: ChunkPos) -> Vec<P
 }
 
 fn build_tiles(
-    known: &mut FxHashSet<ChunkPos>,
+    known: &mut FxHashMap<ChunkPos, FogMask>,
     debug: bool,
     sim: &CellWorld,
     interest: &FxHashSet<ChunkPos>,
     debug_rects: &mut Vec<ChunkDebugRects>,
 ) -> Vec<ChunkOp> {
     let mut ops = Vec::new();
-    known.retain(|&pos| {
+    known.retain(|&pos, _| {
         if interest.contains(&pos) {
             return true;
         }
@@ -350,12 +351,18 @@ fn build_tiles(
                 debug_rects.push(ChunkDebugRects { pos, change, sim });
             }
         }
-        if known.insert(pos) {
-            ops.push(ChunkOp::Load {
-                pos,
-                cells: cells_to_wire(chunk.cells()),
-            });
-            continue;
+        let fog = *chunk.fog();
+        match known.insert(pos, fog) {
+            None => {
+                ops.push(ChunkOp::Load {
+                    pos,
+                    cells: cells_to_wire(chunk.cells()),
+                    fog,
+                });
+                continue;
+            }
+            Some(sent) if sent != fog => ops.push(ChunkOp::Fog { pos, fog }),
+            Some(_) => {}
         }
         let rect = chunk.change_rect();
         if rect.is_empty() {

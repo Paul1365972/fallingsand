@@ -1,5 +1,5 @@
 use super::RenderSourceAssets;
-use super::atlas::{ChunkAtlasState, ChunkInstance, ChunkUpload};
+use super::atlas::{ChunkAtlasState, ChunkInstance, ChunkUpload, FogUpload};
 use super::light_field::extended_size;
 use super::primitives::{DebugPrimitives, ParticleVisuals};
 use super::raster::{QuadInstance, RasterFrame};
@@ -43,6 +43,7 @@ pub(super) struct RasterExtract {
     pub chunks: Vec<ChunkInstance>,
     pub quads: Vec<QuadInstance>,
     pub uploads: Vec<ChunkUpload>,
+    pub fog_uploads: Vec<FogUpload>,
     pub atlas_side: u32,
     pub atlas_generation: u64,
     pub instance_generation: u64,
@@ -64,6 +65,7 @@ impl Default for ExtractedRenderFrame {
                 chunks: Vec::new(),
                 quads: Vec::new(),
                 uploads: Vec::new(),
+                fog_uploads: Vec::new(),
                 atlas_side: 16,
                 atlas_generation: 0,
                 instance_generation: u64::MAX,
@@ -103,12 +105,21 @@ pub fn extract_render_frame(
     let game = main_world.resource::<Game>();
     let active = game.0.ingame().is_some();
     let lights = point_lights(game, &sky);
-    let scene = scene_frame(viewport.clone(), state, &sky, clear_color, lights.len());
+    let fog_floor = if game.0.view_prefs.fog { 0.0 } else { 1.0 };
+    let scene = scene_frame(
+        viewport.clone(),
+        state,
+        &sky,
+        clear_color,
+        lights.len(),
+        fog_floor,
+    );
     let raster = RasterFrame {
         viewport,
         world_snapped,
         emission_size: extended_size(native).as_vec2(),
         time: elapsed,
+        fog_floor,
     };
     let quads = main_world
         .resource::<ParticleVisuals>()
@@ -136,6 +147,7 @@ pub fn extract_render_frame(
     out.raster.frame = raster;
     out.raster.quads = quads;
     out.raster.uploads = atlas.uploads;
+    out.raster.fog_uploads = atlas.fog_uploads;
     out.raster.atlas_side = atlas.side;
     out.raster.atlas_generation = atlas.atlas_generation;
     out.raster.instance_generation = atlas.instance_generation;

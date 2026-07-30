@@ -1,16 +1,16 @@
-use super::atlas::{ChunkInstance, INITIAL_ATLAS_SIDE};
+use super::atlas::{ChunkInstance, INITIAL_ATLAS_SIDE, fog_atlas_dimension};
 use super::extract::{PixelViewport, RasterExtract};
 use super::primitives::WorldQuad;
-use super::targets::RenderTargets;
-use super::{color_attachment, pipeline, populated, queue_pipeline};
+use super::targets::{FOG_FORMAT, RenderTargets};
+use super::{HDR_FORMAT, color_attachment, pipeline, populated, queue_pipeline};
 use bevy::prelude::*;
 use bevy::render::render_resource::binding_types::{
     storage_buffer_read_only, texture_2d, uniform_buffer,
 };
 use bevy::render::render_resource::*;
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue};
-use fallingsand_core::CHUNK_SIZE;
 use fallingsand_core::content;
+use fallingsand_core::{CHUNK_SIZE, FOG_CHUNK_SIDE};
 
 const SHADES: u32 = 16;
 
@@ -37,6 +37,7 @@ pub(super) struct RasterFrame {
     pub world_snapped: Vec2,
     pub emission_size: Vec2,
     pub time: f32,
+    pub fog_floor: f32,
 }
 
 impl Default for RasterFrame {
@@ -46,6 +47,7 @@ impl Default for RasterFrame {
             world_snapped: Vec2::ZERO,
             emission_size: Vec2::ONE,
             time: 0.0,
+            fog_floor: 0.0,
         }
     }
 }
@@ -53,33 +55,47 @@ impl Default for RasterFrame {
 struct Atlas {
     generation: u64,
     side: u32,
-    texture: Texture,
-    view: TextureView,
+    cells: Texture,
+    cells_view: TextureView,
+    fog: Texture,
+    fog_view: TextureView,
 }
 
 impl Atlas {
     fn new(device: &RenderDevice, side: u32, generation: u64) -> Self {
-        let dimension = side * CHUNK_SIZE as u32;
-        let texture = device.create_texture(&TextureDescriptor {
-            label: Some("game_chunk_atlas"),
-            size: Extent3d {
-                width: dimension,
-                height: dimension,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: TextureDimension::D2,
-            format: TextureFormat::Rgba8Uint,
-            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&TextureViewDescriptor::default());
+        let plane = |label, dimension, format| {
+            device.create_texture(&TextureDescriptor {
+                label: Some(label),
+                size: Extent3d {
+                    width: dimension,
+                    height: dimension,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: TextureDimension::D2,
+                format,
+                usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+                view_formats: &[],
+            })
+        };
+        let cells = plane(
+            "game_chunk_atlas",
+            side * CHUNK_SIZE as u32,
+            TextureFormat::Rgba8Uint,
+        );
+        let fog = plane(
+            "game_fog_atlas",
+            fog_atlas_dimension(side),
+            TextureFormat::R8Unorm,
+        );
         Self {
             generation,
             side,
-            texture,
-            view,
+            cells_view: cells.create_view(&TextureViewDescriptor::default()),
+            cells,
+            fog_view: fog.create_view(&TextureViewDescriptor::default()),
+            fog,
         }
     }
 }
@@ -172,6 +188,7 @@ impl RasterPass {
                     texture_2d(TextureSampleType::Uint),
                     texture_2d(TextureSampleType::Float { filterable: false }),
                     texture_2d(TextureSampleType::Float { filterable: false }),
+                    texture_2d(TextureSampleType::Float { filterable: false }),
                 ),
             ),
         );
@@ -188,7 +205,7 @@ impl RasterPass {
             vertex("chunk_vertex"),
             shader.clone(),
             "chunk_fragment",
-            Some(BlendState::ALPHA_BLENDING),
+            &[(HDR_FORMAT, Some(BlendState::ALPHA_BLENDING))],
         );
         let emission_pipeline = queue_pipeline(
             cache,
@@ -197,7 +214,7 @@ impl RasterPass {
             vertex("emissive_vertex"),
             shader.clone(),
             "emissive_fragment",
-            None,
+            &[(HDR_FORMAT, None), (FOG_FORMAT, None)],
         );
         let quad_pipeline = queue_pipeline(
             cache,
@@ -206,7 +223,7 @@ impl RasterPass {
             vertex("quad_vertex"),
             shader,
             "quad_fragment",
-            Some(BlendState::ALPHA_BLENDING),
+            &[(HDR_FORMAT, Some(BlendState::ALPHA_BLENDING))],
         );
         let (palette, emissive_palette) = create_palette_textures(device, queue);
         let palette_view = palette.create_view(&TextureViewDescriptor::default());
@@ -257,7 +274,7 @@ impl RasterPass {
         for upload in &input.uploads {
             queue.write_texture(
                 TexelCopyTextureInfo {
-                    texture: &self.atlas.texture,
+                    texture: &self.atlas.cells,
                     mip_level: 0,
                     origin: Origin3d {
                         x: upload.slot.x * CHUNK_SIZE as u32 + upload.rect.min_x as u32,
@@ -275,6 +292,32 @@ impl RasterPass {
                 Extent3d {
                     width: upload.rect.width(),
                     height: upload.rect.height(),
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+        let side = FOG_CHUNK_SIDE as u32;
+        for upload in &input.fog_uploads {
+            queue.write_texture(
+                TexelCopyTextureInfo {
+                    texture: &self.atlas.fog,
+                    mip_level: 0,
+                    origin: Origin3d {
+                        x: upload.slot.x * side,
+                        y: upload.slot.y * side,
+                        z: 0,
+                    },
+                    aspect: TextureAspect::All,
+                },
+                &upload.data,
+                TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(side),
+                    rows_per_image: Some(side),
+                },
+                Extent3d {
+                    width: side,
+                    height: side,
                     depth_or_array_layers: 1,
                 },
             );
@@ -314,9 +357,10 @@ impl RasterPass {
                     self.frame.binding().expect("raster frame written"),
                     self.chunks.binding().expect("chunk buffer written"),
                     self.quads.binding().expect("quad buffer written"),
-                    &self.atlas.view,
+                    &self.atlas.cells_view,
                     &self.palette_view,
                     &self.emissive_palette_view,
+                    &self.atlas.fog_view,
                 )),
             ));
         }
@@ -384,10 +428,13 @@ impl RasterPass {
             .command_encoder()
             .begin_render_pass(&RenderPassDescriptor {
                 label: Some("game_emission_pass"),
-                color_attachments: &[Some(color_attachment(
-                    &targets.emission.view,
-                    Some(Color::NONE),
-                ))],
+                color_attachments: &[
+                    Some(color_attachment(&targets.emission.view, Some(Color::NONE))),
+                    Some(color_attachment(
+                        &targets.fog_source.view,
+                        Some(Color::NONE),
+                    )),
+                ],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,

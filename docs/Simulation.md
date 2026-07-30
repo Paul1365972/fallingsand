@@ -72,6 +72,7 @@ A water neighbour quenches: a flame dies to steam keeping the water; a burning f
 | Cell / Chunk / Region | 1×1 material instance / 64×64 cells / 8×8 chunks |
 | CellPos / ChunkPos / RegionPos | integer x,y coordinates at each granularity |
 | sim / change | per-chunk rects: cells to re-simulate next tick ⊇ cells changed this tick; double-buffered |
+| Fog / sight mask | per-chunk explored bits (persisted) and coarse opacity (runtime) at 4×4 cells — see [Server.md](Server.md) |
 | SimWindow | a worker's 4×4-chunk view: simulates the inner 2×2 block, reads one chunk beyond |
 | Speed of light | max reach of one update = one chunk = 64 cells |
 | Cell velocity | per-cell fixed-point cells/tick; sim-only, persisted, never on the wire |
