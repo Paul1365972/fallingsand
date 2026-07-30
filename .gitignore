@@ -4,3 +4,4 @@
 /screenshot-*.png
 *.tracy
 .env
+.design/

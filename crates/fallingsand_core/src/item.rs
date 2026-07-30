@@ -37,7 +37,6 @@ pub struct ItemInfo {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ToolSpec {
-    pub tier: u8,
     pub speed: f32,
 }
 

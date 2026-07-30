@@ -24,18 +24,6 @@ const BURNING_EMISSION: EmissionDef = EmissionDef {
     flicker: 0.5,
 };
 
-pub(crate) const fn mining_tier_from_hardness(hardness: f32) -> u8 {
-    if hardness <= 0.35 {
-        0
-    } else if hardness <= 1.0 {
-        1
-    } else if hardness <= 2.0 {
-        2
-    } else {
-        3
-    }
-}
-
 pub struct Mat {
     pub name: String,
     pub const_name: String,
@@ -66,7 +54,7 @@ pub struct ItemOut {
     pub stack_max: u32,
     pub sprite: String,
     pub place: Option<MaterialId>,
-    pub tool: Option<(u8, f32)>,
+    pub tool: Option<f32>,
 }
 
 pub struct RecipeOut {

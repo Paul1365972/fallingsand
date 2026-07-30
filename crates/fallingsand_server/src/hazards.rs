@@ -48,6 +48,7 @@ pub fn sample_hazards(world: &CellWorld, rect: CellRect) -> HazardSample {
     sample.head_submerged = matches!(
         world.get_cell(head),
         Some(cell) if content::phase(cell.material) == Phase::Liquid
+            || content::tags(cell.material).contains(Tag::Suffocating)
     );
     sample
 }

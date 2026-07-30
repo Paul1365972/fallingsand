@@ -1,101 +1,144 @@
 use fallingsand_math::Hash;
-use fastnoise_lite::FastNoiseLite;
 
-pub fn noise_seed(seed: u64, salt: Hash) -> i32 {
-    Hash::seed(seed).salt(salt).get() as i32
+const F2: f32 = 0.366_025_4;
+const G2: f32 = 0.211_324_87;
+const SIMPLEX_SCALE: f32 = 70.0;
+
+const GRADIENTS: [(f32, f32); 8] = [
+    (1.0, 1.0),
+    (-1.0, 1.0),
+    (1.0, -1.0),
+    (-1.0, -1.0),
+    (1.0, 0.0),
+    (-1.0, 0.0),
+    (0.0, 1.0),
+    (0.0, -1.0),
+];
+
+#[inline]
+fn lattice(seed: u64, i: i32, j: i32) -> usize {
+    let mut h = seed ^ ((i as u32 as u64) << 32) ^ (j as u32 as u64);
+    h = (h ^ (h >> 29)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    h ^= h >> 32;
+    (h & 7) as usize
 }
 
+#[inline]
+fn corner(seed: u64, i: i32, j: i32, x: f32, y: f32) -> f32 {
+    let attenuation = 0.5 - x * x - y * y;
+    if attenuation <= 0.0 {
+        return 0.0;
+    }
+    let (gx, gy) = GRADIENTS[lattice(seed, i, j)];
+    let squared = attenuation * attenuation;
+    squared * squared * (gx * x + gy * y)
+}
+
+fn simplex(seed: u64, x: f32, y: f32) -> f32 {
+    let skew = (x + y) * F2;
+    let i = (x + skew).floor();
+    let j = (y + skew).floor();
+    let unskew = (i + j) * G2;
+    let x0 = x - (i - unskew);
+    let y0 = y - (j - unskew);
+    let (i1, j1) = if x0 > y0 { (1, 0) } else { (0, 1) };
+    let i = i as i32;
+    let j = j as i32;
+
+    let total = corner(seed, i, j, x0, y0)
+        + corner(
+            seed,
+            i + i1,
+            j + j1,
+            x0 - i1 as f32 + G2,
+            y0 - j1 as f32 + G2,
+        )
+        + corner(seed, i + 1, j + 1, x0 - 1.0 + 2.0 * G2, y0 - 1.0 + 2.0 * G2);
+    (total * SIMPLEX_SCALE).clamp(-1.0, 1.0)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Shape {
+    Fbm,
+    Ridged,
+}
+
+#[derive(Clone)]
 pub struct Field {
-    noise: FastNoiseLite,
-    warp: Option<FastNoiseLite>,
-    step: i32,
+    seed: u64,
+    inv_period_x: f32,
+    inv_period_y: f32,
+    octaves: u32,
+    lacunarity: f32,
+    gain: f32,
+    shape: Shape,
+    normalization: f32,
 }
 
 impl Field {
-    pub fn new(noise: FastNoiseLite, warp: Option<FastNoiseLite>, step: i32) -> Self {
-        Self { noise, warp, step }
-    }
-
-    pub fn corner(&self, cx: i32, cy: i32) -> f32 {
-        let (x, y) = (cx as f32, cy as f32);
-        let (wx, wy) = match &self.warp {
-            Some(warp) => warp.domain_warp_2d(x, y),
-            None => (x, y),
-        };
-        self.noise.get_noise_2d(wx, wy)
-    }
-
-    pub fn at(&self, x: i32, y: i32) -> f32 {
-        let step = self.step;
-        let cx = x.div_euclid(step) * step;
-        let cy = y.div_euclid(step) * step;
-        let fx = (x - cx) as f32 / step as f32;
-        let fy = (y - cy) as f32 / step as f32;
-        let c00 = self.corner(cx, cy);
-        let c10 = self.corner(cx + step, cy);
-        let c01 = self.corner(cx, cy + step);
-        let c11 = self.corner(cx + step, cy + step);
-        bilerp(c00, c10, c01, c11, fx, fy)
-    }
-}
-
-fn bilerp(c00: f32, c10: f32, c01: f32, c11: f32, fx: f32, fy: f32) -> f32 {
-    let top = c00 + (c10 - c00) * fx;
-    let bottom = c01 + (c11 - c01) * fx;
-    top + (bottom - top) * fy
-}
-
-pub struct Cached<'f> {
-    field: &'f Field,
-    base_x: i32,
-    base_y: i32,
-    columns: usize,
-    values: Vec<f32>,
-}
-
-impl<'f> Cached<'f> {
-    pub fn build(field: &'f Field, min_x: i32, min_y: i32, max_x: i32, max_y: i32) -> Self {
-        let step = field.step;
-        let base_x = min_x.div_euclid(step) * step;
-        let base_y = min_y.div_euclid(step) * step;
-        let columns = ((max_x - base_x).div_euclid(step) + 2) as usize;
-        let rows = ((max_y - base_y).div_euclid(step) + 2) as usize;
-        let mut values = Vec::with_capacity(columns * rows);
-        for row in 0..rows {
-            for column in 0..columns {
-                values
-                    .push(field.corner(base_x + column as i32 * step, base_y + row as i32 * step));
-            }
-        }
+    pub fn new(seed: u64, salt: Hash, period: f32) -> Self {
         Self {
-            field,
-            base_x,
-            base_y,
-            columns,
-            values,
+            seed: Hash::seed(seed).salt(salt).get(),
+            inv_period_x: 1.0 / period,
+            inv_period_y: 1.0 / period,
+            octaves: 1,
+            lacunarity: 2.0,
+            gain: 0.5,
+            shape: Shape::Fbm,
+            normalization: 1.0,
         }
     }
 
-    pub fn at(&self, x: i32, y: i32) -> f32 {
-        let step = self.field.step;
-        let column = (x - self.base_x).div_euclid(step);
-        let row = (y - self.base_y).div_euclid(step);
-        if column < 0
-            || row < 0
-            || (column + 1) as usize >= self.columns
-            || ((row + 1) as usize + 1) * self.columns > self.values.len()
-        {
-            return self.field.at(x, y);
+    pub fn octaves(mut self, octaves: u32) -> Self {
+        self.octaves = octaves.max(1);
+        self.renormalize()
+    }
+
+    pub fn gain(mut self, gain: f32) -> Self {
+        self.gain = gain;
+        self.renormalize()
+    }
+
+    pub fn flatten(mut self, factor: f32) -> Self {
+        self.inv_period_y /= factor;
+        self
+    }
+
+    pub fn ridged(mut self) -> Self {
+        self.shape = Shape::Ridged;
+        self.renormalize()
+    }
+
+    fn renormalize(mut self) -> Self {
+        let mut total = 0.0;
+        let mut amplitude = 1.0;
+        for _ in 0..self.octaves {
+            total += amplitude;
+            amplitude *= self.gain;
         }
-        let (column, row) = (column as usize, row as usize);
-        let cx = self.base_x + column as i32 * step;
-        let cy = self.base_y + row as i32 * step;
-        let fx = (x - cx) as f32 / step as f32;
-        let fy = (y - cy) as f32 / step as f32;
-        let c00 = self.values[row * self.columns + column];
-        let c10 = self.values[row * self.columns + column + 1];
-        let c01 = self.values[(row + 1) * self.columns + column];
-        let c11 = self.values[(row + 1) * self.columns + column + 1];
-        bilerp(c00, c10, c01, c11, fx, fy)
+        self.normalization = 1.0 / total;
+        self
+    }
+
+    pub fn at(&self, x: f32, y: f32) -> f32 {
+        let mut sx = x * self.inv_period_x;
+        let mut sy = y * self.inv_period_y;
+        let mut amplitude = 1.0;
+        let mut total = 0.0;
+        let mut octave_seed = self.seed;
+        for _ in 0..self.octaves {
+            total += amplitude * simplex(octave_seed, sx, sy);
+            sx *= self.lacunarity;
+            sy *= self.lacunarity;
+            amplitude *= self.gain;
+            octave_seed = octave_seed
+                .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+                .rotate_left(17);
+        }
+        let total = total * self.normalization;
+        match self.shape {
+            Shape::Fbm => total,
+            Shape::Ridged => 1.0 - total.abs(),
+        }
     }
 }

@@ -24,7 +24,7 @@ impl std::fmt::Display for ItemKey {
 pub struct ItemDef {
     pub(crate) display: String,
     pub(crate) stack: u32,
-    pub(crate) tool: Option<(u8, f32)>,
+    pub(crate) tool: Option<f32>,
 }
 
 impl ItemDef {
@@ -33,8 +33,8 @@ impl ItemDef {
         self
     }
 
-    pub fn tool(mut self, tier: u8, speed: f32) -> Self {
-        self.tool = Some((tier, speed));
+    pub fn tool(mut self, speed: f32) -> Self {
+        self.tool = Some(speed);
         self
     }
 }

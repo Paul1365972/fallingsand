@@ -286,19 +286,17 @@ fn classify_dig(
     let item = content::item_for_material(material);
     let slot = context.selected_slot as usize;
     let held = inventory.inner.get(slot);
-    let (method, speed, tier) = match held.and_then(|stack| {
+    let (method, speed) = match held.and_then(|stack| {
         content::try_item(stack.item).and_then(|info| info.tool.map(|t| (stack.item, t)))
     }) {
-        Some((id, tool)) => (MiningMethod::Tool(id), tool.speed, tool.tier),
-        None => (MiningMethod::Hands, BARE_HAND_SPEED, 0),
+        Some((id, tool)) => (MiningMethod::Tool(id), tool.speed),
+        None => (MiningMethod::Hands, BARE_HAND_SPEED),
     };
-    if context.survival {
-        if tier < content::material(material).mining_tier {
-            return Err(InteractionStatus::WrongTool);
-        }
-        if item != ItemId::NONE && !inventory.inner.can_insert(ItemStack::new(item, 1)) {
-            return Err(InteractionStatus::InventoryFull);
-        }
+    if context.survival
+        && item != ItemId::NONE
+        && !inventory.inner.can_insert(ItemStack::new(item, 1))
+    {
+        return Err(InteractionStatus::InventoryFull);
     }
     Ok(DigPlan {
         method,

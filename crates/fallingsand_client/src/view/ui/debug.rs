@@ -273,7 +273,7 @@ fn playing_lines(
             you.mode.label(),
         ));
         if !you.biome.is_empty() {
-            left_lines.push(format!("biome {} / {}", you.biome, you.band));
+            left_lines.push(format!("biome {} / {}", you.biome, you.locale));
         }
     }
 

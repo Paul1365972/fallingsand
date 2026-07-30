@@ -23,6 +23,8 @@ pub enum Tag {
     Hot,
     Body,
     Worthless,
+    Suffocating,
+    Soluble,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -174,7 +176,6 @@ pub struct MaterialInfo {
     pub name: &'static str,
     pub colors: &'static [[u8; 4]],
     pub hardness: f32,
-    pub mining_tier: u8,
     pub traction: f32,
     pub contact_damage: f32,
     pub emission: [f32; 3],

@@ -1,5 +1,5 @@
 use super::{accessor_fn, colors_tokens, material_id, phase_path, tags_tokens};
-use crate::compiler::{Content, mining_tier_from_hardness};
+use crate::compiler::Content;
 use fallingsand_material::{Dynamics, Reaction};
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
@@ -125,7 +125,6 @@ pub fn emit(content: &Content) -> TokenStream {
             let name = &mat.name;
             let colors = colors_tokens(&mat.colors);
             let hardness = Literal::f32_suffixed(mat.hardness);
-            let mining_tier = Literal::u8_suffixed(mining_tier_from_hardness(mat.hardness));
             let traction = Literal::f32_suffixed(mat.traction);
             let contact_damage = Literal::f32_suffixed(mat.contact_damage);
             let [er, eg, eb] = mat.emission;
@@ -138,7 +137,6 @@ pub fn emit(content: &Content) -> TokenStream {
                     name: #name,
                     colors: #colors,
                     hardness: #hardness,
-                    mining_tier: #mining_tier,
                     traction: #traction,
                     contact_damage: #contact_damage,
                     emission: [#emission_r, #emission_g, #emission_b],

@@ -1,233 +1,197 @@
-use crate::biomes::{POND_ANCHOR_GRID, WorldDef};
-use crate::noise::{Field, noise_seed};
+use crate::noise::Field;
+use crate::scale::{len, wave};
 use fallingsand_math::Hash;
-use fastnoise_lite::{DomainWarpType, FastNoiseLite, FractalType, NoiseType};
 
-pub struct Terrain {
-    seed: u64,
-    continent: FastNoiseLite,
-    hills: FastNoiseLite,
-    detail: FastNoiseLite,
-    mesa: FastNoiseLite,
-    canyon: FastNoiseLite,
-    river: FastNoiseLite,
-    mountain_mask: FastNoiseLite,
-    ridge: FastNoiseLite,
-    band_edge: FastNoiseLite,
-    pub shape: Field,
+pub const SEA_LEVEL: i32 = 0;
+
+const DEPTH_HALF: f32 = 2200.0;
+const DEPTH_WARP: i32 = 460;
+const DEPTH_WARP_FADE: i32 = 200;
+
+const SHORE: [(f32, f32); 6] = [
+    (0.00, -300.0),
+    (0.18, -150.0),
+    (0.30, -18.0),
+    (0.44, 52.0),
+    (0.70, 132.0),
+    (1.00, 300.0),
+];
+
+#[derive(Clone, Copy)]
+pub struct Params {
+    pub depth: f32,
+    pub land: f32,
+    pub relief: f32,
+    pub rock: f32,
+    pub heat: f32,
+    pub wet: f32,
+    pub weird: f32,
+    pub variant: f32,
 }
 
-const CONTINENT_AMPLITUDE: f32 = 210.0;
-const BASE_HEIGHT: f32 = 12.0;
-const DETAIL_AMPLITUDE: f32 = 3.0;
-const TERRACE_STEP: f32 = 26.0;
-const CANYON_WIDTH: f32 = 0.09;
-const CANYON_DEPTH: f32 = 110.0;
-const RIVER_WIDTH: f32 = 0.028;
-const MOUNTAIN_AMPLITUDE: f32 = 260.0;
-const MOUNTAIN_MASK_START: f32 = 0.18;
-const BIOME_CELL: i32 = 1400;
-const BIOME_BLEND_CELLS: i32 = 64;
-const CONTINENT_SALT: Hash = Hash::label("worldgen.continent");
-const HILLS_SALT: Hash = Hash::label("worldgen.hills");
-const DETAIL_SALT: Hash = Hash::label("worldgen.detail");
-const MESA_SALT: Hash = Hash::label("worldgen.mesa");
-const CANYON_SALT: Hash = Hash::label("worldgen.canyon");
-const RIVER_SALT: Hash = Hash::label("worldgen.river");
-const MOUNTAIN_MASK_SALT: Hash = Hash::label("worldgen.mountain_mask");
-const RIDGE_SALT: Hash = Hash::label("worldgen.ridge");
-const BAND_EDGE_SALT: Hash = Hash::label("worldgen.band_edge");
-const SHAPE_SALT: Hash = Hash::label("worldgen.shape");
-const SHAPE_WARP_SALT: Hash = Hash::label("worldgen.shape_warp");
-const BIOME_CELL_SALT: Hash = Hash::label("worldgen.biome_cell");
-const POND_SALT: Hash = Hash::label("worldgen.pond");
+pub struct Terrain {
+    shore: Field,
+    even: Field,
+    ridge: Field,
+    detail: Field,
+    grain: Field,
+    massif: Field,
+    terrace: Field,
+    warmth: Field,
+    warmth_slow: Field,
+    damp: Field,
+    strange: Field,
+    rock: Field,
+    rock_slow: Field,
+    variant: Field,
+    depth_warp: Field,
+    overhang: Field,
+    bedding: Field,
+    mantle: Field,
+}
 
 impl Terrain {
     pub fn new(seed: u64) -> Self {
-        let mut continent = FastNoiseLite::with_seed(noise_seed(seed, CONTINENT_SALT));
-        continent.set_noise_type(Some(NoiseType::OpenSimplex2));
-        continent.set_fractal_type(Some(FractalType::FBm));
-        continent.set_fractal_octaves(Some(3));
-        continent.set_frequency(Some(0.0006));
-
-        let mut hills = FastNoiseLite::with_seed(noise_seed(seed, HILLS_SALT));
-        hills.set_noise_type(Some(NoiseType::OpenSimplex2));
-        hills.set_fractal_type(Some(FractalType::FBm));
-        hills.set_fractal_octaves(Some(4));
-        hills.set_frequency(Some(0.004));
-
-        let mut detail = FastNoiseLite::with_seed(noise_seed(seed, DETAIL_SALT));
-        detail.set_noise_type(Some(NoiseType::OpenSimplex2));
-        detail.set_frequency(Some(0.035));
-
-        let mut mesa = FastNoiseLite::with_seed(noise_seed(seed, MESA_SALT));
-        mesa.set_noise_type(Some(NoiseType::OpenSimplex2));
-        mesa.set_frequency(Some(0.0016));
-
-        let mut canyon = FastNoiseLite::with_seed(noise_seed(seed, CANYON_SALT));
-        canyon.set_noise_type(Some(NoiseType::OpenSimplex2));
-        canyon.set_frequency(Some(0.0008));
-
-        let mut river = FastNoiseLite::with_seed(noise_seed(seed, RIVER_SALT));
-        river.set_noise_type(Some(NoiseType::OpenSimplex2));
-        river.set_frequency(Some(0.0007));
-
-        let mut mountain_mask = FastNoiseLite::with_seed(noise_seed(seed, MOUNTAIN_MASK_SALT));
-        mountain_mask.set_noise_type(Some(NoiseType::OpenSimplex2));
-        mountain_mask.set_frequency(Some(0.00025));
-
-        let mut ridge = FastNoiseLite::with_seed(noise_seed(seed, RIDGE_SALT));
-        ridge.set_noise_type(Some(NoiseType::OpenSimplex2));
-        ridge.set_fractal_type(Some(FractalType::FBm));
-        ridge.set_fractal_octaves(Some(2));
-        ridge.set_frequency(Some(0.0025));
-
-        let mut band_edge = FastNoiseLite::with_seed(noise_seed(seed, BAND_EDGE_SALT));
-        band_edge.set_noise_type(Some(NoiseType::OpenSimplex2));
-        band_edge.set_frequency(Some(0.004));
-
-        let mut shape = FastNoiseLite::with_seed(noise_seed(seed, SHAPE_SALT));
-        shape.set_noise_type(Some(NoiseType::OpenSimplex2S));
-        shape.set_fractal_type(Some(FractalType::FBm));
-        shape.set_fractal_octaves(Some(3));
-        shape.set_frequency(Some(0.02));
-        let mut shape_warp = FastNoiseLite::with_seed(noise_seed(seed, SHAPE_WARP_SALT));
-        shape_warp.set_domain_warp_type(Some(DomainWarpType::OpenSimplex2));
-        shape_warp.set_domain_warp_amp(Some(30.0));
-        shape_warp.set_frequency(Some(0.01));
-
         Self {
-            seed,
-            continent,
-            hills,
-            detail,
-            mesa,
-            canyon,
-            river,
-            mountain_mask,
-            ridge,
-            band_edge,
-            shape: Field::new(shape, Some(shape_warp), 4),
+            shore: Field::new(seed, Hash::label("worldgen.shore"), wave(6200.0)).octaves(2),
+            even: Field::new(seed, Hash::label("worldgen.even"), wave(2600.0)).octaves(3),
+            ridge: Field::new(seed, Hash::label("worldgen.ridge"), wave(1100.0))
+                .octaves(5)
+                .gain(0.45),
+            detail: Field::new(seed, Hash::label("worldgen.detail"), wave(240.0)).octaves(2),
+            grain: Field::new(seed, Hash::label("worldgen.grain"), wave(60.0)),
+            massif: Field::new(seed, Hash::label("worldgen.massif"), wave(14000.0)).ridged(),
+            terrace: Field::new(seed, Hash::label("worldgen.terrace"), wave(3400.0)),
+            warmth: Field::new(seed, Hash::label("worldgen.warmth"), wave(1900.0))
+                .octaves(3)
+                .flatten(3.0),
+            warmth_slow: Field::new(seed, Hash::label("worldgen.warmth_slow"), wave(12000.0)),
+            damp: Field::new(seed, Hash::label("worldgen.damp"), wave(1150.0))
+                .octaves(3)
+                .flatten(3.0),
+            strange: Field::new(seed, Hash::label("worldgen.strange"), wave(1400.0))
+                .octaves(2)
+                .flatten(2.5),
+            rock: Field::new(seed, Hash::label("worldgen.rock"), wave(2600.0)).octaves(2),
+            rock_slow: Field::new(seed, Hash::label("worldgen.rock_slow"), wave(9000.0)),
+            variant: Field::new(seed, Hash::label("worldgen.variant"), wave(680.0)).octaves(2),
+            depth_warp: Field::new(seed, Hash::label("worldgen.depth_warp"), wave(1400.0))
+                .octaves(2),
+            overhang: Field::new(seed, Hash::label("worldgen.overhang"), wave(380.0)).octaves(3),
+            bedding: Field::new(seed, Hash::label("worldgen.bedding"), wave(170.0))
+                .octaves(2)
+                .flatten(0.09),
+            mantle: Field::new(seed, Hash::label("worldgen.mantle"), wave(260.0)).octaves(2),
         }
     }
 
-    fn biome_of_cell(&self, count: usize, cell: i32) -> usize {
-        Hash::seed(self.seed)
-            .salt(BIOME_CELL_SALT)
-            .pos(cell, 0)
-            .range(0, count as i32 - 1) as usize
+    pub fn land(&self, x: f32) -> f32 {
+        (self.shore.at(x, 0.0) * 0.62 + 0.5).clamp(0.0, 1.0)
     }
 
-    pub(crate) fn biome_mix(&self, count: usize, x: i32) -> (usize, usize, f32) {
-        let cell = x.div_euclid(BIOME_CELL);
-        let offset = x - cell * BIOME_CELL;
-        let own = self.biome_of_cell(count, cell);
-        if offset < BIOME_BLEND_CELLS {
-            let left = self.biome_of_cell(count, cell - 1);
-            let mix = 0.5 + offset as f32 / (2.0 * BIOME_BLEND_CELLS as f32);
-            (left, own, mix.clamp(0.5, 1.0))
-        } else if offset >= BIOME_CELL - BIOME_BLEND_CELLS {
-            let right = self.biome_of_cell(count, cell + 1);
-            let mix = (offset - (BIOME_CELL - BIOME_BLEND_CELLS)) as f32
-                / (2.0 * BIOME_BLEND_CELLS as f32);
-            (own, right, mix.clamp(0.0, 0.5))
-        } else {
-            (own, own, 0.0)
-        }
+    pub fn flat(&self, x: f32) -> f32 {
+        (self.even.at(x, 0.0) * 0.60 + 0.5).clamp(0.0, 1.0)
     }
 
-    pub fn biome_at(&self, count: usize, x: i32) -> usize {
-        let (a, b, mix) = self.biome_mix(count, x);
-        if mix < 0.5 { a } else { b }
-    }
-
-    pub(crate) fn ruggedness(&self, def: &WorldDef, x: i32) -> f32 {
-        let (a, b, mix) = self.biome_mix(def.biomes.len(), x);
-        def.biomes[a].ruggedness * (1.0 - mix) + def.biomes[b].ruggedness * mix
-    }
-
-    pub(crate) fn surface_height(&self, def: &WorldDef, x: i32) -> i32 {
-        let (a, b, mix) = self.biome_mix(def.biomes.len(), x);
-        let amplitude =
-            def.biomes[a].height_amplitude * (1.0 - mix) + def.biomes[b].height_amplitude * mix;
+    pub fn height(&self, x: i32) -> i32 {
         let fx = x as f32;
-        let continent = self.continent.get_noise_2d(fx, 0.0) * CONTINENT_AMPLITUDE;
-        let hills = self.hills.get_noise_2d(fx, 100.0) * amplitude;
-        let detail = self.detail.get_noise_2d(fx, 200.0) * DETAIL_AMPLITUDE;
-        let mut height = BASE_HEIGHT + continent + hills + detail;
+        let flat = self.flat(fx);
+        let rugged = 1.0 - flat;
 
-        let mask = self.mountain_mask.get_noise_2d(fx, 600.0);
-        if mask > MOUNTAIN_MASK_START {
-            let strength = ((mask - MOUNTAIN_MASK_START) / 0.5).clamp(0.0, 1.0);
-            let ridge = 1.0 - self.ridge.get_noise_2d(fx, 700.0).abs();
-            height += strength * ridge * ridge * MOUNTAIN_AMPLITUDE;
+        let base = wave(spline(self.land(fx), &SHORE));
+        let amplitude = wave(18.0) + rugged * rugged * wave(240.0);
+        let relief = self.ridge.at(fx, 0.0) * amplitude;
+        let detail = self.detail.at(fx, 0.0) * wave(14.0) + self.grain.at(fx, 0.0) * wave(4.0);
+
+        let raw = self.massif.at(fx, 0.0);
+        let massif = if raw > 0.86 {
+            let t = ((raw - 0.86) / 0.14).clamp(0.0, 1.0);
+            t * t * (3.0 - 2.0 * t) * wave(300.0) * (0.3 + 0.7 * rugged)
+        } else {
+            0.0
+        };
+
+        let mut height = base + relief + detail + massif;
+        let terracing = (1.0 - ((flat - 0.68) / 0.15).abs()).clamp(0.0, 1.0) * 0.9;
+        if terracing > 0.0 {
+            let step = wave(46.0) + (self.terrace.at(fx, 0.0) * 0.5 + 0.5) * wave(120.0);
+            let phase = height / step;
+            let level = phase.floor();
+            let fraction = phase - level;
+            let riser = fraction * fraction * fraction;
+            let shaped = riser / (riser + (1.0 - fraction).powi(3));
+            height = (level + fraction + (shaped - fraction) * terracing) * step;
+            height += self.grain.at(fx, 0.0) * wave(4.0);
         }
-
-        let mesa = self.mesa.get_noise_2d(fx, 300.0);
-        if mesa > 0.25 {
-            let strength = ((mesa - 0.25) / 0.2).clamp(0.0, 1.0);
-            let terraced = (height / TERRACE_STEP).round() * TERRACE_STEP;
-            height += (terraced - height) * strength;
-        }
-
-        let canyon = self.canyon.get_noise_2d(fx, 400.0).abs();
-        if canyon < CANYON_WIDTH {
-            let profile = 1.0 - canyon / CANYON_WIDTH;
-            height -= profile * profile * CANYON_DEPTH;
-        }
-
-        let river = self.river.get_noise_2d(fx, 500.0).abs();
-        if river < RIVER_WIDTH {
-            let blend = 1.0 - river / RIVER_WIDTH;
-            let smooth = blend * blend * (3.0 - 2.0 * blend);
-            let target = (def.sea_level - 4) as f32;
-            height += (target - height) * smooth;
-        }
-
-        height.round() as i32
+        height as i32
     }
 
-    pub fn canyon_factor(&self, x: i32) -> f32 {
-        let canyon = self.canyon.get_noise_2d(x as f32, 400.0).abs();
-        (1.0 - canyon / CANYON_WIDTH).max(0.0)
+    pub fn lip(&self, x: i32, y: i32, base: f32) -> f32 {
+        let rugged = 1.0 - self.flat(x as f32);
+        let reach = wave(200.0);
+        let fade = 1.0 - (base.abs() / reach).min(1.0);
+        if fade <= 0.0 {
+            return base;
+        }
+        base + self.overhang.at(x as f32, y as f32) * wave(30.0) * rugged * fade * fade
     }
 
-    pub fn band_jitter(&self, x: i32, index: usize) -> f32 {
-        self.band_edge.get_noise_2d(x as f32, index as f32 * 1000.0) * 24.0
+    pub fn depth(&self, x: f32, y: f32, surface: i32) -> f32 {
+        let above = (surface as f32 - y).max(0.0);
+        let fade = (above / len(DEPTH_WARP_FADE) as f32).min(1.0);
+        let raw =
+            (above + self.depth_warp.at(x, y) * len(DEPTH_WARP) as f32 * fade * fade).max(0.0);
+        raw / (raw + wave(DEPTH_HALF))
     }
 
-    pub(crate) fn pond(&self, def: &WorldDef, x: i32, biome: usize) -> Option<(i32, i32)> {
-        let chance = def.biomes[biome].pond_chance;
-        if chance <= 0.0 {
-            return None;
-        }
-        let cell = x.div_euclid(POND_ANCHOR_GRID);
-        for anchor in [cell - 1, cell, cell + 1] {
-            let mut rng = Hash::seed(self.seed).salt(POND_SALT).pos(anchor, 0).rng();
-            if !rng.draw().chance(chance) {
-                continue;
-            }
-            let center = anchor * POND_ANCHOR_GRID
-                + POND_ANCHOR_GRID / 4
-                + rng.draw().range(0, POND_ANCHOR_GRID / 2 - 1);
-            let radius = rng.draw().range(10, 22);
-            let depth = rng.draw().range(3, 7);
-            let dx = x - center;
-            if dx.abs() > radius {
-                continue;
-            }
-            if self.biome_at(def.biomes.len(), center) != biome {
-                continue;
-            }
-            let center_surface = self.surface_height(def, center);
-            if center_surface <= def.sea_level + 2 {
-                continue;
-            }
-            let profile = 1.0 - (dx as f32 / radius as f32).powi(2);
-            let floor = center_surface - 2 - (depth as f32 * profile).round() as i32;
-            let level = center_surface - 1;
-            return Some((floor, level));
-        }
-        None
+    pub fn depth_to_above(depth: f32) -> f32 {
+        let d = depth.clamp(0.0, 0.985);
+        wave(DEPTH_HALF) * d / (1.0 - d)
     }
+
+    pub fn above_to_depth(above: f32) -> f32 {
+        let raw = above.max(0.0);
+        raw / (raw + wave(DEPTH_HALF))
+    }
+
+    pub fn params(&self, x: f32, y: f32, depth: f32) -> Params {
+        let spread = 1.0 + depth * 1.5;
+        let warm = (self.warmth.at(x, y) * 0.42 + self.warmth_slow.at(x, 0.0) * 0.34) * spread;
+        let damp = self.damp.at(x, y) * 0.54 * (1.0 + depth * 0.8);
+        let tail = ((self.strange.at(x, y).abs() - 0.30) / 0.70).clamp(0.0, 1.0);
+        let grain = self.rock.at(x, y) * 0.52 + self.rock_slow.at(x, y) * 0.34;
+        Params {
+            depth,
+            land: self.land(x),
+            relief: self.flat(x),
+            rock: (0.5 + grain).clamp(0.0, 1.0),
+            heat: (0.5 + warm + depth.powf(1.8) * 0.34).clamp(0.0, 1.0),
+            wet: (0.5 + damp).clamp(0.0, 1.0),
+            weird: (tail * tail + depth * depth * 0.30).clamp(0.0, 1.0),
+            variant: (0.5 + self.variant.at(x, y) * 0.66).clamp(0.0, 1.0),
+        }
+    }
+
+    pub fn bedded(&self, x: i32, y: i32) -> bool {
+        self.bedding.at(x as f32, y as f32) > 0.36
+    }
+
+    pub fn mantle_scale(&self, x: i32) -> f32 {
+        1.0 + self.mantle.at(x as f32, 0.0) * 0.45
+    }
+}
+
+fn spline(t: f32, knots: &[(f32, f32)]) -> f32 {
+    if t <= knots[0].0 {
+        return knots[0].1;
+    }
+    for pair in knots.windows(2) {
+        let (low, low_value) = pair[0];
+        let (high, high_value) = pair[1];
+        if t <= high {
+            let u = (t - low) / (high - low);
+            return low_value + (high_value - low_value) * u * u * (3.0 - 2.0 * u);
+        }
+    }
+    knots[knots.len() - 1].1
 }

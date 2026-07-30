@@ -7,12 +7,12 @@ pub const STAND_ROWS: i32 = 9;
 pub const DUCK_ROWS: i32 = 5;
 
 const LEGEND: &[(u8, MaterialId, u8)] = &[
-    (b'r', material::FLESH, 0),
-    (b'h', material::FLESH, 1),
-    (b's', material::FLESH, 2),
-    (b'd', material::FLESH, 3),
-    (b'b', material::FLESH, 4),
-    (b'k', material::FLESH, 5),
+    (b'r', material::BODY, 0),
+    (b'h', material::BODY, 1),
+    (b's', material::BODY, 2),
+    (b'd', material::BODY, 3),
+    (b'b', material::BODY, 4),
+    (b'k', material::BODY, 5),
 ];
 
 const ROWS_9: Frame = Frame {

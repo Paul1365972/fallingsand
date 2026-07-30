@@ -20,7 +20,7 @@ use store::WorldStore;
 use worker::{PersistenceWorker, WorkerCompletion};
 
 pub const REGION_FORMAT_VERSION: u8 = 27;
-pub const WORLD_FORMAT_VERSION: u16 = 26;
+pub const WORLD_FORMAT_VERSION: u16 = 31;
 const AUTOSAVE_INTERVAL_TICKS: u64 = fallingsand_core::ticks_from_secs(10.0);
 
 const REGIONS: TableDefinition<u64, &[u8]> = TableDefinition::new("regions");

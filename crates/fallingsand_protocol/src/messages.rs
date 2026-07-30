@@ -161,8 +161,6 @@ pub enum InteractionStatus {
     OutOfReach,
     NoTarget,
     Occupied,
-    WrongTool,
-
     InventoryFull,
     NotPlaceable,
 }
@@ -236,7 +234,7 @@ pub struct SelfState {
     pub anchor: Option<CellPos>,
     pub mode: GameMode,
     pub biome: String,
-    pub band: String,
+    pub locale: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

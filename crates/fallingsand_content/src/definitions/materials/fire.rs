@@ -1,8 +1,9 @@
-use crate::{Catalog, MaterialKey, Tag, burning, emission, gas, material, powder};
+use crate::{Catalog, MaterialKey, Tag, burning, emission, flammable, gas, material, powder};
 
 pub const FIRE: MaterialKey = MaterialKey::new("FIRE");
 pub const SMOKE: MaterialKey = MaterialKey::new("SMOKE");
 pub const ASH: MaterialKey = MaterialKey::new("ASH");
+pub const CHARCOAL: MaterialKey = MaterialKey::new("CHARCOAL");
 
 pub fn define(catalog: &mut Catalog) {
     catalog.add(
@@ -45,5 +46,42 @@ pub fn define(catalog: &mut Catalog) {
         ])
         .hardness(0.02)
         .tag(Tag::Dissolvable),
+    );
+    catalog.add(
+        CHARCOAL,
+        material(
+            powder()
+                .air_drag(3.2)
+                .ground_friction(76.0)
+                .topple(22.0, 86.0)
+                .deflect(0.3)
+                .cohesion(0.08),
+        )
+        .density(900.0)
+        .colors([
+            [42, 38, 38, 255],
+            [35, 32, 32, 255],
+            [52, 47, 47, 255],
+            [29, 26, 26, 255],
+        ])
+        .hardness(0.08)
+        .friction(0.65)
+        .tag(Tag::Dissolvable)
+        .flammable(
+            flammable()
+                .ignite(2.5)
+                .sealed_burn(0.3)
+                .rate(0.02)
+                .emit(6.0)
+                .colors([
+                    [255, 128, 40, 255],
+                    [226, 96, 24, 255],
+                    [255, 168, 66, 255],
+                    [196, 72, 14, 255],
+                ])
+                .residue(ASH, 0.1)
+                .burnout(SMOKE)
+                .damage(9.0),
+        ),
     );
 }

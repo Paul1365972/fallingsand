@@ -1,7 +1,7 @@
 use crate::{Catalog, MaterialKey, Tag, empty, material, solid};
 
 pub const AIR: MaterialKey = MaterialKey::new("AIR");
-pub const FLESH: MaterialKey = MaterialKey::new("FLESH");
+pub const BODY: MaterialKey = MaterialKey::new("BODY");
 pub const CORPSE: MaterialKey = MaterialKey::new("CORPSE");
 pub const RUBBER: MaterialKey = MaterialKey::new("RUBBER");
 pub const FROG: MaterialKey = MaterialKey::new("FROG");
@@ -9,7 +9,7 @@ pub const FROG: MaterialKey = MaterialKey::new("FROG");
 pub fn define(catalog: &mut Catalog) {
     catalog.add(AIR, material(empty()).density(1.2).colors([[0, 0, 0, 0]]));
     catalog.add(
-        FLESH,
+        BODY,
         material(solid())
             .density(1050.0)
             .colors([

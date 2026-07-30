@@ -67,7 +67,7 @@ impl Players {
             you.anchor = self_state.anchor;
             you.mode = self_state.mode;
             you.biome = self_state.biome.clone();
-            you.band = self_state.band.clone();
+            you.locale = self_state.locale.clone();
         }
     }
 }
@@ -79,7 +79,7 @@ pub struct SelfState {
     pub mode: GameMode,
     pub damage_flash: f32,
     pub biome: String,
-    pub band: String,
+    pub locale: String,
 }
 
 impl Default for SelfState {
@@ -90,7 +90,7 @@ impl Default for SelfState {
             mode: GameMode::default(),
             damage_flash: 0.0,
             biome: String::new(),
-            band: String::new(),
+            locale: String::new(),
         }
     }
 }

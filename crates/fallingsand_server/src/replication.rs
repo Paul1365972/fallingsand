@@ -135,8 +135,8 @@ pub fn replicate(
         let fresh = session.replication.fresh;
         let inventory = inventory_delta(&mut session.replication, &player.profile.inventory, fresh);
         let anchor = player.view_anchor(bodies);
-        let (biome, band) = generator.location_names(anchor.x, anchor.y);
-        let current_self = self_state(player, bodies, anchor, biome, band);
+        let (biome, locale) = generator.location_names(anchor.x, anchor.y);
+        let current_self = self_state(player, bodies, anchor, biome, locale);
         let self_state = if session.replication.last_self.as_ref() != Some(&current_self) {
             session.replication.last_self = Some(current_self.clone());
             Some(current_self)
@@ -185,7 +185,7 @@ fn self_state(
     bodies: &Bodies,
     anchor: CellPos,
     biome: &str,
-    band: &str,
+    locale: &str,
 ) -> SelfState {
     let life = match &player.life {
         PlayerLife::Entering(_) => SelfLife::Entering,
@@ -210,7 +210,7 @@ fn self_state(
         anchor: (!player.is_alive()).then(|| player.view_anchor(bodies)),
         mode: player.profile.mode,
         biome: biome.into(),
-        band: band.into(),
+        locale: locale.into(),
     }
 }
 

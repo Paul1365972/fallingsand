@@ -78,10 +78,9 @@ fn item_info(item: &ItemOut) -> TokenStream {
         None => quote!(None),
     };
     let tool = match item.tool {
-        Some((tier, speed)) => {
-            let tier = Literal::u8_suffixed(tier);
+        Some(speed) => {
             let speed = Literal::f32_suffixed(speed);
-            quote!(Some(crate::item::ToolSpec { tier: #tier, speed: #speed }))
+            quote!(Some(crate::item::ToolSpec { speed: #speed }))
         }
         None => quote!(None),
     };
