@@ -78,6 +78,7 @@ pub(super) struct Body {
     pub vx: i64,
     pub vy: i64,
     pub spin: Spin,
+    pub carried: (i64, i64, i64),
     pub acc_x: i64,
     pub acc_y: i64,
     pub acc_turn: i64,
@@ -207,10 +208,14 @@ impl Body {
         let ry = i128::from(cell_center(pos.y) - com.1);
         self.vx += jx / self.mass;
         self.vy += jy / self.mass;
-        if self.freedoms.holds(Freedoms::TURN) {
+        if self.holds(Freedoms::TURN) {
             let torque = rx * i128::from(jy) - ry * i128::from(jx);
             self.spin += Spin::from_angular_impulse(torque, self.moment);
         }
+    }
+
+    pub(super) fn holds(&self, freedom: u8) -> bool {
+        self.freedoms.holds(freedom) && (freedom != Freedoms::TURN || self.slots.len() > 1)
     }
 
     pub(super) fn apply(&mut self, policy: Policy) {
@@ -224,6 +229,10 @@ impl Body {
     }
 
     pub(super) fn refresh_inertia(&mut self) {
+        if !self.holds(Freedoms::TURN) {
+            self.spin = Spin::ZERO;
+            self.acc_turn = 0;
+        }
         let inertia = inertia(&self.slots);
         self.mass = inertia.mass;
         self.local_com = inertia.local_com;
@@ -263,6 +272,7 @@ pub(super) fn capture(world: &mut CellWorld, id: u32, cells: Vec<CellPos>) -> Bo
         vx: 0,
         vy: 0,
         spin: Spin::ZERO,
+        carried: (0, 0, 0),
         acc_x: 0,
         acc_y: 0,
         acc_turn: 0,

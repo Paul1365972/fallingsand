@@ -43,7 +43,7 @@ Effects shape velocity and matter, never position. A settled cell nets zero forc
 - **Drag & friction** — liquids combine authored linear drag with shared quadratic drag: ordinary motion keeps momentum, while resistance grows with speed and limits free fall below sand. Both velocity components receive the same drag once per tick after gravity; every component also has a hard 31-cell/tick safety bound. Travel adds no per-cell friction. Powders retain medium drag and ground friction. Sub-settle speed snaps the complete velocity vector to zero at rest. Gas turbulence derives from cell state, so unchanged enclosed gas is a true fixed point rather than a sleeping lottery.
 - **Topple** — a grounded grain on an open slope converts fall energy into sideways velocity. Static load tests a deterministic per-grain resistance; a moving grain tests kinetic resistance while its velocity keeps it awake. Impacts propagate as transferred momentum, never as an observed agitation condition. Redirection is a force, never a swap.
 - **Liquid potential** — a resting liquid only falls into a less-dense target. A diagonal descent converts no more than its released one-cell potential into horizontal momentum, and existing velocity travels freely through its own material, gas, and empty space. At a liquid displacement, normalized density contrast splits retained relative speed between forward penetration and transverse wake. Crossing downward into a lighter liquid also converts the released density potential into a momentum-balanced transverse eddy, and the remaining traversal immediately follows the combined redirected velocity.
-- **Impact** — a blocked downward liquid particle redirects an authored fraction of its speed along an open side; a blocked wall component reflects by the same fraction. No impact creates energy.
+- **Impact** — a blocked downward liquid particle redirects an authored fraction of its speed along an open side; a blocked wall component reflects by the same fraction. No impact creates energy. A cell blocked by a body instead records the pair and leaves both sides untouched for the body phase to resolve, so the exchange is never counted twice.
 
 ## Movement
 
@@ -84,4 +84,4 @@ A water neighbour quenches: a flame dies to steam keeping the water; a burning f
 | Keep-alive | a sim-rect mark without a change: pending work that must be re-evaluated |
 | Burning twin | the synthesized burning material of a flammable fuel |
 | Random tick | bounded tick-seeded per-chunk ambient sample, independent of sleep |
-| Displacement budget | a swapped cell or collision receiver is marked moved and can't be displaced again that tick; moved air still admits traversal |
+| Displacement budget | a swapped cell or collision receiver is marked moved and can't be displaced again that tick; moved air still admits traversal. Scoped to the grid passes: the body phase runs after them and reads occupancy, not stamps |

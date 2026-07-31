@@ -13,6 +13,7 @@ Y is up everywhere.
 - **Id lifecycle is guarded** — ids are session-monotonic and never reused; every clear writes only cells still bearing the writer's id; saves scrub ids on encode and decode.
 - **Owned cells are terrain to the grid** — they run reactions, combustion, decay, digging and material writes exactly as terrain; ownership suspends only independent cell movement.
 - **Conservation** — cells never appear or disappear; resolution never creates energy or directed momentum. Integer quantization truncates toward zero, so it may dissipate an unrepresentable remainder but can never amplify one; motion a body cannot realize is otherwise retained.
+- **Blocked force does no work** — a freedom whose quantum was refused and which moved nothing ends the tick with at most the refusing pair's restitution of the motion it carried in. Ambient force, load and impact all press through a pinned body into its support instead of banking speed it cannot spend, so a wedged body decays rather than storing a launch.
 - **Integer anchor, quantized motion** — position is the raster; fractions are per-freedom accumulators read by nothing but stepping.
   A quantum crosses at most one cell or orientation step, interleaved Bresenham-style, so no intermediate raster goes untested; an unavailable axis discards its remaining whole-cell budget for the tick, so blocked travel can never become future position.
   Settling bodies drain sub-floor accumulators so equilibrium jitter never writes the world; bodies that remain live retain fractional motion, so small density differences eventually move them.
@@ -37,7 +38,7 @@ Y is up everywhere.
 
 All bodies move in the same instant; no step depends on a spatial order (two interlinked C-shapes have none).
 Sequential movers are the failure mode this replaces: whether two bodies touch at all would depend on their ids.
-The parallel kernel is round zero; a quantum targeting a cell stamped moved this tick is busy — deferred, never a contact.
+The grid kernel has finished for the tick before the first round opens, so its tick-local moved stamps say nothing about what a body may enter; a body's admission is its own and reads occupancy alone.
 Rounds always run to completion; determinism is never traded for a budget.
 
 1. Every body with budget proposes its next quantum; only newly entered cells are tested.
@@ -71,6 +72,8 @@ A contact is an adjacent cell pair — face or corner — with its normal the pa
   There is no separate creature peer: an ogre shoving a player, a player kicking a crate and two boulders colliding are one path.
 - **Derived support** — a peer whose own opposing contact rests on terrain is immovable along that support normal only; each impulse decomposes, evaluated fresh, depth one, no flag.
 - **Powder** — a finite-mass peer at its density, holding like terrain below its authored repose resistance and yielding above it. Impact demand uses the body's and grain's reduced mass, so ordinary supported weight does not apply the whole body's momentum to one grain; matter yields by moving, never by rule.
+  A grain whose only footing is a cell of the body it blocks is that body's passenger, not its obstacle: it relocates with the pose exactly as a displaced fluid does. Residue settling into a body's own notch would otherwise hold up the body that carries it.
+- **A struck cell is a contact pair** — a free cell that cannot enter a body hands the body phase the pair, never a finished impulse, and both sides resolve from their closing velocity at their reduced mass. World-frame momentum transfer launches light debris faster than whatever hit it. Blocked weight is the exception and stays a direct impulse, because a load is a force rather than a collision.
 - **Liquid** — yields; relocation pairs it into vacated cells and drag emerges from the momentum spent.
   A downhill diagonal converts at most its released one-cell potential into horizontal momentum. Existing momentum travels through the same liquid instead of stopping at its first neighbour.
   The lattice-only remainder is a zero-velocity neutral swap whose direction alternates by material and row, so consecutive one-cell terraces cannot both park uphill while a valid two-row surface compacts and sleeps.
@@ -110,7 +113,7 @@ An id, its owned cells, a pose, a velocity, inertia derived from its materials, 
 
 | Field | Meaning |
 |-------|---------|
-| `turns` | may take turn quanta; without it a body never gains spin |
+| `turns` | may take turn quanta; without it a body never gains spin. A lone cell rotates to itself, so it never holds the freedom and never carries spin no contact could express |
 | `settles` | may become terrain at its fixed point |
 | `assists` | what may answer a refused quantum before it becomes a contact |
 
@@ -143,7 +146,7 @@ The ball is debris that never settles — that is the whole of its species, and 
 - **Detachment is local** — a grid write unseats its rigid neighbourhood; discovery flood-fills and flags an island atomically, parking under an unsimulated chunk and waking with it. Id-bearing cells are flood boundaries, never candidates.
   A region load is a detachment event: every exposed bonded cell reseeds discovery, so matter settled by an unload resumes as a body when its region returns.
 - **The moving-island envelope is explicit** — detachment admits at most 2,048 cells inside a 48-cell extent; a larger connected island remains terrain until damage separates an admissible part. This is a deliberate simulation budget, not a physical approximation hidden in the solver.
-- **Anchoring is adhesion** — an island holds while any member touches a foreign structural solid, or rests on powder from below; weak matter below a minimal hardness never anchors.
+- **Anchoring is adhesion** — an island holds while any member touches a foreign structural solid, or rests on powder from below; weak matter below a minimal hardness never anchors. Turf is the softest ground that still anchors, and the threshold sits at a value rather than beside one, so an authored hardness landing exactly on it holds.
 - **Rotation** uses 256 orientations: an exact quarter-turn plus three bijective shears phased around the quarter-turned mass-weighted subcell centre. A turn quantum probes every crossed cell, so a felled tree cannot sweep through a wall.
 - Body translation shares the free-cell 31-cell/tick safety limit, and rotation is limited to one full turn per tick; both still traverse every quantum rather than skipping collision checks.
 - Species flesh saves as air while alive; a settled corpse is ordinary matter and persists as terrain.
@@ -153,9 +156,11 @@ The ball is debris that never settles — that is the whole of its species, and 
 Rest is the fixed point of the pass, decided in isolation: no external impulse, thresholded velocity and spin zero, ambient force resolving to zero realizable motion — then terrain the same tick. Only bodies whose `settles` is set are candidates.
 Support lies in the direction the net ambient force presses, so a buoyant body settles against a ceiling exactly as a heavy one settles onto a floor.
 
-- The snap threshold is rounding-scale, not gravity-scale, or every tipping plank freezes on tick one.
-- A plank with its centre of mass past the ledge is not a fixed point; a body wedged in a crack is one.
-- Settle requires every load-bearing contact to end in terrain; a crate on a player's head never becomes terrain.
+- One threshold decides both halves, and it is the round scheduler's own accumulator floor: below it the scheduler discards motion, so a body inside it provably goes nowhere and force answered within it provably moves nothing. A tolerance under the impulse quantum asks for precision the integer solver cannot deliver and nothing ever rests; a tolerance above the floor freezes matter that would still have moved.
+- The probe gathers every adjacent bearing, not just the pressed face, under the same corner rule the rounds use — a body wedged in a crack is held by its walls, and it is a fixed point.
+- A plank with its centre of mass past the ledge is not a fixed point.
+- Settled powder bears exactly as it anchors an island; a shifting grain bears nothing, and a body with no other bearing is unsupported rather than refused.
+- Settle requires every load-bearing contact to end in terrain; a crate on a player's head never becomes terrain, and a stack resolves bottom-up as each layer becomes ground for the next.
 - A probe into an unloaded cell parks the body, velocity intact — never a contact, never a settle candidate — and a parked body accrues no forces until its whole neighbourhood simulates again.
 - An unloading region despawns its minded bodies and settles the rest into terrain, so cells never leave the grid.
 

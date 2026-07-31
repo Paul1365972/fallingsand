@@ -4,6 +4,7 @@ use crate::terrain::SEA_LEVEL;
 use fallingsand_core::MaterialId;
 use fallingsand_core::content::material;
 use fallingsand_math::{Hash, Rng};
+use std::collections::HashSet;
 
 const TREE_SALT: Hash = Hash::label("worldgen.tree");
 const CROWN_REACH: i32 = 104;
@@ -266,22 +267,35 @@ fn grow_tree(seed: u64, kind: &Species, rng: &mut Rng, trunk_x: i32, ground: i32
         }
     }
 
+    let wood: HashSet<(i32, i32)> = parts.iter().map(|part| (part.x, part.y)).collect();
     match kind.canopy {
         Canopy::Bare => {}
-        Canopy::Broad => grow_broad(seed, kind, apex_x, top, spread.max(len(4)), &mut parts),
-        Canopy::Conifer => grow_conifer(seed, kind, apex_x, top, height, &mut parts),
+        Canopy::Broad => grow_broad(
+            seed,
+            kind,
+            apex_x,
+            top,
+            spread.max(len(4)),
+            &wood,
+            &mut parts,
+        ),
+        Canopy::Conifer => grow_conifer(seed, kind, apex_x, top, height, &wood, &mut parts),
         Canopy::Cap => grow_cap(kind, rng, apex_x, top, width, &mut parts),
     }
     parts
 }
 
-fn knit(cells: Vec<(i32, i32)>, apex_x: i32) -> Vec<(i32, i32)> {
-    let present: std::collections::HashSet<(i32, i32)> = cells.iter().copied().collect();
-    let mut keep: std::collections::HashSet<(i32, i32)> = std::collections::HashSet::new();
+fn knit(cells: Vec<(i32, i32)>, wood: &HashSet<(i32, i32)>) -> Vec<(i32, i32)> {
+    let present: HashSet<(i32, i32)> = cells.iter().copied().collect();
+    let mut keep: HashSet<(i32, i32)> = HashSet::new();
     let mut stack: Vec<(i32, i32)> = Vec::new();
-    for &cell in &cells {
-        if cell.0 == apex_x && keep.insert(cell) {
-            stack.push(cell);
+    for &(x, y) in &cells {
+        let attached = wood.contains(&(x, y))
+            || [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]
+                .iter()
+                .any(|step| wood.contains(step));
+        if attached && keep.insert((x, y)) {
+            stack.push((x, y));
         }
     }
     while let Some((x, y)) = stack.pop() {
@@ -300,6 +314,7 @@ fn grow_broad(
     apex_x: i32,
     top: i32,
     radius: i32,
+    wood: &HashSet<(i32, i32)>,
     parts: &mut Vec<Growth>,
 ) {
     let centre_y = top - radius / 3;
@@ -320,7 +335,7 @@ fn grow_broad(
             cells.push((x, y));
         }
     }
-    for (x, y) in knit(cells, apex_x) {
+    for (x, y) in knit(cells, wood) {
         parts.push(Growth {
             x,
             y,
@@ -335,6 +350,7 @@ fn grow_conifer(
     apex_x: i32,
     top: i32,
     height: i32,
+    wood: &HashSet<(i32, i32)>,
     parts: &mut Vec<Growth>,
 ) {
     let span = (height as f32 * (1.0 - kind.clear)) as i32;
@@ -361,7 +377,7 @@ fn grow_conifer(
             cells.push((x, y));
         }
     }
-    for (x, y) in knit(cells, apex_x) {
+    for (x, y) in knit(cells, wood) {
         parts.push(Growth {
             x,
             y,

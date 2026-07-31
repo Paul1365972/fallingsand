@@ -84,7 +84,7 @@ fn supported(world: &CellWorld, pos: CellPos, material: MaterialId) -> bool {
             continue;
         }
         match content::phase(cell.material) {
-            Phase::Solid if content::material(cell.material).hardness > SUPPORT_MIN_HARDNESS => {
+            Phase::Solid if content::material(cell.material).hardness >= SUPPORT_MIN_HARDNESS => {
                 return true;
             }
             Phase::Powder if dy < 0 => return true,

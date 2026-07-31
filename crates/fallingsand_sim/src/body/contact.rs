@@ -344,7 +344,7 @@ fn apply_to_body(
     let rx = i128::from(point.0 - com.0);
     let ry = i128::from(point.1 - com.1);
     let torque = rx * i128::from(jy) - ry * i128::from(jx);
-    if body.freedoms.holds(Freedoms::TURN) {
+    if body.holds(Freedoms::TURN) {
         body.spin += super::rotation::Spin::from_angular_impulse(torque, body.moment);
     }
 }

@@ -1,5 +1,6 @@
 mod contact;
 mod island;
+pub mod journal;
 mod rotation;
 mod rounds;
 mod state;
@@ -10,6 +11,7 @@ use fallingsand_core::{
     CARDINAL_NEIGHBORS, CHUNK_SIZE, Cell, CellOffset, CellPos, CellRect, ChunkPos, MaterialId,
     Phase, Q16, RegionPos, Subcell, content,
 };
+use journal::{Event, Journal};
 use rustc_hash::FxHashMap;
 pub use state::Policy;
 
@@ -25,6 +27,7 @@ pub struct Bodies {
     pending: Vec<CellPos>,
     parked_seeds: FxHashMap<ChunkPos, Vec<CellPos>>,
     fractures: Vec<Fracture>,
+    journal: Journal,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,7 +37,28 @@ pub struct Fracture {
     pub parts: Vec<u32>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BodyState {
+    pub id: u32,
+    pub cells: usize,
+    pub bounds: CellRect,
+    pub com: (i64, i64),
+    pub velocity: (i64, i64),
+    pub spin: i64,
+    pub accumulators: (i64, i64, i64),
+    pub mass: i64,
+    pub weight: i64,
+    pub step: u32,
+    pub settles: bool,
+    pub turns: bool,
+    pub parked: bool,
+}
+
 impl Bodies {
+    pub fn journal(&mut self) -> &mut Journal {
+        &mut self.journal
+    }
+
     pub fn rasters(&self) -> impl Iterator<Item = (u32, &[CellPos])> {
         self.bodies
             .iter()
@@ -127,17 +151,25 @@ impl Bodies {
 
     pub fn bounds(&self, id: u32) -> Option<CellRect> {
         let &index = self.by_id.get(&id)?;
-        let body = &self.bodies[index];
-        let mut min = (i32::MAX, i32::MAX);
-        let mut max = (i32::MIN, i32::MIN);
-        for &pos in &body.raster {
-            min = (min.0.min(pos.x), min.1.min(pos.y));
-            max = (max.0.max(pos.x), max.1.max(pos.y));
-        }
-        Some(CellRect::new(
-            CellPos::new(min.0, min.1),
-            CellPos::new(max.0, max.1),
-        ))
+        Some(raster_bounds(&self.bodies[index].raster))
+    }
+
+    pub fn states(&self) -> impl Iterator<Item = BodyState> {
+        self.bodies.iter().map(|body| BodyState {
+            id: body.id,
+            cells: body.raster.len(),
+            bounds: raster_bounds(&body.raster),
+            com: body.com(),
+            velocity: (body.vx, body.vy),
+            spin: body.spin.raw(),
+            accumulators: (body.acc_x, body.acc_y, body.acc_turn),
+            mass: body.mass,
+            weight: body.weight,
+            step: body.step,
+            settles: body.settles,
+            turns: body.holds(state::Freedoms::TURN),
+            parked: body.parked,
+        })
     }
 
     pub fn support_traction(&self, world: &CellWorld, id: u32) -> Option<f32> {
@@ -303,6 +335,7 @@ impl Bodies {
         next.vx = body.vx;
         next.vy = body.vy;
         next.spin = body.spin;
+        next.carried = body.carried;
         next.acc_x = body.acc_x;
         next.acc_y = body.acc_y;
         next.acc_turn = body.acc_turn;
@@ -401,26 +434,53 @@ impl Bodies {
         simulated: &dyn Fn(ChunkPos) -> bool,
         allocate: &mut dyn FnMut() -> u32,
     ) {
-        for body in &mut self.bodies {
-            if body.parked {
-                body.parked = island_blocker(world, simulated, &body.raster).is_some();
+        {
+            let Self {
+                bodies, journal, ..
+            } = self;
+            for body in bodies.iter_mut() {
+                if body.parked {
+                    body.parked = island_blocker(world, simulated, &body.raster).is_some();
+                    if !body.parked {
+                        journal.record(|| Event::Woke { id: body.id });
+                    }
+                }
             }
         }
         self.reconcile(world, allocate);
         self.detach(world, simulated, allocate);
         self.rebuild_index();
 
-        for impulse in impulses {
-            if let Some(&index) = self.by_id.get(&impulse.id) {
-                let body = &mut self.bodies[index];
-                if body.parked {
-                    continue;
-                }
-                let com = body.com();
-                body.apply_impulse(com, impulse.pos, impulse.jx, impulse.jy);
-            }
+        let Self {
+            bodies,
+            by_id,
+            journal,
+            ..
+        } = self;
+        for body in bodies.iter_mut() {
+            body.carried = (body.vx, body.vy, body.spin.raw());
         }
-        for body in &mut self.bodies {
+        for impulse in impulses {
+            let BodyImpulse::Load { id, body_cell, jy } = *impulse else {
+                continue;
+            };
+            let Some(&index) = by_id.get(&id) else {
+                continue;
+            };
+            let body = &mut bodies[index];
+            if body.parked {
+                continue;
+            }
+            let com = body.com();
+            body.apply_impulse(com, body_cell, 0, jy);
+            journal.record(|| Event::Loaded {
+                id,
+                at: body_cell,
+                jy,
+            });
+        }
+        rounds::resolve_strikes(world, bodies, by_id, impulses, journal);
+        for body in bodies.iter_mut() {
             if !body.parked {
                 rounds::integrate_forces(world, body);
             }
@@ -429,7 +489,14 @@ impl Bodies {
 
     pub fn advance(&mut self, world: &mut CellWorld, simulated: &dyn Fn(ChunkPos) -> bool) {
         let mut cells = FxHashMap::default();
-        rounds::run_rounds(world, &mut self.bodies, &self.by_id, &simulated, &mut cells);
+        rounds::run_rounds(
+            world,
+            &mut self.bodies,
+            &self.by_id,
+            &simulated,
+            &mut cells,
+            &mut self.journal,
+        );
 
         let mut yielded: Vec<_> = cells.into_iter().collect();
         yielded.sort_unstable_by_key(|(pos, _)| (pos.y, pos.x));
@@ -447,15 +514,32 @@ impl Bodies {
             world.set(pos, cell);
         }
 
-        for body in &mut self.bodies {
-            rounds::carriage(world, body);
+        let Self {
+            bodies, journal, ..
+        } = self;
+        for body in bodies.iter_mut() {
+            rounds::carriage(world, body, journal);
         }
         let mut index = 0;
-        while index < self.bodies.len() {
-            if rounds::try_settle(world, &mut self.bodies[index]) {
-                let body = self.bodies.remove(index);
+        while index < bodies.len() {
+            let settle = rounds::try_settle(world, &mut bodies[index]);
+            if settle.verdict == journal::Verdict::Rests {
+                let body = bodies.remove(index);
+                journal.record(|| Event::Settled {
+                    id: body.id,
+                    cells: body.raster.len(),
+                    at: body.anchor,
+                });
                 settle_body(world, &body);
             } else {
+                if journal.records() && bodies[index].settles && !bodies[index].parked {
+                    let id = bodies[index].id;
+                    journal.record(|| Event::Restless {
+                        id,
+                        verdict: settle.verdict,
+                        residual: settle.residual,
+                    });
+                }
                 index += 1;
             }
         }
@@ -489,10 +573,12 @@ impl Bodies {
     fn reconcile(&mut self, world: &mut CellWorld, allocate: &mut dyn FnMut() -> u32) {
         let mut index = 0;
         while index < self.bodies.len() {
-            match reconcile_body(world, &self.bodies[index], allocate) {
+            match reconcile_body(world, &self.bodies[index], allocate, &mut self.journal) {
                 Reconciled::Intact => index += 1,
-                Reconciled::Parked => {
+                Reconciled::Parked(blocker) => {
                     self.bodies[index].parked = true;
+                    let id = self.bodies[index].id;
+                    self.journal.record(|| Event::Parked { id, blocker });
                     index += 1;
                 }
                 Reconciled::Gone => {
@@ -501,6 +587,10 @@ impl Bodies {
                         source: body.id,
                         anchor: body.anchor,
                         parts: Vec::new(),
+                    });
+                    self.journal.record(|| Event::Dissolved {
+                        id: body.id,
+                        at: body.anchor,
                     });
                     self.bodies.remove(index);
                 }
@@ -511,6 +601,15 @@ impl Bodies {
                         anchor: self.bodies[index].anchor,
                         parts: parts.iter().map(|part| part.id).collect(),
                     });
+                    if parts.len() > 1 {
+                        let anchor = self.bodies[index].anchor;
+                        let ids: Vec<u32> = parts.iter().map(|part| part.id).collect();
+                        self.journal.record(|| Event::Split {
+                            source: retained,
+                            parts: ids,
+                            at: anchor,
+                        });
+                    }
                     self.bodies.remove(index);
                     let mut offset = 0;
                     for part in parts.drain(..) {
@@ -570,7 +669,22 @@ impl Bodies {
                 match island_blocker(world, simulated, &island) {
                     None => {
                         let id = allocate();
+                        let bounds = raster_bounds(&island);
+                        let cells = island.len();
+                        let seed_material = world
+                            .get_cell(candidate)
+                            .map_or(MaterialId::AIR, |cell| cell.material);
                         self.bodies.push(capture(world, id, island));
+                        self.journal.record(|| Event::Detached {
+                            id,
+                            cells,
+                            span: (
+                                bounds.max.x - bounds.min.x + 1,
+                                bounds.max.y - bounds.min.y + 1,
+                            ),
+                            at: bounds.min,
+                            material: seed_material,
+                        });
                     }
                     Some(chunk) => {
                         self.parked_seeds.entry(chunk).or_default().push(candidate);
@@ -583,7 +697,7 @@ impl Bodies {
 
 enum Reconciled {
     Intact,
-    Parked,
+    Parked(ChunkPos),
     Gone,
     Parts(Vec<Body>),
 }
@@ -592,19 +706,25 @@ fn reconcile_body(
     world: &mut CellWorld,
     body: &Body,
     allocate: &mut dyn FnMut() -> u32,
+    journal: &mut Journal,
 ) -> Reconciled {
     let mut changed = false;
     let mut survivors: Vec<Slot> = Vec::with_capacity(body.slots.len());
     let mut positions: Vec<CellPos> = Vec::with_capacity(body.raster.len());
     for (slot, &pos) in body.slots.iter().zip(&body.raster) {
         let Some(cell) = world.get_cell(pos) else {
-            return Reconciled::Parked;
+            return Reconciled::Parked(pos.chunk());
         };
         if cell.body_id() != Some(body.id) {
             changed = true;
             continue;
         }
         if !bondable(cell.material) {
+            journal.record(|| Event::Released {
+                id: body.id,
+                at: pos,
+                material: cell.material,
+            });
             release(world, body, pos);
             changed = true;
             continue;
@@ -689,6 +809,7 @@ fn derive_part(
         vx: source.vx,
         vy: source.vy,
         spin: source.spin,
+        carried: source.carried,
         acc_x: if id == source.id { source.acc_x } else { 0 },
         acc_y: if id == source.id { source.acc_y } else { 0 },
         acc_turn: if id == source.id { source.acc_turn } else { 0 },
@@ -748,6 +869,16 @@ fn settle_body(world: &mut CellWorld, body: &Body) {
         cell.set_vel(0, 0);
         world.set(pos, cell);
     }
+}
+
+fn raster_bounds(raster: &[CellPos]) -> CellRect {
+    let mut min = (i32::MAX, i32::MAX);
+    let mut max = (i32::MIN, i32::MIN);
+    for &pos in raster {
+        min = (min.0.min(pos.x), min.1.min(pos.y));
+        max = (max.0.max(pos.x), max.1.max(pos.y));
+    }
+    CellRect::new(CellPos::new(min.0, min.1), CellPos::new(max.0, max.1))
 }
 
 fn island_blocker(

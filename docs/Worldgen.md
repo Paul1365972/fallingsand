@@ -10,7 +10,7 @@
 - **No fiat gates** — depth is gated by hazard and preparation, never by bedrock and never by tool tier. Hardness is dig *time* only.
 - **One scale knob** — every dimension is authored relative to the player avatar. `scale::PLAYER_WIDTH` is the only edit needed to retune the whole world.
 - **Nothing generated may be born falling** — the sim promotes any detached cluster of bonded solids into a rigid body, so a placed structure that is not anchored becomes debris the moment the chunk wakes. See *Standing up*.
-- **Foliage is one connected body** — a crown is flood-filled from the trunk column and anything unreachable is dropped, so no leaf ever hangs in open air. A per-cell stipple alone always leaves orphans.
+- **Foliage is one connected body** — a crown is flood-filled from the trunk and branches it grew on and anything unreachable is dropped, so no leaf clump ever hangs in open air. A per-cell stipple alone always leaves orphans.
 
 The benchmark is Terraria × Noita × modern Minecraft. `examples/preview.rs` renders regions to PNG (`--step` downsamples for kilometre-wide views, `PROBE=1` prints terrain statistics, per-depth biome and sub-biome histograms and air fractions) and is the tuning loop. Histograms are the guard against a biome that reads well but never occurs, or one that quietly swallows its neighbours.
 
@@ -114,7 +114,7 @@ Generation writes the region's initial explored mask ([Server.md](Server.md)): e
 
 - **Diagonal chains are not chains.** A line drawn by stepping x and y together is a string of unlinked single cells, each its own island, each a falling body. Any sloped run must emit the whole vertical span at each new column; that shares a row with the previous column and the cardinal link exists by construction. A tree with a dozen diagonally-drawn branches becomes a dozen bodies per tree, which is hundreds of bodies per screen and tens of milliseconds of physics.
 - **Soft matter does not hold anything up.** Leaves, ground cover and rope are below the support threshold, so a plank resting on a rope falls and a branch surrounded only by foliage falls. Ladders are built entirely from timber for this reason; the rope beside them hangs from rock or from a beam, never the reverse.
-- **Non-bonded solids are free.** Foliage, powders and liquids never form islands, so they can be scattered without connectivity care. That is why crowns can be a sparse stipple while trunks cannot.
+- **Bonded foliage is not free.** Leaves share the trunk's `bond_group`, so a stippled crown is a connectivity problem too: it is flood-filled from the woody frame, and the anchor is the frame itself, never a column of crown cells that may itself be severed. Powders and liquids form no islands and can be scattered without care.
 
 The cheap check when authoring a structure: trace the path from every cell to rock. If it does not exist through cardinal, same-group steps, the piece is debris.
 

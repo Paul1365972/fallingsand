@@ -95,7 +95,7 @@ fn transfer_load(
     let mass = i64::from(content::density_milli(material).max(1));
     if let Some(id) = support.body_id() {
         let send = carried.min(cap);
-        window.body_impulse(id, below, 0, -i64::from(send) * mass);
+        window.load_body(id, below, -i64::from(send) * mass);
         return Some(retain(carried, send, cap));
     }
     if content::phase(support.material) != Phase::Powder || !support.is_stressed() {

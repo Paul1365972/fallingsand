@@ -1,7 +1,9 @@
 use super::contact::{CellState, Contact, Peer, Resolver};
+use super::journal::{self, Event, Journal, Outcome, Verdict};
 use super::rotation::{ANGLE_STEPS, ORIENTATION_UNITS, Spin};
 use super::state::{Body, CELL, Freedoms, cell_mass};
 use crate::motion::{GRAVITY_DV, MAX_SPEED_CELLS, SETTLE};
+use crate::window::BodyImpulse;
 use crate::world::CellWorld;
 use fallingsand_core::{
     CARDINAL_NEIGHBORS, Cell, CellPos, ChunkPos, MaterialId, Phase, Q16, content,
@@ -14,8 +16,17 @@ const MAX_BODY_SPEED_CELLS: i64 = MAX_SPEED_CELLS as i64;
 const MAX_SPEED: i64 = MAX_BODY_SPEED_CELLS * CELL;
 const MAX_TURN_QUANTA: i64 = ANGLE_STEPS as i64;
 const FLUID_DRAG_DIVISOR: i64 = 4;
-const SNAP: i64 = 16;
-const SETTLE_EPSILON: i64 = 4;
+const REALIZABLE: i64 = SETTLE as i64;
+const NEIGHBOURHOOD: [(i32, i32); 8] = [
+    (-1, -1),
+    (0, -1),
+    (1, -1),
+    (-1, 0),
+    (1, 0),
+    (-1, 1),
+    (0, 1),
+    (1, 1),
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Freedom {
@@ -26,6 +37,14 @@ enum Freedom {
 
 impl Freedom {
     const ALL: [Self; 3] = [Self::Y, Self::X, Self::Turn];
+
+    fn reported(self) -> journal::Freedom {
+        match self {
+            Self::Turn => journal::Freedom::Turn,
+            Self::X => journal::Freedom::X,
+            Self::Y => journal::Freedom::Y,
+        }
+    }
 
     fn index(self) -> usize {
         match self {
@@ -79,6 +98,8 @@ impl Freedom {
 struct FreedomState {
     parked: bool,
     probed: bool,
+    moved: bool,
+    refused: Option<Q16>,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -100,6 +121,112 @@ struct Proposal {
     canceled: bool,
     deps: Vec<(usize, CellPos, CellPos)>,
     contacts: Vec<Contact>,
+}
+
+pub(super) fn resolve_strikes(
+    world: &mut CellWorld,
+    bodies: &mut [Body],
+    by_id: &FxHashMap<u32, usize>,
+    impulses: &[BodyImpulse],
+    journal: &mut Journal,
+) {
+    let mut cells: FxHashMap<CellPos, CellState> = FxHashMap::default();
+    let mut contacts: Vec<Contact> = Vec::new();
+    for impulse in impulses {
+        let BodyImpulse::Strike {
+            id,
+            body_cell,
+            grain,
+            mass,
+        } = *impulse
+        else {
+            continue;
+        };
+        let Some(&index) = by_id.get(&id) else {
+            continue;
+        };
+        if bodies[index].parked {
+            continue;
+        }
+        let Some(cell) = world.get_cell(grain) else {
+            continue;
+        };
+        if cell.body_id().is_some()
+            || world.get_cell(body_cell).and_then(|held| held.body_id()) != Some(id)
+        {
+            continue;
+        }
+        let (vx, vy) = cell.vel();
+        cells.entry(grain).or_insert(CellState {
+            mass,
+            vx: i64::from(vx),
+            vy: i64::from(vy),
+            start_vx: i64::from(vx),
+            start_vy: i64::from(vy),
+        });
+        let my = &bodies[index];
+        contacts.push(Contact {
+            body: index,
+            from: body_cell,
+            at: grain,
+            normal: (body_cell.x - grain.x, body_cell.y - grain.y),
+            peer: Peer::Cell { pos: grain, mass },
+            restitution: pair_restitution(my, None, Some(cell.material)),
+            friction: my.friction.mul(content::friction(cell.material)),
+            target: 0,
+            push: 0,
+            drag: 0,
+        });
+    }
+    if contacts.is_empty() {
+        return;
+    }
+    contacts.sort_unstable_by_key(|contact| {
+        (
+            bodies[contact.body].id,
+            contact.at.y,
+            contact.at.x,
+            contact.normal,
+        )
+    });
+    let coms: Vec<(i64, i64)> = bodies.iter().map(Body::com).collect();
+    let grounded: Vec<bool> = bodies
+        .iter()
+        .map(|body| body_grounded(world, body))
+        .collect();
+    {
+        let mut resolver = Resolver {
+            bodies,
+            coms: &coms,
+            grounded: &grounded,
+            cells: &mut cells,
+        };
+        resolver.resolve(&mut contacts);
+    }
+    for contact in &contacts {
+        let id = bodies[contact.body].id;
+        journal.record(|| Event::Struck {
+            id,
+            at: contact.at,
+            push: contact.push,
+            drag: contact.drag,
+        });
+    }
+    let mut settled: Vec<(CellPos, CellState)> = cells.into_iter().collect();
+    settled.sort_unstable_by_key(|(pos, _)| (pos.y, pos.x));
+    for (pos, state) in settled {
+        if (state.vx, state.vy) == (state.start_vx, state.start_vy) {
+            continue;
+        }
+        let Some(mut cell) = world.get_cell(pos) else {
+            continue;
+        };
+        if cell.body_id().is_some() {
+            continue;
+        }
+        cell.set_vel(state.vx as i32, state.vy as i32);
+        world.set(pos, cell);
+    }
 }
 
 pub(super) fn integrate_forces(world: &mut CellWorld, body: &mut Body) {
@@ -128,7 +255,7 @@ pub(super) fn integrate_forces(world: &mut CellWorld, body: &mut Body) {
     }
     body.weight = (gravity / i128::from(body.mass)) as i64;
     body.vy += body.weight;
-    if body.freedoms.holds(Freedoms::TURN) {
+    if body.holds(Freedoms::TURN) {
         body.spin += Spin::from_angular_impulse(gravity_torque, body.moment);
     }
     apply_fluid_drag(world, body, fluid);
@@ -310,6 +437,7 @@ pub(super) fn run_rounds<S>(
     by_id: &FxHashMap<u32, usize>,
     simulated: &S,
     cells: &mut FxHashMap<CellPos, CellState>,
+    journal: &mut Journal,
 ) where
     S: Fn(ChunkPos) -> bool,
 {
@@ -357,13 +485,37 @@ pub(super) fn run_rounds<S>(
             &mut newly_parked,
         );
         apply_assists(world, bodies, simulated, &mut proposals);
-        for index in newly_parked {
+        for (index, blocker) in newly_parked {
             bodies[index].parked = true;
+            let id = bodies[index].id;
+            journal.record(|| Event::Parked { id, blocker });
         }
         resolve_ties(bodies, &mut proposals);
         cascade(bodies, &mut proposals);
-        commit(world, bodies, &mut proposals, by_id, cells);
-        finish_round(world, bodies, &mut movers, &mut proposals, cells);
+        commit(world, bodies, &mut proposals, by_id, cells, journal);
+        finish_round(world, bodies, &mut movers, &mut proposals, cells, journal);
+    }
+
+    for (body, mover) in bodies.iter_mut().zip(&movers) {
+        for freedom in Freedom::ALL {
+            let state = mover.freedoms[freedom.index()];
+            let Some(rebound) = state.refused.filter(|_| !state.moved) else {
+                continue;
+            };
+            let carried = match freedom {
+                Freedom::Turn => body.carried.2,
+                Freedom::X => body.carried.0,
+                Freedom::Y => body.carried.1,
+            };
+            let held = freedom.velocity(body);
+            let ceiling = ((i128::from(rebound.raw()) * i128::from(carried.abs())) >> 16) as i64;
+            let spent = held.signum() * held.abs().min(ceiling);
+            match freedom {
+                Freedom::Turn => body.spin = Spin::from_raw(spent),
+                Freedom::X => body.vx = spent,
+                Freedom::Y => body.vy = spent,
+            }
+        }
     }
 }
 
@@ -376,7 +528,7 @@ fn collect_proposals(world: &CellWorld, bodies: &[Body], movers: &mut [Mover]) -
         let mover = &movers[index];
         let mut best: Option<Freedom> = None;
         for freedom in Freedom::ALL {
-            if !body.freedoms.holds(freedom.bit())
+            if !body.holds(freedom.bit())
                 || mover.freedoms[freedom.index()].parked
                 || freedom.pending(body) == 0
             {
@@ -394,7 +546,7 @@ fn collect_proposals(world: &CellWorld, bodies: &[Body], movers: &mut [Mover]) -
         }
         for freedom in Freedom::ALL {
             let state = mover.freedoms[freedom.index()];
-            if !body.freedoms.holds(freedom.bit())
+            if !body.holds(freedom.bit())
                 || state.parked
                 || state.probed
                 || freedom.velocity(body) == 0
@@ -549,7 +701,7 @@ fn classify<S>(
     cells: &mut FxHashMap<CellPos, CellState>,
     movers: &mut [Mover],
     proposals: &mut [Proposal],
-    newly_parked: &mut Vec<usize>,
+    newly_parked: &mut Vec<(usize, ChunkPos)>,
 ) where
     S: Fn(ChunkPos) -> bool,
 {
@@ -563,16 +715,15 @@ fn classify<S>(
     for p in 0..proposals.len() {
         let body_index = proposals[p].body;
         let my = &bodies[body_index];
-        let mut busy = false;
-        let mut unloaded = false;
+        let mut unloaded = None;
         let entered = std::mem::take(&mut proposals[p].entered);
         for &(at, from) in &entered {
             let Some(cell) = world.get_cell(at) else {
-                unloaded = true;
+                unloaded = Some(at.chunk());
                 continue;
             };
             if !simulated(at.chunk()) {
-                unloaded = true;
+                unloaded = Some(at.chunk());
                 continue;
             }
             match cell.body_id() {
@@ -623,7 +774,7 @@ fn classify<S>(
                             my.friction.mul(content::friction(cell.material)),
                         );
                     }
-                    Phase::Powder => {
+                    Phase::Powder if !passenger(world, my.id, at) => {
                         let peer = powder_peer(my, cell, at, from, cells);
                         push_contact(
                             &mut proposals[p],
@@ -635,26 +786,20 @@ fn classify<S>(
                             my.friction.mul(content::friction(cell.material)),
                         );
                     }
-                    _ => {
-                        if !cell.is_air() && cell.is_moved() {
-                            busy = true;
-                        }
-                    }
+                    Phase::Powder => {}
+                    Phase::Empty | Phase::Liquid | Phase::Gas => {}
                 },
             }
         }
         proposals[p].entered = entered;
-        if unloaded {
+        if let Some(blocker) = unloaded {
             bodies_parked(movers, proposals, body_index);
-            newly_parked.push(body_index);
+            newly_parked.push((body_index, blocker));
             proposals[p].canceled = true;
             continue;
         }
         if !proposals[p].contacts.is_empty() {
             proposals[p].refused = true;
-        } else if busy {
-            movers[body_index].freedoms[proposals[p].freedom.index()].parked = true;
-            proposals[p].canceled = true;
         }
     }
 }
@@ -672,30 +817,24 @@ where
         {
             continue;
         }
+        let id = bodies[proposal.body].id;
         let replacement = (1..=STEP_CELLS)
             .map(|rise| build_step_proposal(world, bodies, proposal.body, proposal.sign, rise))
-            .find(|candidate| assist_path_clear(world, simulated, candidate));
+            .find(|candidate| assist_path_clear(world, simulated, id, candidate));
         if let Some(replacement) = replacement {
             *proposal = replacement;
         }
     }
 }
 
-fn assist_path_clear<S>(world: &CellWorld, simulated: &S, proposal: &Proposal) -> bool
+fn assist_path_clear<S>(world: &CellWorld, simulated: &S, id: u32, proposal: &Proposal) -> bool
 where
     S: Fn(ChunkPos) -> bool,
 {
-    proposal.entered.iter().all(|&(at, _)| {
-        simulated(at.chunk())
-            && world.get_cell(at).is_some_and(|cell| {
-                cell.body_id().is_none()
-                    && matches!(
-                        content::phase(cell.material),
-                        Phase::Empty | Phase::Liquid | Phase::Gas
-                    )
-                    && (cell.is_air() || !cell.is_moved())
-            })
-    })
+    proposal
+        .entered
+        .iter()
+        .all(|&(at, _)| simulated(at.chunk()) && admits(world, id, at))
 }
 
 fn bodies_parked(movers: &mut [Mover], proposals: &mut [Proposal], body: usize) {
@@ -898,6 +1037,7 @@ fn commit(
     proposals: &mut [Proposal],
     by_id: &FxHashMap<u32, usize>,
     cells: &mut FxHashMap<CellPos, CellState>,
+    journal: &mut Journal,
 ) {
     loop {
         let mut progress = false;
@@ -917,7 +1057,7 @@ fn commit(
                 continue;
             }
             if revalidate(world, bodies, &proposals[p]) {
-                commit_group(world, bodies, &[p], proposals);
+                commit_group(world, bodies, &[p], proposals, journal);
                 proposals[p].committed = true;
             } else {
                 refuse_after_commit(world, bodies, by_id, cells, proposals, p);
@@ -951,7 +1091,7 @@ fn commit(
         group.sort_unstable();
         remaining.retain(|p| !group.contains(p));
         if joint_valid(world, bodies, proposals, &group) {
-            commit_group(world, bodies, &group, proposals);
+            commit_group(world, bodies, &group, proposals, journal);
             for &p in &group {
                 proposals[p].committed = true;
             }
@@ -963,18 +1103,29 @@ fn commit(
     }
 }
 
+fn passenger(world: &CellWorld, id: u32, grain: CellPos) -> bool {
+    world
+        .get_cell(grain.translated(0, -1))
+        .is_some_and(|below| below.body_id() == Some(id))
+}
+
+fn admits(world: &CellWorld, id: u32, at: CellPos) -> bool {
+    world.get_cell(at).is_some_and(|cell| match cell.body_id() {
+        Some(owner) => owner == id,
+        None => match content::phase(cell.material) {
+            Phase::Empty | Phase::Liquid | Phase::Gas => true,
+            Phase::Powder => passenger(world, id, at),
+            Phase::Solid => false,
+        },
+    })
+}
+
 fn revalidate(world: &CellWorld, bodies: &[Body], proposal: &Proposal) -> bool {
     let my = &bodies[proposal.body];
-    proposal.entered.iter().all(|&(at, _)| {
-        world.get_cell(at).is_some_and(|cell| {
-            cell.body_id() == Some(my.id)
-                || (cell.body_id().is_none()
-                    && matches!(
-                        content::phase(cell.material),
-                        Phase::Empty | Phase::Liquid | Phase::Gas
-                    ))
-        })
-    })
+    proposal
+        .entered
+        .iter()
+        .all(|&(at, _)| admits(world, my.id, at))
 }
 
 fn joint_valid(
@@ -1002,10 +1153,7 @@ fn joint_valid(
             };
             match cell.body_id() {
                 None => {
-                    if !matches!(
-                        content::phase(cell.material),
-                        Phase::Empty | Phase::Liquid | Phase::Gas
-                    ) {
+                    if !admits(world, bodies[proposals[p].body].id, at) {
                         return false;
                     }
                 }
@@ -1037,12 +1185,7 @@ fn refuse_after_commit(
         let Some(cell) = world.get_cell(at) else {
             continue;
         };
-        let blocked = match cell.body_id() {
-            Some(id) if id == bodies[body_index].id => false,
-            Some(_) => true,
-            None => matches!(content::phase(cell.material), Phase::Solid | Phase::Powder),
-        };
-        if !blocked {
+        if admits(world, bodies[body_index].id, at) {
             continue;
         }
         let my = &bodies[body_index];
@@ -1097,6 +1240,7 @@ fn commit_group(
     bodies: &mut [Body],
     group: &[usize],
     proposals: &mut [Proposal],
+    journal: &mut Journal,
 ) {
     let mut current: FxHashSet<CellPos> = FxHashSet::default();
     let mut next: FxHashSet<CellPos> = FxHashSet::default();
@@ -1144,6 +1288,14 @@ fn commit_group(
             let jy = exchange(entrained.1 - i64::from(cvy), (0, 1));
             cell.set_vel(cvx + (jx / mass) as i32, cvy + (jy / mass) as i32);
             bodies[owner].apply_impulse(com, pos, -(jx as i64), -(jy as i64));
+            let id = bodies[owner].id;
+            journal.record(|| Event::Entrained {
+                id,
+                at: pos,
+                material: cell.material,
+                jx: jx as i64,
+                jy: jy as i64,
+            });
         }
         displaced.push(cell);
     }
@@ -1213,6 +1365,7 @@ fn finish_round(
     movers: &mut [Mover],
     proposals: &mut [Proposal],
     cells: &mut FxHashMap<CellPos, CellState>,
+    journal: &mut Journal,
 ) {
     let mut contacts: Vec<Contact> = Vec::new();
     let mut closing_any: FxHashMap<usize, (bool, i64)> = FxHashMap::default();
@@ -1229,26 +1382,30 @@ fn finish_round(
             let approach = proposal.freedom.velocity(&bodies[proposal.body]);
             let resting = proposal.probe;
             let mut any = false;
+            let mut rebound = Q16::from_raw(0);
             proposal.contacts.retain_mut(|contact| {
-                let diagonal = contact.normal.0 != 0 && contact.normal.1 != 0;
                 let body = &bodies[contact.body];
                 let com = coms[contact.body];
-                let point = body.point_velocity(com, contact.at);
-                let closes_x = point.0 * i64::from(contact.normal.0) < 0;
-                let closes_y = point.1 * i64::from(contact.normal.1) < 0;
-                let closes = i128::from(point.0) * i128::from(contact.normal.0)
-                    + i128::from(point.1) * i128::from(contact.normal.1)
-                    < 0;
-                if diagonal && !(closes_x && closes_y) {
+                if !corner_engaged(body, com, contact) {
                     return false;
                 }
                 if resting {
                     contact.restitution = Q16::from_raw(0);
                 }
-                any |= closes;
+                if contact.restitution.raw() > rebound.raw() {
+                    rebound = contact.restitution;
+                }
+                let point = body.point_velocity(com, contact.at);
+                any |= i128::from(point.0) * i128::from(contact.normal.0)
+                    + i128::from(point.1) * i128::from(contact.normal.1)
+                    < 0;
                 true
             });
             closing_any.insert(p, (any, approach));
+            let state = &mut movers[proposal.body].freedoms[proposal.freedom.index()];
+            if state.refused.is_none_or(|held| held.raw() < rebound.raw()) {
+                state.refused = Some(rebound);
+            }
             contacts.append(&mut proposal.contacts);
         }
         contacts.sort_unstable_by_key(|contact| {
@@ -1269,19 +1426,58 @@ fn finish_round(
         resolver.resolve(&mut contacts);
     }
 
+    if journal.records() {
+        for contact in &contacts {
+            let id = bodies[contact.body].id;
+            let peer = match contact.peer {
+                Peer::Terrain => journal::Peer::Terrain,
+                Peer::Body(index) => journal::Peer::Body(bodies[index].id),
+                Peer::Cell { pos, .. } => journal::Peer::Grain(
+                    world
+                        .get_cell(pos)
+                        .map_or(MaterialId::AIR, |cell| cell.material),
+                ),
+            };
+            journal.record(|| Event::Contact {
+                id,
+                at: contact.at,
+                normal: contact.normal,
+                peer,
+                push: contact.push,
+                drag: contact.drag,
+            });
+        }
+    }
+
     for (p, proposal) in proposals.iter().enumerate() {
         let state = &mut movers[proposal.body].freedoms[proposal.freedom.index()];
         if proposal.probe {
             state.probed = true;
             continue;
         }
+        state.moved |= !proposal.refused && !proposal.canceled;
+        let id = bodies[proposal.body].id;
+        let mut report = |outcome: Outcome| {
+            journal.record(|| Event::Quantum {
+                id,
+                freedom: proposal.freedom.reported(),
+                sign: proposal.sign,
+                outcome,
+            });
+        };
         if proposal.canceled {
+            report(Outcome::Unloaded);
             let body = &mut bodies[proposal.body];
             *proposal.freedom.accumulator_mut(body) %= proposal.freedom.threshold();
             continue;
         }
         if proposal.refused {
             let (closes, approach) = closing_any.get(&p).copied().unwrap_or((false, 0));
+            report(if closes {
+                Outcome::Rebounded
+            } else {
+                Outcome::Parked
+            });
             let body = &mut bodies[proposal.body];
             if closes {
                 *proposal.freedom.accumulator_mut(body) -=
@@ -1299,8 +1495,18 @@ fn finish_round(
                 *proposal.freedom.accumulator_mut(body) %= proposal.freedom.threshold();
                 state.parked = true;
             }
+        } else {
+            report(Outcome::Committed);
         }
     }
+}
+
+fn corner_engaged(body: &Body, com: (i64, i64), contact: &Contact) -> bool {
+    if contact.normal.0 == 0 || contact.normal.1 == 0 {
+        return true;
+    }
+    let point = body.point_velocity(com, contact.at);
+    point.0 * i64::from(contact.normal.0) < 0 && point.1 * i64::from(contact.normal.1) < 0
 }
 
 fn peer_rank(bodies: &[Body], peer: &Peer) -> (u8, u64) {
@@ -1323,7 +1529,7 @@ pub(super) fn body_grounded(world: &CellWorld, body: &Body) -> bool {
     })
 }
 
-pub(super) fn carriage(world: &mut CellWorld, body: &mut Body) {
+pub(super) fn carriage(world: &mut CellWorld, body: &mut Body, journal: &mut Journal) {
     let com = body.com();
     let mut exchanges: Vec<(CellPos, Cell, i64)> = Vec::new();
     for &pos in &body.raster {
@@ -1368,41 +1574,80 @@ pub(super) fn carriage(world: &mut CellWorld, body: &mut Body) {
         written.set_vel((i64::from(cvx) + impulse / mass) as i32, cvy);
         world.set(above, written);
         body.apply_impulse(com, above, -impulse, 0);
+        journal.record(|| Event::Carried {
+            id: body.id,
+            at: above,
+            material: cell.material,
+            impulse,
+        });
     }
 }
 
-pub(super) fn try_settle(world: &CellWorld, body: &mut Body) -> bool {
+pub(super) struct Settle {
+    pub verdict: Verdict,
+    pub residual: (i64, i64, i64),
+}
+
+impl Settle {
+    fn refused(body: &Body, verdict: Verdict) -> Self {
+        Self {
+            verdict,
+            residual: (body.vx, body.vy, body.spin.raw()),
+        }
+    }
+}
+
+pub(super) fn try_settle(world: &CellWorld, body: &mut Body) -> Settle {
     if body.parked || !body.settles {
-        return false;
+        return Settle::refused(body, Verdict::Restless);
     }
-    if body.vx.abs() > SNAP || body.vy.abs() > SNAP {
-        return false;
+    if body.vx.abs() >= REALIZABLE || body.vy.abs() >= REALIZABLE {
+        return Settle::refused(body, Verdict::Fast);
     }
-    let spin_snap = Spin::for_speed_at(SNAP, body.radius.max(1) * CELL);
-    if body.spin.clamped(spin_snap) != body.spin {
-        return false;
+    let spin_rest = Spin::for_speed_at(REALIZABLE, body.radius.max(1) * CELL);
+    if body.spin.clamped(spin_rest) != body.spin {
+        return Settle::refused(body, Verdict::Spinning);
     }
     let pressing = if net_lift(world, body) > 0 { 1 } else { -1 };
-    let mut supports: Vec<(CellPos, CellPos)> = Vec::new();
+    let mut braced = false;
+    let mut shifting = false;
+    let mut bearings: Vec<(CellPos, CellPos)> = Vec::new();
     for &pos in &body.raster {
-        let ahead = pos.translated(0, pressing);
-        let Some(cell) = world.get_cell(ahead) else {
-            return false;
-        };
-        if cell.body_id() == Some(body.id) {
-            continue;
-        }
-        if cell.body_id().is_some() {
-            return false;
-        }
-        match content::phase(cell.material) {
-            Phase::Solid => supports.push((ahead, pos)),
-            Phase::Powder => return false,
-            _ => {}
+        for (dx, dy) in NEIGHBOURHOOD {
+            let ahead = pos.translated(dx, dy);
+            let Some(cell) = world.get_cell(ahead) else {
+                return Settle::refused(body, Verdict::Unloaded);
+            };
+            if cell.body_id() == Some(body.id) {
+                continue;
+            }
+            if cell.body_id().is_some() {
+                if dy == pressing {
+                    return Settle::refused(body, Verdict::OnBody);
+                }
+                continue;
+            }
+            match content::phase(cell.material) {
+                Phase::Solid => {}
+                Phase::Powder if passenger(world, body.id, ahead) => continue,
+                Phase::Powder if cell.vel() == (0, 0) => {}
+                Phase::Powder => {
+                    shifting |= dy == pressing;
+                    continue;
+                }
+                Phase::Empty | Phase::Liquid | Phase::Gas => continue,
+            }
+            braced |= dy == pressing;
+            bearings.push((ahead, pos));
         }
     }
-    if supports.is_empty() {
-        return false;
+    if !braced {
+        let verdict = if shifting {
+            Verdict::OnPowder
+        } else {
+            Verdict::Unsupported
+        };
+        return Settle::refused(body, verdict);
     }
 
     let saved = (body.vx, body.vy, body.spin);
@@ -1416,13 +1661,13 @@ pub(super) fn try_settle(world: &CellWorld, body: &mut Body) -> bool {
     let com = body.com();
     let coms = [com];
     let grounded = [false];
-    let mut contacts: Vec<Contact> = supports
+    let mut contacts: Vec<Contact> = bearings
         .iter()
         .map(|&(at, from)| Contact {
             body: 0,
             from,
             at,
-            normal: (0, -pressing),
+            normal: (from.x - at.x, from.y - at.y),
             peer: Peer::Terrain,
             restitution: Q16::from_raw(0),
             friction: body.friction,
@@ -1430,6 +1675,7 @@ pub(super) fn try_settle(world: &CellWorld, body: &mut Body) -> bool {
             push: 0,
             drag: 0,
         })
+        .filter(|contact| corner_engaged(body, com, contact))
         .collect();
     let mut cells = FxHashMap::default();
     {
@@ -1442,14 +1688,22 @@ pub(super) fn try_settle(world: &CellWorld, body: &mut Body) -> bool {
         };
         resolver.resolve(&mut contacts);
     }
-    let rests = body.vx.abs() <= SETTLE_EPSILON
-        && body.vy.abs() <= SETTLE_EPSILON
-        && body.spin.clamped(Spin::for_speed_at(
-            SETTLE_EPSILON,
-            body.radius.max(1) * CELL,
-        )) == body.spin;
+    let residual = (body.vx, body.vy, body.spin.raw());
+    let rests = body.vx.abs() < REALIZABLE
+        && body.vy.abs() < REALIZABLE
+        && body
+            .spin
+            .clamped(Spin::for_speed_at(REALIZABLE, body.radius.max(1) * CELL))
+            == body.spin;
     body.vx = saved.0;
     body.vy = saved.1;
     body.spin = saved.2;
-    rests
+    Settle {
+        verdict: if rests {
+            Verdict::Rests
+        } else {
+            Verdict::Restless
+        },
+        residual,
+    }
 }

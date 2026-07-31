@@ -33,6 +33,21 @@ The debug overlay is the first instrument; tracy is the second. What the overlay
 - `chunks` counts what is loaded, simulated (active plus border), and awake; `cells ~N active` sums *sim rect areas*, not moving cells. Approaching `awake chunks × 4096` means the rects have degenerated to whole chunks.
 - `delta … written … visible … sent` separates the three quantities a dirty rect conflates per tick: cell writes, writes that changed the wire representation (material and shade), and cells actually replicated. `sent ≫ written` is rect over-approximation; `written ≫ visible` is invisible state churning the replication rect.
 
+## Verifying body rules
+
+`fallingsand_server --example burning_tree` is the standing physics harness: it drives the real
+kernel and the real body phase over generated terrain and audits the result.
+
+- `body::journal` is an opt-in per-tick record of every body interaction — detach, split, release,
+  strike, load, quantum outcome, contact, entrainment, carriage, settle and every refused settle
+  with its verdict and residual. Off by default and branch-cheap; the sim never reads it back.
+- `Bodies::states` is the matching snapshot: mass, motion, accumulators, bounds, policy.
+- Scenes: `tree` burns a generated tree and audits the debris, `stack` drops small debris on a
+  floor, `gas` walks a body through smoke, `survey` counts what worldgen leaves falling on load.
+  `--events`, `--trace <id>` and `--frames <n>` turn the journal into a readable trace.
+- Judge by the totals, not by eye: settle-refusal verdicts, quantum outcomes, peak speed per body
+  and settled-versus-detached cells localize a regression faster than any single frame.
+
 ## Verifying cell rules
 
 Verify behavior with a temporary example (deleted before commit) that drives the real kernel:

@@ -7,11 +7,18 @@ pub const SPEED_OF_LIGHT: i32 = CHUNK_SIZE as i32;
 const _: () = assert!(SPEED_OF_LIGHT as usize <= ((WINDOW_CHUNKS as usize - 2) / 2) * CHUNK_SIZE);
 
 #[derive(Debug, Clone, Copy)]
-pub struct BodyImpulse {
-    pub id: u32,
-    pub pos: CellPos,
-    pub jx: i64,
-    pub jy: i64,
+pub enum BodyImpulse {
+    Strike {
+        id: u32,
+        body_cell: CellPos,
+        grain: CellPos,
+        mass: i64,
+    },
+    Load {
+        id: u32,
+        body_cell: CellPos,
+        jy: i64,
+    },
 }
 
 pub struct SimWindow<'a> {
@@ -31,8 +38,21 @@ impl<'a> SimWindow<'a> {
         }
     }
 
-    pub(crate) fn body_impulse(&mut self, id: u32, pos: CellPos, jx: i64, jy: i64) {
-        self.impulses.push(BodyImpulse { id, pos, jx, jy });
+    pub(crate) fn struck_body(&mut self, mover: Cell, grain: CellPos, body_cell: CellPos) -> bool {
+        let Some(id) = self.get(body_cell).and_then(|cell| cell.body_id()) else {
+            return false;
+        };
+        self.impulses.push(BodyImpulse::Strike {
+            id,
+            body_cell,
+            grain,
+            mass: i64::from(content::density_milli(mover.material).max(1)),
+        });
+        true
+    }
+
+    pub(crate) fn load_body(&mut self, id: u32, body_cell: CellPos, jy: i64) {
+        self.impulses.push(BodyImpulse::Load { id, body_cell, jy });
     }
 
     pub(crate) fn set_slot(&mut self, sx: i32, sy: i32, chunk: &'a mut Chunk) {
