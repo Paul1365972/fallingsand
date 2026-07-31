@@ -1,6 +1,7 @@
 use crate::game::world::ChunkChange;
 use crate::view::Game;
 use bevy::platform::collections::HashMap;
+use bevy::platform::time::Instant;
 use bevy::prelude::*;
 use bevy::render::render_resource::ShaderType;
 use fallingsand_core::{
@@ -71,6 +72,7 @@ pub(crate) struct ChunkAtlasState {
     slots: HashMap<ChunkPos, ChunkEntry>,
     uploads: usize,
     upload_bytes: usize,
+    sync_micros: u32,
     atlas_side: u32,
     atlas_generation: u64,
     instance_generation: u64,
@@ -85,6 +87,7 @@ impl Default for ChunkAtlasState {
             slots: HashMap::default(),
             uploads: 0,
             upload_bytes: 0,
+            sync_micros: 0,
             atlas_side: INITIAL_ATLAS_SIDE,
             atlas_generation: 0,
             instance_generation: 0,
@@ -104,6 +107,10 @@ impl ChunkAtlasState {
 
     pub(crate) fn upload_bytes(&self) -> usize {
         self.upload_bytes
+    }
+
+    pub(crate) fn sync_micros(&self) -> u32 {
+        self.sync_micros
     }
 
     pub(crate) fn live_chunks(&self) -> usize {
@@ -185,6 +192,12 @@ pub(super) fn sync_chunk_atlas(
     mut state: ResMut<ChunkAtlasState>,
     time: Res<Time>,
 ) {
+    let start = Instant::now();
+    collect_uploads(&mut game, &mut state, &time);
+    state.sync_micros = start.elapsed().as_micros() as u32;
+}
+
+fn collect_uploads(game: &mut Game, state: &mut ChunkAtlasState, time: &Time) {
     state.uploads = 0;
     state.upload_bytes = 0;
 

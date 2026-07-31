@@ -13,6 +13,7 @@ pub mod settings;
 pub mod world;
 
 use bevy::math::Vec2;
+use bevy::platform::time::Instant;
 use chat::Chat;
 use clock::WorldClock;
 use debug::DebugState;
@@ -231,6 +232,11 @@ impl InGame {
     }
 }
 
+#[derive(Default)]
+pub struct ClientProfile {
+    pub net_micros: u32,
+}
+
 pub struct ClientGame {
     pub settings: Settings,
     pub identity: Identity,
@@ -242,6 +248,7 @@ pub struct ClientGame {
     pub settings_open: bool,
     pub changes: Changes,
     pub effects: Vec<Effect>,
+    pub profile: ClientProfile,
 }
 
 impl Default for ClientGame {
@@ -263,6 +270,7 @@ impl ClientGame {
             settings_open: false,
             changes: Changes::default(),
             effects: vec![Effect::ApplyWindow],
+            profile: ClientProfile::default(),
         }
     }
 
@@ -331,7 +339,9 @@ impl ClientGame {
             self.apply_ui_event(event, io);
         }
         input::resolve(self, io);
+        let net_start = Instant::now();
         net::update(self, io);
+        self.profile.net_micros = net_start.elapsed().as_micros() as u32;
         input::flush(self, io.dt);
         self.tick_timers(io.dt);
     }

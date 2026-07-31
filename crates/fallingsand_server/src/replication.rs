@@ -4,7 +4,9 @@ use crate::regions::RegionMap;
 use crate::session::Sessions;
 use crate::{INTEREST_RADIUS_X, INTEREST_RADIUS_Y};
 use fallingsand_core::FogMask;
-use fallingsand_core::{CHUNK_SIZE, Calendar, CellOffset, CellPos, ChunkPos, ItemStack, Motion};
+use fallingsand_core::{
+    CHUNK_AREA, CHUNK_SIZE, Calendar, CellOffset, CellPos, ChunkPos, ItemStack, Motion,
+};
 use fallingsand_protocol::{
     ChunkDebugRects, ChunkOp, DebugBody, DebugMotion, InteractionState, InteractionStatus,
     ParticleSpawn, PlayerAvatarState, PlayerId, PlayerState, SelfAvatarState, SelfLife, SelfState,
@@ -54,6 +56,9 @@ pub struct ReplicationMetrics {
     pub loaded_chunks: usize,
     pub loaded_regions: u32,
     pub replicated_bytes: u64,
+    pub replicated_cells: u64,
+    pub written_cells: u64,
+    pub visible_cells: u64,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -96,6 +101,7 @@ pub fn replicate(
         .map(|state| (state.player, *state))
         .collect();
 
+    let mut replicated_cells = 0;
     for session in sessions.active_iter_mut() {
         let Some(player_id) = session.player() else {
             continue;
@@ -121,6 +127,7 @@ pub fn replicate(
             sim,
             &interest,
             &mut debug_rects,
+            &mut replicated_cells,
         );
         let (debug_bodies, debug_motion) = if session.replication.debug {
             debug_payload(sim, bodies, &interest)
@@ -163,6 +170,7 @@ pub fn replicate(
     }
 
     let (awake_chunks, awake_cells) = sim.awake_counts();
+    let changes = sim.change_counts();
     let replicated_bytes = sessions
         .entries
         .values()
@@ -178,6 +186,9 @@ pub fn replicate(
         loaded_chunks: sim.chunk_count(),
         loaded_regions: regions.len() as u32,
         replicated_bytes,
+        replicated_cells,
+        written_cells: changes.writes as u64,
+        visible_cells: changes.visible as u64,
     }
 }
 
@@ -333,6 +344,7 @@ fn build_tiles(
     sim: &CellWorld,
     interest: &FxHashSet<ChunkPos>,
     debug_rects: &mut Vec<ChunkDebugRects>,
+    replicated_cells: &mut u64,
 ) -> Vec<ChunkOp> {
     let mut ops = Vec::new();
     known.retain(|&pos, _| {
@@ -354,6 +366,7 @@ fn build_tiles(
         let fog = *chunk.fog();
         match known.insert(pos, fog) {
             None => {
+                *replicated_cells += CHUNK_AREA as u64;
                 ops.push(ChunkOp::Load {
                     pos,
                     cells: cells_to_wire(chunk.cells()),
@@ -368,6 +381,7 @@ fn build_tiles(
         if rect.is_empty() {
             continue;
         }
+        *replicated_cells += u64::from(rect.width() * rect.height());
         let mut cells = Vec::with_capacity((rect.width() * rect.height()) as usize);
         for y in rect.min_y..=rect.max_y {
             for x in rect.min_x..=rect.max_x {

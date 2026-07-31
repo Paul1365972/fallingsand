@@ -43,6 +43,11 @@ pub(crate) struct StatWindows {
     pub(super) sim_ms: StatWindow,
     pub(super) tick_ms: StatWindow,
     pub(super) tx_bytes: StatWindow,
+    pub(super) tx_cells: StatWindow,
+    pub(super) net_ms: StatWindow,
+    pub(super) atlas_ms: StatWindow,
+    pub(super) written_cells: StatWindow,
+    pub(super) visible_cells: StatWindow,
     pub(super) slew_ms: StatWindow,
     pub(super) tps: StatWindow,
     pub(super) awake_cells: StatWindow,
@@ -96,7 +101,21 @@ fn phase_lines(timing: &TickProfile, windows: &mut Vec<StatWindow>, now: f32) ->
         .collect()
 }
 
-pub(super) fn render_pass_line(diagnostics: &DiagnosticsStore) -> Option<String> {
+fn peak_phase_line(timing: &TickProfile) -> String {
+    let mut phases = timing.peak_phases();
+    phases.sort_unstable_by_key(|&(_, micros)| std::cmp::Reverse(micros));
+    let worst = phases
+        .iter()
+        .take(PHASES_PER_LINE)
+        .map(|(label, micros)| format!("{label} {:>5.2}", *micros as f32 / 1000.0))
+        .collect::<Vec<_>>()
+        .join("  ");
+    format!("peak {worst}")
+}
+
+const PASSES_SHOWN: usize = 6;
+
+pub(super) fn render_pass_lines(diagnostics: &DiagnosticsStore) -> Vec<String> {
     let collect = |suffix: &str| {
         let mut passes: Vec<(&str, f64)> = diagnostics
             .iter()
@@ -107,26 +126,29 @@ pub(super) fn render_pass_line(diagnostics: &DiagnosticsStore) -> Option<String>
                     .strip_prefix("render/")?
                     .strip_suffix(suffix)?;
                 let value = d.smoothed()?;
-                (value > 0.0).then_some((name, value))
+                (value > 0.0).then_some((name.trim_start_matches("game_"), value))
             })
             .collect();
         passes.sort_by(|a, b| b.1.total_cmp(&a.1));
-        passes.truncate(3);
+        passes.truncate(PASSES_SHOWN);
         passes
     };
     let mut passes = collect("/elapsed_gpu");
     if passes.is_empty() {
         passes = collect("/elapsed_cpu");
     }
-    if passes.is_empty() {
-        return None;
-    }
-    let joined = passes
+    let entries: Vec<String> = passes
         .iter()
         .map(|(name, ms)| format!("{name} {ms:.2}"))
-        .collect::<Vec<_>>()
-        .join("  ");
-    Some(format!("draw {joined}"))
+        .collect();
+    entries
+        .chunks(PHASES_PER_LINE)
+        .enumerate()
+        .map(|(index, line)| {
+            let prefix = if index == 0 { "draw " } else { "" };
+            format!("{prefix}{}", line.join("  "))
+        })
+        .collect()
 }
 
 pub(super) fn server_lines(
@@ -149,6 +171,7 @@ pub(super) fn server_lines(
         timing.peak_sim as f32 / 1000.0,
     ));
     out.extend(phase_lines(timing, &mut windows.phases, now));
+    out.push(peak_phase_line(timing));
     out.push(format!(
         "{:>3.0} tps  +{:>2.0} ms behind  #{}",
         windows.tps.avg(now, server.tps),
@@ -166,6 +189,15 @@ pub(super) fn server_lines(
         "cells ~{} active  regions {} loaded",
         human_count(windows.awake_cells.avg(now, server.awake_cells as f32) as u64),
         server.loaded_regions,
+    ));
+    let written = windows.written_cells.avg(now, server.written_cells as f32);
+    let visible = windows.visible_cells.avg(now, server.visible_cells as f32);
+    let sent = windows.tx_cells.avg(now, server.replicated_cells as f32);
+    out.push(format!(
+        "delta {} written  {} visible  {} sent",
+        human_count(written as u64),
+        human_count(visible as u64),
+        human_count(sent as u64),
     ));
     let mem = server.loaded_chunks as u64 * CHUNK_AREA as u64 * std::mem::size_of::<Cell>() as u64;
     out.push(format!(

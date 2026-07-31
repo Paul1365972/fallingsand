@@ -17,6 +17,7 @@ use bevy::image::{
     ImageAddressMode, ImageFilterMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor,
 };
 use bevy::prelude::*;
+use bevy::render::diagnostic::RecordDiagnostics;
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_resource::*;
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery};
@@ -215,6 +216,10 @@ fn render_game(
     let Some(targets) = passes.targets.get() else {
         return;
     };
+    let recorder = context.diagnostic_recorder();
+    let diagnostics = recorder.as_deref();
+
+    let span = diagnostics.time_span(context.command_encoder(), "game_raster");
     passes.raster.draw(
         &mut context,
         targets,
@@ -222,16 +227,26 @@ fn render_game(
         frame.raster.quads.len() as u32,
         &passes.cache,
     );
+    span.end(context.command_encoder());
+
+    let span = diagnostics.time_span(context.command_encoder(), "game_light_field");
     passes
         .light_field
         .draw(&mut context, targets, &passes.cache);
+    span.end(context.command_encoder());
+
+    let span = diagnostics.time_span(context.command_encoder(), "game_fog_field");
     passes.fog.draw(&mut context, targets, &passes.cache);
+    span.end(context.command_encoder());
+
+    let span = diagnostics.time_span(context.command_encoder(), "game_composite");
     passes.composite.draw(
         &mut context,
         view.into_inner(),
         frame.composite.lines.len() as u32,
         &passes.cache,
     );
+    span.end(context.command_encoder());
 }
 
 pub(super) fn queue_pipeline(

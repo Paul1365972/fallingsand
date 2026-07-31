@@ -1,4 +1,6 @@
-use fallingsand_core::{CHUNK_SIZE, Cell, CellPos, Chunk, ChunkPos, MaterialId, Phase, content};
+use fallingsand_core::{
+    CHUNK_SIZE, Cell, CellPos, ChangeCounts, Chunk, ChunkPos, MaterialId, Phase, content,
+};
 use fallingsand_math::Hash;
 use rustc_hash::FxHashMap;
 
@@ -141,5 +143,13 @@ impl CellWorld {
             cells += rect.width() as u64 * rect.height() as u64;
         }
         (chunks, cells)
+    }
+
+    pub fn change_counts(&self) -> ChangeCounts {
+        self.chunks
+            .values()
+            .fold(ChangeCounts::default(), |total, chunk| {
+                total.merge(chunk.change_counts())
+            })
     }
 }

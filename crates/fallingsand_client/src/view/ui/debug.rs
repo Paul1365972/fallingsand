@@ -10,7 +10,7 @@ use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use fallingsand_core::content;
 use fallingsand_core::{ChunkPos, MAX_HEALTH, Phase as MaterialPhase, SEASON_DAYS};
-use metrics::{StatWindows, human_bytes, render_pass_line, server_lines};
+use metrics::{StatWindows, human_bytes, render_pass_lines, server_lines};
 
 pub struct DiagnosticsPlugin;
 
@@ -18,7 +18,7 @@ impl Plugin for DiagnosticsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<StatWindows>();
         app.add_plugins(FrameTimeDiagnosticsPlugin::default());
-        #[cfg(all(debug_assertions, not(feature = "tracy")))]
+        #[cfg(not(feature = "tracy"))]
         app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
     }
 }
@@ -115,7 +115,7 @@ pub fn update_overlay(
         format!("fallingsand v{}", env!("CARGO_PKG_VERSION")),
         format!("fps {fps:>3.0}  frame {frame_ms:>5.1} ms ({frame_min:>4.1}-{frame_max:>4.1})"),
     ];
-    right_lines.extend(render_pass_line(&diagnostics));
+    right_lines.extend(render_pass_lines(&diagnostics));
 
     match game.0.ingame() {
         None => {}
@@ -324,6 +324,15 @@ fn playing_lines(
         ),
         camera.k,
         game.settings.render_mode.label(),
+    ));
+    right_lines.push(format!(
+        "cpu net {:>5.2} ms  atlas {:>5.2} ms",
+        windows
+            .net_ms
+            .avg(now, game.profile.net_micros as f32 / 1000.0),
+        windows
+            .atlas_ms
+            .avg(now, visuals.sync_micros() as f32 / 1000.0),
     ));
 }
 

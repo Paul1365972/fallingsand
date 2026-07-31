@@ -93,11 +93,28 @@ impl DirtyRect {
     }
 }
 
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ChangeCounts {
+    pub writes: u32,
+    pub visible: u32,
+}
+
+impl ChangeCounts {
+    pub fn merge(self, other: Self) -> Self {
+        Self {
+            writes: self.writes + other.writes,
+            visible: self.visible + other.visible,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Chunk {
     cells: Box<[Cell; CHUNK_AREA]>,
     pub change: DirtyRect,
     pub prev_change: DirtyRect,
+    counts: ChangeCounts,
+    prev_counts: ChangeCounts,
     pub sim: DirtyRect,
     pub prev_sim: DirtyRect,
     fog: FogMask,
@@ -118,6 +135,8 @@ impl Chunk {
             cells: Box::new([Cell::AIR; CHUNK_AREA]),
             change: DirtyRect::EMPTY,
             prev_change: DirtyRect::EMPTY,
+            counts: ChangeCounts::default(),
+            prev_counts: ChangeCounts::default(),
             sim: DirtyRect::EMPTY,
             prev_sim: DirtyRect::EMPTY,
             fog: FogMask::EMPTY,
@@ -139,7 +158,10 @@ impl Chunk {
 
     #[inline]
     pub fn set(&mut self, offset: CellOffset, cell: Cell) {
+        let old = self.cells[offset.index()];
         self.cells[offset.index()] = cell;
+        self.counts.writes += 1;
+        self.counts.visible += u32::from(old.material != cell.material || old.shade != cell.shade);
         self.change.mark(offset);
         self.sim.mark_neighbourhood(offset);
         self.sight_dirty.mark(offset);
@@ -166,6 +188,8 @@ impl Chunk {
         if roll {
             self.prev_change = self.change;
             self.change = DirtyRect::EMPTY;
+            self.prev_counts = self.counts;
+            self.counts = ChangeCounts::default();
             self.prev_sim = self.sim;
             self.sim = DirtyRect::EMPTY;
         }
@@ -173,6 +197,10 @@ impl Chunk {
 
     pub fn change_rect(&self) -> DirtyRect {
         self.change.union(self.prev_change)
+    }
+
+    pub fn change_counts(&self) -> ChangeCounts {
+        self.counts.merge(self.prev_counts)
     }
 
     pub fn sim_rect(&self) -> DirtyRect {

@@ -16,14 +16,19 @@ pub struct TickProfile {
     pub total: u32,
     pub peak_sim: u32,
     pub peak_total: u32,
+    peak_phases: [u32; PHASE_COUNT],
 }
+
+const PHASE_COUNT: usize = 11;
+
+pub type Phases = [(&'static str, u32); PHASE_COUNT];
 
 impl TickProfile {
     pub fn sim(&self) -> u32 {
         self.sim_simulate + self.sim_random_tick
     }
 
-    pub fn phases(&self) -> [(&'static str, u32); 11] {
+    pub fn phases(&self) -> Phases {
         [
             ("network", self.network),
             ("input", self.player_input),
@@ -39,15 +44,28 @@ impl TickProfile {
         ]
     }
 
+    pub fn peak_phases(&self) -> Phases {
+        let mut phases = self.phases();
+        for (entry, peak) in phases.iter_mut().zip(self.peak_phases) {
+            entry.1 = peak;
+        }
+        phases
+    }
+
     pub fn finish(&mut self, tick: u64, total_micros: u32) {
         self.total = total_micros;
         let sim = self.sim();
-        if tick.is_multiple_of(PEAK_WINDOW_TICKS) {
+        let reset = tick.is_multiple_of(PEAK_WINDOW_TICKS);
+        if reset {
             self.peak_sim = sim;
             self.peak_total = total_micros;
         } else {
             self.peak_sim = self.peak_sim.max(sim);
             self.peak_total = self.peak_total.max(total_micros);
+        }
+        let current = self.phases();
+        for (peak, (_, micros)) in self.peak_phases.iter_mut().zip(current) {
+            *peak = if reset { micros } else { (*peak).max(micros) };
         }
     }
 }
@@ -65,5 +83,8 @@ pub struct ServerStats {
     pub loaded_regions: u32,
     pub players: usize,
     pub replicated_bytes: u64,
+    pub replicated_cells: u64,
+    pub written_cells: u64,
+    pub visible_cells: u64,
     pub timing: TickProfile,
 }

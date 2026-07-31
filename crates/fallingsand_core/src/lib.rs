@@ -17,7 +17,7 @@ pub use fallingsand_math::{TICK_DT, TICK_RATE, ticks_from_secs};
 pub use calendar::{Calendar, DAY_UNITS, SEASON_DAYS, Season};
 pub use celestial::{CelestialState, smoothstep};
 pub use cell::{Cell, Motion};
-pub use chunk::{CHUNK_AREA, CHUNK_SIZE, Chunk, DirtyRect};
+pub use chunk::{CHUNK_AREA, CHUNK_SIZE, ChangeCounts, Chunk, DirtyRect};
 pub use coords::{
     CARDINAL_NEIGHBORS, CellOffset, CellPos, CellRect, ChunkOffset, ChunkPos, RegionPos, ray_cells,
 };

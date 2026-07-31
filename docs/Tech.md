@@ -20,6 +20,19 @@ Direction: `{math, material} ← content ← core(build)`, `{math, material} ←
 - Only the client depends on Bevy; only the server depends on redb.
 - One transport trait spans WebTransport and the in-memory pipe, so single player runs the real protocol, not a shortcut.
 
+## Profiling
+
+Timings are only meaningful in an optimized build. `[profile.dev]` puts workspace crates at `opt-level = 1` and leaves `debug_assert!` live in the innermost cell accessors, so `cargo dev` numbers are not a measurement of anything. Use `cargo profile` (release + symbols + tracy) or `--profile perf`; `cargo profile-server` does the same for the dedicated binary.
+
+The debug overlay is the first instrument; tracy is the second. What the overlay states:
+
+- `frame` with its min/max spread separates a steady cost from a hitch. The embedded server owns its own thread and the kernel fans out over rayon, so a client hitch can be sim contention rather than render cost.
+- `draw` ranks GPU passes, the game's own (`raster`, `light_field`, `fog_field`, `composite`) alongside Bevy's post-process chain. `composite` and everything after it run at window resolution, not at native cell resolution.
+- `cpu net` / `cpu atlas` are the client's two per-frame costs that scale with world churn: wire decode plus `WorldView::apply`, and dirty-rect packing into the chunk atlas.
+- `tick`/`sim` carry a peak alongside the average, and `peak` names the worst phases over the same window. Averages hide work that runs on a few ticks out of hundreds — region integration, autosave — which is exactly the work a frame spike is made of.
+- `chunks` counts what is loaded, simulated (active plus border), and awake; `cells ~N active` sums *sim rect areas*, not moving cells. Approaching `awake chunks × 4096` means the rects have degenerated to whole chunks.
+- `delta … written … visible … sent` separates the three quantities a dirty rect conflates per tick: cell writes, writes that changed the wire representation (material and shade), and cells actually replicated. `sent ≫ written` is rect over-approximation; `written ≫ visible` is invisible state churning the replication rect.
+
 ## Verifying cell rules
 
 Verify behavior with a temporary example (deleted before commit) that drives the real kernel:

@@ -397,6 +397,9 @@ impl ServerState {
                 s.stats.loaded_chunks = metrics.loaded_chunks;
                 s.stats.loaded_regions = metrics.loaded_regions;
                 s.stats.replicated_bytes = metrics.replicated_bytes;
+                s.stats.replicated_cells = metrics.replicated_cells;
+                s.stats.written_cells = metrics.written_cells;
+                s.stats.visible_cells = metrics.visible_cells;
             },
         );
 
