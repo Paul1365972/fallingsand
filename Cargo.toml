@@ -50,19 +50,20 @@ tracing-tracy = "0.11"
 bytes = "1.12.0"
 tokio = { version = "1.52.3", default-features = false }
 redb = "4.1.0"
-web-transport-quinn = "0.11.9"
+web-transport-quinn = { version = "0.11.9", default-features = false, features = ["ring"] }
 web-transport-wasm = "0.5.8"
 gloo-timers = { version = "0.3", features = ["futures"] }
 rcgen = "0.14"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 rustls-pki-types = "1"
 sha2 = "0.10"
 ed25519-dalek = "2.2"
 getrandom = "0.3"
 time = "0.3"
 ctrlc = "3"
-instant-acme = "0.8"
+instant-acme = { version = "0.8", default-features = false, features = ["ring", "hyper-rustls", "rcgen"] }
 dotenvy = "0.15"
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "webpki-roots"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider", "webpki-roots"] }
 serde_json = "1"
 
 fastnoise-lite = "1.1.1"
@@ -72,15 +73,11 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+debug = false
 
 [profile.release]
 lto = "thin"
 debug = "line-tables-only"
-
-[profile.perf]
-inherits = "release"
-debug = true
-strip = false
 
 [profile.dist]
 inherits = "release"

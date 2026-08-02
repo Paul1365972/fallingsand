@@ -16,7 +16,13 @@ Docs express intent, not exact specification: when relevant code and docs disagr
 
 ## Verification
 
-Run `cargo fmt --all` and `cargo clippy --workspace --all-targets --locked -- -D warnings`.
+Run `cargo fmt --all` and `cargo clippy --workspace --lib --bins --examples --locked -- -D warnings`.
+Add `--tests` once the workspace has tests; until then `--all-targets` only recompiles every lib as a test harness.
+
+One build tree per profile is an invariant. The client's default features are the dev set, so
+`cargo check`, `cargo clippy`, `cargo run`, and `cargo dev` resolve identically; never pass
+`--features`. Release, `dist`, and web builds drop the dev set via `--no-default-features`,
+which lives in `.cargo/config.toml` aliases and the CI workflows, not in typed commands.
 
 Manual gameplay verification belongs to the user.
 Do not build or launch the game unless explicitly requested.

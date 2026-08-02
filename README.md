@@ -28,9 +28,16 @@ crates/
 ```
 cargo dev                                  # native client (dev mode)
 cargo dev-server                           # dedicated headless server
-bevy run -p fallingsand_client web         # web client, needs the bevy CLI
-cargo run -p fallingsand_core --example gen_icons   # regenerate item/material icons
+cargo profile                              # native client, tracy-instrumented
+cargo dist                                 # stripped, fat-LTO release binaries
+bevy run --no-default-features -p fallingsand_client web   # web client, needs the bevy CLI
+cargo run -p fallingsand_core --example gen_icons          # regenerate item/material icons
 ```
+
+The client's default features are the dev set (`bevy/dynamic_linking` for link time,
+`bevy/file_watcher` for shader hot reload, `bevy/debug` for ECS diagnostics), so every host
+command lands in one build tree. Release, `dist`, and web builds pass `--no-default-features`
+to drop all three.
 
 Bevy CLI install:
 

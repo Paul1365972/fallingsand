@@ -19,6 +19,7 @@ fallingsand_worldgen = { workspace = true }
 fallingsand_math = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
 rcgen = { workspace = true }
+rustls = { workspace = true }
 rustls-pki-types = { workspace = true, features = ["std"] }
 instant-acme = { workspace = true }
 dotenvy = { workspace = true }

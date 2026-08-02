@@ -14,44 +14,23 @@ env:
   CARGO_PROFILE_DEV_DEBUG: 0
 
 jobs:
-  format:
+  check:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Bevy dependencies
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libasound2-dev libudev-dev libwayland-dev
 
       - name: Format
         run: cargo fmt --all --check
 
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install Bevy dependencies
-        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libasound2-dev libudev-dev libwayland-dev
-
       - name: Lint
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
-
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install Bevy dependencies
-        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libasound2-dev libudev-dev libwayland-dev
-
-      - name: Test
-        run: cargo test --workspace --locked
+        run: cargo clippy --workspace --lib --bins --examples --locked -- -D warnings
 
   build-native:
     strategy:
@@ -79,7 +58,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libasound2-dev libudev-dev libwayland-dev
 
       - name: Build client and server
-        run: cargo build --release --locked -p fallingsand_client -p fallingsand_server
+        run: cargo build --release --no-default-features --locked -p fallingsand_client -p fallingsand_server
 
       - name: Upload client
         uses: actions/upload-artifact@v7
@@ -111,7 +90,7 @@ jobs:
         run: cargo binstall --version 0.1.0-alpha.2 --locked --no-confirm --force --git=https://github.com/TheBevyFlock/bevy_cli bevy_cli
 
       - name: Build web bundle
-        run: bevy build --locked --release -p fallingsand_client --yes web --bundle
+        run: bevy build --locked --release --no-default-features -p fallingsand_client --yes web --bundle
 
       - name: Upload site
         uses: actions/upload-pages-artifact@v5

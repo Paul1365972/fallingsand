@@ -62,7 +62,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libasound2-dev libudev-dev libwayland-dev
 
       - name: Build client and server
-        run: cargo build --profile dist --locked -p fallingsand_client -p fallingsand_server
+        run: cargo build --profile dist --no-default-features --locked -p fallingsand_client -p fallingsand_server
 
       - name: Package archives
         if: matrix.platform == 'linux'

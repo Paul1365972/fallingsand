@@ -8,8 +8,9 @@ name = "fallingsand"
 path = "src/main.rs"
 
 [features]
-dev = ["bevy/dynamic_linking", "bevy/dev", "bevy/embedded_watcher"]
-tracy = ["bevy/trace_tracy"]
+default = ["dev"]
+dev = ["bevy/dynamic_linking", "bevy/file_watcher", "bevy/debug"]
+tracy = ["bevy/trace_tracy", "fallingsand_server/tracy"]
 
 [build-dependencies]
 embed-resource = "3"
