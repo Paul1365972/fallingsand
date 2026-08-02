@@ -14,7 +14,7 @@ BEVY_ASSET_ROOT = { value = "", relative = true }
 
 [alias]
 dev = "run -p fallingsand_client"
-dev-server = "run -p fallingsand_server"
+dev-server = "run -p fallingsand_dedicated"
 profile = "run -p fallingsand_client --release --no-default-features --features tracy"
-profile-server = "run -p fallingsand_server --release --features tracy"
-dist = "build --profile dist --no-default-features --locked -p fallingsand_client -p fallingsand_server"
+profile-server = "run -p fallingsand_dedicated --release --features tracy"
+dist = "build --profile dist --no-default-features --locked -p fallingsand_client -p fallingsand_dedicated"

@@ -9,15 +9,16 @@ fallingsand_sim       # CA kernel, dirty rects, sleeping, physics
 fallingsand_protocol  # Client↔server messages
 fallingsand_net       # Transport trait: WebTransport (native + wasm), in-memory
 fallingsand_worldgen  # Procedural generation
-fallingsand_server    # Authoritative server: library + dedicated binary
+fallingsand_server    # Authoritative server library
+fallingsand_dedicated # Headless binary: CLI, ACME certs, tracing
 fallingsand_client    # Plain-Rust game core + bevy IO shell (game/ vs view/); native + WASM
 ```
 
-Direction: `{math, material} ← content ← core(build)`, `{math, material} ← core`, `math ← {sim, worldgen, server}`, `core ← {sim, worldgen, protocol, server, client}`, `sim ← server`, `protocol ← {server, client}`; the client reaches the sim only through the embedded server.
+Direction: `{math, material} ← content ← core(build)`, `{math, material} ← core`, `math ← {sim, worldgen, server}`, `core ← {sim, worldgen, protocol, server, client}`, `sim ← server`, `protocol ← {server, client}`, `server ← {dedicated, client}`; the client reaches the sim only through the embedded server.
 
 - Content compiles in during the core build — see [Content.md](Content.md).
 - The client stays WASM-clean: the browser build is join-only; rayon, storage, and the embedded server compile out. CI builds for `wasm32-unknown-unknown`.
-- Only the client depends on Bevy; only the server depends on redb.
+- Only the client depends on Bevy; only the server depends on redb; only the dedicated binary depends on the HTTP and certificate stack.
 - One transport trait spans WebTransport and the in-memory pipe, so single player runs the real protocol, not a shortcut.
 
 ## Profiling

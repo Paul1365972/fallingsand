@@ -10,6 +10,7 @@ members = [
     "crates/fallingsand_net",
     "crates/fallingsand_worldgen",
     "crates/fallingsand_server",
+    "crates/fallingsand_dedicated",
     "crates/fallingsand_client",
 ]
 
@@ -52,7 +53,6 @@ tokio = { version = "1.52.3", default-features = false }
 redb = "4.1.0"
 web-transport-quinn = { version = "0.11.9", default-features = false, features = ["ring"] }
 web-transport-wasm = "0.5.8"
-gloo-timers = { version = "0.3", features = ["futures"] }
 rcgen = "0.14"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 rustls-pki-types = "1"
@@ -65,8 +65,6 @@ instant-acme = { version = "0.8", default-features = false, features = ["ring", 
 dotenvy = "0.15"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider", "webpki-roots"] }
 serde_json = "1"
-
-fastnoise-lite = "1.1.1"
 
 [profile.dev]
 opt-level = 1

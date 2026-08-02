@@ -1,0 +1,32 @@
+[package]
+name = "fallingsand_dedicated"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "fallingsand_server"
+path = "src/main.rs"
+
+[features]
+tracy = ["dep:tracing-tracy"]
+
+[dependencies]
+fallingsand_core = { workspace = true }
+fallingsand_net = { workspace = true }
+fallingsand_server = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
+rcgen = { workspace = true }
+rustls = { workspace = true }
+rustls-pki-types = { workspace = true, features = ["std"] }
+instant-acme = { workspace = true }
+dotenvy = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+ctrlc = { workspace = true }
+time = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-tracy = { workspace = true, optional = true }

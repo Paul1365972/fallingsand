@@ -58,7 +58,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libasound2-dev libudev-dev libwayland-dev
 
       - name: Build client and server
-        run: cargo build --release --no-default-features --locked -p fallingsand_client -p fallingsand_server
+        run: cargo build --release --no-default-features --locked -p fallingsand_client -p fallingsand_dedicated
 
       - name: Upload client
         uses: actions/upload-artifact@v7

@@ -19,7 +19,8 @@ crates/
 ├── fallingsand_protocol  # All client↔server messages: serde types, framing, versioning
 ├── fallingsand_net       # Transport trait; backends: WebTransport (native + wasm), in-memory
 ├── fallingsand_worldgen  # Deterministic procedural generation
-├── fallingsand_server    # Authoritative server: library + dedicated headless binary
+├── fallingsand_server    # Authoritative server library
+├── fallingsand_dedicated # Headless `fallingsand_server` binary: CLI, certs, tracing
 └── fallingsand_client    # Bevy app; builds the `fallingsand` binary (native + WASM)
 ```
 
@@ -34,10 +35,8 @@ bevy run --no-default-features -p fallingsand_client web   # web client, needs t
 cargo run -p fallingsand_core --example gen_icons          # regenerate item/material icons
 ```
 
-The client's default features are the dev set (`bevy/dynamic_linking` for link time,
-`bevy/file_watcher` for shader hot reload, `bevy/debug` for ECS diagnostics), so every host
-command lands in one build tree. Release, `dist`, and web builds pass `--no-default-features`
-to drop all three.
+The client's default features are the dev set: `bevy/dynamic_linking`, `bevy/file_watcher`,
+`bevy/debug`. Release, `dist`, and web builds drop them with `--no-default-features`.
 
 Bevy CLI install:
 
